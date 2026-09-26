@@ -6,7 +6,8 @@ suggested_doc: auto-update-release-channel
 related_paths:
   - .github/workflows/release.yml
   - apps/desktop/electron-builder.yml
-promoted: false
+promoted: true
+promoted_to: auto-update-release-channel
 ---
 
 # Stable Windows release metadata can name an installer asset that does not exist

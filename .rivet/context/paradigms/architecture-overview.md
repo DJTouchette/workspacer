@@ -1,5 +1,5 @@
 ---
-title: Architecture Overview — Three Processes
+title: Architecture Overview — Clients, Daemons, and Capability Providers
 tags: [architecture, processes, ipc, daemon]
 related_paths:
   - "apps/desktop/src/main/index.ts"
@@ -11,13 +11,40 @@ related_paths:
   - "apps/desktop/src/main/shared/ipcChannels.ts"
   - "services/claudemon/src/session/state.rs"
 owner: Damien Touchette
-last_reviewed: 2026-08-16
+last_reviewed: 2026-09-26
 ---
 
-# Architecture Overview — Three Processes
+# Architecture Overview — Clients, Daemons, and Capability Providers
 
 ## Overview
-Workspacer runs a three-daemon spine: the Electron desktop shell (TS/React, spawns + supervises), the claudemon observability daemon (Rust, owns session state and transports), and the hub event bus with brain provider (Go, routes capabilities and plugins). The desktop and TUI are thin clients over REST+SSE or WebSocket; claudemon is the single source of truth for what every agent is doing. When remote-connected or headless, all three run independently of the desktop — the hub and brain can serve multiple clients at once. Since 2026-08 the hub can also *federate*: it links outbound to named peer hubs on other machines and republishes their fleet events locally (envelope-stamped with the peer name), so every client still holds exactly one bus connection but sees a merged multi-machine fleet — see `modules/hub-federation.md` / `docs/hub-federation.md`.
+Workspacer separates clients, session execution, and capability routing. The
+Electron desktop shell hosts a React renderer and can supervise local services;
+claudemon (Rust) owns agent transports and daemon session state; the hub (Go)
+routes bus capabilities and events and supervises plugin sidecars. It can also
+supervise a brain provider, as in desktop catalog mode; `workspacer serve` owns
+its brain as a separate launcher child. The MCP facade is a separate service translating agent tools to bus
+calls. This is a process tree, not a fixed three-process deployment.
+
+In desktop host mode, Electron supplies live/enriched session capabilities and
+normally delegates file-backed catalog capabilities to a catalog-scope brain.
+`WORKSPACER_NO_BRAIN=1` keeps those catalog capabilities in Electron instead.
+The renderer normally uses the bus for shared data and IPC for native host
+features; `WORKSPACER_DESKTOP_DIRECT=1` selects the pure-IPC data path. See
+[the backend seam](../domains/renderer-backend-seam.md).
+
+`workspacer serve` runs the services without Electron, using a full-scope brain
+for the live session projection and capability provider. The brain can also
+launch a private Node companion to execute shared desktop TypeScript services;
+see [headless desktop services](../modules/headless-desktop-services.md).
+In desktop remote-client mode, Electron starts no local claudemon, hub, or facade; the renderer connects
+to the remote bus. The TUI defaults to the bus, with `--direct` for claudemon
+REST/SSE. Providers project claudemon state into client snapshots and add their
+own enrichment; daemon state and the desktop snapshot are not identical models.
+
+Federation links named hubs and republishes selected peer events locally with
+peer provenance. Clients can use one bus connection for the merged fleet;
+qualified methods use `hub:<peer>/<method>`. See
+[hub federation](../modules/hub-federation.md).
 
 ## Key modules
 
@@ -35,24 +62,37 @@ Workspacer runs a three-daemon spine: the Electron desktop shell (TS/React, spaw
 
 **Daemon startup ordering:** Electron creates a BrowserWindow, then spawns claudemon, then creates bridges, then starts hub. A hung claudemon startup blocks the bridges but not renderer paint; startup notifications signal failures to the user without crashing.
 
-**SSE reconnect:** The hub bridge (bridge.go:44–58) reconnects on stream drop with a 1-second backoff; while disconnected, session updates don't flow to the bus, but the UI remains usable (stale snapshot).
+**SSE reconnect:** The hub bridge (`services/hub/internal/claudemon/bridge.go`) reconnects on stream drop with exponential backoff from 200 ms to 5 seconds, resetting after a stream lasts at least 5 seconds; while disconnected, session updates don't flow to the bus, but the UI remains usable (stale snapshot).
 
-**Mode-gated endpoints:** claudemon returns HTTP 409 Conflict when /message is called in non-Input mode, /approve in non-Approval mode, etc. The desktop must check session.mode before sending; race-condition sends get rejected and must retry or alert.
+**Message queue versus pending actions:** `/message` accepts live-session
+messages immediately or queues them until ready, including while responding or
+showing an approval/question. Stopped sessions return 409. `/approve` and
+`/answer` still reject mismatched pending modes. See
+[the HTTP API contract](../domains/claudemon-http-api.md).
 
-**SessionState lifecycle:** When a Stop event fires while live_subagents > 0, the session stays Responding until SubagentStop drains all subagents — a misaligned Stop/SubagentStop sequence can strand the session in Responding or flip it to Input prematurely.
+**SessionState lifecycle:** When a Stop event fires while live_subagents > 0, an unblocked session stays Responding until SubagentStop drains all subagents; an existing Approval/Question mode is preserved — a misaligned Stop/SubagentStop sequence can strand the session in Responding or flip it to Input prematurely.
 
-**Hook event parsing:** Unrecognized hook event names are silently ignored (state.rs:542–547); forward-compat depends on new clients ignoring unknown modes and new daemon versions tolerating missing fields.
+**Hook event parsing:** Unrecognized hook event names are ignored by the state machine. This does not prove readers accept new SessionMode values or changed snapshot shapes; test those wire changes separately and preserve optional-field compatibility.
 
 ## Gotchas
 
-**IPC channel exhaustion:** The desktop app has two-way IPC channels (ipcChannels.ts) for every major action (spawn, message, approve, etc.). Adding a new channel requires updating both main (ipc.ts) and renderer (preload.ts). The CLAUDE_SPAWN channel is especially fragile — if the renderer doesn't await the IPC, the session races against daemon startup.
+**IPC registration:** New channels require aligned main handlers, shared payload
+shapes, preload methods, renderer declarations, and backend classification.
+Await spawn results before consuming their returned session identity. Runtime
+readiness remains the host launcher's responsibility, not something an awaited
+renderer IPC alone proves. See [IPC boundary](../modules/ipc-boundary.md).
 
 **SessionState transport field:** The transport enum (PTY vs Stream) is serialized onto every snapshot; clients must check it to hide PTY-only affordances (e.g. Term view) on stream sessions. It's back-compatible (defaults to PTY) but omission breaks stream-mode detection.
 
-**Hub scope conflict:** The brain command runs in full-scope (owns session store + events) or catalog-scope (desktop app owns store). Both cannot run against the same hub simultaneously; the desktop must detect and suppress a local hub if one exists remotely.
+**Capability ownership:** The router is single-owner per method. A catalog-scope brain is designed to coexist with Electron: brain owns the delegated catalog and Electron owns live/enriched capabilities. A full-scope brain owns the headless surface. When adopting an existing hub, desktop capability registration must respect the adopted provider ownership; do not register overlapping methods. Remote-client mode is a separate startup choice and does not start a local hub.
 
-**Subagent background-task bookkeeping:** live_subagents and parent_turn_ended are non-serialized internal state. They survive stop-then-resume ONLY if the SessionState object isn't reconstructed from disk (state.rs:480–486); resuming a stopped session from SQLite must zero these fields to avoid idle false-negatives.
+**Subagent background-task bookkeeping:** live_subagents and parent_turn_ended are non-serialized internal state. They survive stop-then-resume ONLY if the SessionState object isn't reconstructed from disk; resuming a stopped session from SQLite must zero these fields to avoid idle false-negatives.
 
 **Config mtime gate + lock:** Both the desktop TS config service and the brain Go code write config.yaml. Each mtime-gates its refresh, and since 2026-07-31 an O_EXCL cross-process lockfile (`config.yaml.lock`, held across refresh→merge→write by both writers; parameters pinned in `contracts/config-lock.json`) closes the interleaved-write window — see `domains/config.md`.
 
-**TUI bus token discovery:** The TUI reads `~/.config/workspacer/remote-token` to auto-join a desktop-owned hub (main.rs:90). If this token doesn't match the hub's expected token, all bus operations hang reconnecting; pass `--bus-token` explicitly when the desktop's token is unavailable.
+**TUI bus token discovery:** Explicit CLI/environment credentials take precedence
+over configured/discovered tokens. The default discovery uses the shared
+Workspacer config directory’s `remote-token`. A rejected credential is not a
+working bus connection; startup may fall back for an unusable loopback bus,
+while an explicitly remote endpoint remains the requested target. See
+[the TUI guide](../domains/tui-client.md).

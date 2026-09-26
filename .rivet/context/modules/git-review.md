@@ -6,14 +6,16 @@ related_paths:
   - "apps/desktop/src/renderer/src/lib/gitQueries.ts"
   - "apps/desktop/src/renderer/src/panes/ReviewPane.tsx"
   - "services/hub/cmd/brain/git.go"
+  - "services/hub/cmd/brain/gitactions.go"
 owner: Damien Touchette
-last_reviewed: 2026-09-16
+last_reviewed: 2026-09-26
 ---
 
 # Host-side git service and review pane flows
 
 The desktop host and headless brain expose `git.*` using the system `git`
-binary. Authenticated agents have ambient host-path access, so callers may
+binary; the brain’s review mutations and commit-history reads are in
+`services/hub/cmd/brain/gitactions.go`. Authenticated agents have ambient host-path access, so callers may
 select any repository the desktop user can access. Workspacer does not restrict
 repository selection to live-agent cwd roots.
 

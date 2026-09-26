@@ -8,13 +8,13 @@ related_paths:
   - "apps/desktop/src/renderer/src/panes/MarkdownPreviewPane.tsx"
   - "apps/desktop/src/renderer/src/components/claude/ChangedFilesCard.tsx"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-26
 ---
 
 # FileLink openable-path affordance and editor/preview buses
 
 ## Overview
-`FileLink` is the single clickable-file-path affordance used across the chat tool-call UI: it renders a filename, resolves relativeness against a pane `cwd`, and turns click/right-click into a request on one of two decoupled window-`CustomEvent` buses. `App.tsx` is the sole listener for both buses; it owns pane lifecycle (create-or-focus, dedupe) so `FileLink` itself never touches pane state. Browser-open and reveal-in-Finder/Explorer bypass panes entirely and go straight to Electron main via `window.electronAPI`.
+`FileLink` is the single clickable-file-path affordance used across the chat tool-call UI: it renders a filename, resolves relativeness against a pane `cwd`, and turns click/right-click into a request on editor/preview requests on window-`CustomEvent` buses. `App.tsx` is the sole listener for both buses; it owns pane lifecycle (create-or-focus, dedupe) so `FileLink` itself never touches pane state. HTML browser-open uses the browser request bus; show-in-folder calls the current `electronAPI` backend. Do not assume all file actions bypass pane routing or execute on a local Electron host.
 
 ## Key modules
 - `apps/desktop/src/renderer/src/components/claude/FileLink.tsx` — `isAbsolutePath`, `resolveWithCwd`, `isMarkdownPath`/`isHtmlPath`, `openFileDefault`, the exported `FileActionMenuItems` menu body, and the `FileLink` component itself (click = open default, right-click = context menu).
@@ -27,18 +27,18 @@ last_reviewed: 2026-07-11
 - Consumers of `FileLink`/`FileActionMenuItems`: `apps/desktop/src/renderer/src/components/claude/ToolTraceCard.tsx` (tool-call target row), `apps/desktop/src/renderer/src/components/claude/DiffView.tsx` (three header instances, one per diff-card variant), `apps/desktop/src/renderer/src/components/claude/WorkCard.tsx`, `apps/desktop/src/renderer/src/components/claude/ChangedFilesCard.tsx` (via `renderContextMenuItems` on its own `FileTree`, not `FileLink` itself), `apps/desktop/src/renderer/src/panes/ContextPane.tsx`.
 
 ## Failure modes
-- `openFileInEditor` (App.tsx) warns to console and no-ops if `config.editor?.engine !== 'terminal'` and the `workspacer.editor` plugin pane isn't found (`pluginPanesRef.current`) — no user-visible error surface.
+- If the editor plugin is unavailable/unreachable, `openFileInEditor` logs and falls back to the system editor through `fileOpenExternal`, prompting for a file when necessary. Backend support still determines whether that external action can complete; this is not the old unconditional no-op.
 - `MarkdownPreviewPane.load()` catches read errors from `window.electronAPI.readFile` and renders them inline (`Couldn't read {fileName}` + raw error text); it does not retry automatically, only on manual "Refresh" click.
 - If a preview pane's `previewPath` is ever undefined (stale/migrated pane state), the pane renders a dead-end message telling the user to reopen from a file link rather than erroring.
-- `fileOpenExternal`/`fileShowInFolder` return `{ok:false,error}` on failure but `FileActionMenuItems` calls them with `void ...(...)`, discarding the result — a failed browser-open or reveal fails silently in the UI.
+- Show-in-folder inspects a returned `{ok:false,error}` and posts a warning notification. HTML “Open in browser” dispatches a checked `file:` URL through the browser bus, rather than calling `fileOpenExternal` directly. Preserve these distinct paths when changing feedback or remote routing.
 
 ## Gotchas
 - Left-click and right-click both call `e.stopPropagation()` in `FileLink` — required because the rows/cards hosting it (tool-trace rows, work-card entries) toggle expand/collapse on click; without this the link's own click would also fire the parent toggle.
-- Extension detection (`isMarkdownPath`: `md`/`markdown`, `isHtmlPath`: `html`/`htm`) is the single source of truth for three independent things: default left-click action, which extra context-menu items appear, and the small type glyph (`M↓` / `⊕`) — changing recognized extensions in one place changes all three, which is usually desired but easy to forget when only fixing one symptom.
+- `defaultOpenTarget` chooses preview for Markdown and editor otherwise; both default click dispatch and the leading destination icon use it. HTML offers a browser action only in the context menu. Extension helpers also determine optional menu entries; the old typographic file-type glyphs are no longer used.
 - `isAbsolutePath` must stay in sync with any new path-origin format; it currently covers POSIX (`/…`), UNC (`\\…`), and Windows drive (`C:\…` or `C:/…`) — a path that doesn't match any of these is treated as relative and gets prefixed with `cwd` via `resolveWithCwd`, so a malformed/unexpected absolute-path style would silently corrupt the path.
 - `FileActionMenuItems` is a bare menu-items fragment (no `ContextMenu` wrapper) so it can be reused inside a caller-owned `ContextMenu`/`FileTree` (`ChangedFilesCard.tsx` passes it into `FileTree`'s `renderContextMenuItems`); every item must keep calling `onClose()` via the `run()` wrapper or the host's menu will not close — new actions added to this list must follow the same `run(...)` pattern.
 - The editor/preview buses are intentionally *not* merged into `reviewBus.ts`'s pattern even though they serve an analogous purpose; per their doc comments: kept separate so the two concerns stay independent — do not attempt to unify them without checking both `EditorOpenTarget`/`MarkdownPreviewTarget` payload shapes stay distinct from `ReviewFileTarget`.
-- `openFileDefault` resolves the path (`resolveWithCwd`) before dispatching, but `FileLink`'s own right-click path passes the *original* `path`/`cwd` into `FileActionMenuItems`, which re-resolves internally — resolution happens twice on two different code paths for the same click session; if `resolveWithCwd`'s logic ever became stateful/non-idempotent this would break.
+- `openFileDefault` resolves the path (`resolveWithCwd`) before dispatching, but `FileLink`'s own right-click path passes the *original* `path`/`cwd` into `FileActionMenuItems`, which re-resolves internally — the default-action and menu paths each resolve independently. Keep that helper pure and apply the same path rules in both.
 - `MarkdownPreviewPane` pane dedupe key is `previewPath` exactly (string equality) — opening the same markdown file via two different relative-vs-absolute-looking `path` strings that resolve to the same absolute file will not dedupe unless `FileLink`/`openFileDefault` already normalized to the same absolute string first.
 
 ## Hand-authored notes (2026-07-23)
@@ -77,3 +77,22 @@ last_reviewed: 2026-07-11
 - `markdown.tsx`'s `MdPathLink` no longer passes the old `glyph={false}`: prose is where the
   badge matters most, since a linkified path there has no other at-rest affordance (the
   underline is hover-only).
+
+## Preview bounds and checked paths
+
+`MarkdownPreviewPane` renders at most `MAX_PREVIEW_CHARS` (200,000 JavaScript
+string code units), with an editor pointer for the remainder. A
+`previewCanonicalPath` supplied by the checked browser-file flow is sent back
+with every read so the backend can detect a changed target. Ordinary FileLink
+previews do not manufacture that prior-check evidence.
+
+`EditorOpenTarget` accepts either a file `path` or a server `directory`, plus
+optional cwd. It still has no line/column field. Preserve this distinction when
+linkifying `:line[:column]` display suffixes.
+
+Detection is a bounded lexical heuristic, not an existence check. It rejects
+URLs, flags, templates/globs and overlong tokens; code spans allow recognized
+bare filenames, while prose uses stricter path-like shapes. The cwd context is
+read at render time, so a shared Markdown parse result does not bind relative
+paths to whichever pane parsed it first. Linkification alone does not authorize
+or guarantee a successful file read.

@@ -7,7 +7,8 @@ related_paths:
   - apps/desktop/src/main/services/worktreeArtifactCleanupScheduler.ts
   - apps/desktop/src/main/headless/stdio.ts
   - apps/desktop/scripts/cleanup-agent-artifacts.mjs
-promoted: false
+promoted: true
+promoted_to: worktree-artifact-cleanup
 ---
 
 # Artifact cleanup startup is delayed and shared between desktop and headless

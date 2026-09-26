@@ -8,105 +8,125 @@ related_paths:
   - "services/claudemon/src/session/store.rs"
   - "services/claudemon/src/session/state.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-26
 ---
 
-# claudemon SQLite Persistence + Boot Hydration
+# Claudemon SQLite persistence and boot hydration
 
-## Overview
-claudemon keeps a hot in-memory `SessionStore` (`services/claudemon/src/session/store.rs`) for latency-sensitive PTY/mode state, and a cold SQLite store (`services/claudemon/src/store/mod.rs`) that durably records only the hook-event stream and a derived sessions row. On boot the daemon loads the most recent SQLite rows and rehydrates the in-memory list as `Stopped`/resumable sessions, so agents survive a daemon restart even though their live PTY state does not.
+## Durable data versus runtime state
 
-## Key modules
-- `services/claudemon/src/store/mod.rs` — `Db` handle (`Arc<Mutex<Connection>>`), `record_event` (upsert session + insert event in one transaction), `load_recent_sessions`, `default_db_path`.
-- `services/claudemon/src/store/schema.rs` — `migrate()` (user_version-gated, one-shot), `SCHEMA_V1` DDL for `sessions`/`events` + `events_session_time` index.
-- `services/claudemon/src/daemon/mod.rs` — wires it all up: opens `Db`, calls `load_recent_sessions(SESSION_HYDRATE_LIMIT)` (= 100) at startup, calls `store.hydrate(sessions)`, and spawns `spawn_persistence_task` subscribed to `store.subscribe_hooks()`.
-- `services/claudemon/src/session/store.rs` — `SessionStore::hydrate` (line ~411) turns each `RestoredSession` into a `SessionState::new(...)` forced to `SessionMode::Stopped`, restoring `tool_calls`, `started_at`, `updated_at`; only fills a slot if not already present (`entry.or_insert_with`), so a live session at boot always wins over a hydrated row.
-- `services/claudemon/src/session/state.rs` — `SessionState::is_archived` (line 525): archived purely as a display filter once `Stopped` and idle past `ARCHIVE_AFTER_SECONDS`; the SQLite row is never deleted and the session stays resumable.
+`services/claudemon/src/store/mod.rs` provides `Db`, a shared mutex-protected
+SQLite connection. The schema stores hook events, session history/spawn facts,
+keep-warm heartbeat records, and execution leases. PTY buffers, live processes,
+channels, and pending runtime operations are not restored by reopening this DB.
 
-## Failure modes
-- `record_event` runs inside a single `rusqlite::Transaction`: `upsert_session_tx` then `insert_event_tx`, committed together, so an `events` row can never reference a session that failed to upsert (mod.rs:54-61).
-- Persistence is out-of-band via `tokio::sync::broadcast`: `spawn_persistence_task` (daemon/mod.rs:370) reads `store.subscribe_hooks()` and does the write on `tokio::task::spawn_blocking`, logging (`tracing::warn`) and swallowing errors on write failure rather than crashing the daemon — a failed persist never blocks the hook response.
-- If the persistence task falls behind the broadcast channel it hits `RecvError::Lagged(n)` and logs `skipped = n` — those hook events are silently dropped from SQLite (never retried) while the in-memory store still applied them normally.
-- On `RecvError::Closed` the task just logs and exits; no restart/backoff.
-- `load_recent_sessions` failing at boot (`Err(err)`) only logs a `tracing::warn`; the daemon still starts with an empty session list rather than failing to boot (daemon/mod.rs:64-72).
-- The mutex in `Db` is `.lock().expect("db mutex poisoned")` — a panic while holding the lock (e.g. mid-transaction) poisons it and takes down every subsequent DB call for the process lifetime.
+`default_db_path` prefers XDG_DATA_HOME/claudemon/state.db, then the user’s
+.claudemon/state.db, with a relative fallback if no home can be resolved. A
+launcher can explicitly pass a different DB path. Do not assume a second set
+of daemon ports selects a different database automatically; the serve launcher
+has its own alternate-stack path checks.
 
-## Gotchas
-- **Durable vs ephemeral boundary**: only what `record_event` writes — the `sessions` upsert columns and one `events` row per `HookEvent` — survives a restart. PTY bytes, live `SessionMode`, transcript tailer state, conversation store, and all other rich in-memory `SessionState` fields are gone on restart and rebuilt from scratch (or not at all) via hydration.
-- **Upsert is column-preserving, not overwriting**: on conflict, `cwd` only updates `CASE WHEN sessions.cwd = '' THEN excluded.cwd ELSE sessions.cwd END` (keeps first non-empty value), and `model`/`branch` use `COALESCE(sessions.model, excluded.model)` (keep first non-null). Later events with better/different values for these fields will never overwrite an already-set one — only `last_event_at` and (via a separate `UPDATE`) `tool_call_count` unconditionally advance.
-- Only `PreToolUse` bumps `tool_call_count` (mod.rs:144-149) — other tool-related events do not increment it, so tool-count parity with the in-memory `SessionState.tool_calls` field depends entirely on that one event type being reliably delivered.
-- `name`/`project` are derived once at first insert (`derive_name_from_cwd`, or `payload["name"]`/`payload["project"]` if present) and are **not** part of the `ON CONFLICT` update clause at all — they're frozen at session creation even if the payload later carries a better name.
-- `migrate()` is one-shot forward-only: it checks `user_version >= USER_VERSION` and no-ops if so; there is no down-migration or multi-step migration chain. Any schema change requires bumping `USER_VERSION` in `services/claudemon/src/store/schema.rs` and adding a new `SCHEMA_V2`-style batch — editing `SCHEMA_V1` in place will not re-run against existing databases.
-- Pragmas set at `Db::open` (WAL journal mode, `synchronous = NORMAL`, `foreign_keys = ON`) are connection-level and re-applied every open; `foreign_keys = ON` makes the `events.session_id` FK to `sessions(id)` actually enforced, reinforcing why the upsert-then-insert ordering inside one transaction matters.
-- `default_db_path()` honors `XDG_DATA_HOME` first (`$XDG_DATA_HOME/claudemon/state.db`), else `~/.claudemon/state.db` via `directories::BaseDirs`, else falls back to relative `.claudemon/state.db` if `BaseDirs::new()` fails — three different possible locations depending on environment.
-- Hydration is capped at `SESSION_HYDRATE_LIMIT = 100` (daemon/mod.rs:20), newest `last_event_at` first; sessions beyond that limit remain in SQLite but won't reappear in the in-memory list until pruning/archival logic or a manual query surfaces them.
-- All `Db` writes serialize through one `Mutex<Connection>` — there's a single connection, not a pool, so heavy concurrent hook traffic serializes on this lock (acceptable per the module's own doc comment, which asserts SQLite itself is the bottleneck, not the mutex).
+`Db::open` applies WAL, synchronous NORMAL and foreign-key enforcement, then
+migrations. Reads/writes through this handle share one connection mutex. A panic
+poisoning that mutex makes later expect/unwrap acquisition fail; there is no
+pool of unaffected connections to fall back to.
 
-## Hand-authored notes (2026-08-26) — a spawn-time value has to ride the row-creating INSERT
+## Hook persistence and upsert semantics
 
-`SessionStore::set_requested_model` is called from the spawn handlers, but a
-session's `sessions` row is **not created until its FIRST HOOK EVENT arrives**
-(`upsert_session_tx`, driven by the persistence task off `store.subscribe_hooks()`).
-So a spawn-time `UPDATE sessions SET requested_model = ... WHERE id = ?` matches
-zero rows, and the INSERT that follows leaves the column NULL. `SessionStore`
-also holds no `Db` handle at all — persistence is deliberately out-of-band via
-the hook broadcast — so there is no in-store write path either.
+The daemon subscribes to the hook broadcast and writes on the blocking pool.
+`record_event_with_spawn_facts` upserts the session and inserts its event in one
+transaction. The hook response does not wait for successful durable storage.
+Write failures are logged; broadcast lag loses events from persistence with a
+warning, and a closed channel ends the task. Do not claim every accepted hook
+has reached disk or that missed persistence events are retried.
 
-The working shape is to thread the value INTO the row-creating statement
-(`Db::record_event_with_requested_model`, read from `SessionStore::requested_model`
-in the persistence task) with `COALESCE(sessions.requested_model,
-excluded.requested_model)` on conflict — exactly how the neighbouring `model`
-column is handled. The spawn-time UPDATE is still worth keeping for a session
-whose row already exists (a resume).
+`upsert_session_tx` has field-specific merge rules:
 
-**Any future "remember X about a session across a daemon restart" field hits the
-same ordering hole, and the failure is silent**: the column is simply always
-NULL, and it only shows up as wrong behaviour after a restart. It cost a
-debugging round on `requested_model`, which is the only carrier of a `[1m]`
-window choice (Claude Code strips the marker from the transcript's model id).
+- First nonempty cwd and first non-null reported model/branch are preserved.
+- Name/project are chosen at insertion, not replaced by later hook payloads.
+- Last-event time updates; PreToolUse increments the hook-derived tool counter.
+- A supplied canonical requested-model identity replaces the legacy model,
+  identity and context-window columns together, including a null window.
+  Absent selection facts leave the existing selection untouched.
+- A new non-null transcript path replaces the stored path.
+- First non-null config_root sticks; empty string is the known default root,
+  while null means no account attribution.
 
-For new persisted per-session fields: add them to `RestoredSession` + `hydrate` +
-the `upsert_session_tx` INSERT/COALESCE in one go, and put the value on the
-persistence task's path rather than writing it at spawn. **Migrations that ADD
-COLUMN must use a catalog-checked step body** (see `add_heartbeat_provider` /
-`add_session_requested_model`), never a bare SQL const.
+These are hook-upsert rules, not a claim that separate model-selection updates
+can never change a column. `note_requested_model_selection` updates the
+selection for an already-existing row after appropriate control acceptance.
 
-## Hand-authored notes (2026-09-01) — the v8 rollback window, and where its tests live
+## The row-creation ordering rule
 
-Promoted from the 2026-08-31 native-1M persistence learnings, re-checked
-against master at `0bac5799`.
+A spawn-time in-memory value can precede the first hook that creates its session
+row. An UPDATE at that point may match nothing. The persistence task therefore
+reads `SpawnFacts` from the session store and carries requested selection and
+config-root attribution into the row-creating INSERT. Keep RestoredSession,
+hydration and the INSERT/update rules aligned when adding another durable fact.
 
-- **The canonical selection columns are ADDITIVE AND UNVERSIONED on purpose.**
-  `sessions.requested_model_identity` and `sessions.requested_context_window`
-  are added by `add_session_requested_selection`
-  (`services/claudemon/src/store/schema.rs`) with a catalog check per column,
-  and `USER_VERSION` deliberately stays at 8 — because the previous daemon's
-  downgrade guard refuses any database stamped higher, so bumping it would end
-  the rollback window as a side effect of what is really just an ALTER TABLE.
-  During that window `requested_model` is the ONLY selection value an older
-  daemon can read or write; it cannot express the identity/window pair and may
-  still carry redundant native-1M markers. The file states this as a
-  maintenance contract: any future `sessions` rebuild must copy both columns
-  explicitly, and raising `USER_VERSION` past 8 is a compatibility DECISION,
-  not cleanup.
-- **A rollback-compatible reader must compare the LEGACY PROJECTIONS, not the
-  raw normalized pairs.** That is the edge `e8349a8d` closed: for a
-  native-1M family (Fable/Mythos) the canonical bare identity and an old marked
-  input normalize to values that LOOK different, so a naive comparison made
-  restore prefer the legacy evidence and drop the canonical 1M selection.
-  Project both sides down to the legacy spelling and compare that.
-- **CORRECTION — the canonical pair is no longer serde-skipped.** The learning
-  recorded it as hidden from public snapshots, so transports could not depend
-  on it. Since `66c842df` `SessionState.requested_selection` is serialized
-  (`skip_serializing_if = "Option::is_none"`) and `daemon/api.rs` publishes
-  `requested_selection` + `resolved_context_window` on the snapshot, the
-  session-update event and the `/sessions` list alike. Additive and optional:
-  absence still means "nobody has said".
-- **Where the regression coverage lives.** These changes are covered by INLINE
-  `#[cfg(test)]` modules in the files they touch, not a separate integration
-  target: `store/mod.rs` (daemon-restart requested-model round trips),
-  `store/schema.rs` (migration replay, including the drop-a-column and
-  re-open-after-downgrade cases) and `session/usage.rs` (resolving the 1M window
-  from the requested model). Validating a persistence/schema change is therefore
-  `cargo test` with a name filter inside the claudemon crate, plus the whole
-  crate's checks for cross-module compilation.
+Execution leases use their own table precisely because native admission can
+precede hook-created history. Lease claims compare the expected prior lease
+inside an immediate transaction and increment the generation. Do not fold that
+identity into a build stamp or substitute an in-memory spawn generation for the
+durable compatibility pin.
+
+Transcript paths retain the provider’s spelling. A profile may symlink its
+projects into another root; canonicalizing the stored path can destroy account
+attribution. Usage is re-derived from transcript/provider evidence, not a
+permanently stale total-cost column in sessions (that column was removed in v7).
+
+## Hydration and retention
+
+At startup the daemon loads up to 100 most-recent session rows and hydrates
+Stopped/resumable state, restoring timestamps, tool/user-prompt counts,
+transcript path, requested selection and account facts. RestoredSession does
+not carry a provider field, and hydrate deliberately does not install its reported
+model as fresh live telemetry; this is not full cross-provider snapshot serialization. Existing in-memory rows win over
+hydration. Loading history can fail with a warning while the daemon continues;
+that differs from a failure to open/migrate the database itself.
+
+Hydration does not revive a process. Requested capacity is not confirmed live
+capacity, and retained history is not proof of current liveness. Resume may
+recreate state and replay provider history under the appropriate launch path.
+
+Archive display and retention are separate. Stopped rows older than seven days
+are hidden by the archive predicate and evicted from memory by maintenance.
+`Db::prune_archived` selects by last-event age and preserves the newest 100 rows
+regardless of age. It freezes the prune IDs, then deletes matching events and
+sessions in one transaction; deterministic tie-breaking keeps both deletes on
+the same set. It does not select using the in-memory mode, and it does not delete
+the provider’s transcript files.
+
+## Migration and rollback contract
+
+`schema.rs` currently supports user_version 8 and refuses a higher version.
+Numbered forward steps commit DDL and their version stamp together. Every step
+also needs replay-safe DDL/catalog checks so partially applied older databases
+can recover. A bare ADD COLUMN without checking the catalog is not replay-safe.
+
+Canonical selection columns are additive and deliberately unversioned during
+the v8 rollback window. The normal catalog check avoids an unnecessary write
+transaction when both columns exist; a missing column is rechecked under an
+immediate transaction before alteration. Rebuilding sessions must copy both
+columns. Raising the version ends a compatibility promise and is not formatting
+cleanup. `execution_leases` is also created idempotently outside numbered steps.
+
+Rollback-compatible selection restore compares legacy projections before deciding
+that canonical and legacy evidence disagree. A marker-free native-large-window
+identity and an older marked spelling can represent the same legacy request.
+Canonical selection is published additively on current snapshots; it is not
+serde-skipped or safe for clients to reconstruct from an unrelated settings field.
+
+## Verification
+
+From `services/claudemon`:
+
+```bash
+cargo test --lib store::
+```
+
+Inspect the result count: these tests live in the library, not the binary target.
+They cover schema creation/replay/rollback, event transactions, selection/account
+round trips and retention. Use API and session-state tests as well when changing
+publication or control acknowledgement, because a correct DB row alone does not
+prove clients receive the same owner fields.

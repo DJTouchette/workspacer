@@ -6,7 +6,7 @@ related_paths:
   - "services/hub/internal/bus/*.go"
   - "services/hub/cmd/mcp/plugins.go"
 owner: Damien Touchette
-last_reviewed: 2026-09-16
+last_reviewed: 2026-09-26
 ---
 
 # Hub Plugin System
@@ -32,7 +32,7 @@ document; it is not a filesystem sandbox for enabled plugin code.
 - `install.go`: zip-slip/decompression guards and atomic trusted install.
 - `settings.go`: typed settings, secret redaction on reads, `WKS_SETTINGS` for
   the trusted sidecar.
-- `cmd/mcp/plugins.go`: enabled plugin tools are added ambiently to supported
+- `services/hub/cmd/mcp/plugins.go`: enabled plugin tools are added ambiently to supported
   spawned-agent server catalogs.
 
 ## Invariants

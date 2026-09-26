@@ -7,7 +7,7 @@ related_paths:
   - "apps/desktop/src/main/services/mcpFacadeDaemon.ts"
   - "apps/desktop/src/main/services/mcpConfig.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-16
+last_reviewed: 2026-09-26
 ---
 
 # MCP Tool Facade
@@ -19,8 +19,8 @@ hub connection, and initial plugin-catalog readiness.
 
 ## Spawned-agent contract
 
-Every supported Workspacer-spawned agent receives the ambient operator tool
-surface and every enabled plugin tool. `toolScope`, `pluginTools`, profile-grant
+When a healthy facade is available for injection, supported Workspacer-spawned
+agents receive its ambient operator tool surface and every enabled plugin tool. `toolScope`, `pluginTools`, profile-grant
 and yolo-grant fields remain accepted only for mixed-version compatibility and
 do not narrow or widen that surface. Pi is not admitted because its CLI has no
 MCP bridge.
@@ -56,9 +56,20 @@ polls later changes; clients caching `tools/list` may need to reconnect.
 
 ## Key tests
 
-- `cmd/brain/facade_test.go`: per-spawn healthy→down→healthy, identity/bind/hub
+- `services/hub/cmd/brain/facade_test.go`: per-spawn healthy→down→healthy, identity/bind/hub
   refusal, no token leak, pointer-only ordinary skills.
 - `mcpFacadeDaemon.test.ts`: exact adoption/readiness and stale-restart race.
 - `claudeSessionStore.test.ts`: retry-safe, once-per-lifecycle revocation.
-- `cmd/mcp/auth_test.go`, `tiers_test.go`, `plugins_test.go`: manual credential
+- `services/hub/cmd/mcp/auth_test.go`, `tiers_test.go`, `plugins_test.go`: manual credential
   tiers, authentication, and plugin catalog behavior.
+
+## Outbound identity delegation
+
+A dedicated scoped operator token used by a facade does not automatically gain
+permission to assert another local session’s identity. The bus’s
+`mayAssertLocalSession` requires local control-plane provenance or explicitly
+provisioned facade authority and still excludes revoked/plugin/federated callers.
+`workspacer token facade-authority` provisions that bit for a dedicated service
+label; it does not grant authenticated-host-only administration or let a session
+bearer self-promote. Keep inbound session authentication and outbound delegation
+checks separate when diagnosing connected-but-refused tools.

@@ -1,6 +1,6 @@
 ---
 title: "Fleet Manager: the delegating manager agent, its wake loop, succession and briefs"
-tags: [fleet-manager, wake, supervisor-nudge, worker, parent, briefs, mcp-facade, succession, wire-format]
+tags: [fleet-manager, wake, supervisor-nudge, worker, parent, briefs, mcp-facade, succession, wire-format, codex, header, block]
 related_paths:
   - "apps/desktop/src/main/services/supervisorNudge.ts"
   - "apps/desktop/src/main/shared/fleetMessages.ts"
@@ -18,352 +18,193 @@ related_paths:
   - "apps/desktop/src/renderer/src/components/settings/SupervisorSection.tsx"
   - "services/hub/cmd/brain/handlers.go"
   - "services/hub/cmd/hub/mobile.html"
+  - "apps/desktop/src/main/shared/managerDoctrine.ts"
+  - "apps/desktop/src/main/services/managerReplacementService.ts"
+  - "apps/desktop/src/main/services/managerReplacementState.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-26
 ---
 
-# Fleet Manager: the delegating manager agent, its wake loop, succession and briefs
+# Fleet Manager: launch, wakes, ownership, and memory
 
-## READ THIS FIRST — the naming trap
+## Names and scope
 
-The fleet **supervisor ROLE** was deleted from the code (merged to master at
-`a6ad647d`). The **Fleet Manager** is the surviving feature, and it is wired
-through modules that still carry the word "supervisor" in their names. Nothing
-here is dead code:
+Fleet Manager is the product role. `isWakeTarget` is the current session/journal
+flag; the rename from `isSupervisor` has already happened. Files named
+`supervisorNudge`, `SupervisorSection`, or `ensureSupervisorHome` still implement
+active manager features. Do not delete them because of that legacy name.
+The Go process-supervisor packages are a separate concern.
 
-- **`apps/desktop/src/main/services/supervisorNudge.ts` is NOT the supervisor.**
-  Despite the filename it is the Fleet Manager's *entire event loop*:
-  worker-finished wakes (`onFinished` → `sendFinished`), the blocked-agent
-  broadcast (`onBlock`/`onBlockCleared` → `broadcastBlock`), the missed-wake
-  backstop (`sweepMissedFinishes`), and `reassignPendingFinish`, which
-  re-addresses in-flight wakes during succession. An agent that greps for
-  "supervisor" and deletes what it finds deletes the manager.
-- **`isSupervisor` is a wake-eligibility flag, not a role.** Its only input is
-  now `opts.manager` (`claudeSpawn.ts` and both `setSpawnMeta` calls in
-  `managedSpawn.ts`). A manager IS a supervisor for wake purposes — the Go
-  brain spells the same rule as `spawnParams.isWakeTarget()`, see
-  `services/hub/cmd/brain/handlers.go` (~L643). **A rename to `isWakeTarget` is
-  pending and out of scope**; this doc is written against the current name.
-- **`ensureSupervisorHome()`** (`apps/desktop/src/main/lib/workspacerHome.ts`)
-  is just `~/.workspacer`. The file's own header says so: the name is kept
-  because `app.supervisorHome` is a live IPC channel and bus capability with a
-  Go twin.
-- **`supervisorMcpConfigPath()` / `<userData>/supervisor-mcp.json`**
-  (`mcpConfig.ts`) is the shared untokened facade MCP config — legacy name.
-- **`services/hub/internal/supervisor/` and `services/hub/internal/nodes/supervisor.go`
-  are OS PROCESS supervision.** Unrelated namesake, untouched by any of this —
-  see `modules/hub-process-supervision.md`.
-- **`components/settings/SupervisorSection.tsx` is Settings → Fleet Manager.**
-  Its header documents the collapse from two roles to one.
-- **"Ask the Fleet" survives as a plain ordinary-agent spawn**
-  (`useAgentManager.spawnAskAgent`, `panes/AskPane.tsx`) opening in
-  `~/.workspacer`. It is no longer a role and has no settings of its own.
+`supervisorNudge.ts` routes child finishes, blocks and catch-up messages. It also
+supports ordinary agents receiving their own children’s wakes; being a parent
+is not the same as being a fleet-wide manager. Role changes must preserve this
+distinction and the persisted/wire spelling of `isWakeTarget`.
 
-## Overview
+`main/shared/managerDoctrine.ts` is the shared manager instruction source;
+`renderer/lib/fleetManager.ts` re-exports kickoff construction. Doctrine tells the
+manager to delegate substantial work, obey explicit user/workflow choices, and
+rely on host wakes after dispatch rather than polling. It is not additional
+permission to merge, publish, or perform work outside the user’s authorization.
 
-The Fleet Manager is ONE long-lived agent session whose job is delegation: it
-inventories the projects under its root, dispatches real worker agents into
-them through the workspacer MCP facade at the **operator** tier, and reports
-back. Its doctrine is in `renderer/src/lib/fleetManager.ts` (`MANAGER_PREAMBLE`,
-auto-sent as the kickoff message — never a composer pre-fill). Rule 2 of that
-doctrine is **NEVER POLL**: the manager ends its turn after dispatching, and the
-host wakes it. That wake is the feature this module exists to deliver.
+## Launch and requested configuration
 
-## How a manager is spawned, and what makes it wake-eligible
+Renderer manager launch reuses an appropriate live manager or creates/resumes
+one through the host launchers. `manager: true` produces manager role metadata.
+The native/bus launch bodies also resolve this role so entry points do not rely
+on a renderer remembering to supply every setting.
 
-- **Entry points.** `FleetManagerHero` on the Overview pane → `App.tsx` →
-  `useAgentManager.spawnFleetManager(ask, root, …)`. It is reuse-by-name
-  (`FLEET_MANAGER_NAME = 'Fleet Manager'`): a live manager is messaged, a
-  stopped card is respawned/resumed, otherwise a fresh one is spawned with
-  `transport: 'stream'`, `manager: true` and
-  `kickoffMessage: buildManagerKickoff(ask, fullAccess)`. The command palette
-  and a bus/MCP caller (`agents.spawn` with `manager: true`) reach the same
-  spawn bodies.
-- **Root.** `deriveFleetRoot(agents.fleetRoot, projectCwds, home)` — explicit
-  config wins, else the common parent of configured projects, else `$HOME`.
-- **Harness / model / effort are resolved IN MAIN**, so they land however the
-  manager starts: `resolveManagerProvider()` (`main/lib/roleProviders.ts`,
-  `agents.managerProvider`, default `claude`), `resolveManagerModel(provider)`
-  and `resolveManagerEffort(provider)` (`main/lib/roleModels.ts`, per-harness
-  maps `agents.managerModels` / `agents.managerEfforts` — neither has a default
-  entry in `config_defaults.json`, so blank means "the harness's own default").
-  **The routing matrix does not pick this.** `roles.supervisor` exists in
-  `routing.yaml` so the vocabulary is complete and is NOT consulted: the
-  manager's model is chosen before there is a manager to ask. The matrix routes
-  the WORKERS the manager dispatches (see `limit-aware-routing`), and Settings →
-  Fleet Manager's Manager model hint says so on the other side. Keep both
-  pointing at each other.
-- **`manager: true` is the ONLY thing that sets `isSupervisor`** in the spawn
-  meta, on all three spawn legs: `claudeSpawn.ts` (~L186), `managedSpawn.ts`
-  (~L377 managed/stream, ~L512 the codex Windows hybrid). Headless, the brain
-  does the same via `isWakeTarget()`. Without it the session is a decorative
-  manager: no wake ever routes to it.
-- **Skills.** `installManagerSkills(provider)` writes `/standup`,
-  `/checkpoint` and `/handoff` into the harness's skill dir (`~/.claude/skills`
-  or `$CODEX_HOME/skills`, same SKILL.md format) and *removes* `RETIRED_NAMES =
-  ['bearings', 'stow', 'supervise']`. Called from both `claudeSpawn.ts` and
-  `managedSpawn.ts`, gated on `opts.manager`.
-- **Authority.** `manager: true` controls role/wake routing only. Supported
-  agents receive ambient Workspacer/plugin tools, while full-access and profile
-  choices flow as provider configuration rather than session-token grants.
+- Provider resolution prefers an explicit supported provider, then
+  `agents.managerProvider`, then the configured fallback logic in
+  `main/lib/roleProviders.ts` (Claude when no recognized setting exists).
+- `main/lib/roleModels.ts` resolves per-provider `agents.managerModels`,
+  `managerEfforts`, and `managerContextWindows`. Preserve null-versus-absent
+  context preferences and resume behavior; do not apply a different harness’s
+  model string as a generic default.
+- `deriveFleetRoot` uses an explicit fleet root, otherwise project/common-parent
+  logic and the home fallback. `ensureSupervisorHome` names Workspacer’s home;
+  it does not resurrect a separate supervisor role.
+- The manager’s own model preferences are distinct from the routing matrix used
+  for worker selection. Report requested config separately from live telemetry.
 
-## The wake path: a worker finishes → the manager is invoked
+Supported launches use the ordinary ambient facade tool surface; manager metadata
+controls role/wake behavior, not a wider per-session tool grant. Native permission
+modes are provider configuration. Pi is rejected by normal Workspacer spawning.
+The Windows Codex PTY hybrid has its own facade-ready/token-injection path and
+must not be described as an intentionally tool-less manager.
 
-1. A worker session transitions working→idle. `claudeSessionStore`'s
-   `nudgeParentOnFinish` fires at every ambient-transition site. It requires a
-   `parentSessionId` whose session is **live and `isSupervisor`** — otherwise
-   the finish is silently dropped.
-2. `supervisorNudge.onFinished(session, parentId, lastReply)` skips a boot idle
-   (`hasReceivedTask` — a session with no user turn was never given its task)
-   and coalesces per PARENT over `COALESCE_MS = 1500`.
-3. `sendFinished` re-verifies each worker against its LIVE session at delivery:
-   drops one that resumed working, re-reads the reply from the live
-   conversation, marks `stopped` for an ended session, derives `failed` via
-   `shared/workerFailure`, validates a `resultSchema` dispatch through
-   `shared/structuredResult`, and suppresses a repeat with an identical
-   `reply + stopped + failed` signature (`lastReportedReply`, see
-   `apps/desktop/PER_TURN_WAKE_FINDING.md`).
-4. `buildFleetMessage('worker-finished', entries)` renders the text and
-   `claudemonSessionClient.message(parentId, text)` injects it as an ordinary
-   user turn. The GUI re-parses it into a `FleetMessageCard`.
-5. **Backstop.** `claudeSessionStore.startWakeBackstop()` runs every
-   `WAKE_BACKSTOP_MS = 2 min` and calls `supervisorNudge.sweepMissedFinishes`,
-   which re-nudges (kind `catch-up`) any live idle `isSupervisor` session whose
-   child finished more than `MISSED_WAKE_GRACE_MS = 3 min` ago and before the
-   manager last acted. The dedup is implicit: the manager acting advances its
-   `lastActivity` past the child's finish.
+`installManagerSkills` writes standup/checkpoint/handoff through `agentSkillsRoot`:
+Claude’s personal skills directory, Codex’s configured/default home, or Copilot’s
+personal skills directory. Unsupported skill-root conventions are skipped in
+best-effort mode; strict installation throws. Existing content is rewritten only
+when different, and retired skill names are removed. This native manager skill
+path is separate from pointer-only ordinary-agent skills under the project’s
+versioned Workspacer directory.
 
-Blocks take the other path: `onBlock` debounces `BLOCK_DEBOUNCE_MS = 20 s`
-(cancelled by `onBlockCleared`), then `broadcastBlock` goes to **every** live
-`isSupervisor` session except the blocked one. Two more wake kinds exist:
-`threshold` (`thresholdWatch.ts`, the one-shot `notify_when` a manager arms so
-it never polls) and `progress` (`progressReports.ts`, the worker-initiated
-`report_progress` whose recipient is host-derived from the caller's parent and
-can never be named by the caller).
+## Finish wakes
 
-## `[supervisor]` is WIRE FORMAT, not UI copy
+The desktop watches working→idle transitions through `nudgeParentOnFinish`.
+A child with a live local parent can report to that parent even when the parent
+is an ordinary agent. The manager-replacement journal can retain completion
+information independently of immediate delivery.
 
-`fleetMessages.ts` is the one place the wake format lives — builder and parser
-side by side. `HEADERS.blocked` is the literal string
-`'[supervisor] An agent is now blocked on a decision:'`. It is **parsed**, not
-merely displayed:
+`onFinished` ignores boot-idle sessions with no received user task and coalesces
+by parent over 1.5 seconds. Delivery rechecks the live worker: a worker that
+resumed working or produced a different reply during asynchronous evidence
+capture must not report an obsolete finish. It derives stopped/failure state,
+validates structured result or terminal escalation, captures review evidence,
+and records the result in dispatch history.
 
-- `parseFleetMessage` in `apps/desktop/src/main/shared/fleetMessages.ts` — the
-  canonical implementation, consumed by the desktop (`FleetMessageCard.tsx` via
-  `ConversationMessage`) and by the web `/app`, which runs the same renderer.
-- `services/hub/cmd/hub/mobile.html` (~L2654) — a **hand-ported copy** of the
-  headers, `ENTRY_RE` and the result-block regexes for the `/m` PWA. It cannot
-  import the TS module, so it drifts by hand.
-- `apps/desktop/src/main/shared/fleetMessages.test.ts` — build→parse round-trip
-  tests, including the legacy single-paragraph spelling at L287, which pins the
-  `[supervisor]` header in a *stored transcript* format.
+Completion and escalation batches are separate. A valid escalation is not a
+successful result, and malformed/missing result data does not waive the requested
+contract. Deduplication includes the meaningful finish signature; unchanged
+repeated idle observations do not wake the parent again.
 
-Renaming that prefix breaks the wire: existing transcripts stop rendering as
-cards, and `/m` stops recognising blocked wakes until mobile.html is edited to
-match. Change it only as a coordinated three-site edit.
+Delivery follows current worker ownership through the replacement journal.
+A message may be held durably during handoff or sent through
+`claudemonSessionClient.message`. Explicit refusal/throw does not book a delivered
+signature. A successful message acknowledgement proves acceptance for delivery,
+not that the parent completed the requested follow-up. Ordinary parents get
+ordinary-parent wording; managers also receive workflow guidance.
 
-## Succession and `adopt_workers`
+The desktop’s two-minute backstop scans idle live parents with children whose
+unreported finish is older than three minutes and newer than the parent’s last
+activity. This now includes ordinary parents, not only `isWakeTarget` rows.
+It remains a recovery mechanism, not a guarantee that a missing/ended parent can
+receive a message.
 
-Fleet wakes are **parent-keyed**, so replacing a manager used to orphan every
-dispatch it had in flight.
+## Blocks, progress, and threshold watches
 
-- `claudeSessionStore.reparentChildren(oldId, newId)` re-points
-  `parentSessionId` on live children **and** on not-yet-registered
-  `spawnMeta` dispatches, then calls
-  `supervisorNudge.reassignPendingFinish(oldId, newId)` so a wake still inside
-  its coalesce window follows the fleet instead of being delivered to a manager
-  on its way out. It refuses loudly when the successor is unknown, ended, or
-  not `isSupervisor`; it skips federated (`session.hub`) rows and never lets the
-  successor become its own parent. It records no lineage — `parentSessionId` is
-  the routing key and nothing else.
-- `claudeSessionStore.orphanCandidates()` answers "which dead parent was mine":
-  tombstones (`confirmedManager: true` — the store watched an `isSupervisor`
-  session die, capped at `MAX_MANAGER_TOMBSTONES = 32`) plus bare dangling
-  parent ids (`confirmedManager: false`). It REPORTS; it never picks.
-- Bus capabilities `agents.orphans` / `agents.reparent`
-  (`hubCapabilities.ts` ~L2042/L2058, Go twin in `services/hub/cmd/brain/agentops.go`),
-  exposed as the **operator-only** MCP tools `list_orphans` and
-  `adopt_workers` (`services/hub/cmd/mcp/main.go` L597/L606, tier pinned by
-  `services/hub/cmd/mcp/adopt_test.go`).
-- The doctrine's first-turn rule: read `.workspacer/handoff.md` if present (the
-  `/handoff` skill's mid-flight state, naming the predecessor's id), else call
-  `list_orphans` and adopt the confirmed manager whose label and directory
-  match.
+Blocks debounce for 20 seconds; clearing the block cancels the pending timer.
+Recipients include live managers and the child’s live direct parent, excluding
+self. Coalescing and replacement-aware routing avoid duplicate or misaddressed
+wakes, and parked successors are not prematurely awakened.
 
-## Briefs
+`report_progress` derives the caller from its session credential and the recipient
+from current parentage; the caller cannot nominate an arbitrary manager. The
+desktop implementation flattens a note to one line, limits it to 500 string code
+units, requires at least one minute between reports, and caps a worker at 20.
+Refusals are explicit. Check the Go twin when changing these bounds or recipient
+rules; semantic progress is not a substitute for host-observed completion.
 
-Every project keeps `.workspacer/brief.md` (`BRIEF_RELATIVE_PATH` in
-`briefService.ts`) with `## Now` / `## Direction` / `## Recently` (prepended,
-newest first) / `## User` (fleet brief only). The manager's OWN fleet brief is
-the same file under its cwd (normally `~/.workspacer/brief.md`) and holds
-cross-project state only — it is its memory across restarts.
+`notify_when` is a separate one-shot, in-memory watch service. Cumulative token,
+cost and idle predicates are distinct from `contextUsedPct`. The latter requires
+fresh, consistent runtime context-health evidence, compatible provider identity
+and a valid decimal epoch; requested/catalog capacity does not authorize an
+automatic context wake. The two-minute health-age gate and future-time checks
+are tested across the desktop and headless implementations.
 
-- `brief_append` (`briefService.ts` → `brief.append`) is the atomic
-  inspect-then-edit primitive: strictly additive (one line inserted, provably
-  nothing else touched), serialized by an O_EXCL advisory lock, and
-  compare-and-swap against outside writers. It **refuses** an over-long line
-  rather than truncating.
-- `brief_check` (`briefCheck.ts` → `brief.check`) is read-only: which `## Now`
-  lines have outlived their dispatch.
-- `brief_archive` (`briefBoardService.ts` → `brief.archive`) moves `## Recently`
-  overflow to `brief.archive.md`; `/checkpoint` is what runs it.
+Headless predicate accessors prefer the current raw snake-case status block where
+high-frequency updates may precede the compatibility overlay. Keep raw and camel
+projection types aligned and test raw-only updates. A predicate added only to the
+desktop service silently leaves headless managers with different behavior.
 
-## Failure modes
+## Wake text is a stored wire format
 
-- Every send is best-effort: `sendFinished`, `send` and `sendCatchUp` swallow a
-  rejected `claudemonSessionClient.message` (the parent may have just ended).
-  `sendFinished` deliberately does NOT record dedup signatures when the send
-  throws — booking a lost wake would silence the next identical edge forever.
-- A worker whose parent is not live-and-`isSupervisor` just goes quiet. There is
-  no error anywhere; the only symptom is a manager that never hears back.
-- The codex **Windows rollout hybrid** (`spawnCodexHybrid`) spawns a bare TUI
-  and has no facade wiring: a manager asked for on that path comes up with NO
-  workspacer tools. It warns on the console and still sets `isSupervisor`, so
-  wake routing works while the manager has nothing to act with.
-- `installManagerSkills` is best-effort; a write failure leaves the manager with
-  its kickoff doctrine but no `/standup`, `/checkpoint` or `/handoff`.
-- `notify_when` watches are one-shot and in-memory — they do not survive a
-  workspacer restart.
-- Manager tombstones, orphan bookkeeping and reparenting are all in-process
-  memory: none of it survives an app restart.
+`main/shared/fleetMessages.ts` builds and parses worker-finished,
+worker-escalated, catch-up, blocked, threshold, and progress messages. The legacy
+`[supervisor]` blocked header is still parsed from stored transcripts. The desktop
+and web renderer share the parser; mobile HTML has a port that must stay aligned.
 
-## Gotchas
+Keep the builder, parser, mobile handling and round-trip fixtures together.
+All-failed and still-running wording has distinct meaning. Structured extras are
+joined by session ID; arbitrary full-reply prose must not be scanned as a forged
+result block. A size-capped serialized result may not be valid JSON, so renderers
+must preserve parse/missing-result caveats.
 
-- **Do not hand-copy spawn option literals.** `main/lib/managedSpawnOptions.ts`
-  owns the mapping so role/parent/provider metadata reaches every transport.
-  Legacy `fleetFullAccess` may still parse during upgrades but is inert and must
-  not be reintroduced as a facade grant.
-- **The MCP facade path is the one that matters.** The manager dispatches every
-  worker through `MCP facade → agents.spawn` (the bus), never through the
-  desktop IPC path. Test changes there.
-- **Two stale comments in source, verified against the code:**
-  `claudeSpawn.ts` (~L238) still says the manager skills are "/bearings,
-  /stow" — those are retired names; the installed set is `/standup`,
-  `/checkpoint`, `/handoff`. And `hubCapabilities.ts` (~L1992) calls the wake
-  backstop "the 15-minute backstop"; it actually runs every 2 minutes with a
-  3-minute grace (`WAKE_BACKSTOP_MS`, `MISSED_WAKE_GRACE_MS`).
-- **`supervisorSessionIds()` is a live-sessions-only scan** and is deliberately
-  NOT mapped into the federated/remote snapshot projection
-  (`claudeSessionStore.ts` ~L1581) — a peer's manager is that peer's wake target.
-- **`fleetMessages.ts` headers are load-bearing prose.** The all-failed
-  `ALT_HEADERS` spelling exists because a wake whose every worker DIED must not
-  open with the word "finished", and the `progress` header says STILL RUNNING
-  for the same reason. Both are parsed back to their kind — edit the header and
-  the parser together or the card degrades to a raw text blob.
-- **`~/.workspacer/README.md` is upgraded in place** only when it is empty or
-  byte-identical to `LEGACY_HOME_README`; a user-edited README is left alone.
-- Related docs: `modules/mcp-tool-facade.md` (tiers, the `help` tool),
-  `domains/agent-spawn.md`, `domains/session-lifecycle.md`,
-  `modules/hub-process-supervision.md` (the unrelated namesake).
+## Manager lineage and restart recovery
 
-## Hand-authored notes (2026-08-27/29) — role models, provider-less dispatch, and the sender header twin
+The private `manager-replacements.json` journal is now durable authority for
+eligible replacement lineage and delivery state. `ManagerReplacementService`
+coordinates preparation, successor creation, worker/task transfer, binding and
+activation through bounded host operations. Desktop and the headless Node
+companion share that service with different host adapters.
 
-- **`supervisor.model` is per-harness now — read it through
-  `main/lib/supervisorModel.ts`, never inline.** `config.supervisor.model` is a
-  single field but the supervisor can run on claude/codex/opencode, and a model id
-  is never portable between them. Two latent bugs came out of the inline
-  `supCfg?.model` read in `claudeSpawn.ts`: (1) `managedSpawn` never read it at
-  all, so `supervisor.model` was silently Claude-PTY-only — picking a codex
-  supervisor model changed nothing; (2) a Claude supervisor launched from AskPane
-  while `supervisor.provider` was codex would have inherited the codex id and
-  400'd. Resolution: `supervisor.models[provider]` (the per-harness memory the
-  settings picker writes) wins, then `supervisor.model` **but ONLY when
-  `supervisor.provider` matches**, else `undefined` (= the CLI's own default, the
-  one value valid everywhere). Any new supervisor spawn path that reads
-  `supervisor.model` directly reintroduces the cross-harness 400. Keep
-  `managedFacadeInstructions` (managed/stream) and `facadeSpawnArgs` (PTY) in step
-  — both now carry summarizerModel + pollSeconds + whether `/supervise` was
-  installed for that harness. Also: the settings model dropdown is keyed on the
-  selected harness via `renderer/src/lib/modelOptions.loadModelOptions` +
-  `capsFor(provider).modelSource`; it used to call `claudeListModels()`
-  unconditionally, which is what made codex show Claude models. See
-  `domains/agent-spawn.md` for the wider "every model-holding config key predates
-  multi-provider" note.
-- **`spawn_agent` with NO `provider` spawns Claude — and prompt text is
-  load-bearing wiring, not documentation.** The `/supervise` skill and both facade
-  prompt builders (`mcpConfig` `facadeSpawnArgs` + `managedFacadeInstructions`)
-  told the supervisor to spawn its transcript-digest worker with a MODEL but no
-  PROVIDER. Because `spawn_agent` defaults to Claude, a **codex** supervisor
-  dispatched **Claude** summarizers — which is why `supervisor.summarizerModel`'s
-  claude-only `'sonnet'` default looked correct: it was right by accident, and only
-  because the setting it named was never actually reaching a codex spawn. Fixed by
-  adding `summarizerProvider` to both builders (one shared
-  `mcpConfig.summarizerSpawnNote`) so the digest worker follows its supervisor's
-  harness, and by omitting the model key entirely when it resolves to nothing.
-  **Any prompt that instructs an agent to call `spawn_agent` must name the provider
-  explicitly.** Keep the instruction in `mcpConfig.summarizerSpawnNote` — the PTY
-  and managed prompt builders drifted once already; `supervisorSkill.ts`'s
-  `SKILL_BODY` now defers to the system prompt for both provider and model rather
-  than restating a config key.
-- **`agents.sendMessage`'s `fromSessionId` is a TWO-PROVIDER contract, and the
-  desktop was the half that dropped it** (fixed 2026-08-29).
-  `services/hub/cmd/brain/handlers.go` prepends `fleetSenderHeader()` —
-  `"[fleet] session:<id> (<label>) says:\n"` (`services/hub/cmd/brain/enrich.go`) — when
-  `agents.sendMessage` carries `fromSessionId`, and the MCP facade's
-  `sendMessageIn` (`services/hub/cmd/mcp/main.go`) advertises the param to every agent as *"the
-  message is delivered with a header naming you as the sender"*. The desktop twin
-  in `hubCapabilities.ts` destructured only `{ sessionId, text }` and dropped the
-  field — so a dispatched worker messaging its manager arrived **ANONYMOUS in the
-  normal desktop case and attributed only on a headless node**, while the tool
-  description promised attribution the primary provider did not implement.
-  The header string is a shared twin: it borrows `[fleet]` and `session:<id>` from
-  `main/shared/fleetMessages.ts` but is deliberately **NOT** a `FleetMessageKind`,
-  so `parseFleetMessage` must keep not round-tripping it. **Any new field on a
-  dual-provider agent method has to be destructured on BOTH sides** — see
-  `paradigms/registration-checklists.md`, Checklist B.
+A host-owned handoff takes precedence over legacy standalone handoff files:
+ownership has already been transferred by the host protocol, so the successor
+must not repeat adoption, terminate/reopen the predecessor, or consume/delete an
+unrelated shared handoff file. The facade’s ordinary `spawn_agent` does not let a
+manager create its own replacement role.
 
-## Hand-authored notes (2026-08-26) — the brief line's DOUBLE SPACE is load-bearing
+Standalone recovery still uses the intended predecessor from a handoff file or
+confirmed orphan evidence. `agents.orphans` reports candidates; it does not choose
+one. A bare dangling parent ID is not proof that the parent was the intended
+manager. Live tombstones are bounded projections, retained while associated
+children exist, not a substitute for the durable journal.
 
-`briefService.normalizeBriefLine` already warns about this and it is easy to
-reintroduce one layer up: the doctrine's dated-log format is
-`- YYYY-MM-DD  <what happened>` with **TWO spaces**, so a `\s+ -> ' '` flatten in
-any new brief-line composer silently re-spaces the one format the brief tooling
-exists to write. Caught by a test on `composeResultLine`'s "the caller already
-dated their sentence" path.
+`reparentChildren` handles live rows and pending spawn metadata, refuses invalid
+successors/self-parenting, and excludes federated rows. Task ownership is persisted
+before mutating in-memory parentage; pending wakes follow the new owner. Do not
+reduce this to changing a `parentSessionId` string or claim no lineage is recorded.
+A timeout/interrupted acknowledgement leaves an uncertain outcome that recovery
+must reconcile; it is not permission to repeat a mutation blindly.
 
-The correct flatten is `normalizeBriefLine`'s two replaces — newline runs and
-tab/FF/VT runs become one space, **interior SPACES are left alone** — and the Go
-twin `flattenBriefLine` (`services/hub/cmd/brain/brief.go`) is the same function,
-so both providers must use it rather than `strings.Fields` or a `\s+` regexp.
+## Briefs and project memory
 
-## Hand-authored notes (2026-09-01) — notify_when is a TWIN, and its inputs must be read RAW
+Project `.workspacer/brief.md` files record Now, Direction and Recently; the
+manager’s fleet brief also carries user preferences and cross-project state.
+The shared doctrine directs first-turn reading of its own fleet brief, then
+project context relevant to the request, not an unconditional scan/write of every
+project. A brief is durable task memory, not a runtime liveness database.
 
-Promoted from the 2026-08-31 fleet-manager learnings, re-checked against master
-at `0bac5799`.
+`brief.append` is an inspect-then-edit addition under an advisory lock with
+outside-write checks; overlong lines are refused rather than truncated.
+`brief.check` is a read-only reconciliation report. `brief.archive` moves old
+Recently entries into the archive rather than silently deleting their history.
+When result/session fields are supplied, preserve the host’s factual contribution
+and keep the manager’s own text to significance rather than duplicating evidence.
 
-- **`notify_when` has two full implementations and they must stay behaviorally
-  identical.** TypeScript: `main/services/thresholdWatch.ts` (desktop
-  `agents.notifyWhen`). Go: `services/hub/cmd/brain/agentops.go` (headless), with
-  the facade tool declared in `services/hub/cmd/mcp/main.go`. Both deliberately
-  hold the same policy — a 15s sweep (`SWEEP_MS` / `thresholdSweepInterval`),
-  one-shot in-memory watches, a 20-watch cap per watcher
-  (`MAX_WATCHES_PER_WATCHER` / `maxWatchesPerWatcher`), and host-rendered
-  `[fleet]` threshold wakes. **Adding a predicate is a five-part change on BOTH
-  sides**: schema, evaluator, tests, the facade tool docs, and the wake
-  composer. A one-sided extension works for either the desktop or the headless
-  Fleet Manager and silently drifts policy for the other; treat it as a
-  dual-provider contract and test both over the same fixtures. (`contextUsedPct`
-  is the worked example — note how much validation rode along with it: provider
-  eligibility, staleness, and the refusal to combine it with the cumulative
-  predicates.)
-- **Every status-line-derived predicate must read the RAW snake_case block
-  first.** `sessionStore.updateStatusLine` merges a high-frequency tick into
-  `status_line` ONLY — it does not re-run the camelCase compatibility overlay,
-  so `statusLine` stays as it was at the last FULL snapshot. `fleetSession`
-  (`services/hub/cmd/brain/fleetview.go`) therefore prefers raw in `pick`
-  (tokens/cost), `contextHealth` and `outOfCredits`. A new health predicate
-  reading only the camel projection fires late or misses its threshold entirely
-  against perfectly fresh telemetry — the difference between catching a runaway
-  spend and noticing it by chance. Extend the raw and compat structs together,
-  go through one raw-first accessor, and include a raw-only update in the tests.
-  (The desktop has no such split: it reads its own live store's `statusLine`.)
-- **CORRECTION — the Fleet Manager DOES have a manager-scoped context setting
-  now.** A 2026-08-31 note recorded `agents.managerModels`/`managerEfforts` as
-  per-provider with no context equivalent, so a fresh Codex manager got 1M only
-  through provider-level new-spawn defaulting. `agents.managerContextWindows`
-  shipped in `1eebab86`: it is resolved beside the other two in
-  `main/lib/roleModels.ts`, preserved through `configService.ts`'s
-  presence-aware merge (a `null` leaf is a real value, not an omission), and
-  pinned with its Hub twin by `managerPreferenceCases` in
-  `contracts/model-context-windows.json` — including the migration of a legacy
-  `managerModels: {claude: "opus[1m]"}` into the canonical suffix-free pair.
+A user-edited Workspacer home README is preserved; automatic migration is limited
+to the recognized legacy/empty form. Manager skills, briefs, runtime metadata and
+replacement journals have different lifecycles—do not treat any one as the whole
+manager’s memory.
+
+## Verification
+
+Exercise ordinary-parent and manager wake paths, failed/held/accepted deliveries,
+coalescing, restart ownership, structured result/escalation round trips, and both
+threshold implementations. Manager launch changes require provider/model/context
+preference tests and facade injection tests, including Windows hybrid argv.
+Replacement changes require the shared service tests and real companion protocol
+suite. See [agent spawning](../domains/agent-spawn.md),
+[session lifecycle](../domains/session-lifecycle.md),
+[facade](mcp-tool-facade.md), and [headless services](headless-desktop-services.md).

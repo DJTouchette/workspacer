@@ -5,32 +5,100 @@ related_paths:
   - "services/hub/internal/push/*.go"
   - "services/hub/cmd/hub/sw.js"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-26
 ---
 
-# Hub Web Push (VAPID + agent-needs-you PWA alerts)
+# Hub Web Push
 
-## Overview
-`services/hub/internal/push/push.go::Manager` turns "agent needs you" transitions (waiting on an approval or a question) into a lock-screen Web Push notification for the installed `/m` PWA, even with the app fully closed. It owns a VAPID keypair and the set of subscribed browsers/phones, watches the hub bus for `agent.snapshot` events, and fires push only on the un-blocked→blocked edge per session. Delivery is one-shot (fire the push, forget); it never keeps a background connection open — that is not possible on mobile.
+## Ownership and delivery
 
-## Key modules
-- `services/hub/internal/push/push.go` — `Manager`: VAPID load/generate/persist, subscription store, bus RPC handlers (`RPCKey`/`RPCSubscribe`/`RPCUnsubscribe`), `Watch`/`onSnapshot` transition detector, `sendAll`/`sendOne` push senders.
-- `services/hub/internal/push/push_test.go` — transition-edge tests using a stubbed `m.notify`; `snap()` helper builds camelCase `{sessionId, cwd, ambientState, status}` payloads matching the real wire shape.
-- `services/hub/cmd/hub/main.go` — wiring: `push.New(*pushDir)` (best-effort, `-push-dir` flag, default `<UserConfigDir>/workspacer-hub`), registers the three `push.*` RPCs on the bus server, `/sw.js` route (serves `services/hub/cmd/hub/sw.js` with `Service-Worker-Allowed: /`), and `go pushMgr.Watch(ctx, b)`.
-- `services/hub/cmd/hub/sw.js` — the actual service worker: `push` listener shows the notification from `{title, body, sessionId}`; `notificationclick` focuses/opens `/m` and deep-links via `sessionId`; also handles app-shell caching (unrelated to push).
-- `apps/desktop/src/main/services/hubTelemetry.ts` — publishes `agent.snapshot` with full `ambientState` and rich session data when remote sharing is enabled via `isRemoteShareEnabled()` (gated by `WORKSPACER_REMOTE_SHARE` env var). The brain headless provider also publishes `agent.snapshot` with `ambientState` added via `compatSnapshot()`.
+`services/hub/internal/push/push.go` owns the VAPID keypair, persisted browser
+subscriptions, notification preferences, and the snapshot transition watcher.
+The hub must remain running to send notifications; the installed `/m` client
+can be closed because its service worker receives Web Push independently of
+the application's bus socket.
 
-## Failure modes
-- `push.New` failure (unwritable state dir) is caught in `main.go` and just logs `push: disabled (...)`, setting `pushMgr = nil` — the hub still boots, push RPCs are simply not registered and `Watch` never starts.
-- `onSnapshot` silently no-ops on unmarshal failure or an empty `sessionId` (`push.go:211`) — a malformed snapshot is dropped, not logged.
-- `sendOne` swallows all send errors (`push.go:268-270`) — network failures to a push service are silent, no retry.
-- HTTP 404/410 from the push service means the subscription is dead; `sendOne` calls `removeEndpoint`, which takes `mu` and rewrites `push-subscriptions.json` — self-healing pruning, no operator action needed.
-- On session end (`status == "ended"`), `onSnapshot` deletes the session from `states` so a later re-open starts from a clean "not blocked" baseline.
+`services/hub/cmd/hub/main.go` registers `push.key`, `push.subscribe`,
+`push.unsubscribe`, `push.test`, `push.list`, and `push.revoke`. Subscriptions
+record the bus caller's token fingerprint and scope through `RPCSubscribeAs`.
+The token validator suppresses delivery after that credential is revoked.
+`push.list` and `push.revoke` are not in view/triage allowlists. Keep those
+administration methods separate from the phone's subscription operations.
 
-## Gotchas
-- **Multiple snapshot sources publish with `ambientState`.** Both `apps/desktop/src/main/services/hubTelemetry.ts` (when remote sharing enabled) and the brain's headless provider (via `services/hub/cmd/brain/enrich.go::compatSnapshot`) emit `agent.snapshot` events with `ambientState` set. Desktop publishes full rich snapshots only when `isRemoteShareEnabled()` (the `WORKSPACER_REMOTE_SHARE` opt-in); the brain publishes in full scope mode. Push notifications work in both scenarios.
-- **VAPID key stability.** `vapid.json` under the push dir must not be regenerated/lost — every phone's `PushSubscription` is bound to the public key it subscribed against; rotating it breaks all existing subscriptions until they re-subscribe via `push.key`/`push.subscribe`.
-- **Concurrency split is intentional and load-bearing.** `states` (last-seen `ambientState` per session) is touched only inside `onSnapshot`, which only ever runs on the single `Watch` goroutine — no lock. `subs` is mutated from RPC handlers (any bus-server goroutine) and from `sendOne`'s pruning, so it's guarded by `mu`. Adding a second caller of `onSnapshot`/writer of `states` without a lock would be a real race.
-- **No background socket.** By design there's no persistent connection kept alive in the client for background awareness — mobile OSes kill it. The service worker (`services/hub/cmd/hub/sw.js`) is woken on-demand by the push event only.
-- **HTTPS requirement.** The Push API requires a secure context; `/m` must be served over HTTPS (Tailscale `serve`) for `pushManager.subscribe` to work at all — plain `http://` LAN access won't let the PWA register a subscription in the first place.
-- Notification `tag` is set to `sessionId` (`renotify: true`) so repeated pushes for the same agent collapse instead of stacking — a lock screen shows one notification per blocked session, not one per event.
+`push.test` reports delivered, gone/pruned, and failed counts and bypasses
+per-kind preferences. It sends real notifications; use unit tests rather than
+invoking it against someone's configured hub during a documentation check.
+
+## Notification triggers
+
+`Watch` consumes `agent.snapshot`, and `onSnapshot` tracks state by session ID.
+Malformed payloads or missing IDs are ignored. Current triggers are:
+
+- Entering `waiting_approval` or `waiting_input` from a non-blocked state.
+- Becoming idle after a tracked working run, including a run parked on an
+  approval/question. The default per-device duration threshold is 60 seconds.
+- Ending a session already tracked by this watcher. Replayed historical ended
+  rows do not notify.
+- Optional still-working checkpoints at 10 and 30 minutes. They are evaluated
+  when snapshots arrive, not by a separate timer.
+
+`thinking`, `streaming`, and `background` count as working. The title prefers
+the dispatch label, then original cwd, then live cwd, then “Worker”. Per-device
+`prefs` control needs/finished/ended notifications (default on), previews
+(default on), checkpoints (default off), and `finishedAfterSec`. A zero finish
+threshold means every completed run; absent/negative uses the default.
+
+Approval/question text and the latest assistant reply can populate a preview,
+clipped at a Unicode boundary. With preview disabled the payload describes the
+event without the agent's words. This is a single-operator broadcast model,
+not per-user fleet filtering. Subscription identity supports revocation; it
+does not select which agent activity a still-authorized device may receive.
+
+## Snapshot sources
+
+Desktop `apps/desktop/src/main/services/hubTelemetry.ts` emits compact background
+snapshots, not whole conversations. Its `isRemoteShareEnabled` gate reads the
+cached effective sharing setting: an environment override or the persisted UI
+toggle. The full-scope brain also emits compatible snapshots with `ambientState`
+through `services/hub/cmd/brain/enrich.go`. A raw daemon state without the
+compatible fields is not a drop-in replacement.
+
+The watcher consumes only event data, not the envelope's hub stamp. Its state
+keys and push payload identify a session by ID alone; do not describe this as
+hub-qualified identity or assume colliding IDs from peers remain distinct.
+
+## Persistence and failures
+
+`vapid.json` and `push-subscriptions.json` live under the configured push directory
+(default `<UserConfigDir>/workspacer-hub`). Preserve the keypair across restarts.
+When keys are missing/unreadable and old subscriptions exist, `loadVAPID` generates
+new keys, logs state loss, and drops subscriptions tied to the old key. Devices
+must subscribe again. A failure constructing the push manager logs “push:
+disabled”; it does not prevent the hub from starting.
+
+Each delivery attempt has a 10-second timeout, a 60-second TTL, and high urgency.
+Transport failures and non-2xx responses are logged; they are not silently
+swallowed. There is no retry queue. HTTP 404/410 prunes the dead endpoint from
+storage. Subscription-file writes currently ignore write errors, so an RPC
+success is not proof that a subscription survived a disk-write failure.
+
+Endpoint validation in `services/hub/internal/push/endpoint.go` requires HTTPS
+and rejects literal non-public IP addresses. Hostnames are not resolved during
+validation; the shared HTTP client has a timeout but no custom DNS/redirect
+confinement. Do not describe this validation as a complete network sandbox.
+
+`states` belongs to the single watcher goroutine. RPC handlers and delivery
+pruning share `subs` under a mutex; adding another writer of `states` requires
+an explicit concurrency decision.
+
+## Service worker and verification
+
+`services/hub/cmd/hub/sw.js` shows the payload, collapses repeated notifications
+under `sessionId` (`renotify: true`), and opens/focuses `/m` with that ID. Serve
+the phone UI over HTTPS for browser push support; ordinary HTTP LAN hosting
+does not provide the required secure context.
+
+From `services/hub`, run `go test ./internal/push`. This exercises trigger,
+preference, revocation, key-loss, endpoint, and bounded-delivery behavior with
+controlled test endpoints; it does not prove delivery through a real phone's
+push service or OS notification settings.

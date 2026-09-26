@@ -13,6 +13,8 @@ related_paths:
   - "apps/desktop/src/renderer/src/lib/watchBus.ts"
   - "apps/desktop/src/renderer/src/components/claude/ConversationEmptyState.tsx"
   - "apps/desktop/src/renderer/src/backend/webBackend.ts"
+  - "services/hub/cmd/brain/agenthandoff.go"
+  - "apps/desktop/src/renderer/src/components/claude/HandoffDialog.tsx"
   - "services/claudemon/src/session/handoff.rs"
   - "services/claudemon/src/daemon/api.rs"
   - "apps/tui/src/claudemon.rs"
@@ -20,52 +22,98 @@ related_paths:
   - "apps/tui/src/app/input/pickers.rs"
   - "apps/tui/src/keys.rs"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-26
 ---
 
-# Cross-provider agent handoff (brief authoring + successor spawn)
+# Cross-provider handoff
 
-## Overview
+## What a handoff establishes
 
-Cross-provider handoff lets any running agent session (Claude, Codex, OpenCode, Pi) hand its work off mid-session to a freshly spawned agent of any provider — including a different provider than the source. The mechanism is a markdown "brief" persisted under `~/.workspacer/handoffs/<timestamp>-<sessionId prefix>[-agent].md` that distills what the source session was doing, then a successor agent is spawned in the same `cwd` with its first message/composer pointed at that file. It exists because sessions in this app are provider-bound (a Claude PTY session can't silently become a Codex session), so "switching models/providers mid-task" is implemented as a full handoff rather than an in-place transport swap. Two independent runtimes implement (parts of) this flow: `services/claudemon` (Rust daemon — the only implementation with a brief-building algorithm) and both frontends that drive it, `apps/desktop` (Electron/TS) and `apps/tui` (Rust TUI).
+This flow prepares a Markdown brief and starts a successor in the source working
+directory. It can also keep the same provider with a fresh context. It does not
+mutate a running session into another provider, terminate the source, or transfer
+Fleet Manager journal/task/worker ownership. See
+[manager recovery](session-lifecycle.md#manager-lineage-and-restart-recovery)
+for that separate transaction.
 
-## Key modules
+Provider-neutral history does not imply every legacy adapter is a valid launch
+target. Workspacer admits Claude, Codex, OpenCode and Copilot; normal launchers
+reject Pi even though raw daemon code retains it. A persisted path must be
+readable on the successor's host; returning a path is not a cross-host file copy.
 
-- `services/claudemon/src/session/handoff.rs` — the only brief-building code. `build_brief(session_id, state, items)` walks the shared `ConversationItem` timeline (provider-neutral — every adapter/tailer feeds it) and produces: header (session id, cwd, model, tool-call count), the full spine of user requests (capped at 25, oldest omitted first), a Files-modified / Files-read split (edit-shaped tool names: `edit`/`write`/`patch`/`filechange` win; a file both read and edited is *only* listed as modified), and a "recent exchange" tail built by walking items **backwards** filling a ~10,000-char budget, then reversed into chronological order (the final assistant message alone gets a 5,000-char cap vs 1,600 for everything else — it's usually the "state of the world" summary). `persist_brief` writes to `~/.workspacer/handoffs/`, filename `<YYYYMMDD-HHMMSS>-<first 8 chars of session id>.md`.
-- `services/claudemon/src/daemon/api.rs` — `POST /sessions/:id/handoff` (`post_handoff`, ~line 1024). Body: `HandoffPayload { no_persist: bool }`. Validates `id` with `valid_session_id` (line 169) before it can become part of a filesystem path. Returns 404 if the conversation store has no items for that session (works for **stopped** sessions too, as long as the conversation is still cached/tailed — no liveness check). Response: `{ ok, markdown, path }` (`path` is `null` when `no_persist`).
-- `apps/desktop/src/main/services/claudemonSessionClient.ts` — `handoffBrief(sessionId)` (~line 427), a thin `fetch` wrapper around `POST /sessions/:id/handoff` (never sets `no_persist`, so desktop always persists). This is claudemon's deterministic/"mechanical" tier as seen from Electron main.
-- `apps/desktop/src/main/services/agentHandoff.ts` — the **agent-authored** ("rich") tier, desktop-only. `agentHandoffBrief(sessionId)`: picks a path under `~/.workspacer/handoffs/<ts>-<sid8>-agent.md`, sends the source agent an instruction message through the normal message pipeline (`claudemonSessionClient.message`, settle+verify, queues if the agent is mid-turn) asking it to write that exact file (6-point brief template) and reply "Handoff brief written.", then polls every 1s for up to `AGENT_BRIEF_TIMEOUT_MS = 150_000` for the file to appear with `size > 0`. On any failure (message can't be sent, dead session, timeout) it calls `fallbackMechanical()`, which delegates to `claudemonSessionClient.handoffBrief` and marks the result `{ fallback: true }`.
-- `apps/desktop/src/main/ipc.ts` — wires `IPC.CLAUDE_HANDOFF_BRIEF` (`'claude:handoffBrief'`) → `claudemonSessionClient.handoffBrief`, and `IPC.CLAUDE_HANDOFF_AGENT_BRIEF` (`'claude:handoffAgentBrief'`) → `agentHandoffBrief`. Exposed to the renderer via `apps/desktop/src/main/preload.ts` (`window.electronAPI.claudeHandoffBrief` / `claudeHandoffAgentBrief`) and, for the web/remote surface, `apps/desktop/src/renderer/src/backend/webBackend.ts` maps the same calls onto hub bus methods `claude.handoffBrief` / `claude.handoffAgentBrief`.
-- `apps/desktop/src/main/services/hubCapabilities.ts` (~line 411-425) — registers `claude.handoffBrief` and `claude.handoffAgentBrief` as hub bus capabilities (remote-control counterpart of the two IPC channels), each requiring `{ sessionId }`.
-- `apps/desktop/src/renderer/src/panes/ClaudePane.tsx` (~line 1081) — the UI: a context-menu two-step picker (target provider, then "written by…" agent-vs-mechanical choice). `handleHandoff(target, kind)` calls the agent or mechanical IPC, and on success calls `requestHandoff({ targetProvider, cwd, briefPath, sourceSessionId })` from `watchBus.ts`.
-- `apps/desktop/src/renderer/src/lib/watchBus.ts` — `AGENT_HANDOFF_EVENT = 'agent:handoff'`; `requestHandoff(target: HandoffTarget)` dispatches a `CustomEvent` on `window` carrying `{ targetProvider, cwd, briefPath, sourceSessionId }`.
-- `apps/desktop/src/renderer/src/App.tsx` (~line 1507) — listens for `AGENT_HANDOFF_EVENT` and calls `spawnAgent({ cwd, provider: targetProvider, name: 'handoff → <provider>', initialPrompt: <fixed takeover string> })`. The takeover string is: `"You are taking over an in-progress session from another AI coding agent. First read the handoff brief at ${briefPath}, then continue the work from where it left off — don't start over or redo completed steps. Reply with a one-paragraph summary of the state and your next step."`
-- `apps/desktop/src/renderer/src/components/claude/ConversationEmptyState.tsx` (~line 196) — detects a handoff-takeover spawn purely by regex: `const isHandoff = /handoff brief at /i.test(initialPrompt ?? '')`, and renders a "Taking over from a handoff" empty-state treatment when true. No structured flag is passed — string matching only.
-- `apps/tui/src/claudemon.rs` — `HandoffBrief { markdown, path }` (path absent when `no_persist`) and `Claudemon::handoff(session_id)` (~line 213), a REST client for `POST /sessions/:id/handoff` (no `no_persist`, so TUI always persists too).
-- `apps/tui/src/bus.rs` (~line 406-426) — `Driver::handoff(sid)`: routes to `claude.handoffBrief` over the hub bus when connected via bus (`b.call("claude.handoffBrief", { sessionId: sid })`), otherwise falls straight through to `claudemon.handoff` (REST). Same dual-transport pattern used by model-switch/permission-mode elsewhere in this driver.
-- `apps/tui/src/app/input/pickers.rs` — `open_handoff_picker()` (L54) opens a `PickerKind::Handoff { cwd }` fuzzy picker over `["claude", "codex", "opencode", "pi"]`. `submit_picker()` (L122) routes the chosen id into `do_handoff(session_id, cwd, target)` (L179). `do_handoff` calls `drv.handoff(&sid)` (**mechanical only, see Gotchas**), then spawns the target: a `claude` successor gets the brief pasted into its composer unsent via `seed_prompt` (`apps/tui/src/app/tasks.rs` L139), matching the "library-spawn flow"; a managed successor (codex/opencode/pi) receives the same prompt text as its actual first message via the spawn call.
-  (All three lived in a single `input.rs` until b03c1732 split that seventy-method impl block into the `apps/tui/src/app/input/` module directory — `dispatch.rs`, `nav.rs`, `panes.rs`, `pickers.rs`, `questions.rs`, `query.rs`, `dialogs.rs`. Handoff went to `pickers.rs`.)
-- `apps/tui/src/keys.rs` — binds `Handoff` action to key `H`, action name `"handoff"`.
+## Mechanical brief
 
-## Failure modes
+`services/claudemon/src/session/handoff.rs` is the deterministic builder shared
+by REST and bus callers. `POST /sessions/:id/handoff` validates the session ID,
+reads cached/tailed conversation items, and returns `{ok, markdown, path}`.
+Stopped sessions can work if their conversation remains available. Missing
+conversation returns 404; invalid ID returns 400; persistence failure returns
+500. `no_persist=true` returns Markdown with a null path. Ordinary desktop/TUI
+callers request persistence.
 
-- **No conversation recorded** — `POST /sessions/:id/handoff` returns `404 { ok: false, error: "no conversation recorded for that session" }` when the conversation store has zero items for the id (covered by `post_handoff_with_no_conversation_is_404` test in `api.rs`). This can happen for a session id that never existed, or one whose transcript hasn't been tailed/cached yet.
-- **Invalid / traversal session id** — `valid_session_id` rejects empty strings, ids over 128 chars, anything containing `..`, and any byte outside ASCII alphanumerics + `-_.`; a rejected id returns `400 Bad Request` before any filesystem write is attempted (covered by `post_handoff_with_dotdot_segment_id_is_400`). This guards the `~/.workspacer/handoffs/<...id...>.md` filename from path traversal since `id` becomes part of the persisted path.
-- **Persist write failure** — if `persist_brief` fails (disk full, permissions), `post_handoff` returns `500 { ok: false, error: "could not write handoff brief: <err>" }`. The in-memory markdown was already built but is discarded.
-- **Agent-authored brief never arrives (desktop only)** — `agentHandoffBrief` polls for 150s; on timeout it falls back to the mechanical brief and returns `{ ok: true, fallback: true, error: 'source agent did not write the brief in time' }`. The desktop UI (`ClaudePane.tsx`) logs a `console.warn` on `fallback: true` but still proceeds with the handoff using the mechanical brief — the user isn't blocked, just silently downgraded.
-- **Source session can't take the instruction message (desktop agent-authored tier)** — if `claudemonSessionClient.message` returns `{ ok: false }` (e.g. session mid-turn in a mode that can't queue, or genuinely dead) or throws, `agentHandoffBrief` immediately falls back to mechanical rather than waiting — it never even starts the poll loop in that case.
-- **No cwd for target session (TUI)** — `open_handoff_picker` toasts `"no working directory for a handoff"` and refuses to open the picker if the target agent has no known `cwd`.
-- **No default claude profile to hand off to (TUI)** — if the user picks `claude` as the target and there's no default/first profile configured, `do_handoff` toasts `"no claude profile to hand off to"` and aborts before spawning.
-- **Handoff to `claude` fails to spawn (TUI)** — toast `"Successor spawn failed: {e}"`; the brief was already built/persisted (orphaned handoff file left on disk, harmless but not cleaned up).
-- **Stopped sessions can still be handed off** — `post_handoff`'s conversation lookup works "for stopped sessions too, as long as their conversation is still tailed/cached" (explicit doc comment in `handoff.rs`) — there's no liveness gate on the daemon side. Liveness only matters for the *agent-authored* tier, since that needs the source agent to actually take a turn.
+The builder includes metadata when session state exists, up to 25 recent user
+requests clipped to 240 characters each, file classifications, and a recent
+exchange. Tool-name/path heuristics classify files; they are not a verified
+filesystem diff. Edited paths are removed from the read-only bucket, with up
+to 40 displayed paths per bucket.
 
-## Gotchas
+The exchange walks newest-first then renders chronologically. The most recent
+assistant text gets a 5,000-character cap; other text gets 1,600, tool detail
+200. Successful tool results, usage and command output are omitted; errored
+results keep a marker and only the latest nonempty plan is retained. The overall
+10,000 budget uses rendered **byte length**, despite the source's character
+wording, and is soft: the first included block may exceed it.
 
-- **The TUI has no agent-authored brief tier — desktop does.** `apps/tui/src/app/input/pickers.rs` `do_handoff` always calls `drv.handoff()`, which only ever produces the deterministic/mechanical brief from `handoff.rs::build_brief`. There is no TUI equivalent of `agentHandoff.ts`'s "ask the source agent to write its own brief" flow, and no bus capability `claude.handoffAgentBrief` is called from anywhere except desktop's own `ClaudePane.tsx` via `window.electronAPI`. Don't assume feature parity between the two frontends here.
-- **The successor takeover prompt string is hand-duplicated, word-for-word, in two places** — `apps/desktop/src/renderer/src/App.tsx` (L1712) and `apps/tui/src/app/input/pickers.rs` `do_handoff` (L200). They must stay textually identical in intent; more importantly, **both must retain the substring `"handoff brief at "`**, because `apps/desktop/src/renderer/src/components/claude/ConversationEmptyState.tsx` (L196) detects a handoff takeover purely by regex-matching that substring against `initialPrompt` — there is no structured "this is a handoff" flag threaded through the spawn call. Rewording either prompt without preserving that substring silently breaks the takeover empty-state UI (desktop only; the TUI has no equivalent detection since it has no composer empty-state).
-- **`build_brief` is the single source of truth for the mechanical brief; both frontends and both transports (REST + hub bus) funnel through the same `POST /sessions/:id/handoff` endpoint** — there is no separate Go/TS reimplementation of the brief algorithm (unlike config.yaml's two writers). The provider-neutrality comes from the shared `ConversationItem` enum that every adapter (claude/codex/opencode) and the claude transcript tailer normalize into; `tool_path()` in `handoff.rs` reads `file_path`/`path`/`filePath`/`notebook_path` keys to cover different harnesses' tool-input vocabularies in one function.
-- **Desktop always persists (`no_persist` is never sent from TS)**; only the Rust `daemon/api.rs` test suite exercises the `no_persist: true` path to avoid touching disk during `cargo test`. If you add a new caller, remember `no_persist` exists and is the way to get the markdown without a filesystem write.
-- **A file both read and edited must appear only under "Files modified," never also under "Files read/inspected"** — enforced by `read_only.retain(|p| !edited.contains(p))` in `build_brief`; this ordering (build edited/read_only independently, then subtract) is load-bearing and has a dedicated regression test (`file_read_then_edited_is_not_listed_as_read_only`).
-- **The "recent exchange" section is built backwards then reversed** — `build_brief` iterates `items.iter().rev()` accumulating blocks until a ~10,000-char budget is exceeded, so what actually gets included is a *newest-first* selection, only re-ordered to chronological for output. Successful tool results are dropped entirely (`continue` — "add bulk, not signal"); only tool-call lines and *errored* tool results survive. Only the single most recent `Plan` item survives (`plan_seen` guard skips all earlier plan revisions since they're superseded).
-- **TUI spawns claude vs managed successors differently for the same handoff** — a `claude` target gets the brief-pointer prompt pasted into its composer *unsent* (`seed_prompt`), matching the ordinary library-spawn UX, while codex/opencode/pi targets get the identical text sent as their literal first message at spawn time. A future editor changing how managed spawn accepts an initial message must keep this distinction in mind for handoff specifically.
-- **`valid_session_id` also gates `/sessions/:id/handoff`'s sibling endpoints** (line 929 is a different handler reusing the same guard) — it's a general filesystem-safety check, not handoff-specific, so changes to the allowed id charset ripple beyond this subsystem.
+Files live under the host home directory's `.workspacer/handoffs`, named with
+second-resolution timestamp and the first eight session-ID characters.
+`persist_brief` uses a plain write, so repeated same-name writes can replace one
+another; do not treat these filenames as immutable request identities.
+
+## Agent-authored brief
+
+Desktop `apps/desktop/src/main/services/agentHandoff.ts` and headless
+`services/hub/cmd/brain/agenthandoff.go` both ask the source to write a six-part
+brief and poll for up to 150 seconds at one-second intervals. Sending failure
+or deadline triggers the mechanical fallback, with `fallback=true` on success.
+Directory creation errors occur before this fallback path and can reject the
+operation. The source needs to accept a turn; the mechanical fallback does not.
+
+The implementations differ: TS uses a timestamp/session-prefix filename and
+`stat` size; Go validates a narrower alphanumeric/dash/underscore ID, uses a
+nonce filename, honors context cancellation, and requires a nonempty regular
+file via `Lstat`. Go cancellation returns the context error rather than falling
+back. Neither completion check validates all six sections or proves writing
+has finished. A bus caller's timeout may also expire before the service's
+150-second wait; do not equate that timeout with a cancelled source-agent turn.
+
+`claude.handoffBrief` and `claude.handoffAgentBrief` are bus methods; desktop
+preload exposes the corresponding `claudeHandoff*` methods. The headless rich
+tier exists now; older comments describing it as desktop-only are obsolete.
+
+## Desktop and TUI successor flows
+
+`HandoffDialog.tsx` collects provider/model/effort/permission settings and brief
+type, starting from source-session values. Unsupported permission modes fall
+back to the target's offered mode; bypass-family intent is translated. Provider
+visibility is filtered by detection, with source-provider retention; final
+launcher admission remains authoritative.
+
+`ClaudePane.tsx` obtains the brief, logs failure/fallback, then emits
+`AGENT_HANDOFF_EVENT` with path, cwd and chosen settings. App requires provider,
+path and cwd and calls normal `spawnAgent` with a takeover `initialPrompt`.
+That prompt prefills the desktop composer for review. The empty-state treatment
+currently recognizes the literal phrase `handoff brief at `; preserve that or
+replace it with an explicit signal when changing the prompt.
+
+`apps/tui/src/app/input/pickers.rs` probes offered providers, requires cwd and
+refuses remote-owned sessions. Its handoff uses the mechanical tier through
+`Driver::handoff` (bus when connected, direct REST otherwise). Claude targets
+require a default/first profile and receive an unsent composer seed. Managed
+targets spawn and then receive a separate `Driver::message`; that call's result
+is currently ignored. A successful spawn/toast therefore does not prove prompt
+acceptance. This is distinct from atomic first-message-in-spawn entry points.
+
+Failed successor creation can leave an unused brief. Neither frontend rolls
+back all prior steps as one transaction. Tests cover the deterministic builder,
+API validation and headless fallback; dialog tests cover chosen launch settings.
+No live-provider authoring or cross-host file transfer is claimed by this audit.

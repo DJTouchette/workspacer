@@ -6,7 +6,8 @@ suggested_doc: renderer-live-state-hooks
 related_paths:
   - apps/desktop/src/main/shared/compactClaudeSnapshot.ts
   - apps/desktop/scripts/bench-agent-load.mjs
-promoted: false
+promoted: true
+promoted_to: renderer-live-state-hooks
 ---
 
 # Large fleets thrash the bounded snapshot compaction memo

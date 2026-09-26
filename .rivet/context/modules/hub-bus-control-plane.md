@@ -8,7 +8,7 @@ related_paths:
   - "services/hub/internal/capspec/capspec.go"
   - "apps/desktop/src/main/services/hubCapabilities.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-16
+last_reviewed: 2026-09-26
 ---
 
 # Hub event bus and control plane
@@ -44,8 +44,8 @@ filters.
 ## Scoped remote clients
 
 `view`, `triage`, `operator` and `provider` remain real scopes for remote clients
-and nodes. Exact method allowlists fail closed for view/triage. Operator is full
-host control. Provider is orthogonal: it may register only declared provider
+and nodes. Exact method allowlists fail closed for view/triage. Operator has the broad ordinary method surface, while actual host provenance
+is still required by owner-only administration handlers. Provider is orthogonal: it may register only declared provider
 methods and has a tiny outbound call surface. These scopes are separate from the
 retired per-agent Workspacer tool tiers.
 

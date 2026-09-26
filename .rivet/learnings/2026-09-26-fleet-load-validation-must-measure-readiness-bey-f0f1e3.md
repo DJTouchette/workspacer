@@ -9,7 +9,8 @@ related_paths:
   - apps/desktop/src/main/services/remoteTokens.ts
   - services/claudemon/src/daemon/spawn.rs
   - services/claudemon/src/daemon/mod.rs
-promoted: false
+promoted: true
+promoted_to: agent-spawn
 ---
 
 # Fleet load validation must measure readiness beyond spawn admission

@@ -14,167 +14,133 @@ related_paths:
   - "apps/desktop/src/renderer/src/components/settings/SupervisorSection.tsx"
   - "docs/limit-aware-routing.md"
 owner: Damien Touchette
-last_reviewed: 2026-09-07
+last_reviewed: 2026-09-26
 ---
 
 # Limit-aware routing
 
-## Overview
-The hub composes compiled `routing.default.yaml`, trusted host
-`<config>/workspacer-hub/routing.yaml` and safe managed preferences to decide
-which model a piece of work is worth. Both source layers are re-read on a
-content hash every 30s and preferences apply immediately. The chain is
-`role -> capability -> (provider, model, effort)`, and the point of the
-indirection is that nothing outside the matrix names a model, so a vendor
-rename is one edit. Roles are the vocabulary on the wire: `scout`,
-`mechanical`, `implementer`, `reviewer`, `deep_reviewer`, `fixer`,
-`complex_fixer`, `validator`, `diagnostician`, `judge`, plus `supervisor`
-(see the exception below). Profiles resolve a capability to a concrete tuple;
-`mixed`, `codex_only` and `anthropic_only` ship.
+## Policy sources and evidence
 
-Read `docs/limit-aware-routing.md` for the per-block detail. This doc is about
-which parts of the system consult it and which do not.
+The hub composes compiled routing defaults, host routing.yaml and managed
+preferences. File-backed policy is content-hash checked on a 30-second schedule;
+managed preference changes install immediately. A bad edit retains the last
+valid policy. Compiled defaults change with the binary, not by editing the source
+YAML beside a running process.
 
-## Advisory by default, enforced in two places
-`routing.select` is registered as an ordinary read-only RPC
-(`services/hub/cmd/hub/main.go`, `RegisterLocalIdent("routing.select", ...)`). Nothing calls
-it on a spawn. A caller asks, gets an answer, and is free to ignore it. That is
-deliberate: it is a table lookup over a hub-owned file plus one read of
-claudemon's `/usage/report`, and every action taken on the answer goes through a
-separate refusable capability (`agents.spawn`).
+The matrix maps role → capability → provider/model/effort and carries profiles,
+ranks, thresholds, directory ceilings, freshness and unknown-provider policy.
+Explicit user/model choices and manager preferences also exist; it is not true
+that no model can ever be named outside this matrix.
 
-Two rules DO bind, and both live in `sanitizeSpawnParams` (`services/hub/internal/bus/rpc.go`),
-injected from `services/hub/cmd/hub/main.go`'s `SetSpawnCeiling`:
+`services/hub/internal/routing/policy.go` is a pure decision layer over
+the matrix, current time and `services/hub/internal/limits` evidence. Observed health and
+assumed effective health are separate: an unreadable quota bucket must not become
+green just because policy permits proceeding. Window currency is checked before
+thresholds or spend-down arithmetic, so a reset already in the past cannot look
+like an attractive imminent reset.
 
-- **The per-directory ceiling.** `ceilings:` caps `max_capability` by absolute
-  directory, longest matching ancestor wins. Legacy `max_tool_scope` parses but
-  is ignored because supported agents receive ambient tools. A
-  clamped capability also drops the model and effort the caller named.
-- **The freshness refusal.** A spawn declaring a `role` or `capability` whose
-  active-profile entry carries `fresh: true` (the review capabilities in every
-  shipped profile) may not also carry a `resumeSessionId`. It is refused rather
-  than stripped, because a dropped resume would start a new session the caller
-  believes is a continuation.
+Forecast weights produce weighted work units, not a quota percentage.
+`expectedWork` alone does not establish demand before reset; a genuine
+forecastDemandBeforeResetPct is a distinct input. Keep unknown assumptions and
+refusal reasons on the decision returned to callers.
 
-`sanitizeSpawnParams` is the only spawn-path function in the repo that is not a
-twin, so both rules cover the desktop provider, the headless brain and the
-federated hop at once. The local Electron IPC spawn door is deliberately not
-sanitized: that is a human at the machine clicking Spawn.
+## Selection versus spawn enforcement
 
-## The wire
-Three fields carry a decision onto a dispatch, all on the facade's
-`spawn_agent` (`services/hub/cmd/mcp/main.go`, `spawnAgentIn`) and on bus `agents.spawn`:
+`routing.select` is a read-only selection RPC. A raw `agents.spawn` does not
+need a prior selection receipt; a decisionId is correlation metadata, not an
+authorization token. Nevertheless selection can be composed into a dispatch:
+`services/hub/cmd/mcp/workflow_dispatch.go` selects locally or through the paired
+routing method before spawning. The old “nothing calls selection during a
+spawn flow” statement is too broad.
 
-| Field | What it does |
-|---|---|
-| `role` | recorded against the session, and read by the freshness rule. Not an authority axis: lying about it can only ever give the caller less. |
-| `capability` | the enforced one. Clamped to the directory ceiling, and the model/effort go with it. There is no way to ask for a capability above what `select_model` answered. |
-| `decisionId` | joins the decision and the worker it produced in `routing-decisions.jsonl`. |
+The bus router separately calls its configured ceiling/freshness hook during
+spawn sanitization. This shared site protects desktop/headless bus providers
+and qualified routing paths; native Electron IPC is a different entry point.
+Do not infer all entry points have identical policy merely because they launch
+the same provider family.
 
-`escalationScrubbed` on the spawn ANSWER is how a caller learns something was
-taken: the hub deletes any incoming value and re-stamps what this router
-removed, and the provider returns the union of that and its own clamps. No
-silent downgrades. A caller that does not read it cannot tell a clamped spawn
-from an honored one.
+The binding policy includes:
 
-## Who consults it
-- **The Fleet Manager doctrine** (`fleetManager.ts` `MANAGER_PREAMBLE`) tells
-  the manager to call `select_model` with a role before every dispatch and to
-  pass `provider`/`model`/`effort`/`role`/`capability`/`decisionId` through to
-  `spawn_agent`. It names no model family anywhere, on purpose: a model noun in
-  the doctrine is the second file a rename has to find. Pinned by
-  `apps/desktop/src/renderer/tests/fleetManager.test.tsx`.
-- **The dispatch starters** (`libraryService.ts` `starters()` and its Go twin
-  `services/hub/cmd/brain/library.go` `starterItems()`) name the role to pass in each item's
-  DESCRIPTION. A library item of kind `dispatch` is text-only by construction,
-  so a template can carry no spawn arguments at all: the role rides the call.
-  `ship-task` is `implementer`, `scout-task` is `scout`, `review-task` is
-  `reviewer`, `two-explanations` is `diagnostician`.
-- **Nothing else.** The desktop spawn dialog, the web `/app` and `/m` resume
-  paths and the renderer's own resume path declare no role, so they make no
-  freshness claim and route nothing.
+- **Directory capability ceiling:** canonical cwd is compared against configured
+  ancestors, longest applicable path wins. Invalid configured ceiling values
+  refuse rather than silently falling through to an uncapped result.
+- **Concrete model enforcement:** a refused capability/model can be replaced by
+  the permitted matrix tuple. Merely deleting a strong model and allowing a
+  strong provider default would not enforce the ceiling. Explicit exactModel
+  conflicts refuse instead of silently substituting; an explicitly named harness
+  is not casually swapped for another provider.
+- **Freshness:** a role/capability requiring fresh context cannot also resume an
+  old conversation. That is refused, not converted into an unannounced fresh start.
 
-## The supervisor exception, in both directions
-`roles.supervisor` is in the matrix so the vocabulary is complete, and it is
-NOT consulted. The manager's own harness, model and effort are resolved in
-desktop main from `agents.managerProvider` / `managerModels` / `managerEfforts`
-(`main/lib/roleProviders.ts`, `main/lib/roleModels.ts`), before there is a
-manager to ask. Settings -> Fleet Manager is the only place that value is
-chosen, and its Manager model hint says so. Keep both sides naming each other:
-two mechanisms that each claim to pick the supervisor's model, with neither
-naming the other, is a bug this project has already had once.
+Legacy max_tool_scope values are parse-compatible but do not restrict the ambient
+Workspacer tool surface. Capability/model ceilings and provider permission modes
+are different axes.
 
-## Gotchas
-- **Safe preferences have a UI and MCP surface; host YAML has no writer.**
-  `preferences.go` composes a fixed private typed sidecar over the host policy,
-  with combined-source CAS and immediate Service install. Reset reveals the
-  inherited policy. The immutable host model classifications, ranks, ceilings
-  and freshness floors cannot be weakened by the managed patch. See
-  `docs/limit-aware-routing.md` for the API and persistence contract.
-- **Host authority is stronger than operator tier here.** The new
-  `CallerIdentity.AuthenticatedHost` bit excludes scoped operator, untokened
-  loopback and federation links. MCP also checks the authenticated static facade
-  credential before borrowing its outbound host connection. HTTP/SSE tests pin
-  that boundary. Peer edits are unavailable; direct connected-hub web works.
-- **`select_model` is operator tier only.** It is absent from capspec's
-  `viewMethods` and `triageMethods`, so `ScopeOperator`'s `["*"]` is what grants
-  it. A Fleet Manager holds it; a phone token does not.
-- **A ceiling value the file cannot read denies the spawn** rather than being
-  skipped. An omitted key still means "this row does not cap that axis".
-- **`forecast_weights` produce weighted units, not a share of an allowance**, so
-  `expectedWork` on its own leaves demand UNKNOWN for the mode rules. Pass
-  `forecastDemandBeforeResetPct` when the real share is known.
-- **`difficulty` / `risk` / `decisionDensity` are accepted and not yet acted
-  on.** They are recorded on the decision, and they change no answer today.
+## Wire and caller responsibilities
 
-## Windows path semantics (the containment-windows CI job)
+`role` expresses the work role and participates in selection/freshness.
+`capability` is checked against the configured ceiling. `decisionId` joins the
+selection to a spawn record. None of those caller-supplied strings proves task
+ownership or that a prior result was accepted. Preserve host-owned task/workflow
+identities through the dedicated dispatch APIs.
 
-Promoted from the 2026-09-01 Windows-containment learnings. The two learnings
-were incident reports on specific CI runs (33495681039 for `2d8f7fd0`,
-33503823057 for `710d8e8b`); what follows is the durable part, plus the state of
-the job as of `0bac5799`.
+`escalationScrubbed` reports what the router/provider removed or rewrote; callers
+must inspect it instead of assuming all requested options were honored. The
+router removes caller-authored scrub receipts before constructing its own.
 
-- **Ceiling containment is a PATH COMPARISON, and on Windows a byte compare is
-  the wrong one.** Windows resolves drive letters, UNC hosts/shares and ordinary
-  NTFS components case-insensitively, so a ceiling must answer for the directory
-  the filesystem actually opens, not for `routing.yaml`'s casing of it — a
-  Cyrillic or umlaut case variant of a configured ceiling that fails to match
-  silently hands the caller the DEFAULT ceiling, which is the permissive one.
-  The comparison is `CompareStringOrdinal` (`pathmatch_windows.go`), not
-  `strings.EqualFold`: it uses the OS uppercase table for non-linguistic
-  identifiers and so does NOT apply generic Unicode equivalences — the Kelvin
-  sign stays a sibling of `K`, which is what NTFS does. The rule is
-  platform-split by build tag (`pathmatch_windows.go` / `pathmatch_unix.go`,
-  and the same shape again in
-  `services/hub/cmd/brain/pathmatch_windows.go` / `pathmatch_other.go` for the brief tools' `workspaceRoots` confinement, which
-  shares this confinement model and had the same bug). Prefix matching must
-  also keep rejecting siblings: `C:\work\client-old` is not inside
-  `C:\work\client\`, and `\\server\share-old\work` is not inside
-  `\\server\share\`.
-- **"Private file" is a mode bit on Unix and an ACL on Windows.** The routing
-  decision log asserts 0600 privacy; on Windows that assertion is meaningless
-  (`-rw-rw-rw-` is what a mode read returns), so the log is created through
-  `CreateFile` with a protected DACL and `FILE_APPEND_DATA|WRITE_DAC`
-  (`decisionlog_private_windows.go`), with the Unix mode path kept in
-  `decisionlog_private_unix.go`. Any new "this file must be private" assertion
-  needs both implementations and platform-split tests, not a `chmod` and a
-  skip.
-- **`filepath.Join` erases the fixtures a path test is trying to exercise**, so
-  a Windows-safe routing fixture must build its dirty inputs literally and give
-  each case a real absolute cwd (`filepath.Join(t.TempDir(), "project")`) rather
-  than a hardcoded `/home/...`, which is not absolute on Windows and made
-  `CheckSpawn` skip the ceiling arm entirely — that is why a run could report
-  only `ResumeRefused` and never exercise the clamp and tool-scope arms it was
-  written to prove (`fresh_test.go`, fixed in `75220468`).
-- **STATE, checked 2026-09-01: the repair `02e8e65c` merged to master as
-  `115b565a` on 2026-09-01.** The first `containment-windows` CI run after that
-  push is what confirms the job is green; do not assume it from the merge
-  alone, check the run.
-- The two failing corpus cases in the prior run built two spellings of ONE
-  NTFS directory, and `MkdirAll` collapses them, so the deny they asked for was
-  a false refusal of the caller's own granted root, not a real containment gap.
-  Separately, the brief-tools test had sent `brief.archive` both `count` and
-  `keep`, which `archiveOldestEntries` rejects before containment logic ever
-  runs. The ordinal guard was right all along; no production code changed. A
-  genuinely case-only sibling such as `<root>Other` is still denied, and that
-  case is now regression-tested.
+The manager doctrine lives in `main/shared/managerDoctrine.ts`; automatic worker
+routing asks for a selection and forwards its result. Composed workflow dispatch
+can perform that sequence itself. Paired work uses the selected remote cwd and
+remote provider/readiness view rather than guessing from the local machine.
+The ordinary spawn dialog and legacy resume paths may supply no role and make
+no role-based freshness claim; inspect the exact caller before documenting it.
+
+The manager’s own harness/model/effort/context choices come from
+agents.managerProvider/managerModels/managerEfforts/managerContextWindows, with
+host launcher resolution. The matrix’s supervisor role entry is not a second
+independent selector for the manager’s launch settings.
+
+## Managed preferences and authority
+
+Managed preference operations write a typed private sidecar over host policy;
+they do not arbitrarily edit the host YAML. Combined-source stamp checks protect
+against racing policy changes, reset reveals inherited values, and protected model
+classifications/ranks/ceilings/freshness floors cannot be weakened by a preference
+patch. A configured operator scope is not the same as authenticated host identity.
+The hub and facade administration paths perform their own stronger owner checks.
+
+The select_model MCP tool belongs to the operator catalog rather than view/triage.
+This is tool-catalog policy, separate from enabled-plugin ambient methods and
+separate from owner-only preference administration. Do not collapse those three
+boundaries into “operator means every administrative action.”
+
+## Decision logs and platform comparisons
+
+The decision log records selection/spawn correlation and reasons, not the whole
+prompt or raw credential. Rotation preserves a prior generation. Log creation
+and repair are platform-specific: Unix mode 0600; Windows protected owner DACL
+with append/write-DACL access. Synthetic Windows mode bits do not prove privacy.
+
+Routing canonicalizes cwd before comparing ceiling paths. Windows comparison uses
+CompareStringOrdinal with counted UTF-16 rather than generic Unicode case folding;
+component boundaries still reject sibling directories such as client-old for a
+client root. Unix has its own comparison path. Build dirty-path fixtures literally:
+filepath.Join can normalize away the spelling a test meant to exercise.
+
+Historical CI IDs and old merged fixes are not current test results. Platform
+comparison/privacy tests must run on the relevant OS before claiming runtime
+Windows verification.
+
+## Verification
+
+From `services/hub`, run routing and limits tests, bus spawn-ceiling/freshness
+checks, and MCP selection/preference/composed-dispatch tests. This checkout’s
+Unix append-repair fixture assumes creating a 0644 file actually produces that
+mode; with umask 0077 it fails before the production operation. A validation run
+can use a separate shell with umask 0022; record that condition rather than
+hiding the initial fixture failure.
+
+Keep `contracts/usage-window-currency-cases.json` and the context/manager selection
+contracts aligned with their other consumers. A green policy test does not
+prove current account availability or that a real provider accepted its selected
+model; those observations belong to runtime readiness and dispatch results.

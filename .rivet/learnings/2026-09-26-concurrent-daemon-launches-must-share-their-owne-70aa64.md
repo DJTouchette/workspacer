@@ -5,7 +5,8 @@ confidence: high
 suggested_doc: agent-spawn
 related_paths:
   - services/claudemon/src/daemon/worktree_admission.rs
-promoted: false
+promoted: true
+promoted_to: worktree-artifact-cleanup
 ---
 
 # Concurrent daemon launches must share their owned worktree admission fence

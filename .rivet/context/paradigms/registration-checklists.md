@@ -9,7 +9,7 @@ related_paths:
   - "apps/desktop/src/main/services/hubCapabilities.ts"
   - "contracts/README.md"
 owner: Damien Touchette
-last_reviewed: 2026-09-16
+last_reviewed: 2026-09-26
 ---
 
 # Registration checklists
@@ -63,3 +63,12 @@ Update the shared shape, serializers, renderer store, delivery transports and
 tests. Avoid routine success receipts for actions already visible in chat;
 reserve notifications for failures, questions, blockers and meaningful
 background events.
+
+## Shared desktop/headless service
+
+Add owner-service methods to `contracts/desktop-service-methods.json`, then run
+`node scripts/gen-desktop-services.mjs` from `apps/desktop`. Keep the native
+service, headless dispatcher and renderer mapping aligned, and run the
+companion integration checks described in
+[headless desktop services](../modules/headless-desktop-services.md). Generated
+method lists and literal owner gates are outputs, not independent edit points.

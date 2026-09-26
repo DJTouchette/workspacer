@@ -1,68 +1,101 @@
 ---
 title: Workflow + subagent artifact watcher and watch panes
-tags: [workflow, subagent, filesystem-tail, agent-watch, vm-sandbox]
+tags: [workflow, subagent, filesystem-tail, agent-watch, vm-metadata]
 related_paths:
   - "apps/desktop/src/main/services/workflowWatcher.ts"
   - "apps/desktop/src/renderer/src/panes/AgentWatchPane.tsx"
   - "apps/desktop/src/renderer/src/components/claude/WorkflowRunCard.tsx"
   - "apps/desktop/src/renderer/src/components/claude/WorkflowTimeline.tsx"
 owner: Damien Touchette
-last_reviewed: 2026-07-11
+last_reviewed: 2026-09-26
 ---
 
-# Workflow + subagent artifact watcher and watch panes
+# Workflow artifacts and subagent watch panes
 
-## Overview
-`workflowWatcher.ts` is a pure on-disk tailer — no Claude comms — that polls Claude Code's subagent/workflow artifact files beside a session's transcript to surface live progress (running agents, tool activity, tokens, cost) before Claude Code writes any final summary. `claudeSessionStore.ts` attaches/pokes/detaches it per session and merges its snapshots into `session.subagents`/`session.workflows`; the renderer reads that via `useClaudeSession` and drills into individual agents with `AgentWatchPane.tsx`, `WorkflowTimeline.tsx`, and `WorkflowRunCard.tsx`.
+## Reader ownership
 
-## Key modules
-- `apps/desktop/src/main/services/workflowWatcher.ts` — the `WorkflowWatcher` class: per-session poll loop (`TICK_MS=2500`, idles after `IDLE_AFTER_MS=60_000` unless a run is live), tails run/agent/journal files, adopts the final-state JSON, exposes `readAgentTranscript`/`readAgentConversation` for drill-in.
-- `apps/desktop/src/main/services/modelUsage.ts` — `turnCostUSD(model, usage)`, called per assistant turn in `applyTranscriptEntry` to accumulate live `costUSD`.
-- `apps/desktop/src/main/services/claudeSessionStore.ts` — wires the watcher: `workflowWatcher.attach(sessionId, session.transcriptPath, cb)` on first hook event carrying `transcript_path` (~line 425), `workflowWatcher.poke(sessionId)` every hook event (~line 430), `workflowWatcher.detach(sessionId)` on `SessionEnd` (~line 470); `applyWatcherUpdate`/`mergeWatcherData` (~line 750) merge `update.runs` into `session.workflows` and filter workflow-owned agents out of `session.subagents`.
-- `apps/desktop/src/main/ipc.ts` — `IPC.WORKFLOW_AGENT_TRANSCRIPT` and `IPC.WORKFLOW_AGENT_CONVERSATION` handlers (~line 567-579) proxy straight to the watcher's read methods.
-- `apps/desktop/src/renderer/src/types/claudeSession.ts` — hand-mirrored copies of `WorkflowPhaseInfo`, `WorkflowAgentInfo`, `WorkflowRunInfo` (comment explicitly says "mirrors src/main/services/workflowWatcher.ts", ~line 80-120).
-- `apps/desktop/src/renderer/src/panes/AgentWatchPane.tsx` — pane for `watchKind: 'subagent' | 'workflow' | 'agents'`; polls `window.electronAPI.workflowAgentTranscript`/`workflowAgentConversation` every `TRANSCRIPT_POLL_MS=2500` while the agent runs; `'agents'` mode synthesizes a fake `WorkflowRunInfo` (`runId: fleet:<sessionId>`) from `session.subagents` so the same `WorkflowTimeline` renders plain Agent-tool calls.
-- `apps/desktop/src/renderer/src/components/claude/WorkflowTimeline.tsx` / `WorkflowRunCard.tsx` — render `WorkflowRunInfo` as swimlane/time-bar cards; consume the same mirrored types.
-- `apps/desktop/tests/main/workflowWatcherAgentIds.test.ts` — existing test coverage for agent-id stripping/attribution.
-- `apps/desktop/scripts/test-workflow-watcher.js` — standalone manual exerciser script for the watcher.
+`apps/desktop/src/main/services/workflowWatcher.ts` reads Claude artifact files
+beside a session transcript. It does not communicate with the model. The session
+store attaches it when a transcript path becomes known, pokes it on hook activity,
+and detaches on teardown. The headless shared-service path can also prime a newly
+attached reader with `refresh` before answering its first query.
 
-## Failure modes
-- All fs reads are wrapped in try/catch that swallow to empty/null (`tailLines`, `readJsonSafe`, `readdirSync` in `scanRuns`/`scanPlainAgents`) — a missing dir just means "no workflows yet," not an error surfaced anywhere.
-- `tick()` catches and `console.error`s any throw from `scanRuns`/`scanPlainAgents` so one bad tick never kills the interval.
-- `parseScriptMeta` brace-matches the `export const meta = {...}` literal by hand and evaluates it in a `node:vm` sandboxed context (`vm.runInNewContext`, 50ms timeout, empty global object) — any parse/eval failure falls back to a filename-derived name; this is inherently fragile if Claude Code changes script formatting.
-- `tryAdoptFinal` treats the presence of `workflows/wf_<runId>.json` as the single source of truth: once adopted, `run.finalized = true` and the run is never tailed again, even if the file is later rewritten or was written mid-race.
-- Duplicate usage entries are deduped per-agent via `lastUsageKey` (assistant `msg.id` or `entry.uuid`) to avoid double-counting tokens/cost when Claude Code re-emits partial transcript chunks.
-- `readAgentTranscript`/`readAgentConversation` resolve the run dir only from `watch.runs` (in-memory) — if the session was never attached or the run aged out of `MAX_RUNS=3`, drill-in silently returns `null` and the pane shows "Transcript unavailable."
-- `AgentWatchPane` shows an explicit "owning session isn't being watched" message when `session` is falsy or the run/subagent isn't in the live snapshot — the pane is read-only and has no fallback to re-attach.
+Attach derives the session directory by removing the .jsonl suffix; an unexpected
+path shape is ignored. Polling is every 2.5 seconds, idling after a minute without
+a poke when no workflow is live. Missing/unreadable directories generally look
+like no artifacts; a reader returning no data does not prove the provider emitted
+none. These layouts are provider-version-sensitive, not a stable public API.
 
-## Gotchas
-- The `WorkflowAgentInfo`/`WorkflowRunInfo`/`WorkflowPhaseInfo` types are hand-duplicated (not shared/generated) between `apps/desktop/src/main/services/workflowWatcher.ts` and `apps/desktop/src/renderer/src/types/claudeSession.ts` — any field added on one side must be manually mirrored or the renderer silently drops it.
-- `costUSD` is a live-tail-only figure: the final `wf_<runId>.json` file "has no cost figures" (see comment at `tryAdoptFinal`, ~line 670), so on adoption the code explicitly preserves `run.agents.get(...)?.info.costUSD` from the pre-adoption live tail rather than trusting the final file — losing the live `RunState.agents` map before adoption would zero out cost permanently for that run.
-- `label` on `WorkflowAgentInfo` is only ever populated from the final-state file (`p.label`) — it is never set during live tailing, so UI relying on `label` must handle it being undefined for the entire "running" phase of a workflow.
-- The on-disk contract (`subagents/agent-<id>.jsonl[.meta.json]`, `subagents/workflows/wf_<runId>/...`, `workflows/scripts/<name>-wf_<id>.js`, `workflows/wf_<runId>.json`) is undocumented/reverse-engineered from Claude Code's own behavior, not a published API — any Claude Code update could silently break tailing with only the "no workflows yet" no-op fallback (no visible error).
-- `sessionDir` is derived by stripping the `.jsonl` suffix off `transcriptPath` (`workflowWatcher.attach`) — `attach()` no-ops if that strip doesn't change the string ("unexpected path shape"), so any transcript-path format change upstream silently disables the whole watcher for that session.
-- `MAX_RUNS=3` and the `buildUpdate` comment note that dropped runs' `workflowAgentIds` must still be excluded from `subagentActivity`, otherwise agents from aged-out runs would reappear in the plain-subagent list — this coupling between `runs` slicing and `workflowAgentIds` computation is easy to break independently.
-- `journal.jsonl` `started`/`result` entries only update agents already registered from a `meta.json` sighting (`refreshJournal` looks up `run.agents.get(id)` and no-ops if absent) — ordering matters: meta.json must be seen before journal entries are meaningful.
+## Artifact shapes and adoption
 
-## Hand-authored notes (2026-08-26) — this watcher is Claude-artifact-only; provider-native subagents come from elsewhere
+Plain subagent transcripts live beneath the session’s subagents directory.
+Workflow runs have their own directories, agent metadata/transcripts and journals;
+script metadata and final run JSON live beneath the workflows tree. Keep the
+path construction functions as the source of truth when a provider changes layout.
 
-Everything in this module reads Claude Code's on-disk `subagents/*.jsonl`
-sidecars. **Codex subagent activity is app-server NATIVE** — `subAgentActivity`
-and `collabAgentToolCall` items plus thread metadata (`parentThreadId`,
-`agentNickname`, `agentRole`) — so Codex cannot become visible by reusing this
-file watcher at all. The provider-neutral surface lives in claudemon
-(`SessionState.subagents` fed by `apply_subagent_update`); see
-`modules/claudemon-providers.md` for the three wire shapes and the child-thread-id
-join key.
+Agent metadata creates known rows before journal started/result entries can
+update them. `parseScriptMeta` extracts the exported metadata literal and evaluates
+it in a separate node:vm context with a 50 ms timeout, then filters recognized
+fields. This is evaluation with limits, not a claimed OS security sandbox or a
+full JavaScript parser. Failures fall back to filename-derived metadata.
 
-The trap this leaves in the renderer: **the Agents tab renders every
-`session.subagents[]` row with a click target that calls
-`requestAgentWatch(kind: 'subagent')`, and the main-process handler for that
-watch pane reads from `workflowWatcher`.** So a provider-native row added to
-`subagents[]` gets a drill-in affordance the watcher cannot serve. For a first
-provider-neutral snapshot path, either gate the monitor/watch affordance to
-providers with transcript-backed watcher data, or add the provider read path
-first — which is what `readProviderSubagentConversation` +
-`sessions.subagentConversation` now do. The routing rule between the two sources
-is `runId === null`, re-implemented in FOUR places; see
-`domains/renderer-backend-seam.md` before touching either side.
+A successfully parsed final JSON is adopted once and marks the run finalized;
+it is not tailed again after that. An unreadable/unparseable final file does not
+finalize the run. A valid but premature/partial object can still finalize under
+the current permissive reader, so mere final-file presence is not a robust
+transactional completion protocol.
+
+Final adoption preserves the cost accumulated from live agent transcripts because
+the final artifact does not supply that figure. Label fields arrive from final
+progress records and may be absent while running. The live usage fold uses the
+last message ID/UUID as its duplicate key; do not treat a single remembered key
+as arbitrary replay-order deduplication.
+
+## Projection boundaries
+
+`buildUpdate` emits only the latest three run snapshots. It does not discard the
+entire in-memory run map at that limit. `workflowAgentIds` is computed from the
+same emitted slice: keeping omitted runs’ agents suppressed would hide them from
+both the run cards and the plain-subagent projection.
+
+Workflow phase/agent/run types are mirrored in the renderer’s session types.
+Keep additive fields and missing-value behavior aligned. The renderer uses
+WorkflowRunCard/WorkflowTimeline and AgentWatchPane; its fleet watch synthesizes
+a run shape from plain subagent rows rather than creating a real workflow run.
+
+## Transcript drill-in
+
+`runId === null` selects a plain subagent; a workflow ID selects its known run
+directory. Missing watch/run/file returns null. The watcher strips the agent-
+filename prefix consistently, so callers must not double-prefix IDs.
+
+File stat/read is asynchronous and parsed views are cached by mtime and size,
+with an eight-file insertion-order cap. **Parsing still runs synchronously after
+the asynchronous read.** The source comment saying parsing is off the event loop
+is stronger than the implementation. A cache hit avoids the repeated parse, but
+an asynchronous method alone does not make a large first parse non-blocking.
+
+AgentWatchPane polls a running subagent every 2.5 seconds only while the pane is
+active; missing owning-session/run state gets an explanatory empty state. A
+successful transcript read is still a projection of recorded artifacts, not proof
+that the agent process is currently alive.
+
+Provider-native subagents use the daemon’s provider-neutral state/replay routes.
+Codex child IDs join its native thread/rollout data; the Claude artifact watcher
+cannot manufacture those records. Keep plain-subagent versus workflow routing
+aligned across IPC, shared headless services and web/bus methods, including
+`sessions.subagentConversation`. Do not give a new native provider a watch action
+until that read path exists or the UI explicitly reports its limitation.
+
+## Verification
+
+From `apps/desktop`:
+
+```bash
+npx vitest run tests/main/workflowWatcherAgentIds.test.ts
+```
+
+These tests pin attribution/prefix behavior; they are not complete provider-version
+coverage. For changes to native child replay, include daemon provider tests and
+backend conversation tests. For cache/performance changes, inspect which work
+actually leaves the event loop instead of relying on an async return type.

@@ -8,7 +8,7 @@ related_paths:
   - "apps/desktop/src/renderer/src/components/FleetDeck.tsx"
   - "apps/desktop/src/renderer/src/App.tsx"
 owner: Damien Touchette
-last_reviewed: 2026-07-24
+last_reviewed: 2026-09-26
 ---
 
 # UI modes (focus|fleet) manifest and mode-driven chrome
@@ -30,7 +30,7 @@ last_reviewed: 2026-07-24
 
 ## Failure modes
 - `resolveUiMode` is total: any unknown/corrupt value falls back to `fleet`, the fuller view.
-- `setMode` awaits nothing; if the save IPC fails the UI silently stays on the old mode.
+- `setMode` awaits nothing; if the save rejects, `ConfigProvider` retains the prior configuration and posts a “Setting not saved” warning.
 - Manifest flags gate effects, so toggling mid-flight can race; the code guards by re-checking `viewLevel`/`uiManifest.fleetDeck` at effect entry rather than assuming synchronous consistency.
 
 ## Gotchas
@@ -40,11 +40,15 @@ last_reviewed: 2026-07-24
 - Mode is genuinely a lens: nothing mode-gated unmounts/remounts a pane. Gate visibility/props, never mount identity.
 - **Focus is not a width control.** The sidebar collapse toggle (`toggle-sidebar`, `Ctrl+B`) owns width, in either mode, and the two compose. Re-coupling them is the mistake the 2026-07-24 rewrite undid.
 
-## History — why this was rewritten (2026-07-24)
-The original manifest (`c76cb3b`) was a "chat-first" *subtractive* lens: `sidebar: 'rail'`, `inspectorRail: false`, `fleetDeck: false`, `attention: 'badge'`, `hubFooter: 'compact'`. That made sense when the sidebar was a navigation list with an EARLIER/RECENT dock.
+## Maintaining the mode boundary
 
-`4556b4d` turned the sidebar into pure live triage — attention-sorted activity cards with inline Approve/Reply. Focus mode then deleted the app's best attention surface and replaced it with a bare count, which is backwards. Three further incoherences: `sidebar: 'rail'` duplicated the collapse toggle; `attention: 'badge'` existed only to patch the rail hiding attention; `hubFooter` had no consumer at all.
+The two-field manifest is intentional: sidebar width has its own toggle, and
+unconditional inspector/chrome behavior should not become duplicated flags.
+When a field stops distinguishing the modes, remove it from the manifest and
+update consumers/tests together. Do not rely on old source searches that claimed
+a field had no readers—check both renderer source and parse/index caveats.
 
-Also deleted with it: `App.tsx`'s `sidebarRailForced` / `focusSidebarOverlay` scrim-and-floating-panel machinery, which existed purely to get the sidebar back after focus forced it away.
-
-⚠️ Note for future audits: the pre-2026-07-24 version of this doc claimed `inspectorRail` had **no consumer**. It did (`ClaudePane.tsx`). The claim came from a grep that silently skipped `ClaudePane.tsx` because the file contained a literal NUL byte (fixed in `968be1d`). Treat old "nothing reads X" notes in these docs with suspicion.
+`ConfigProvider` can return the prior configuration after a rejected save; host
+writers can also return an unchanged value after a persistence failure. A click
+is not proof that the requested mode was persisted. The current snapshot remains
+the rendering input.

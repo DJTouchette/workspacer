@@ -9,15 +9,26 @@ related_paths:
   - "services/claudemon/src/daemon/init.rs"
   - "services/claudemon/src/daemon/mod.rs"
 owner: Damien Touchette
-last_reviewed: 2026-08-16
+last_reviewed: 2026-09-26
 ---
 
 # claudemon Daemon HTTP/SSE/WS API Surface
 
-`daemon::run` (`services/claudemon/src/daemon/mod.rs`) binds two independent Axum apps on two `TcpListener`s: `hook::router` on `cfg.hook_port` (ingress-only, Claude Code's own hook/statusLine POSTs) and `api::router_with_host` on `cfg.api_port` (everything a client — desktop, TUI, hub, MCP-speaking agents — calls). Splitting them lets the hook listener stay dumb/unauthenticated (Claude Code itself is the only caller, always loopback) while the client-facing API carries the Host/CORS/body-limit hardening. `API_BASE` (`once_cell::sync::OnceCell<String>` in `mod.rs`) is set once in `run` (`0.0.0.0`→`127.0.0.1` for the announced base) so adapters can hand agents a callback URL (e.g. `/mcp/ask/:session_id`) without re-deriving the port.
+`daemon::run` in `services/claudemon/src/daemon/mod.rs` binds two independent
+Axum routers: `hook::router_with_host` on the hook port (default 7890), and
+`api::router_with_host` on the API port (default 7891). Both use the configured
+bind address, defaulting to loopback. Both enforce Host and request-Origin
+checks plus a 16 MiB body limit; only the API router also has a CORS layer.
+Neither listener authenticates native callers with a bearer token. These
+browser-request guards do not turn a non-loopback bind into an authenticated
+remote API; remote clients normally use the hub's authenticated bus.
+
+`API_BASE` is set once in `run` so adapters can construct callbacks such as
+`/mcp/ask/:session_id` using the configured API port. For a `0.0.0.0` bind the
+announced callback base uses `127.0.0.1`.
 
 ## Key modules
-- `services/claudemon/src/daemon/api.rs` — `router_with_host` mounts ~24 `/sessions/*` REST routes (spawn, spawn-managed, get/list, input, message, approve, answer, decide, gate, signal, permission-mode, model, resize, output, stream, transcript, conversation, handoff), plus `/conversation/stream`, `/events`, `/hooks/stream`, `/statusline/stream` SSE, `/wrapper/:id` WS upgrade, `/mcp/ask/:session_id`, `/health`. Layers (applied inner→outer): `DefaultBodyLimit::max(16MB)`, `cors_layer()` (loopback-origin-only `CorsLayer`), `host_guard` middleware (outermost, added last — runs first).
+- `services/claudemon/src/daemon/api.rs` — `router_with_host` mounts `/sessions/*` REST routes (spawn, spawn-managed, get/list, input, message, approve, answer, decide, gate, signal, permission-mode, model, resize, output, stream, transcript, conversation, handoff), plus provider model discovery, usage/reporting, heartbeat and one-shot endpoints, `/conversation/stream`, `/events`, `/hooks/stream`, `/statusline/stream` SSE, `/wrapper/:id` WS upgrade, `/mcp/ask/:session_id`, `/health`. Layers (applied inner→outer): `DefaultBodyLimit::max(16 MiB)`, `cors_layer()` (loopback-origin-only `CorsLayer`), `origin_guard`, `host_guard` middleware (outermost, added last — runs first).
 - `services/claudemon/src/daemon/hook.rs` — hook-port router: `POST /hook`, `POST /hook/:kind` (mapped via `subroute_to_event`), `POST /statusline`, `GET /health`; same 16MB `DefaultBodyLimit`. Holds `DECISION_TIMEOUT = 30s` for the PreToolUse gate.
 - `services/claudemon/src/daemon/wrapper_ws.rs` — `GET /wrapper/:id` WS upgrade; wrapper sends `Register` first, then `Output`/`Exited` frames; daemon pumps `Input`/`Signal`/`Resize` back over an unbounded mpsc.
 - `services/claudemon/src/daemon/mcp_ask.rs` — one-tool MCP streamable-HTTP server (`POST /mcp/ask/:session_id`; GET 405s).
@@ -25,51 +36,101 @@ last_reviewed: 2026-08-16
 - `services/claudemon/src/daemon/mod.rs` — `run`, `ServeConfig`, `API_BASE`, graceful shutdown (`wait_for_parent_exit`, `kill_all_ptys`); out of scope for this doc beyond the two-listener bind.
 
 ## Failure modes
-- `hook::process` parks a PreToolUse hook on `store.park_decision` and awaits up to `DECISION_TIMEOUT` (30s, safely under Claude Code's default 60s hook timeout); on timeout or dropped channel it falls through to an empty `{}` passthrough decision rather than blocking Claude forever. Gating only applies when `!driver_owned` (PTY, non-managed, transport != `Stream`) and `!is_ask_question` — AskUserQuestion always passes through so the picker renders and `/answer` resolves it separately.
-- `mcp_ask::tools_call` blocks up to `ANSWER_TIMEOUT = 6h` on the managed answer channel; `QuestionGuard`'s `Drop` impl is the *only* path that restores `SessionMode::Question` back to `Responding` and unregisters the answer channel when the HTTP request is aborted mid-flight (agent killed) — the timeout/answered/closed paths call `guard.finish()` explicitly and defuse the drop.
-- All four SSE endpoints (`event_stream`, `hook_stream`, `status_line_stream`, `conversation_stream`) wrap a `tokio::sync::broadcast::Receiver` in `BroadcastStream` and `filter_map` away `RecvError::Lagged` with only a `tracing::warn!` — a slow SSE subscriber silently drops events with no resync signal to the client. `stream_bytes` (`/sessions/:id/stream`) is the one exception: it drives the receiver directly (not via `BroadcastStream`) so on `Lagged` it can `await` `store.output_snapshot` and repaint the client with a full terminal reset (`\x1bc`) instead of dropping silently.
+- `hook::process` parks a PreToolUse hook on `store.park_decision` and awaits up to `DECISION_TIMEOUT` (30s in this implementation); on timeout or dropped channel it falls through to an empty `{}` passthrough decision rather than blocking Claude forever. Gating only applies when `!driver_owned` (PTY, non-managed, transport != `Stream`) and `!is_ask_question` — AskUserQuestion always passes through so the picker renders and `/answer` resolves it separately.
+- `mcp_ask::tools_call` waits up to six hours for an answer. `QuestionGuard`
+  releases its own Ask-owned pending request and unregisters its channel on
+  explicit completion or future drop. A displaced Primary approval may be
+  restored; finishing a question does not unconditionally force Responding or
+  clear another owner’s pending card. The shim still has one answer channel
+  per session: the Primary-versus-Ask ownership fence does not create independent
+  channels for multiple simultaneous Ask requests.
+- `/events` emits `session.resync` with `{"event":"Resync","reason":"lagged"}`
+  when its broadcast receiver lags. Consumers must reconcile authoritative
+  state instead of assuming a later event will repair a missed session end.
+  The desktop event bridge and full-scope brain handle this signal. The
+  lightweight hub `services/hub/internal/claudemon` bridge only maps session updates and
+  does not itself perform this reconciliation.
+- `/hooks/stream`, `/statusline/stream`, and `/conversation/stream` still log
+  broadcast lag and drop the missed data. They do not send the same resync
+  signal. `/sessions/:id/stream` handles terminal-byte lag by fetching
+  `output_snapshot` and repainting with a terminal reset (`\x1bc`).
 - `spawn_persistence_task` (mod.rs) subscribes to the hook broadcast and writes each event to SQLite on the blocking pool; a `Lagged` there just warns and continues (events are lost from persistence, not just from a live subscriber).
-- `init.rs` writes are atomic (`tmpfile` + `fsync` + `rename`) and idempotent via `TAG`/`STATUS_TAG` command markers, but a malformed `settings.json` (`hooks` present as non-object, or top-level non-object) causes `merge_hooks`/`merge_status_line` to warn and skip rather than fail loudly — a user with a broken settings file silently gets no claudemon hooks registered.
+- `init.rs` writes are atomic (`tmpfile` + `fsync` + `rename`) and idempotent via `TAG`/`STATUS_TAG` command markers, but a malformed `settings.json` (`hooks` present as non-object, or top-level non-object) causes the merge helpers to warn and skip the malformed part. Invalid JSON is a separate parse failure; do not describe every malformed settings file as the same silent-success case.
 
 ## Gotchas
-- `AllowedHosts` (`api.rs`) only ever allows loopback plus **one** concrete `bind_host` string (`mod.rs` passes `cfg.host` from `router_with_host`); a wildcard bind (`0.0.0.0`/`::`) contributes nothing extra (`AllowedHosts::new` filters it out), so remote/non-loopback clients cannot reach the API directly at all — they must go through the hub bus. This is a DNS-rebind guard, not an auth mechanism: it runs as the outermost middleware layer specifically so a rebound request never even reaches CORS or a handler.
-- CORS (`cors_layer`) reflects only loopback `Origin` headers and allows no credentials; this is defense-in-depth for a browser context, not a substitute for `host_guard` (CORS can't block same-origin post-rebind requests).
+- `AllowedHosts` accepts loopback and one concrete bind-host string; wildcard
+  binds add no extra allowed Host value. A present disallowed Host is refused,
+  but native clients can omit or choose Host. This is a DNS-rebinding guard,
+  not proof of where the caller is running or who it is.
+- `origin_guard` rejects cross-site browser requests before handlers run, on
+  both listeners. Absent Origin is allowed for native clients; loopback origins
+  and an origin authority matching Host are accepted. Opaque/malformed origins
+  are refused. CORS alone only controls browser access to responses and cannot
+  prevent the side effects of simple requests.
 - The 16MB `DefaultBodyLimit::max` on both the hook router and the API router matters because hook/statusline bodies are cloned, broadcast to every SSE subscriber, and persisted to SQLite — an unbounded body would be a fanout DoS, not just a memory spike on one handler.
-- `valid_session_id` (api.rs) is a path-traversal guard used by `get_transcript` and `post_handoff` (session id becomes a filename under `~/.workspacer/handoffs/` or a JSONL path) — any new handler that interpolates `id` into a filesystem path must call it too; it is not applied uniformly across every route (e.g. `/sessions/:id` itself doesn't need it, no FS use).
+- `valid_session_id` (api.rs) is a path-traversal guard used by `get_transcript` and `post_handoff` (session id becomes a filename under `~/.workspacer/handoffs/` or a JSONL path) — any new handler that interpolates `id` into a filesystem path must call it too; it also protects caller-pinned spawn IDs. It is not an authentication credential and is not applied uniformly to every route.
 - `init.rs`'s `HOOK_EVENTS` const array is a **manually-enumerated mirror** of `HookEventKind::REGISTERABLE` (see comment at line ~29) — the const-context limitation means this list must be hand-kept in sync with `HookEventKind` variants in `crate::session::state`; adding a registerable hook kind there without updating `HOOK_EVENTS` here silently skips installing it.
-- `hook::subroute_to_event` 404s unknown `/hook/:kind` subroutes on purpose (no silent typo passthrough) — any new hook kind needs an entry here.
-- The API and hook routers are two entirely separate `Router`s with independent middleware stacks; a change to CORS/host/body-limit hardening on `api.rs` does **not** apply to `hook.rs` (and shouldn't — the hook port is meant to be dumb, loopback-only-by-convention ingress from Claude Code's own hook shellouts, installed via `init.rs`'s `curl 127.0.0.1:<hook_port>/hook`).
+- `hook::subroute_to_event` 404s unknown `/hook/:kind` subroutes on purpose (no silent typo passthrough) — any new exposed hook subroute needs an entry here. Adding a registerable event also requires checking init’s explicit list and its tests.
+- The routers have independent middleware stacks, but share the same
+  `host_guard` and `origin_guard` functions. When changing those protections,
+  test both API and hook ingress. Do not remove hook-port guards on the
+  assumption that installed curl commands are its only possible callers.
 - `post_permission_mode`/`post_model` branch on `store.has_managed_permission_mode` / `store.is_managed` to pick between PTY-shift+tab, managed-adapter-flag, and stream-control-protocol code paths — this domain doc covers only the routing/response shape; the actual switching logic lives in `SessionStore` (out of scope here, see `PermissionSwitchError` variants for the error taxonomy surfaced as 409s).
 - Explicitly excluded from this doc: `services/claudemon/src/daemon/spawn.rs` (agent-spawn concern) and session state/snapshot internals (`crate::session::*`, covered elsewhere) — this doc is the transport/router surface only.
 
-## Hand-authored notes (2026-07-30) — POST /oneshot
+## Message and action responses
 
-- `POST /oneshot {argv, model?, prompt, timeout_secs?}` → `{ok, text?, error?}` runs ONE
-  headless `claude --print` turn and returns raw stdout. Added for the desktop's agent
-  auto-titling; it is deliberately generic (any little "ask a cheap model a question about
-  a session" job belongs here).
-- **Why it exists at all**: a caller shelling out to `claude --print` itself fires the
-  user's Claude Code hooks against `/hook`, and `SessionStore::ingest` registers a stray
-  session for them — a ghost row in RECENT per call. Verified empirically before building
-  the endpoint (`sessions` count 35 → 36 after one bare `claude --print`), and
-  `--settings '{"hooks":{}}'` does NOT suppress it (settings merge, 35 → 36 again).
-  `/oneshot` pins `--session-id <uuid>` and marks it via `SessionStore::mark_heartbeat`,
-  the same trick `daemon::heartbeat` uses, so `ingest` drops those hooks wholesale.
-  End-to-end check: sessions `[]` before and `[]` after a successful call.
-- `heartbeat::home_dir` is now `pub(crate)` and shared — both the heartbeat and the
-  one-shot run their child in the home dir so it picks up no project context.
-- The desktop falls back to a heuristic title (not a local shell-out) when the route is
-  missing, so an older claudemon binary degrades quietly instead of resurrecting the ghost.
-- Its first consumer is agent auto-titling: `config.agents.autoTitle {enabled, model}`
-  (default on, haiku), renderer `useAgentAutoTitle` fires once per agent when the opening
-  exchange has both a user message and an assistant reply, main's `agentTitler` sanitizes
-  the model output. `AgentWorkspace` carries `nameSetByUser` + `autoTitled` (persisted, so
-  a restart doesn't re-title). Reminder: any new `ElectronAPI` method must be triaged in
-  `tests/backend/backendParity.test.ts` or the parity test fails.
-- **Hardening (2026-07-30)**: the prompt goes on **stdin** (`claude --print` reads it),
-  never argv — on non-npm Windows installs `claudeBaseArgv()` returns
-  `['cmd.exe','/c','claude']`, so agent-written text on the command line was an injection
-  class. And both `/oneshot` and the keep-warm heartbeat used to pipe stderr without
-  draining it: a child filling the 64KiB pipe blocks in write(2) and burns the whole
-  timeout — `/oneshot` drains both pipes with `tokio::join!`, heartbeat uses
-  `Stdio::null()`. Keep both properties for any future child-spawning endpoint.
+`POST /sessions/:id/message` delegates to `SessionStore::submit_message`.
+Live sessions can accept a message during cold start, responding, approval, or
+question modes: it is sent when ready or returns `{ok:true, queued:true}` for
+later delivery. Stopped sessions return 409; missing sessions/wrappers return
+404, disconnected wrappers 410, and a full input queue 503. Do not disable
+sending solely because the snapshot mode is not Input.
+
+Approval and answer endpoints still require their corresponding pending mode
+and can reject stale actions with 409. Treat each endpoint's response contract
+separately rather than applying a blanket Input-mode gate.
+
+API `/health` returns `ok` with `x-workspacer-maintenance: 1`; artifact cleaners
+use that header to detect the spawn/cleanup admission fence. The hook listener's
+health endpoint does not carry that API contract.
+
+
+## One-shot prompts and hook registration
+
+`POST /oneshot` accepts argv, prompt, optional model/timeout, `no_tools`, and
+`harness_default`. It runs a single headless prompt and returns `{ok,text?,error?}`.
+The request is bounded by prompt/output/timeout limits in `daemon/oneshot.rs`;
+a successful HTTP response still requires checking `ok`. The harness-default
+option omits an explicit model choice rather than silently applying the fallback.
+
+The prompt travels on stdin, not through a shell-sensitive argv. Both output
+pipes are drained. The one-shot UUID is marked as heartbeat traffic so its hooks
+do not create an ordinary fleet session; this is not a general suppression of
+all hook installation. These are real model calls when invoked against a real
+provider, unlike the fake-CLI unit fixtures.
+
+`claudemon init` uses marker-based merges to preserve unrelated hook/status-line
+configuration. Overlay mode writes the standalone overlay and removes previously
+installed Workspacer entries from the global file to avoid double reporting.
+Check registration lists, subroute vocabulary, overlay behavior and parse-failure
+handling together when adding a hook event.
+
+The auto-title client can use `/oneshot` and has a heuristic fallback; the route
+is also used by other bounded summarization work. Do not describe a specific
+historical ghost-session experiment as fresh end-to-end verification of every
+current caller.
+
+## Route contracts and validation
+
+`contracts/claudemon-routes.json` and the cross-language caller sweeps pin
+served paths and caller construction. A mocked client test that accepts any URL
+does not catch a deleted route. Update the route registry and actual caller list
+when adding/removing an endpoint, and preserve the distinction between policy,
+serialization, and live-provider validation.
+
+From `services/claudemon`, relevant library suites are `daemon::api::tests`,
+`daemon::hook::tests`, `daemon::wrapper_ws::tests`, `daemon::mcp_ask::tests`,
+`daemon::init::tests`, and the one-shot fake-CLI tests. From `services/hub`,
+`go test ./internal/capspec` checks the shared route/caller contracts. Library
+filters must select real tests; zero selected tests is not a passing API audit.

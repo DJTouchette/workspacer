@@ -1,6 +1,6 @@
 ---
 title: Usage Accounting: Twin Pricing Tables, Subagent Transcripts & Rate-Limit Windows
-tags: [usage, pricing, cost, rate-limits, cross-language, twin-structure, subagents]
+tags: [usage, pricing, cost, rate-limits, cross-language, twin-structure, subagents, codex, tokens, report]
 related_paths:
   - "apps/desktop/src/main/services/modelUsage.ts"
   - "apps/desktop/src/main/services/analyticsBackfill.ts"
@@ -9,274 +9,211 @@ related_paths:
   - "services/claudemon/src/session/usage.rs"
   - "services/claudemon/src/session/pricing.rs"
   - "services/claudemon/src/session/state.rs"
+  - "services/claudemon/src/session/usage_report.rs"
+  - "services/claudemon/src/session/account_usage.rs"
+  - "services/hub/cmd/hub/usagereport.go"
+  - "apps/desktop/src/renderer/src/hooks/useUsageReport.ts"
+  - "apps/desktop/src/renderer/src/lib/usagePacing.ts"
+  - "apps/desktop/src/main/headless/analytics.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-26
 ---
 
-# Usage Accounting: Twin Pricing Tables, Subagent Transcripts & Rate-Limit Windows
+# Usage Accounting
 
-## Overview
-Token/cost accounting is implemented independently in the Electron main process (`modelUsage.ts` + accumulator/writer), the Rust claudemon daemon (`usage.rs` + `pricing.rs`), and the wks-tui crate's own usage module — `usage.rs`'s header states it is "ported verbatim" from wks-tui's copy and mirrors `modelUsage.ts`. Every implementation folds a Claude Code transcript's per-turn `usage` block (input/output/cache tokens + model id) into cumulative cost, a point-in-time context-window gauge, and a per-model split. Separately, rate-limit window state (5h/7d/monthly) is sourced only from Claude's `statusLine`/stream `rate_limit_event`, never hooks or transcripts.
+## Three measurements, separate evidence
 
-## Key modules
-- `apps/desktop/src/main/services/modelUsage.ts` — Electron pricing table (`MODEL_RATES`, longest-prefix match), `turnCostUSD`, `contextTokensOf`, `contextLimitFor`, `emptyUsage`. No override-file support.
-- `apps/desktop/src/main/services/sessionStore/usageAccumulator.ts` — `SessionUsageAccumulator.applyUsage`, live per-session fold, dedup by message id, per-model `slice` split, persists newly-seen model ids to `config.claude.seenModels`.
-- `apps/desktop/src/main/services/analyticsBackfill.ts` — one-shot re-derivation of historical `session_history` rows from raw transcripts (`foldTranscriptFile`, `recomputeSession`), marker-guarded via the `_backfills` table (`BACKFILL_NAME = 'transcript-usage-v2'`); also folds `subagents/*.jsonl` with `forceSidechain=true`.
-- `apps/desktop/src/main/services/sessionStore/analyticsWriter.ts` — `writeHistory` snapshots session usage into `sessionHistory.record` + `sessionHistory.recordModels` (the `session_model_usage` split table).
-- `services/claudemon/src/session/usage.rs` — Rust mirror: `Usage`, `rates_for`, `from_transcript` (dedup + sidechain handling identical to the TS accumulator), `usage_for_path` (walks `<stem>/subagents/*.jsonl`).
-- `services/claudemon/src/session/pricing.rs` — shared cross-provider pricing table: `BUILTIN` prefix list (Claude + OpenAI/Codex models), mtime-cached `~/.workspacer/model-rates.json` overrides, `rates_for`, `estimate_cost` (used by managed-provider status lines that report tokens but no dollars, e.g. Codex).
-- `services/claudemon/src/session/state.rs` — `StatusLine` struct + `StatusLine::from_claude_json`, the sole source of `five_hour_pct`/`seven_day_pct`/`monthly_pct` + `*_resets_at`.
-- `services/claudemon/src/providers/claude_stream.rs` — `rate_limit_event` handling: buckets `rateLimitType` (`five_hour | seven_day* | overage`) into five-hour/seven-day/monthly fields.
+Keep cumulative billed tokens/cost, current context occupancy, and account quota
+windows separate. A long session can have millions of cumulative tokens without
+holding that many tokens in its current context. A model’s catalog capacity is
+not proof of the active window, and a window’s last recorded percentage is not
+proof it describes the window open now.
 
-## Failure modes
-- Unknown/new model ids silently fall back to Sonnet-tier defaults (`DEFAULT_RATES`/`Rates::default` = $3/$15, 200k) in `modelUsage.ts` and `usage.rs`; `pricing.rs`'s `rates_for`/`estimate_cost` instead return `None` for managed-provider cost estimation ("an invented rate would be worse than a blank readout") — the two failure philosophies differ between Claude-transcript costing and cross-provider cost estimation.
-- `model-rates.json` at `~/.workspacer/model-rates.json` is read (mtime-cached) only by claudemon's `pricing.rs`; `modelUsage.ts` has no equivalent override mechanism — user rate overrides apply to claudemon-sourced numbers (Codex estimate, daemon-derived costs) but not to the desktop app's own transcript-derived costs.
-- Cost/token dedup is by assistant message `id`; a `null`/missing id causes re-counting on transcript replay in `analyticsBackfill.ts`'s `foldTranscriptFile` (falls back to `row.uuid`), a documented edge the historical backfill (`transcript-usage-v2`) exists to correct.
-- `analyticsBackfill` v1→v2 history: v1 mis-priced dated `claude-opus-4-2…` ids at the generic Opus rate and left stale `session_model_usage` rows for model keys no longer produced, double-counting `summary()` UNIONs — fixed by clearing `session_model_usage` per session before re-recording (`clearModels`/`DELETE FROM session_model_usage WHERE session_id=?`).
-- Rate-limit windows only populate from the `statusLine` command / stream `rate_limit_event`; `rate_limits` is entirely absent on non-Pro/Max accounts and before the first API response, so all `*_pct`/`*_resets_at` fields stay `None` — callers must treat absence as "unknown," not "0%".
+There are two costing implementations: desktop/shared TypeScript
+`modelUsage.ts` with its live accumulator and analytics folds, and claudemon
+Rust `usage.rs`/`pricing.rs` with managed-provider `UsageAcc`. The TUI consumes
+published usage; it does not maintain a third price table.
 
-## Gotchas
-- **Triple-mirrored pricing tables must be edited in lockstep**: `MODEL_RATES` in `modelUsage.ts`, `BUILTIN` in `pricing.rs`, and wks-tui's own copy. **KNOWN DIVERGENCE**: `pricing.rs` line 57 has `"claude-opus-4-1"` (without trailing dash) while `modelUsage.ts` line 67 correctly has `'claude-opus-4-1-'` (with trailing dash). Editing rates in one place silently diverges GUI vs daemon vs TUI cost figures with no compile-time or runtime check tying them together — this inconsistency is already present and exemplifies the danger.
-- Longest-prefix matching is intentional and order-sensitive: e.g. `claude-opus-4-1-` (with trailing dash) must not be swallowed by the shorter `claude-opus` prefix, and dated ids like `claude-opus-4-20250514` need the separate `claude-opus-4-20` key since they don't match the `claude-opus-4-0` alias — see the long comment block in `modelUsage.ts` lines 48-62, duplicated conceptually in `pricing.rs`. **The missing trailing dash in `pricing.rs` means the daemon will mismatch Opus 4.1-dated model ids against a shorter prefix than the Electron app would use.**
-- Cache pricing constants are fixed multipliers baked into code, not table-driven, in both TS and the Claude branch of Rust: cache-write = `input * 1.25`, cache-read = `input * 0.1` (default) — but `pricing.rs`'s generic (multi-provider) path instead supports a per-model `cached_input` override (used for OpenAI/Codex, whose wire reports an explicit cached rate), so Claude and Codex costing diverge in mechanism even within the single Rust codebase.
-- ~~Context-window default is 200k tokens; both implementations infer a 1M-mode
-  promotion heuristically once observed context exceeds 200k.~~ **CORRECTED
-  2026-09-01 — that heuristic is gone.** There is now one table and one
-  resolver, pinned across the three engines by
-  `contracts/model-context-windows.json`
-  (`apps/desktop/src/main/shared/modelContextWindows.ts`,
-  `services/claudemon/src/session/windows.rs`,
-  `services/hub/cmd/brain/windows.go`). `resolveContextWindow` walks an ordered
-  list of CLAIMS — provider-reported window, user override, the `[1m]`/`-1m`
-  marker on the REQUESTED model, then the model table — and observed occupancy
-  is only a DISQUALIFIER: a claim the session demonstrably exceeds (past
-  `DRIFT_TOLERANCE`, 1.02) is dropped and the next claim tried. Occupancy never
-  promotes anything, and if every claim is disproved the window is `null` —
-  UNKNOWN, which each client renders by hiding the meter. The four places that
-  spelled unknown `200_000` (including `emptyUsage()`) are gone; that literal
-  was the whole of "every session starts at 200k and upgrades later".
-- Sidechain (subagent) turns count toward cumulative cost/tokens and the per-model split at their own model's rates, but must never move the main-thread context gauge or `model` field — enforced identically by `if (!sidechain)` in `usageAccumulator.ts`/`analyticsBackfill.ts` and `if !sidechain` in `usage.rs`; subagent transcripts live at `<transcript-stem>/subagents/*.jsonl` and are walked separately (`usage_for_path`, `subagentFilesFor`).
-- `overage` rate-limit events (monthly window) previously misfiled into the 5h gauge; `claude_stream.rs`'s `rate_limit_event` handler now explicitly buckets by `rateLimitType` (`is_overage` check) with regression tests (`rate_limit_event_buckets_by_window_type`) pinning that `overage` never lands in `five_hour_*`.
-- Every provider adapter (`claude_stream.rs`, `codex.rs`, `codex_rollout.rs`, `opencode.rs`) surfaces its own cost/usage fields into this same pipeline via `state.rs`'s `StatusLine`/session usage structs — a new adapter that gets cost wiring wrong corrupts `session_history`/`session_model_usage` analytics silently, since there is no cross-check against the transcript-derived numbers.
+## Pricing and cache accounting
 
-## Hand-authored notes (2026-08-24/28) — cache multipliers, derived tokens, and what is actually available at boot
+`MODEL_RATES` in TypeScript and `BUILTIN` in Rust are software estimates, not a
+live provider billing feed. Both perform longest-prefix matching and read
+`~/.workspacer/model-rates.json`; an override wins an equal-length prefix tie.
+Rust transcript costing delegates lookup to `pricing.rs`. The TS override
+writer updates the same file, and both readers cache by mtime.
 
-- **Cache-write pricing is TTL-DEPENDENT and both engines hardcoded the cheap
-  rate.** Claude bills a prompt-cache WRITE at a multiple of the base input rate
-  chosen by the write's lifetime: **1.25x at the 5-minute TTL, 2x at the 1-hour
-  TTL** (reads are 0.1x). `modelUsage.ts` `turnCostUSD` and
-  `services/claudemon/src/session/usage.rs` `turn_cost_usd` both hardcoded 1.25x
-  — the 5-minute rate — while this project's sessions are almost entirely
-  1-hour. The per-turn TTL split has always been on disk:
-  `usage.cache_creation.{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}`.
-  Displayed cost understated 1-hour writes by 1.6x (a 1M-token opus write showed
-  $6.25 where $10.00 was due). **Never hardcode a cache multiplier.** Read the
-  TTL split; when a turn reports writes with no `cache_creation` block, price at
-  the 1-hour (dearer) rate, because assuming the cheaper one reads as a lower
-  bill than the account will see. The two engines are now pinned to each other by
-  the `cacheMultiplierCases` block in `contracts/model-pricing-cases.json`, read
-  by `modelPricingContract.test.ts` and
-  `usage.rs::matches_shared_cache_multiplier_contract`.
-  *Correction to the earlier "third copy" belief:* `session/pricing.rs`'s
-  `estimate_cost` has NO cache-write concept at all. It is the cross-provider
-  path, enabled only via `UsageAcc::estimate_costs()` (set by `codex.rs` and
-  `codex_rollout.rs` only), and OpenAI does not bill cache writes; it prices
-  cache READS at the per-model `cached_input` rate with a 0.1x fallback, which is
-  correct. *Widening trap:* there are **FIVE** type mirrors, not four — the Rust
-  `Usage` struct, `enrich.go`, main-process `SessionUsage`
-  (`modelUsage.ts` + `ipcTypes.ts`), the renderer `SessionUsage`, and the TUI
-  `Usage` — plus the statusLine's own extra pair
-  (`claudemonStatusLineBridge.ts`'s mapping and `SessionStatusLine`, declared in
-  BOTH `claudeSessionStore.ts` and `renderer/types/claudeSession.ts`). Note serde
-  `rename_all=camelCase` produces `expectedUsd`, not `expectedUSD`, so that field
-  needs an explicit rename.
-- **A wrong context WINDOW produces absurd TOKEN counts, because managed sessions
-  derive tokens as pct × window.** Managed (non-Claude) sessions have no direct
-  context-token count: `contextTokensFromStatusLine` (`claudeSessionStore.ts`)
-  computes `contextUsedPct / 100 * contextWindowSize`, feeding both the bus row
-  (`hubCapabilities.ts` `agents.list`) and `session.peakContext`. So (1) any bug
-  that inflates the WINDOW inflates the reported TOKENS by the same factor — the
-  `claude_stream.rs` `.max()` across `modelUsage` entries (a 1M sub-agent
-  inflating a 200k parent) showed up as "crazy token numbers", not only as a wrong
-  meter; and (2) `context_used_pct` was read UNCLAMPED off the provider payload in
-  `StatusLine::from_claude_json` while `UsageAcc::status_line` already clamped the
-  percentage it COMPUTES. Both are now clamped, at the parser and again at the
-  consumer — keep both: the parser one covers the four clients that render
-  `context_used_pct` directly (TUI, /m, remote.html, desktop), the consumer one
-  covers producers other than Claude's statusLine. **When a session reports an
-  impossible token count, check the WINDOW first**, and check whether that session
-  is managed (usage-less) so its tokens are derived rather than counted. A bad
-  percentage also poisons `peakContext`, which drives the drift alarm that
-  disarms a claimed window — one wrong reading becomes a permanently hidden meter.
-- **Codex's cached-token count reaches the cost estimate correctly but never
-  reaches the UI.** The wire reports it in two shapes — legacy flat
-  `usage.cached_input_tokens` and modern
-  `tokenUsage.total/last.cachedInputTokens` (camelCase) — and both `codex.rs` and
-  `codex_rollout.rs` parse it into `AgentUpdate::Usage.cached_input_tokens`,
-  `UsageAcc::merge` folds it into `cached_input`, and `pricing.rs::estimate_cost`
-  bills that subset at the model's discounted `cached_input` rate (gpt-5-codex:
-  0.125 vs 1.25 per M, a 10x discount). **So Codex cost is NOT systematically
-  overbilled.** But `state.rs`'s `StatusLine` — the thing actually projected to
-  desktop/TUI — has no `cached_input` field, and `UsageAcc::status_line` consumes
-  `self.cached_input` only to compute `cost_usd`, then discards it. "Can
-  workspacer show cache hit/miss for a Codex session" is therefore a small,
-  well-scoped gap (add the field to `StatusLine` and populate it in
-  `status_line()`), not a missing upstream signal.
+The delimited `claude-opus-4-1-` prefix is present in both tables. Its delimiter
+prevents matching 4.10–4.19; dated 4.0 IDs need their separate prefix. Maintain
+`contracts/model-pricing-cases.json` and both loaders when changing rates or
+matching rules rather than reintroducing a documented-but-fixed divergence.
 
-### What is available at boot, and what only looks like it should be
+Claude-transcript pricing falls back to this build’s price-only defaults for
+an unknown model (3/15 USD per million input/output tokens). Managed generic
+`estimate_cost` returns None for an unknown model. Neither fallback invents a
+context-window size. Copilot’s token-based session dollar estimate is not the
+same measurement as its recorded GitHub AI-credit charge.
 
-- **Account rate-limit windows are blank at boot for ONE reason: a poller gate.**
-  `fetch_account_usage()` (`services/claudemon/src/session/account_usage.rs`) has
-  NO session dependency — it reads `<root>/.credentials.json` and GETs
-  `https://api.anthropic.com/api/oauth/usage`, and `GET /usage`
-  (`daemon/api.rs`) already serves it on demand with zero sessions running. The
-  gauges are blank because `spawn_poller` iterates
-  `store.live_claude_config_roots()`, which filters
-  `provider == "claude" && mode != Stopped` — zero live sessions, empty vec, loop
-  body never runs. Separately, EVERY renderer usage surface (`UsageDetailDialog`,
-  OverviewPane's `RateLimitCard`, `sessionStats.ts`) renders from a session
-  snapshot's `statusLine`, so there is no session-free surface to hang a reading
-  on. **For Claude this is a wiring change, not an architecture change.**
-- **Distinguish the two halves of "usage".** Cumulative cost/tokens is ALREADY
-  boot-available (`list_sessions`/`get_session` fold it from the transcript via
-  `usage::usage_for_session`, for stopped and archived rows too, plus
-  `workspacer.db`); account rate-limit WINDOWS are the half gated above.
-- **Codex and Copilot both persist usage on disk** — which contradicted the
-  assumption encoded in `keepWarmService.ts` that "no sessionless usage query
-  exists" for Codex. True for a network query, false for on-disk state. That
-  assumption is now gone: keep-warm reads Codex's 5h window from
-  `GET /usage/report` (`fiveHourWindowFromReport` in `keepWarmLogic.ts`) and
-  keeps the live status line only as a fallback. It is that endpoint's FIRST
-  client. Note the trap it encodes: the report's `used_percent` for a window
-  whose `resets_at` has passed is real history and a false present, so
-  currency is decided from `resets_at`, never from the percentage.
-  Verified against live artifacts 2026-08-28:
-  - **Codex:** every rollout at `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
-    carries `event_msg` payloads of type `token_count` whose `rate_limits` holds
-    `primary` (used_percent, window_minutes 300, resets_at), `secondary`
-    (window_minutes 10080), `credits` and `plan_type` — the 5h/weekly gauges are
-    on disk, readable at boot by tailing the newest rollout for the last
-    `token_count`. `~/.codex/state_5.sqlite` `threads.tokens_used` holds a
-    cumulative per-thread count but with no model split and no cost.
-    `~/.codex/auth.json` carries `account_id`, a real attribution key.
-  - **Copilot (the richest of the three):** `~/.copilot/session-store.db` has a
-    full `assistant_usage_events` table (session_id, turn_index, agent_id, model,
-    input/output/cache_read/cache_write/reasoning tokens, total_nano_aiu,
-    request_multiplier, api_endpoint, finish_reason, token_details_json) — and
-    `token_details_json` embeds **Copilot's OWN price table** (costPerBatch in
-    nano-AIU per token type), so cost need not be estimated from our table at all.
-    But it has NO account/user column; `~/.copilot/config.json` lists
-    `loggedInUsers` and `lastLoggedInUser`, so mapping rows to a login is a guess.
-    Copilot quota specifically has no queryable API (`copilot_internal/v2/token`
-    403s to a `gh` OAuth token).
-  - **Claude:** `~/.claude/stats-cache.json` holds `modelUsage` per model +
-    `dailyModelTokens` + `dailyActivity`, but it is LAZILY recomputed by the CLI —
-    `lastComputedDate` was 2026-08-09 while sessions ran through 2026-08-28 (19
-    days stale) and every `costUSD` field is 0. **Never use it for anything
-    time-sensitive.**
-  Boot-time preference: Claude = OAuth `/api/oauth/usage` (exact); Codex = newest
-  rollout's last `token_count.rate_limits` (exact but as-of-last-turn); Copilot =
-  `assistant_usage_events` aggregation (exact tokens/AIU, no quota headroom, no
-  account attribution).
+Claude cache-write cost uses the reported 5-minute/1-hour token split, at 1.25×
+and 2× input rate respectively. Unitemized writes use the 1-hour rate. Cache reads
+use the explicit cached-input rate where supplied, otherwise the read multiplier.
+The generic managed estimator treats cached input as a subset of total input,
+clamps it to that total, and has no Claude cache-write bucket. Do not apply
+Claude’s write formula to every provider’s input shape.
 
-### Two traps in the desktop usage SURFACES
+`StatusLine.cached_input_tokens` now carries the managed cache-read count.
+Desktop status mapping, brain projection, and TUI types retain it; the old claim
+that Codex’s cache count is discarded before the UI is obsolete. An absent
+cache count means not reported, not zero. Claude transcript cache splits remain
+separate from the managed status-line subset.
 
-- **`InspectorCard`'s Usage tab short-circuits on `!sl && !usage`** (no live
-  statusLine, no transcript usage) — and a cold start has NEITHER by definition:
-  a restored agent's session is a stopped daemon row that
-  `promoteSessionSnapshots` drops, so there is no snapshot at all. **Any figure
-  sourced from the history DB rather than a live snapshot was therefore
-  unreachable in exactly the case it exists for** — the tab rendered "No usage
-  data yet" over a store holding the numbers. Any future "fill this from the
-  record" work must widen the guard, not just add tiles below it. When adding a
-  cold-start fallback to any usage surface, check the section's own empty-state
-  guard first; several gate on live snapshot fields.
-- **`session_history.cost_usd / input_tokens / output_tokens` are `DEFAULT 0` and
-  never NULL**, so a row created and never written to is indistinguishable from
-  one measured at zero. Verified against the live store 2026-08-28: 754 rows,
-  $14,968.38, 17.58B tokens — and 239 rows (31.7%) all-zero. Every desktop read
-  path therefore reports a stored 0 as UNDEFINED (`recentSessions.ts`'s
-  `recorded()`, `useSessionAnalytics`'s `recorded()`) and surfaces render a dash
-  rather than "$0.00". **Consumers must never `?? 0` these.** Treat unknown /
-  unavailable / zero as three distinct states and never collapse them —
-  `useSessionAnalytics` and `RecordedUsageContext` (`absentUsageTitle`) already
-  carry the reason strings for the "could not read" case. An all-zero payload is a
-  routine shape here, not an error, so "$0.00 across 0 sessions" is the default
-  failure mode beside a five-figure database. (`analytics:summary`/`analytics:recent`
-  were wired end to end with ZERO callers after the analytics pane was deleted;
-  `useSessionAnalytics` is now the only consumer, and the headless brain answers
-  both with a well-formed all-zero stub carrying `unavailable: "headless"` — the
-  same field main sets when its SQLite read throws, so one check covers both.)
+## Transcript folds and analytics
 
-### Per-profile attribution: one exact path, two guesses
+`usageAccumulator.ts` folds live assistant usage; `analyticsUsage.ts` and
+`analyticsBackfill.ts` recompute historical usage; Rust `usage.rs` folds daemon
+transcripts and sibling subagent files. Preserve message-ID deduplication and
+fallback identifiers when replaying partial/repeated transcript entries. Missing
+identifiers cannot provide the same deduplication guarantee as a stable ID.
 
-Verified on a live machine 2026-08-28.
+Subagent/sidechain turns contribute cumulative tokens, cost, and per-model totals
+at their own model’s rates. They must not replace the parent’s current context
+occupancy or active model. Per-model history rows must be cleared/replaced
+consistently during recomputation so obsolete slices do not double-count totals.
+Backfill markers are versioned; rerunning an old fold is not proof its output
+matches a new pricing algorithm.
 
-1. **EXACT.** `fetch_account_usage(client, root)` already takes a config root and
-   reads `<root>/.credentials.json`; the profile dir
-   `~/.claude/accounts/work/.credentials.json` exists with its OWN
-   `subscriptionType` ("team", rateLimitTier default_claude_max_5x) distinct from
-   the default root's ("max", default_claude_max_20x). Per-profile account windows
-   are genuinely fetchable, not inferred.
-2. **BUT idle profiles degrade to unknown.** The Work profile's OAuth token was
-   EXPIRED (expiresAt 8 days stale); `token_from_credentials` bails locally on
-   expiry and never refreshes (rotation is the CLI's job), so a boot-time fetch
-   for any profile you have not used recently silently returns nothing — and idle
-   profiles are exactly the ones a boot readout is for.
-3. **GUESS territory.** `~/.claude/accounts/work/projects` is a SYMLINK to the
-   shared `~/.claude/projects`, so both logins' transcripts land in one physical
-   directory. `claudeAccountOf()` (`renderer/src/lib/claudeAccount.ts`) and
-   `root_from_transcript()` only work because the CLI's path STRING retains the
-   profile root — **never canonicalize/realpath a Claude transcript path before
-   deriving the account.** And `workspacer.db`'s
-   `session_history`/`session_model_usage` have no profile/account/transcript
-   column at all, so the ~750 existing history rows cannot be retroactively
-   attributed by any means. If per-profile history is wanted, add an account
-   column going forward and leave old rows unattributed rather than backfilling a
-   guess.
+Desktop history uses the shared session-history schema and model split table.
+The brain’s `analytics.summary` and `analytics.recent` now call the Node companion,
+whose `headless/analytics.ts` persists `headless-analytics.sqlite` and reuses
+native schema/query/fold code. They are not unconditional zero-valued headless
+stubs. A missing companion or failed read remains an availability failure; do
+not convert it to a measured zero.
 
-### Hand-authored notes (2026-09-01) — the context DENOMINATOR, and who is allowed to state it
+Legacy analytics columns defaulted to zero without recording whether a sample
+was measured. Consumers such as `useSessionAnalytics` treat those stored zeros
+as unrecorded and show absence. That convention must not be copied onto the
+new tagged usage report, where an explicitly measured zero is a valid answer.
 
-Promoted from the 2026-08-30/31 context-window learnings, each re-checked
-against master at `0bac5799` before being written down.
+## Context window and runtime health
 
-- **A status-line percentage and its denominator are ONE claim, and either the
-  pair is believed or neither half is.** The specimen is a live worker holding
-  356,380 tokens while the provider's status line still said
-  `contextWindowSize: 200000` — a 178% meter. The rule: if held tokens exceed
-  the reported window past `DRIFT_TOLERANCE` (1.02), reject the percentage AND
-  the window together and fall through to the owner's resolved window; never
-  keep the used-% and swap the denominator, and never infer 1M from
-  occupancy. **It is a FOUR-CLIENT rule, not a desktop one**, and the fourth
-  copy is the one that gets forgotten: `deriveSessionStats`/`busContextLimit`
-  (`hubCapabilities.ts`), `sessionStats.ts` in the renderer, `stats()` in
-  `services/hub/cmd/hub/mobile.html`, and `derive_stats` in
-  `apps/tui/src/types.rs`. The TUI copy needed a wire change first, because its
-  `StatusLine` carried the percentage without `context_window_size` — a client
-  that never received the denominator cannot apply a rule about it. (A reduced
-  client silently reporting 100%/200K for a session the desktop draws correctly
-  is the symptom that this list has grown a fifth member.)
-- **What is DISPLAYED never changes what is STORED.** `busContextLimit` skips a
-  disproved raw pair for display only; `statusLine.contextWindowSize` and
-  `resolvedContextWindow` both stay on the row exactly as their owners wrote
-  them, because reconciling them is the client's job and it needs both claims
-  intact.
-- **claudemon OWNS the selection; every other process is a forwarder.** The
-  daemon publishes two fields a client cannot derive — `requested_selection`
-  `{model, context_window}` (the canonical, suffix-free request) and
-  `resolved_context_window` (what its resolver settled on) — and the brain's
-  `enrichAndCompat` projects them to camelCase BESIDE the snake originals, so a
-  current peer row carries both spellings and an older peer sends only the
-  snake one. Readers accept either. There is deliberately no local
-  reconstruction from `settings.model` or `contextLimitFor`: that is the
-  second, disagreeing answer this slice exists to retire. Absent means "nobody
-  has said", which is not `200_000` and not `null`-as-a-value.
-- **A missing Codex 5h window is usually an unreadable reading, not a zero.**
-  The report path preserves that distinction explicitly: a window whose
-  `resets_at` is absent is `no-reset-time-reported`
-  (`ReasonNoResetTime`, `services/hub/internal/limits/window.go`) and
-  `fiveHourWindowFromReport` (`keepWarmLogic.ts`) SKIPS it rather than
-  rendering 0% — a percentage alone cannot say which window it describes, which
-  is why the report leaves `is_current` null. When a Codex limit window is
-  missing from the UI, read the report's currency reason FIRST; the parser and
-  the renderer are the last two places to look, not the first.
+Canonical selection is `{model, contextWindow}` (snake-case on the daemon wire),
+with a legacy model-string projection for compatibility. Normalize suffix
+spellings at ingress; preserve the canonical owner fields through persistence
+and transport instead of reconstructing them from renderer settings.
+`contracts/model-context-windows.json` pins normalization, provider argv and
+window resolution across TypeScript, Rust, and Go.
+
+Window resolution distinguishes reported runtime capacity, user override,
+requested capacity, and the model table. Observed occupancy can disprove a
+candidate beyond the drift tolerance; it cannot promote an unknown window to a
+larger guessed capacity. If no claim survives, the window is unknown.
+
+A reported percentage and denominator are one claim. Reject a disproved pair
+together; retaining its percentage while substituting a different denominator
+manufactures a new reading. Display rejection does not rewrite stored source
+fields. `contextTokensFromStatusLine` is a derived display estimate
+(clamped percentage × reported window), not a direct provider token count.
+
+Automatic context-health actions use `ContextHealth`, a separate
+runtime-confirmed sample with used/window tokens, percentage, runtime provenance,
+observation time, provider, and epoch. Requested/catalog capacity is not a health
+sample. The epoch is a decimal string on the wire because a u64 can exceed
+JavaScript’s exact integer range. Provider/session/model boundaries fence samples;
+an explicit invalidating observation differs from a tick with no context evidence.
+See `contracts/context-health-cases.json` and the store’s tri-state update handling.
+
+Codex spawn can request a window through `model_context_window`; its requested,
+catalog, runtime, cumulative-token, and compaction-threshold values remain
+different quantities. A picker request is provisional until runtime evidence
+confirms it. Do not infer a live context allocation from a large lifetime token
+total or from a catalog maximum alone.
+
+## Session-free account reporting
+
+Claudemon `GET /usage/report` builds account/provider rows without needing a
+running session. `usage_report.rs` uses a tagged `Measured` scalar:
+
+| State | Meaning |
+| --- | --- |
+| `ok` with value, including zero | A reading exists |
+| `unknown` with reason | Not known now; a later read may succeed |
+| `unavailable` with reason | This source cannot supply the measurement |
+
+`account: ""` identifies the default Claude root; `account: null` is unattributed.
+Do not merge null into the default account. Rows carry source, observation/freshness
+information, windows, spend, token splits, and per-model readings. Provider data
+sources differ:
+
+- **Claude:** account OAuth usage plus transcript-derived estimates. Config-root
+  identity separates configured logins, including idle profiles.
+- **Codex:** disk rollout rate-limit evidence and available disk token records.
+  A last-turn reading can exist at boot but already be expired; report spend is
+  not a native metered-dollar figure.
+- **Copilot:** local usage/charge records supply token/AI-credit information.
+  This implementation reports unavailable quota headroom where no usable source
+  exists. Recorded usage does not by itself identify the login that incurred it.
+
+Provider disk schemas and API behavior are version-sensitive. A dated CLI probe
+is useful historical evidence, not a permanent claim about every installed
+provider version. Prefer the current readers in `providers/codex_usage.rs` and
+`providers/copilot_usage.rs` over manually querying an old schema from a note.
+
+## Claude polling and account attribution
+
+`account_usage.rs` discovers configured roots as well as live-session roots when
+boot polling is enabled. `WORKSPACER_USAGE_POLL_ON_BOOT` defaults on; explicit
+false/0/off/no disables idle-root discovery, not live-root polling. Desktop and
+`workspacer serve` pass the config preference to the daemon.
+
+Healthy live roots poll every minute and idle roots every 15 minutes. Failures
+back off to one hour. The scheduler checks due roots every 30 seconds and
+rearms an idle-to-live root promptly. Account freshness lasts the idle cadence
+plus one live cadence (16 minutes), so a healthy idle poller does not repeatedly
+invalidate its own reading between polls. This age gate and quota-window reset
+currency answer different questions.
+
+Credential failure/expiry leaves the attempt without a reading; it is not
+proof of zero usage. The poller does not refresh the provider’s login on behalf
+of the CLI. Session `config_root` spawn facts are the stronger account evidence;
+transcript-root attribution must preserve the path spelling, because profiles
+can symlink their projects into a shared physical directory. Realpath can erase
+which account wrote a transcript. Old history lacking attribution stays unknown
+rather than being assigned to the currently selected login.
+
+## Hub projections and renderer refresh
+
+The hub’s no-parameter `usage.report` reads the existing usage sampler, routing
+matrix and pacing preference. It returns server-computed projections with a
+validity deadline; it does not select a model, spawn work, or accept caller-supplied
+usage/capacity. `services/hub/internal/limits` validates window currency and computes the
+projection. Keep `contracts/usage-window-currency-cases.json` in agreement with
+keep-warm’s narrower reader.
+
+For a quota decision, `resets_at` must be present and strictly in the future at
+the instant of use. The report’s `is_current` is only a hint computed when that
+report was produced. A cached percentage or cached true hint cannot make an
+expired window current. Unknown reset time remains unknown.
+
+`useUsageReport` shares one report/fetch per backend, refreshes every minute,
+and uses a one-second local clock only to redraw deadline/reset guards. It does
+not extrapolate the server’s pacing calculation. Backend generations and request
+sequence numbers prevent older responses overwriting a newer forced refresh;
+failed refresh marks an existing report transport-stale. Settings can force a
+refresh after saving the pacing schedule.
+
+`usageReportAttribution` reports match, ambiguous, none, remote, or unavailable.
+Claude session paths can identify a root; otherwise a provider with exactly one
+report row can be matched. Multiple rows without identity are ambiguous. Peer
+sessions cannot borrow a local account report merely because their path or
+provider resembles a local default. `SessionAccountUsage` and Overview use this
+session-free report rather than requiring a live status line for every gauge.
+
+## Verification
+
+Use the shared pricing, cache-multiplier, model-window, context-health, and
+window-currency fixtures for cross-language changes. Account poll/report tests
+must exercise zero live sessions, unavailable/expired credentials, explicit
+unattributed rows, and elapsed reset times. Renderer usage tests cover attribution,
+transport-stale reports, and server-validity deadlines. Run the headless companion
+suite for persistent analytics; a passing desktop-only history test does not
+validate that path. No tests here establish current external provider prices or
+live account headroom.
