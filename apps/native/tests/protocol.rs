@@ -522,3 +522,133 @@ async fn live_harness_targets_and_cleans_up_only_its_disposable_session() {
     );
     server.abort();
 }
+
+fn launch_request() -> wks_native::controller::NewSession {
+    wks_native::controller::NewSession {
+        provider: "codex".into(),
+        cwd: "/work/project".into(),
+        label: "My session".into(),
+        model: String::new(),
+        message: "Please inspect the project".into(),
+    }
+}
+
+#[tokio::test]
+async fn create_session_uses_real_capability_and_survives_stale_fleet() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let old_fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    view(&controller, |v| v.connected).await;
+    controller
+        .command(Command::Create(launch_request()))
+        .unwrap();
+    let spawn = hub.frame("call", Some("agents.spawn")).await;
+    assert_eq!(
+        spawn.value["params"],
+        json!({"provider":"codex","cwd":"/work/project",
+        "label":"My session","transport":"stream","skipPermissions":false,"message":"Please inspect the project"})
+    );
+    // A second click while the acknowledgement is outstanding cannot launch twice.
+    controller
+        .command(Command::Create(launch_request()))
+        .unwrap();
+    spawn
+        .result(json!({"sessionId":"new","messageQueued":true}))
+        .await;
+    let created = view(&controller, |v| v.spawn_receipt.is_some()).await;
+    assert_eq!(created.selected.as_deref(), Some("new"));
+    assert!(!created.creating);
+    assert!(
+        created
+            .spawn_receipt
+            .as_ref()
+            .unwrap()
+            .unsent_message
+            .is_none()
+    );
+    old_fleet.result(json!([])).await;
+    let conversation = hub.frame("call", Some("sessions.conversation")).await;
+    conversation.result(snapshot(1, "Ready")).await;
+    let ready = view(&controller, |v| !v.loading && !v.transcript.rows.is_empty()).await;
+    assert_eq!(ready.selected.as_deref(), Some("new"));
+    assert!(ready.sessions.iter().any(|s| s.id == "new"));
+    while let Ok(frame) = hub.frames.try_recv() {
+        assert_ne!(frame.value["method"], "agents.spawn", "duplicate launch");
+    }
+}
+
+#[tokio::test]
+async fn create_session_retains_unconfirmed_prompt_without_resending() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    controller
+        .command(Command::Create(launch_request()))
+        .unwrap();
+    hub.frame("call", Some("agents.spawn"))
+        .await
+        .result(json!({"sessionId":"new","messageQueued":false}))
+        .await;
+    let created = view(&controller, |v| v.spawn_receipt.is_some()).await;
+    let receipt = created.spawn_receipt.as_ref().unwrap();
+    assert_eq!(
+        receipt.unsent_message.as_deref(),
+        Some("Please inspect the project")
+    );
+    assert_eq!(receipt.session.as_deref(), Some("new"));
+    assert!(receipt.error.is_none());
+    assert!(created.notice.contains("not confirmed"));
+}
+
+#[tokio::test]
+async fn disconnected_spawn_is_reported_and_never_replayed() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    controller
+        .command(Command::Create(launch_request()))
+        .unwrap();
+    let spawn = hub.frame("call", Some("agents.spawn")).await;
+    spawn.send.send(Message::Close(None)).await.unwrap();
+    let failed = view(&controller, |v| v.spawn_receipt.is_some()).await;
+    assert!(!failed.creating);
+    assert!(
+        failed
+            .spawn_receipt
+            .as_ref()
+            .unwrap()
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("unknown")
+    );
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    while let Ok(frame) = hub.frames.try_recv() {
+        assert_ne!(frame.value["method"], "agents.spawn");
+    }
+}
+
+#[test]
+fn creation_validates_hub_paths_without_checking_the_clients_filesystem() {
+    let mut request = launch_request();
+    for path in ["/remote/project", "C:\\Work\\project", "\\\\server\\share"] {
+        request.cwd = path.into();
+        assert!(request.params().is_ok());
+    }
+    for path in ["", "relative/project", "~/project", "C:relative"] {
+        request.cwd = path.into();
+        assert!(request.params().is_err());
+    }
+}

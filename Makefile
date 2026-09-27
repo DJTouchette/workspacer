@@ -1,6 +1,7 @@
 # Workspacer monorepo — top-level orchestrator.
 #
 #   apps/desktop      Electron app (npm)        — the GUI client
+#   apps/native       GPUI client (Rust/cargo)  — the native GUI
 #   apps/tui          wks-tui (Rust/cargo)      — the terminal client
 #   services/claudemon  Claude session daemon (Rust/cargo)
 #   services/hub        control-plane / event bus (Go)
@@ -10,12 +11,13 @@
 
 DESKTOP   := apps/desktop
 TUI       := apps/tui
+NATIVE    := apps/native
 CLAUDEMON := services/claudemon
 HUB       := services/hub
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
         build-cli test test-desktop test-hub test-tui test-claudemon test-routing-harness \
-        claudemon-routes docs-drift package clean
+        claudemon-routes docs-drift package clean dev-native run-native build-native test-native
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -47,12 +49,28 @@ dev-tui: build-hub
 run-tui: build-claudemon build-hub build-tui
 	cd $(TUI) && cargo run --release -- $(ARGS)
 
+## dev-native: run the native GUI against the running desktop/headless hub.
+##             ARGS="--bus wss://host/bus --token-file /path/to/token" for remote.
+##             Demo data is opt-in only: ARGS="--demo".
+dev-native:
+	cargo run --locked --manifest-path $(NATIVE)/Cargo.toml -- $(ARGS)
+
+## run-native: build and launch the release native GUI against the running hub.
+run-native: build-native
+	cargo run --locked --release --manifest-path $(NATIVE)/Cargo.toml -- $(ARGS)
+
+build-native:
+	cd $(NATIVE) && cargo build --locked --release --bin wks-native
+
+test-native:
+	cd $(NATIVE) && cargo test --locked --features ui-tests
+
 ## install: install desktop JS dependencies
 install:
 	cd $(DESKTOP) && npm install
 
 ## build: build every component
-build: build-hub build-claudemon build-desktop build-tui
+build: build-hub build-claudemon build-desktop build-tui build-native
 
 build-desktop:
 	cd $(DESKTOP) && npm run build
@@ -73,7 +91,7 @@ build-tui:
 	cd $(TUI) && cargo build --release
 
 ## test: run all test suites
-test: test-desktop test-hub test-claudemon test-tui
+test: test-desktop test-hub test-claudemon test-tui test-native
 
 test-desktop:
 	cd $(DESKTOP) && npm test
@@ -134,3 +152,4 @@ clean:
 	      $(HUB)/workspacer $(HUB)/workspacer.exe $(HUB)/claudemon $(HUB)/claudemon.exe
 	cd $(CLAUDEMON) && cargo clean
 	cd $(TUI) && cargo clean
+	cd $(NATIVE) && cargo clean

@@ -104,6 +104,16 @@ impl Client {
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
+        self.call_with_timeout(method, params, self.call_timeout)
+            .await
+    }
+
+    pub async fn call_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+    ) -> Result<Value> {
         if !self.connected.load(Ordering::Acquire) {
             bail!("Hub disconnected; request was not sent");
         }
@@ -113,10 +123,10 @@ impl Client {
                 method: method.into(),
                 params,
                 reply,
-                expires: Instant::now() + self.call_timeout,
+                expires: Instant::now() + deadline,
             })
             .map_err(|_| anyhow!("Hub busy; request was not sent"))?;
-        timeout(self.call_timeout, result)
+        timeout(deadline, result)
             .await
             .map_err(|_| {
                 anyhow!("Request timed out; outcome unknown. Check the session before retrying")

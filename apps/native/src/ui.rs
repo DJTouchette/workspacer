@@ -8,7 +8,7 @@ use gpui_component::{
     text::TextView,
 };
 use std::{collections::HashMap, sync::Arc};
-use wks_native::controller::{Action, Command, Controller, View};
+use wks_native::controller::{Action, Command, Controller, NewSession, View};
 
 // Native equivalents of the desktop semantic tokens. No CSS/browser runtime.
 const BASE: u32 = 0x14171c;
@@ -23,6 +23,7 @@ actions!(
     native,
     [
         SendMessage,
+        CreateSession,
         NextSession,
         PreviousSession,
         FocusComposer,
@@ -33,6 +34,8 @@ actions!(
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("ctrl-n", CreateSession, Some("Workspace")),
+        KeyBinding::new("cmd-n", CreateSession, Some("Workspace")),
         KeyBinding::new("ctrl-enter", SendMessage, Some("Workspace")),
         KeyBinding::new("cmd-enter", SendMessage, Some("Workspace")),
         // Input owns its own Enter bindings, so match the focused editor's
@@ -54,6 +57,15 @@ pub struct Workspace {
     controller: Controller,
     view: Arc<View>,
     composer: Entity<InputState>,
+    new_session: bool,
+    provider: &'static str,
+    project: Entity<InputState>,
+    label: Entity<InputState>,
+    model: Entity<InputState>,
+    prompt: Entity<InputState>,
+    spawn_pending: bool,
+    last_spawn_receipt: u64,
+    spawn_error: String,
     focus: FocusHandle,
     list: ListState,
     drafts: HashMap<String, String>,
@@ -81,6 +93,16 @@ impl Workspace {
                 .rows(3)
                 .placeholder("Message this session…")
         });
+        let project =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Absolute project directory"));
+        let label = cx.new(|cx| InputState::new(window, cx).placeholder("Optional session name"));
+        let model = cx.new(|cx| InputState::new(window, cx).placeholder("Provider default"));
+        let prompt = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .rows(3)
+                .placeholder("What would you like to work on? (optional)")
+        });
         let incoming = controller.views.clone();
         let updates = cx.spawn_in(window, async move |this, cx| {
             while let Ok(view) = incoming.recv().await {
@@ -103,6 +125,15 @@ impl Workspace {
             controller,
             view: Arc::new(View::default()),
             composer,
+            new_session: false,
+            provider: "claude",
+            project,
+            label,
+            model,
+            prompt,
+            spawn_pending: false,
+            last_spawn_receipt: 0,
+            spawn_error: String::new(),
             focus,
             list,
             drafts: HashMap::new(),
@@ -123,6 +154,27 @@ impl Workspace {
     }
 
     fn update_view(&mut self, view: Arc<View>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(receipt) = &view.spawn_receipt
+            && receipt.number > self.last_spawn_receipt
+        {
+            self.last_spawn_receipt = receipt.number;
+            self.spawn_pending = false;
+            self.spawn_error = receipt.error.clone().unwrap_or_default();
+            if let Some(id) = &receipt.session {
+                self.new_session = false;
+                if let Some(message) = &receipt.unsent_message {
+                    self.drafts.insert(id.clone(), message.clone());
+                    if self.view.selected.as_ref() == Some(id) {
+                        self.composer
+                            .update(cx, |input, cx| input.set_value(message.clone(), window, cx));
+                    }
+                }
+                self.prompt
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.composer
+                    .update(cx, |input, cx| input.focus(window, cx));
+            }
+        }
         if let Some(id) = &self.requested_session {
             if view.selected.as_ref() == Some(id) {
                 self.selection_requested = false;
@@ -237,6 +289,10 @@ impl Workspace {
     }
 
     fn send(&mut self, _: &SendMessage, _: &mut Window, cx: &mut Context<Self>) {
+        if self.new_session {
+            self.create(cx);
+            return;
+        }
         let text = self.composer.read(cx).value().to_string();
         if text.trim().is_empty() || self.view.busy || !self.view.connected {
             return;
@@ -248,6 +304,53 @@ impl Workspace {
         if let Some(session) = self.view.selected.clone() {
             self.command(Command::Act { session, action }, cx);
         }
+    }
+
+    fn show_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.demo || self.requested_session.is_some() {
+            return;
+        }
+        self.new_session = true;
+        if self.project.read(cx).value().is_empty() {
+            let cwd = self
+                .view
+                .sessions
+                .iter()
+                .find(|s| Some(&s.id) == self.view.selected.as_ref())
+                .map(|s| s.cwd.clone())
+                .unwrap_or_default();
+            self.project
+                .update(cx, |input, cx| input.set_value(cwd, window, cx));
+        }
+        self.project.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    fn create(&mut self, cx: &mut Context<Self>) {
+        if self.demo
+            || self.requested_session.is_some()
+            || self.spawn_pending
+            || self.view.creating
+            || !self.view.connected
+        {
+            return;
+        }
+        let request = NewSession {
+            provider: self.provider.into(),
+            cwd: self.project.read(cx).value().to_string(),
+            label: self.label.read(cx).value().to_string(),
+            model: self.model.read(cx).value().to_string(),
+            message: self.prompt.read(cx).value().to_string(),
+        };
+        self.spawn_error.clear();
+        match request
+            .params()
+            .and_then(|_| self.controller.command(Command::Create(request)))
+        {
+            Ok(()) => self.spawn_pending = true,
+            Err(error) => self.spawn_error = error.to_string(),
+        }
+        cx.notify();
     }
 
     fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
@@ -386,9 +489,17 @@ impl Render for Workspace {
                         .child(if self.demo {
                             "NATIVE EXPERIMENT · DEMO"
                         } else {
-                            "NATIVE EXPERIMENT"
+                            "NATIVE"
                         }),
                 ),
+            )
+            .child(
+                self.button(
+                    "new-session",
+                    "New session",
+                    !self.demo && self.requested_session.is_none(),
+                )
+                .on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))),
             )
             .child(
                 uniform_list(
@@ -437,6 +548,7 @@ impl Render for Workspace {
                                             }),
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.new_session = false;
                                         this.command(Command::Select(id.clone()), cx)
                                     }))
                             })
@@ -462,8 +574,130 @@ impl Render for Workspace {
                     )),
             );
 
+        if self.new_session {
+            let busy = self.spawn_pending || self.view.creating;
+            let can_create = self.view.connected && !busy;
+            return div()
+                .key_context("Workspace")
+                .track_focus(&self.focus)
+                .size_full()
+                .flex()
+                .bg(rgb(BASE))
+                .text_color(rgb(TEXT))
+                .text_size(px(14.))
+                .on_action(cx.listener(Self::send))
+                .child(sidebar)
+                .child(
+                    div()
+                        .id("new-session-form")
+                        .flex_1()
+                        .min_w_0()
+                        .h_full()
+                        .overflow_y_scroll()
+                        .p_5()
+                        .child(
+                            div()
+                                .max_w(px(640.))
+                                .mx_auto()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(div().text_size(px(20.)).child("New session"))
+                                .child(
+                                    div()
+                                        .text_color(rgb(MUTED))
+                                        .text_size(px(12.))
+                                        .child("Start an agent on your connected Workspacer hub."),
+                                )
+                                .child("Provider")
+                                .child(div().flex().gap_2().children(
+                                    [("claude", "Claude"), ("codex", "Codex")].into_iter().map(
+                                        |(provider, label)| {
+                                            self.button(provider, label, !busy)
+                                                .when(self.provider == provider, |d| {
+                                                    d.bg(rgb(SELECTED))
+                                                })
+                                                .when(!busy, |d| {
+                                                    d.on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            this.provider = provider;
+                                                            cx.notify();
+                                                        },
+                                                    ))
+                                                })
+                                        },
+                                    ),
+                                ))
+                                .child("Project directory")
+                                .child(Input::new(&self.project).disabled(busy))
+                                .child(
+                                    div().text_size(px(12.)).text_color(rgb(MUTED)).child(
+                                        "Use an existing absolute path on the hub's machine.",
+                                    ),
+                                )
+                                .child("Session name")
+                                .child(Input::new(&self.label).disabled(busy))
+                                .child("Model (optional)")
+                                .child(Input::new(&self.model).disabled(busy))
+                                .child("First message")
+                                .child(Input::new(&self.prompt).h(px(110.)).disabled(busy))
+                                .when(!self.spawn_error.is_empty(), |d| {
+                                    d.child(
+                                        div()
+                                            .text_color(rgb(WARNING))
+                                            .child(self.spawn_error.clone()),
+                                    )
+                                })
+                                .when(!self.view.connected, |d| {
+                                    d.child(
+                                        div()
+                                            .text_color(rgb(WARNING))
+                                            .child("Waiting for the hub connection…"),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .flex()
+                                        .justify_between()
+                                        .child(self.button("cancel-create", "Back", !busy).when(
+                                            !busy,
+                                            |d| {
+                                                d.on_click(cx.listener(|this, _, _, cx| {
+                                                    this.new_session = false;
+                                                    cx.notify();
+                                                }))
+                                            },
+                                        ))
+                                        .child(
+                                            self.button(
+                                                "create-session",
+                                                if busy {
+                                                    "Creating session…"
+                                                } else {
+                                                    "Create session"
+                                                },
+                                                can_create,
+                                            )
+                                            .when(
+                                                can_create,
+                                                |d| {
+                                                    d.on_click(
+                                                        cx.listener(|this, _, _, cx| {
+                                                            this.create(cx)
+                                                        }),
+                                                    )
+                                                },
+                                            ),
+                                        ),
+                                ),
+                        ),
+                )
+                .into_any_element();
+        }
+
         div().key_context("Workspace").track_focus(&self.focus).size_full().flex().bg(rgb(BASE)).text_color(rgb(TEXT)).text_size(px(14.))
             .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(|this, _: &CreateSession, window, cx| this.show_new_session(window, cx)))
             .on_action(cx.listener(|this, _: &NextSession, _, cx| this.move_selection(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousSession, _, cx| this.move_selection(-1, cx)))
             .on_action(cx.listener(|this, _: &FocusComposer, window, cx| this.composer.update(cx, |input, cx| input.focus(window, cx))))
@@ -476,7 +710,7 @@ impl Render for Workspace {
                 .when(!notice.is_empty(), |d| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(WARNING)).child(notice)))
                 .when(self.view.transcript.omitted, |d| d.child(div().px_5().text_size(px(11.)).text_color(rgb(MUTED)).child("Showing recent history; older content is retained by the server.")))
                 .when(self.view.loading, |d| d.child(div().px_5().text_color(rgb(MUTED)).child("Loading conversation…")))
-                .when(!self.view.loading && self.view.transcript.rows.is_empty(), |d| d.child(div().p_5().text_color(rgb(MUTED)).child(if self.view.sessions.is_empty() {"Connect to a running Workspacer hub to see sessions. Use --demo to explore the native client."} else {"No conversation yet."})))
+                .when(!self.view.loading && self.view.transcript.rows.is_empty(), |d| d.child(div().p_5().text_color(rgb(MUTED)).child(if self.view.sessions.is_empty() {if self.view.connected {"No sessions yet. Choose New session to get started."} else {"Connecting to Workspacer. Start the desktop app or workspacer serve, or specify --bus."}} else {"No conversation yet."})))
                 .child(transcript)
                 .when(!self.follow, |d| d.child(self.button("latest", "Jump to latest", true).on_click(cx.listener(|this, _, _, cx| {
                     this.follow = true;
@@ -502,6 +736,7 @@ impl Render for Workspace {
                         .child(div().flex().gap_2()
                             .child(self.button("stop", "Interrupt", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx)))))
                             .child(self.button("send", if self.view.busy {"Sending…"} else {"Send"}, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx)))))))))
+            .into_any_element()
     }
 }
 
@@ -559,6 +794,63 @@ mod tests {
             ]),
             ..Default::default()
         }
+    }
+
+    #[gpui::test]
+    fn new_session_form_creates_once_and_keeps_failed_input(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+            })
+        });
+        visual.simulate_keystrokes("ctrl-n");
+        visual.simulate_input("/work/project");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                assert!(this.new_session);
+                this.provider = "codex";
+                this.prompt
+                    .update(cx, |input, cx| input.set_value("Hello", window, cx));
+            })
+        });
+        visual.simulate_keystrokes("ctrl-enter");
+        visual.simulate_keystrokes("ctrl-enter");
+        let Command::Create(request) = commands.try_recv().expect("create command") else {
+            panic!("wrong command")
+        };
+        assert_eq!(request.cwd, "/work/project");
+        assert_eq!(request.provider, "codex");
+        assert_eq!(request.message, "Hello");
+        assert!(commands.try_recv().is_err());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut failed = state("a");
+                failed.spawn_receipt = Some(wks_native::controller::SpawnReceipt {
+                    number: 1,
+                    session: None,
+                    error: Some("Launch failed".into()),
+                    unsent_message: None,
+                });
+                this.update_view(Arc::new(failed), window, cx);
+                assert!(this.new_session);
+                assert!(!this.spawn_pending);
+                assert_eq!(this.prompt.read(cx).value().as_ref(), "Hello");
+                assert_eq!(this.project.read(cx).value().as_ref(), "/work/project");
+                assert_eq!(this.spawn_error, "Launch failed");
+                let mut success = state("b");
+                success.spawn_receipt = Some(wks_native::controller::SpawnReceipt {
+                    number: 2,
+                    session: Some("b".into()),
+                    error: None,
+                    unsent_message: Some("Hello".into()),
+                });
+                this.update_view(Arc::new(success), window, cx);
+                assert!(!this.new_session);
+                assert_eq!(this.composer.read(cx).value().as_ref(), "Hello");
+            })
+        });
     }
 
     #[gpui::test]

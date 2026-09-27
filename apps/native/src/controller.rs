@@ -40,10 +40,65 @@ impl Action {
     }
 }
 
+/// User-entered launch settings. Paths refer to the connected hub's machine.
+#[derive(Clone, Debug, Default)]
+pub struct NewSession {
+    pub provider: String,
+    pub cwd: String,
+    pub label: String,
+    pub model: String,
+    pub message: String,
+}
+
+impl NewSession {
+    pub fn params(&self) -> Result<Value> {
+        anyhow::ensure!(
+            matches!(self.provider.as_str(), "claude" | "codex"),
+            "Choose Claude or Codex"
+        );
+        let cwd = self.cwd.trim();
+        let bytes = cwd.as_bytes();
+        let absolute = cwd.starts_with('/')
+            || cwd.starts_with("\\\\")
+            || (bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\'));
+        anyhow::ensure!(
+            absolute && !cwd.contains('\0'),
+            "Enter an absolute project directory on the hub's machine"
+        );
+        anyhow::ensure!(
+            self.message.len() <= 65536,
+            "Initial message must be at most 64 KiB"
+        );
+        let mut params = json!({"provider":self.provider,"cwd":cwd,"transport":"stream","skipPermissions":false});
+        for (key, value) in [
+            ("label", &self.label),
+            ("model", &self.model),
+            ("message", &self.message),
+        ] {
+            if !value.trim().is_empty() {
+                params[key] = json!(value.trim());
+            }
+        }
+        Ok(params)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SpawnReceipt {
+    pub number: u64,
+    pub session: Option<String>,
+    pub error: Option<String>,
+    pub unsent_message: Option<String>,
+}
+
 pub enum Command {
     Select(String),
     Act { session: String, action: Action },
     Refresh,
+    Create(NewSession),
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +119,8 @@ pub struct View {
     pub busy: bool,
     pub notice: String,
     pub receipt: Option<Receipt>,
+    pub creating: bool,
+    pub spawn_receipt: Option<SpawnReceipt>,
 }
 
 pub struct Controller {
@@ -106,6 +163,7 @@ impl Controller {
 }
 
 enum Completion {
+    Spawn(u64, NewSession, Result<Value>),
     Fleet(u64, Result<Value>),
     Conversation(u64, u64, Result<Value>),
     Action(u64, String, Action, Result<Value>),
@@ -128,6 +186,7 @@ struct Worker {
     dirty: bool,
     fleet_dirty: bool,
     action_number: u64,
+    created_row: Option<Value>,
     last_fleet: Instant,
     last_conversation: Instant,
 }
@@ -151,6 +210,7 @@ impl Worker {
             dirty: false,
             fleet_dirty: false,
             action_number: 0,
+            created_row: None,
             last_fleet: Instant::now(),
             last_conversation: Instant::now(),
         }
@@ -172,6 +232,7 @@ impl Worker {
                     Err(_) => break,
                     Ok(Command::Select(id)) if self.sessions.contains_key(&id) => self.select(Some(id)).await,
                     Ok(Command::Act { session, action }) => self.act(session, action),
+                    Ok(Command::Create(request)) => self.create(request),
                     Ok(Command::Refresh) => { self.fetch_fleet(); self.fetch_conversation(); }
                     _ => {}
                 },
@@ -430,8 +491,87 @@ impl Worker {
         self.dirty = true;
     }
 
+    fn create(&mut self, request: NewSession) {
+        if self.view.creating {
+            return;
+        }
+        self.action_number += 1;
+        let number = self.action_number;
+        let params = request.params().and_then(|params| {
+            anyhow::ensure!(
+                self.view.connected,
+                "Hub disconnected; session was not created"
+            );
+            Ok(params)
+        });
+        match params {
+            Err(error) => {
+                self.view.spawn_receipt = Some(SpawnReceipt {
+                    number,
+                    session: None,
+                    error: Some(error.to_string()),
+                    unsent_message: None,
+                });
+            }
+            Ok(params) => {
+                self.view.creating = true;
+                let bus = self.bus.clone();
+                self.jobs.push(Box::pin(async move {
+                    let result = bus
+                        .call_with_timeout("agents.spawn", params, Duration::from_secs(360))
+                        .await;
+                    Completion::Spawn(number, request, result)
+                }));
+            }
+        }
+        self.dirty = true;
+    }
+
     async fn complete(&mut self, completion: Completion) {
         match completion {
+            Completion::Spawn(number, request, result) => {
+                self.view.creating = false;
+                let result = result.and_then(|value| {
+                    anyhow::ensure!(value["sessionId"].as_str().is_some_and(|id| !id.is_empty()),
+                        "Spawn returned no session ID; outcome unknown. Refresh sessions before retrying");
+                    Ok(value)
+                });
+                match result {
+                    Ok(value) => {
+                        let id = value["sessionId"].as_str().unwrap().to_owned();
+                        let unsent_message = (!request.message.trim().is_empty()
+                            && value["messageQueued"] != true)
+                            .then(|| request.message.clone());
+                        let row = json!({"sessionId":id,"cwd":request.cwd.trim(),"label":request.label.trim(),"transport":"stream","mode":"unknown"});
+                        // Preserve the acknowledged identity across an older fleet read.
+                        if !self.sessions.contains_key(&id) {
+                            self.upsert(&row);
+                        }
+                        self.created_row = Some(row);
+                        self.select(Some(id.clone())).await;
+                        self.view.notice = if unsent_message.is_some() {
+                            "Session created. Initial message delivery was not confirmed; check the conversation before sending the retained draft.".into()
+                        } else {
+                            "Session created".into()
+                        };
+                        self.view.spawn_receipt = Some(SpawnReceipt {
+                            number,
+                            session: Some(id),
+                            error: None,
+                            unsent_message,
+                        });
+                        self.fetch_fleet();
+                    }
+                    Err(error) => {
+                        self.view.spawn_receipt = Some(SpawnReceipt {
+                            number,
+                            session: None,
+                            error: Some(error.to_string()),
+                            unsent_message: None,
+                        });
+                    }
+                }
+            }
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;
                 match result {
@@ -448,6 +588,13 @@ impl Worker {
                         }
                         for (_, row) in std::mem::take(&mut self.fleet_overlay) {
                             self.upsert(&row);
+                        }
+                        if let Some(row) = self.created_row.take() {
+                            let id = row["sessionId"].as_str().unwrap();
+                            if !self.sessions.contains_key(id) {
+                                self.upsert(&row);
+                                self.created_row = Some(row);
+                            }
                         }
                         self.fleet_dirty = true;
                         if self

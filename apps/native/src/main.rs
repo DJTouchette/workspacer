@@ -93,6 +93,8 @@ fn main() -> Result<()> {
                 ..Default::default()
             },
             |window, cx| {
+                window.set_window_title("Workspacer Native");
+                window.set_app_id("workspacer-native");
                 let view = cx.new(|cx| {
                     let mut view = ui::Workspace::new(controller, args.demo, window, cx);
                     view.open_session(args.session);

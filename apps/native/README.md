@@ -19,6 +19,28 @@ Visual Studio C++ build tools. Linux needs a working X11/Wayland display and
 Vulkan driver. The CI workflow builds/tests all three platforms; local validation
 results are recorded separately below.
 
+From the repository root (connects to the running desktop hub or `workspacer serve`):
+
+```sh
+make dev-native     # build and launch the debug GUI
+make build-native   # build apps/native/target/release/wks-native
+make run-native     # build and launch the release GUI
+make test-native    # protocol and GPUI input tests
+```
+
+Use **New session** (`Ctrl/Cmd+N`), choose Claude or Codex, and enter an existing
+absolute project directory on the connected hub. A name, model override, and
+first message are optional. **Create session** opens the real agent conversation;
+provider tool approvals remain enabled. The provider CLI must be installed and
+signed in on the hub. Failed launches retain the form. If the connection drops
+before acknowledgement, refresh the session list before retrying to avoid a
+duplicate. An unconfirmed first message is retained as a composer draft.
+
+The launch targets use live data by default and do not start or stop the backend.
+For a different hub, pass `ARGS="--bus wss://host/bus --token-file /path/to/token"`.
+Demo mode remains explicitly opt-in with `ARGS="--demo"`; creation is disabled there.
+The native targets are also included in the root `build`, `test`, and `clean` targets.
+
 From `apps/native`:
 
 ```sh
@@ -42,10 +64,10 @@ URLs**. Config directory rules match the existing clients (`APPDATA` on Windows;
 `XDG_CONFIG_HOME`, otherwise `~/.config`, on Unix including macOS). Local credentials
 are never automatically forwarded to an explicitly remote hub.
 
-The client connects to existing sessions. It does not own or stop backend
-processes on exit. The connected hub needs a provider for `sessions.snapshots`,
+The client connects to existing sessions and creates sessions via `agents.spawn`.
+It does not own or stop backend processes on exit. The connected hub needs a provider for `sessions.snapshots`,
 `sessions.conversation`, `agents.sendMessage`, `claude.approve`, `claude.answer`,
-and `claude.signal`.
+`claude.signal`, and `agents.spawn`.
 
 ## First slice
 
@@ -65,8 +87,8 @@ Captured during a real Codex round trip through an isolated backend:
 
 This experiment intentionally starts with the connected hub's own sessions.
 Federated/paired rows are excluded so a remote session cannot accidentally be
-controlled through an unqualified local method. Terminal emulation, session
-creation, historical pagination, attachments, model settings, full theme parity,
+controlled through an unqualified local method. Terminal emulation,
+historical pagination, attachments, model settings, full theme parity,
 and packaging/updating remain follow-on work. Rich tool input/output is displayed
 as text, without the Electron client's diff cards.
 
@@ -165,6 +187,19 @@ It deliberately does not call those values GPU frame latency or startup time.
 For comparisons with Electron, run both clients against the same backend and
 workload, measuring client RSS, total-stack RSS, idle CPU, cold startup, and
 input/scroll latency separately. Use release binaries on representative hardware.
+
+On Linux, compare already-running clients without restarting them (use Electron's
+main PID, not a renderer PID):
+
+```sh
+python3 scripts/compare-clients.py --native-pid NATIVE_PID --electron-pid ELECTRON_PID --seconds 20
+```
+
+This reports sampled CPU and proportional RAM (PSS, which apportions shared pages).
+It includes Chromium child processes and any open DevTools, excludes separate
+backend/build processes, and does not measure GPU memory. Electron's in-process
+host services remain included. Match builds, displayed conversations and window
+visibility before treating the result as a controlled efficiency comparison.
 
 The X11 smoke script drives focus, resize, typing and send, then captures native
 pixels and fails on a blank window. It reports window-appearance time (not time
