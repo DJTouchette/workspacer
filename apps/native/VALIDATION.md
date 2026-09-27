@@ -1,0 +1,70 @@
+# Native client validation — 2026-09-27
+
+## Automated checks
+
+- `cargo test --locked --features ui-tests`: **20 passed** — 4 model,
+  11 WebSocket/controller/live-harness, and 5 GPUI tests.
+- `cargo clippy --locked --all-targets --features ui-tests -- -D warnings`: passed.
+- `cargo build --locked --release --bin wks-native`: passed, followed by the
+  real-window smoke against the optimized executable.
+- Rust formatting, Python harness syntax, workflow YAML, and diff whitespace:
+  passed.
+- Independent reviewer rechecked allocation bounds, stream reset/readiness races,
+  revision collisions, draft handling, and live-test targeting. Reported issues
+  were fixed and received regressions; no remaining reviewed blocker.
+
+The tests use actual loopback WebSockets and GPUI's window/input harness. They
+exercise protocol ordering and rendering behavior rather than asserting only
+helper return values. Witness initially reported the new app as unmapped; the
+complete native suite was run directly.
+
+## Real-provider check
+
+The repeatable `scripts/live-stack.py` command started an isolated hub, brain,
+and claudemon using temporary configuration, database, and loopback ports. Global
+hook installation was skipped and the tool facade was explicitly disabled for
+the no-tool prompts. The running production hub's credentials were not changed.
+
+**Codex passed:**
+
+1. Launch a disposable stream session and receive `NATIVE_TEST_READY`.
+2. Send through the production native controller and receive `NATIVE_FOLLOWUP_OK`.
+3. Reconstruct the conversation in a fresh client, without its previous cache.
+4. Open that session in the actual GPUI window and capture its rendered text.
+5. Shut down the native window and isolated backend; temporary state was removed.
+
+The final live controller exercise took **14.159 seconds**, including provider
+startup and two model replies; the first reply arrived at 11.866 seconds. These
+are not UI latency measurements. [The captured window](docs/live-codex.png) shows
+both assistant responses and the connected test session.
+
+Claude was attempted but could not authenticate: its local OAuth session was
+expired and could not be refreshed. That test did not pass. The harness terminated
+the failed disposable session and shut down its isolated backend.
+
+## Performance scope
+
+The reducer benchmark covers a 5,000-item initial snapshot, 20,000 streaming
+events, and periodic immutable UI snapshots. Its bounds are asserted independently
+of timing: at most 2,000 retained rows / 4 MiB text, with clipped allocations also
+bounded. Run the JSON benchmark command in README for measurements on your machine.
+
+Final optimized reducer sample on this Linux host: **12.1 µs p99** per event/
+periodic snapshot handoff, 20,000 events in 24.97 ms, and 1,530 retained rows /
+4,192,600 text bytes. Initial 5,000-item construction/folding took 65.89 ms.
+This sample excludes text layout, GPU work, network traffic, and process RSS;
+it is a reproducible workload measurement, not a hardware-independent guarantee.
+
+Native window smoke passed under Linux Xvfb + Mesa software Vulkan, including
+focus, resize, typing, send, and a nonblank pixel capture. This validates a real
+window but is not representative hardware GPU performance. The release binary was
+26,271,608 bytes. Its fixture smoke observed window appearance at 504 ms,
+132,247,552 bytes RSS, and 12.7% of one CPU core over a three-second sample after
+a three-second settle. This includes the in-process fixture and CPU-based Vulkan
+rendering, and does not establish steady-state hardware idle CPU or a speedup
+over Electron. Representative desktop GPU measurements remain necessary.
+
+Windows/macOS build-and-test jobs are configured, but were not executed locally.
+Live permissions/tool approvals, PTY terminals, and remote TLS/account setup are
+outside this recorded live check. The first implementation's scope and remaining
+features are listed in README.

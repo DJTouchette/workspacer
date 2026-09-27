@@ -1,0 +1,53 @@
+name: native-client
+
+on:
+  pull_request:
+    paths: ['apps/native/**', '.github/workflows/native-client.yml']
+  push:
+    branches: [master]
+    paths: ['apps/native/**', '.github/workflows/native-client.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: native-client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/native
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native
+      - name: Linux native libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libfontconfig1-dev libwayland-dev libssl-dev libasound2-dev libvulkan1 mesa-vulkan-drivers xvfb xauth xdotool fonts-dejavu-core
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets --features ui-tests -- -D warnings
+      - name: Reducer, WebSocket and GPUI interaction tests
+        run: cargo test --locked --features ui-tests
+      - name: Link the native application
+        run: cargo build --locked --bin wks-native
+      - name: Real Linux window, keyboard and pixel smoke
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s '-screen 0 1280x900x24' python3 scripts/smoke.py
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && always()
+        with:
+          name: native-linux-smoke
+          path: apps/native/native-smoke.png
+      - name: Measure bounded transcript workload
+        run: cargo run --locked --release --no-default-features --bin native-harness -- bench --events 20000
