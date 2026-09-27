@@ -45,6 +45,11 @@ try {
         throw 'Start menu shortcut must launch the installed GUI in local mode'
     }
     if (!(Test-Path $key)) { throw 'Windows uninstall registration missing' }
+    $expectedUninstall = '"' + (Join-Path $installDir 'Uninstall.exe') + '"'
+    $registration = Get-ItemProperty $key
+    if ($registration.UninstallString -ne $expectedUninstall -or $registration.QuietUninstallString -ne "$expectedUninstall /S") {
+        throw 'Windows uninstall commands must quote the installed path without literal dollar signs'
+    }
     $version = (Get-Content (Join-Path $stage 'build-stamp.json') | ConvertFrom-Json).version
     if ((Get-ItemProperty $key).DisplayVersion -ne $version) { throw 'Installed version does not match the release' }
     # Upgrade in place must preserve data and reproduce the complete payload.
@@ -69,15 +74,17 @@ try {
     $node = Join-Path $installDir 'node.exe'
     & $node -e "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(':memory:').close()"
     if ($LASTEXITCODE -ne 0) { throw 'Packaged Node SQLite runtime failed' }
+    $hubPort = Get-FreePort
+    do { $mcpPort = Get-FreePort } while ($mcpPort -eq $hubPort)
+    & $harness embedded-probe --services-dir $installDir --database (Join-Path $testRoot 'state.db') --hub-port $hubPort --mcp-port $mcpPort
+    if ($LASTEXITCODE -ne 0) { throw 'Installed embedded backend probe failed' }
+    # The backend must initialize the pairing token before a service call creates
+    # settings; otherwise the intentional missing-token/state-loss guard fires.
     $reply = '{"id":"smoke","method":"desktop.pricingGetRates","params":{},"context":{}}' |
         & $node (Join-Path $installDir 'desktop-host.cjs') | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or $reply.id -ne 'smoke' -or $reply.PSObject.Properties['error'] -or !$reply.result.defaults) {
         throw 'Installed desktop service bundle failed its protocol check'
     }
-    $hubPort = Get-FreePort
-    do { $mcpPort = Get-FreePort } while ($mcpPort -eq $hubPort)
-    & $harness embedded-probe --services-dir $installDir --database (Join-Path $testRoot 'state.db') --hub-port $hubPort --mcp-port $mcpPort
-    if ($LASTEXITCODE -ne 0) { throw 'Installed embedded backend probe failed' }
     # Restore the shell paths before invoking the uninstall machinery.
     foreach ($name in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
     Invoke-Uninstaller

@@ -65,7 +65,7 @@ test('NSIS compiles the staged payload into a Windows installer', { skip: !proce
   const { stage, uninstall } = stagePayload(options);
   const output = path.join(options.root, 'Native Setup.exe');
   const prefix = process.platform === 'win32' ? '/' : '-';
-  const args = ['V3', `DVERSION=${options.version}`, `DSTAGE=${stage}`, `DOUTPUT=${output}`, `DUNINSTALL_FILES=${uninstall}`]
+  const args = ['V3', 'WX', `DVERSION=${options.version}`, `DSTAGE=${stage}`, `DOUTPUT=${output}`, `DUNINSTALL_FILES=${uninstall}`]
     .map(arg => prefix + arg);
   args.push(path.join(repo, 'apps/native/packaging/windows/installer.nsi'));
   const result = spawnSync(process.env.MAKENSIS, args, { encoding: 'utf8' });

@@ -24,7 +24,7 @@ const { uninstall } = stagePayload({
 const installer = path.join(out, `Workspacer-Native-Setup-${version}-x64.exe`);
 const compiler = process.env.MAKENSIS || path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'NSIS/makensis.exe');
 const result = spawnSync(compiler, [
-  '/V3', `/DVERSION=${version}`, `/DSTAGE=${stage}`, `/DOUTPUT=${installer}`,
+  '/V3', '/WX', `/DVERSION=${version}`, `/DSTAGE=${stage}`, `/DOUTPUT=${installer}`,
   `/DUNINSTALL_FILES=${uninstall}`, path.join(root, 'apps/native/packaging/windows/installer.nsi'),
 ], { stdio: 'inherit' });
 if (result.error) throw result.error;

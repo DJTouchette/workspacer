@@ -139,6 +139,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: services/claudemon
+          cache-on-failure: true
 
       # apps/desktop's postinstall rebuilds better-sqlite3 against Electron's
       # ABI for this OS, so the native module ships correctly per platform.
@@ -213,6 +214,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/native
+          cache-on-failure: true
 
       - name: Build native Windows application and probe
         if: runner.os == 'Windows'
