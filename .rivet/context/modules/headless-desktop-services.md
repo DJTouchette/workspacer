@@ -27,7 +27,10 @@ MCP facade, and plugin sidecars.
 
 `services/hub/cmd/brain/desktophost.go` locates the bundle beside the brain
 executable, unless `WKS_DESKTOP_HOST` overrides it. It starts `node <bundle>`
-on demand and reuses that process for subsequent calls. `available()` checks
+on demand and reuses that process for subsequent calls. On Windows it prefers
+a regular `node.exe` beside the brain executable (the native installer bundles
+one), falling back to PATH for existing installations. Bundle overrides and the
+working directory do not select the private runtime. `available()` checks
 for a regular bundle file; it does not prove Node is installed or that startup
 will succeed. Node runs as the brain's OS user and is not a sandbox boundary.
 

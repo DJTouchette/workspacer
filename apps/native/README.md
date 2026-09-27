@@ -6,6 +6,42 @@ GPUI Component are pinned together; the optional component webview feature is
 disabled. Local mode embeds the claudemon Rust library and retains the hub, brain, and MCP
 facade for shared services and agent tools.
 
+## Windows installer
+
+The release workflow builds `Workspacer-Native-Setup-<version>-x64.exe` alongside
+its Electron artifacts. Version tags attach it to the draft release; nightlies
+include it in the rolling prerelease. PR and manual builds upload it as part of
+the Windows workflow artifact. This is an experimental, unsigned installer with
+manual updates, separate from the Electron installer and updater.
+
+It installs per user, adds a **Workspacer Native** Start menu shortcut with
+`--local`, and bundles the four Go services, `desktop-host.cjs`, a private Node
+22 runtime, examples and the Visual C++ runtime DLLs. Agent CLIs and Git are
+separate prerequisites. Close other local Workspacer backends using ports 7895
+and 7897 before starting local mode, or use `--bus` to connect to one instead.
+Uninstall preserves session data and shared configuration.
+
+To reproduce on Windows x64, build the desktop/service artifacts with
+`npm run package -- --publish never` from `apps/desktop`, then from the repo root:
+
+```powershell
+cargo build --manifest-path apps/native/Cargo.toml --locked --release --bin wks-native --bin native-harness
+# Install NSIS 3; point NATIVE_CRT_DIR at Visual Studio's x64 Microsoft.VC*.CRT directory.
+$env:NATIVE_CRT_DIR = 'C:\path\to\Microsoft.VC143.CRT'
+node apps/native/scripts/package-windows.mjs
+$version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Setup-$version-x64.exe"
+```
+
+Packaging uses the Node executable running the script (x64 Node 22.13+), and
+expects its adjacent `LICENSE` file from the official Node distribution.
+`MAKENSIS` can override the compiler path. The smoke test requires a disposable
+Windows user without an existing native installation. It checks install/upgrade,
+payload hashes, the local-mode shortcut, backend readiness and shutdown without
+Node on PATH, and uninstall/data retention. It does not launch an agent or
+validate GPU rendering. The release version and source SHA are recorded in the
+installed `build-stamp.json`.
+
 ## Run
 
 Use a current stable Rust toolchain. On Debian/Ubuntu, install the native build

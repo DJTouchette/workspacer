@@ -133,3 +133,24 @@ The workflow currently gives explicit space-free names only to nightlies. Verify
 each stable update YAML path/URL against the actual uploaded draft asset names
 before publication; do not assume the provider repairs them. This audit checked
 the local resolver and workflow, not the historical live release URLs.
+
+## Native Windows installer
+
+The Windows release leg also builds `apps/native` in release mode and runs
+`apps/native/scripts/package-windows.mjs`. Its separate unsigned
+`Workspacer-Native-Setup-<version>-x64.exe` is included by the existing `.exe`
+upload/tag attachment globs and required by the nightly asset gate. Native
+updates are manual; no Electron update metadata is emitted for this installer.
+The landing page's Electron Windows download explicitly excludes native assets.
+
+The per-user NSIS package contains `wks-native.exe`, the four Go local services,
+`desktop-host.cjs`, the build runner's Node 22 runtime/license, Visual C++ runtime
+DLLs and examples. Its Start menu shortcut passes `--local`; bare executable
+launches retain the existing-hub default. Native and Electron install identities
+are separate, though local ports and shared configuration can still conflict.
+Uninstall removes enumerated package files, preserving user data and unknown files.
+
+The Windows release job runs payload/compiler tests, private Node resolution,
+and a silent install/upgrade/backend/shutdown/uninstall smoke with isolated
+state and no system Node on PATH. Linux-local validation can compile NSIS with
+fixture payloads but does not establish that the Windows application launches.

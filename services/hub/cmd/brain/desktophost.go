@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -68,6 +69,18 @@ func (h *desktopHost) available() bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
+// Native Windows installs ship a private Node runtime alongside brain. Resolve
+// against the executable, never the working directory or a bundle override.
+func desktopNodeExecutable(executable string) string {
+	if runtime.GOOS == "windows" && executable != "" {
+		candidate := filepath.Join(filepath.Dir(executable), "node.exe")
+		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
+			return candidate
+		}
+	}
+	return "node"
+}
+
 func (h *desktopHost) startLocked() (*desktopProcess, error) {
 	if h.process != nil {
 		return h.process, nil
@@ -76,7 +89,8 @@ func (h *desktopHost) startLocked() (*desktopProcess, error) {
 	if _, err := os.Stat(bundle); err != nil {
 		return nil, fmt.Errorf("desktop services are not installed: build/install desktop-host.cjs beside brain")
 	}
-	cmd := exec.Command("node", bundle)
+	executable, _ := os.Executable()
+	cmd := exec.Command(desktopNodeExecutable(executable), bundle)
 	cmd.Stderr = os.Stderr
 	input, err := cmd.StdinPipe()
 	if err != nil {

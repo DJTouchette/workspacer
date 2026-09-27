@@ -262,10 +262,10 @@ impl LocalServices {
                 }
             }
         }
-        if let Some(engine) = self.engine.take() {
-            if let Err(error) = engine.shutdown().await {
-                failure = Some(error.context("stopping embedded engine"));
-            }
+        if let Some(engine) = self.engine.take()
+            && let Err(error) = engine.shutdown().await
+        {
+            failure = Some(error.context("stopping embedded engine"));
         }
         if let Some(error) = failure {
             Err(error)

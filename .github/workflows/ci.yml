@@ -1,13 +1,13 @@
 name: ci
 
-# Test + typecheck/lint on every PR and every push to master. Complements
+# Test + typecheck/lint on every PR and every push to main. Complements
 # release.yml (which only smoke-BUILDS the installers). Toolchain setup/versions
 # here mirror release.yml exactly (Node 22, Go 1.25.4, Rust stable, the two
 # `npm ci`s, and the same caches).
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
 
 # A newer push to the same ref cancels the older in-progress run on PRs.

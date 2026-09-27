@@ -17,7 +17,7 @@ on:
         description: 'Publish to the rolling nightly prerelease'
         type: boolean
         default: false
-  # Rolling nightly: rebuild master and republish the `nightly` prerelease
+  # Rolling nightly: rebuild main and republish the `nightly` prerelease
   # (skipped by the gate job when nothing changed since the last one).
   schedule:
     - cron: '0 8 * * *' # 08:00 UTC, overnight for NA
@@ -208,6 +208,51 @@ jobs:
           fi
           npm run package -- --publish never "${extra[@]}"
 
+      - name: Cache native Windows build
+        if: runner.os == 'Windows'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native
+
+      - name: Build native Windows application and probe
+        if: runner.os == 'Windows'
+        working-directory: apps/native
+        run: cargo build --locked --release --bin wks-native --bin native-harness
+
+      - name: Package native Windows installer (unsigned)
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install nsis --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'Visual Studio C++ tools not found' }
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$crt) { throw 'Redistributable x64 CRT not found' }
+          $env:NATIVE_CRT_DIR = $crt.FullName
+          $env:MAKENSIS = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          node --test apps/native/scripts/windows-payload.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Native payload tests failed' }
+          node apps/native/scripts/package-windows.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Native packaging failed' }
+
+      - name: Test native private Node lookup
+        if: runner.os == 'Windows'
+        working-directory: services/hub
+        run: go test ./cmd/brain -run '^TestDesktopNodeExecutable$' -count=1
+
+      - name: Smoke test native Windows install, local backend and uninstall
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Setup-$version-x64.exe"
+
       # Standalone headless-server bundle: the binaries `workspacer serve`
       # supervises — workspacer + hub + brain + claudemon — in ONE directory
       # (the CLI resolves its daemons sibling-first, so extract-and-run needs no
@@ -335,7 +380,7 @@ jobs:
 
           Loopback-only, unauthenticated by design — see the API reference and
           security notes before exposing it beyond localhost:
-          https://github.com/DJTouchette/workspacer/blob/master/landing/build-client.html
+          https://github.com/DJTouchette/workspacer/blob/main/landing/build-client.html
 
           Want the full fleet (bus, plugins, remote clients, MCP) instead? Grab
           workspacer-server-* from the same release.
@@ -462,7 +507,7 @@ jobs:
           # uses must match BEFORE we touch the live release. (No mac zip yet:
           # MacUpdater needs one, but mac auto-update is dead until signing
           # lands anyway — add '*-mac.zip' here when the zip target ships.)
-          for pat in 'Workspacer-Setup-*.exe' '*.AppImage' '*-arm64.dmg' \
+          for pat in 'Workspacer-Setup-*.exe' 'Workspacer-Native-Setup-*-x64.exe' '*.AppImage' '*-arm64.dmg' \
                      'latest.yml' 'latest-linux.yml' 'latest-mac.yml' \
                      '*.blockmap' \
                      'workspacer-server-windows-x64.zip' \
@@ -489,15 +534,15 @@ jobs:
           done
 
           # The body is the [Unreleased] section — which is exactly what a
-          # nightly IS: master since the last tagged release. Same file, same
+          # nightly IS: main since the last tagged release. Same file, same
           # cutter as a tagged release page and the app's Settings → Updates, so
           # the three cannot drift. An empty section is NOT fatal here (unlike
           # tagging a release with no notes): a nightly must still ship the day
           # someone lands a change nobody wrote a line for.
           notes_file="$RUNNER_TEMP/nightly-notes.md"
           {
-            printf 'Rolling nightly build of master (%s). Unsigned.\n\n' "${{ github.sha }}"
-            printf 'Nightly installs auto-update onto the next nightly from this feed and never onto stable — to return to stable, install a release build from the releases page.\n\n'
+            printf 'Rolling nightly build of main (%s). Unsigned.\n\n' "${{ github.sha }}"
+            printf 'Electron nightly installs auto-update onto the next nightly from this feed and never onto stable. Workspacer Native for Windows is experimental, unsigned, and updated manually using its separate installer. To return to stable, install a release build from the releases page.\n\n'
             printf -- '---\n\n'
             printf '## Unreleased — what has landed since the last stable release\n\n'
             node "$GITHUB_WORKSPACE/scripts/changelog-section.mjs" Unreleased \

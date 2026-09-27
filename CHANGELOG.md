@@ -3,9 +3,20 @@
 All notable changes to Workspacer are recorded here. Versions are the desktop
 app version (`apps/desktop/package.json`); each `vX.Y.Z` tag builds installers
 for macOS, Windows, and Linux plus a standalone headless-server bundle. The
-rolling `nightly` prerelease tracks `master` between tagged releases.
+rolling `nightly` prerelease tracks `main` between tagged releases.
 
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
+
+## [Unreleased]
+
+### Added
+- Experimental native Windows x64 installer, separate from the Electron app.
+  The Start menu shortcut launches the Rust/GPUI interface with its embedded
+  local engine and bundled backend services, Node runtime and C++ runtime.
+  The installer is unsigned and updates are manual; agent CLIs and Git remain
+  separate prerequisites. Uninstall preserves sessions and shared settings.
+- Native client themes, project and settings views, keyboard navigation, and
+  live session creation for Claude and Codex against local or existing hubs.
 
 ## [0.169.0] - 2026-09-26
 

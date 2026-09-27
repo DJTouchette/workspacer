@@ -1378,7 +1378,7 @@
       // electron-builder default names: "Workspacer Setup <v>.exe" (nsis),
       // "Workspacer-<v>-arm64.dmg" / "Workspacer-<v>.dmg", "Workspacer-<v>.AppImage".
       var dl = {
-        Windows: url(/Setup.*\.exe$/i) || url(/\.exe$/i, /portable/i),
+        Windows: url(/Setup.*\.exe$/i, /native/i) || url(/\.exe$/i, /portable|native/i),
         macArm: url(/arm64\.dmg$/i),
         macX64: url(/\.dmg$/i, /arm64/i),
         Linux: url(/\.AppImage$/i),
