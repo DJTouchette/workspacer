@@ -68,6 +68,7 @@ impl Settings {
             label: String::new(),
             model: String::new(),
             message: String::new(),
+            ..Default::default()
         }
         .params()?;
         let paths = self.projects.entry(hub.to_owned()).or_default();

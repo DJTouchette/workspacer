@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/djtouchette/workspacer-hub/internal/authtoken"
+	"github.com/djtouchette/workspacer-hub/internal/parentwatch"
 )
 
 const readyTimeout = 20 * time.Second
@@ -57,6 +58,9 @@ func runServe(args []string) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	parentwatch.Watch(cancel)
 
 	stk, err := bootStack(ctx, opts, os.Stderr)
 	if err != nil {
@@ -91,6 +95,7 @@ type commonServeFlags struct {
 	pluginOrigin                   *string
 	dbPath                         *string
 	noClaudemonInit                *bool
+	externalClaudemon              *bool
 	allowNewToken                  *bool
 }
 
@@ -112,6 +117,8 @@ func registerCommonServeFlags(fs *flag.FlagSet) *commonServeFlags {
 			"a SECOND origin (scheme://host[:port]) that also routes to this hub, e.g. a second `tailscale serve --https=8443` rule or a second fly.io service. Browser clients frame plugin UI from it, which is what lets a hub-served plugin keep its bus connection: same-origin with /app, the browser must sandbox it opaque (it could otherwise read the app's host token). Loopback browsers get this for free; a REMOTE one needs this flag. Pair with --trusted-host when TLS terminates in front (default: $WORKSPACER_PLUGIN_ORIGIN)"),
 		dbPath: fs.String("claudemon-db-path", "",
 			"path to claudemon's SQLite session store (default: $XDG_DATA_HOME/claudemon/state.db, else ~/.claudemon/state.db — the same file the desktop app uses, deliberately). REQUIRED when you change claudemon's ports: that means a second daemon, and two daemons on one state.db share every session and event row"),
+		externalClaudemon: fs.Bool("external-claudemon", false,
+			"attach to an already-running loopback claudemon at --claudemon-api-port; its host owns hooks, database, startup and shutdown"),
 		noClaudemonInit: fs.Bool("no-claudemon-init", false,
 			"skip the claudemon-init pre-flight that registers Claude Code's hooks + statusLine in ~/.claude/settings.json. Only for an operator who writes that file themselves (or ships it read-only): without those hooks a PTY session never leaves mode=unknown, and a spawn's first message — held until the Input transition — is never delivered"),
 		allowNewToken: fs.Bool("allow-new-token", os.Getenv("WORKSPACER_ALLOW_NEW_TOKEN") == "1",
@@ -144,6 +151,7 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 		PluginOrigin:  *f.pluginOrigin,
 
 		SkipClaudemonInit: *f.noClaudemonInit,
+		ExternalClaudemon: *f.externalClaudemon,
 		DBPath:            *f.dbPath,
 
 		// The one config key this launcher forwards to claudemon. Read from the
@@ -151,7 +159,7 @@ func (f *commonServeFlags) resolveOptions() (serveOptions, bool) {
 		// Settings checkbox on a machine where both have run.
 		UsagePollOnBoot: usagePollOnBootSetting(configDir()),
 	}
-	if opts.ClaudemonBin == "" {
+	if opts.ClaudemonBin == "" && !opts.ExternalClaudemon {
 		fmt.Fprintln(os.Stderr, "workspacer: claudemon binary not found next to this binary or on PATH (build it with `make build-claudemon`, or pass --claudemon-bin)")
 		return opts, false
 	}
@@ -203,7 +211,9 @@ func (s *stack) shutdown(logw io.Writer) {
 		s.mcp.Stop()
 	}
 	s.hub.Stop()
-	s.claudemon.Stop()
+	if s.claudemon != nil {
+		s.claudemon.Stop()
+	}
 }
 
 // bootStack probes the ports are free, starts + supervises claudemon and the
@@ -224,6 +234,9 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 		{"127.0.0.1", opts.APIPort, "claudemon API port"},
 		{opts.Host, opts.HubPort, "hub port"},
 	}
+	if opts.ExternalClaudemon {
+		ports = ports[2:] // The external host owns both daemon listeners.
+	}
 	if opts.MCPBin != "" {
 		ports = append(ports, struct {
 			host string
@@ -241,13 +254,20 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 	// starting a process: it is the one refusal that must happen before any
 	// side effect, since the damage it prevents is done the moment a second
 	// claudemon opens the file.
-	dbPath, err := resolveDBPath(opts)
-	if err != nil {
-		return nil, err
+	if !opts.ExternalClaudemon {
+		dbPath, err := resolveDBPath(opts)
+		if err != nil {
+			return nil, err
+		}
+		opts.DBPath = dbPath
 	}
-	opts.DBPath = dbPath
 
 	plan := buildServePlan(opts)
+	if opts.ExternalClaudemon {
+		if err := waitForExternalClaudemon(ctx, plan.ClaudemonHealth, readyTimeout); err != nil {
+			return nil, fmt.Errorf("external claudemon failed readiness: %w", err)
+		}
+	}
 
 	// Before the daemons, not beside them: a session spawned in the window
 	// before the hooks land comes up hookless and stays that way for its whole
@@ -255,11 +275,17 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 	runInitStep(ctx, plan.Init, logw)
 
 	children := "claudemon + hub"
+	if opts.ExternalClaudemon {
+		children = "hub (external claudemon)"
+	}
 	if plan.MCP.Bin != "" {
 		children += " + authenticated MCP facade"
 	}
 	fmt.Fprintf(logw, "[workspacer] starting %s (brain-scope full)…\n", children)
-	claudemon := startChild(ctx, plan.Claudemon, logw, newRestartBackoff())
+	var claudemon *child
+	if !opts.ExternalClaudemon {
+		claudemon = startChild(ctx, plan.Claudemon, logw, newRestartBackoff())
+	}
 	hub := startChild(ctx, plan.Hub, logw, newRestartBackoff())
 	var mcp *child
 	if plan.MCP.Bin != "" {
@@ -290,6 +316,36 @@ func bootStack(ctx context.Context, opts serveOptions, logw io.Writer) (*stack, 
 		s.brain = startChild(ctx, plan.Brain, logw, newRestartBackoff())
 	}
 	return s, nil
+}
+
+// waitForExternalClaudemon requires the daemon's current health contract,
+// not an arbitrary HTTP 200. This capability marker identifies a daemon with
+// the spawn/maintenance admission fence. Redirects must not escape loopback.
+func waitForExternalClaudemon(ctx context.Context, endpoint string, timeout time.Duration) error {
+	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	deadline := time.Now().Add(timeout)
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK && resp.Header.Get("X-Workspacer-Maintenance") == "1" && readErr == nil && string(body) == "ok" {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("no compatible claudemon health response from %s within %s", endpoint, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 // waitForMCPHealth requires both an HTTP-ready facade and a live bus bridge.

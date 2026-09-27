@@ -105,12 +105,14 @@ async fn connected(events: &async_channel::Receiver<Event>) {
 }
 
 async fn view(controller: &Controller, predicate: impl Fn(&View) -> bool) -> Arc<View> {
+    let mut views = controller.views.clone();
     timeout(DEADLINE, async {
         loop {
-            let next = controller.views.recv().await.unwrap();
+            let next = views.borrow_and_update().clone();
             if predicate(&next) {
                 return next;
             }
+            views.changed().await.unwrap();
         }
     })
     .await
@@ -530,6 +532,7 @@ fn launch_request() -> wks_native::controller::NewSession {
         label: "My session".into(),
         model: String::new(),
         message: "Please inspect the project".into(),
+        ..Default::default()
     }
 }
 
@@ -546,7 +549,7 @@ async fn create_session_uses_real_capability_and_survives_stale_fleet() {
     assert_eq!(
         spawn.value["params"],
         json!({"provider":"codex","cwd":"/work/project",
-        "label":"My session","transport":"stream","skipPermissions":false,"message":"Please inspect the project"})
+        "label":"My session","transport":"stream","skipPermissions":false,"permissionMode":"ask","message":"Please inspect the project"})
     );
     // A second click while the acknowledgement is outstanding cannot launch twice.
     controller
@@ -651,4 +654,118 @@ fn creation_validates_hub_paths_without_checking_the_clients_filesystem() {
         request.cwd = path.into();
         assert!(request.params().is_err());
     }
+}
+
+#[tokio::test]
+async fn catalogs_are_scoped_and_late_provider_results_do_not_replace_selection() {
+    use wks_native::launch::CatalogKey;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    let claude = CatalogKey {
+        provider: "claude".into(),
+        cwd: String::new(),
+    };
+    let codex = CatalogKey {
+        provider: "codex".into(),
+        cwd: "/remote/project".into(),
+    };
+    controller
+        .command(Command::LoadModels {
+            key: claude.clone(),
+            refresh: false,
+        })
+        .unwrap();
+    let old = hub.frame("call", Some("claude.listModels")).await;
+    controller
+        .command(Command::LoadModels {
+            key: codex.clone(),
+            refresh: false,
+        })
+        .unwrap();
+    let current = hub.frame("call", Some("providers.listModels")).await;
+    assert_eq!(
+        current.value["params"],
+        json!({"provider":"codex","cwd":"/remote/project"})
+    );
+    current
+        .result(json!([{"id":"exact-codex","label":"Codex model"}]))
+        .await;
+    let loaded = view(&controller, |v| {
+        !v.catalog.loading && !v.catalog.models.is_empty()
+    })
+    .await;
+    assert_eq!(loaded.catalog.key, codex);
+    old.result(json!({"aliases":[{"model":"opus","contextWindow":1000000}]}))
+        .await;
+    controller
+        .command(Command::LoadModels {
+            key: codex.clone(),
+            refresh: true,
+        })
+        .unwrap();
+    let refresh = hub.frame("call", Some("providers.listModels")).await;
+    refresh.result(json!([])).await;
+    let failed = view(&controller, |v| v.catalog.error.is_some()).await;
+    assert_eq!(failed.catalog.key, codex);
+    assert_eq!(failed.catalog.models[0].id, "exact-codex");
+    assert!(!failed.catalog.loading);
+    controller
+        .command(Command::LoadModels {
+            key: claude,
+            refresh: false,
+        })
+        .unwrap();
+    hub.frame("call", Some("claude.listModels"))
+        .await
+        .result(json!({"aliases":[{"model":"sonnet","contextWindow":200000}]}))
+        .await;
+    let recovered = view(&controller, |v| {
+        !v.catalog.loading && v.catalog.key.provider == "claude"
+    })
+    .await;
+    assert_eq!(recovered.catalog.models[0].id, "sonnet");
+    assert!(recovered.catalog.error.is_none());
+}
+
+#[tokio::test]
+async fn model_discovery_requires_hub_directory_for_codex() {
+    use wks_native::launch::CatalogKey;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    controller
+        .command(Command::LoadModels {
+            key: CatalogKey {
+                provider: "codex".into(),
+                cwd: "relative".into(),
+            },
+            refresh: false,
+        })
+        .unwrap();
+    let rejected = view(&controller, |v| v.catalog.error.is_some()).await;
+    assert!(
+        rejected
+            .catalog
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("absolute")
+    );
+    controller
+        .command(Command::Create(launch_request()))
+        .unwrap();
+    let next = hub.frame("call", None).await;
+    assert_eq!(
+        next.value["method"], "agents.spawn",
+        "invalid catalog cwd must not reach the hub"
+    );
 }

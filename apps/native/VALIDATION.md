@@ -1,6 +1,34 @@
 # Native client validation — 2026-09-27
 
-## Automated checks
+## Embedded backend and launch controls
+
+Current change validation:
+
+- `cargo test --locked --features ui-tests`: **48 passed** — 16 core/host,
+  15 GPUI, and 17 protocol tests.
+- `cargo test --locked --manifest-path services/claudemon/Cargo.toml --test embedded`:
+  passed. Exercises channel commands, listener readiness, failed startup/restart,
+  a real disposable PTY child, and shutdown with a stalled HTTP request body.
+- `go test ./cmd/workspacer` and `go test -race ./cmd/workspacer`: passed.
+- `go test ./internal/capspec`: passed.
+- Formatting and diff whitespace checks: passed.
+- `native-harness embedded-probe` against actual hub/brain/MCP binaries: passed
+  with isolated configuration/database, four Claude family choices, zero agents
+  launched, and all four owned listener ports released after shutdown.
+
+Independent review fixed bounded shutdown admission, cleanup error preservation,
+shared idle-usage configuration, and GPUI termination-hook ownership. The actual
+stack smoke exposed Tokio `Child::wait` closing the parentwatch stdin pipe;
+separate pipe ownership fixed it, a real-child regression passed, and the full
+smoke passed afterward.
+
+This run did not execute a real provider/model conversation or test macOS/Windows
+on those operating systems. The provider and performance results below describe
+the earlier client baseline, not the new embedded mode. The current native build
+also emits an existing handoff formatter deprecation warning under its resolved
+`time` version; compilation succeeds.
+
+## Initial-client automated checks
 
 - `cargo test --locked --features ui-tests`: **20 passed** — 4 model,
   11 WebSocket/controller/live-harness, and 5 GPUI tests.

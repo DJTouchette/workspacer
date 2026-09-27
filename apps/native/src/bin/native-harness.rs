@@ -13,6 +13,18 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Exercise the embedded engine and owned hub/tool stack without an agent.
+    #[cfg(feature = "embedded")]
+    EmbeddedProbe {
+        #[arg(long)]
+        services_dir: std::path::PathBuf,
+        #[arg(long)]
+        database: std::path::PathBuf,
+        #[arg(long)]
+        hub_port: u16,
+        #[arg(long)]
+        mcp_port: u16,
+    },
     /// Launch one real disposable agent, test controller send/reseed, terminate it.
     Live {
         #[arg(long, default_value = "ws://127.0.0.1:7895/bus")]
@@ -53,6 +65,15 @@ enum Command {
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
     match Args::parse().command {
+        #[cfg(feature = "embedded")]
+        Command::EmbeddedProbe {
+            services_dir,
+            database,
+            hub_port,
+            mcp_port,
+        } => {
+            embedded_probe(services_dir, database, hub_port, mcp_port).await?;
+        }
         Command::Live {
             bus,
             token_file,
@@ -184,5 +205,123 @@ async fn main() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+/// Use fresh XDG_CONFIG_HOME/XDG_DATA_HOME and
+/// WORKSPACER_USAGE_POLL_ON_BOOT=0 for an isolated smoke; leave HOME unchanged.
+#[cfg(feature = "embedded")]
+async fn embedded_probe(
+    services_dir: std::path::PathBuf,
+    database: std::path::PathBuf,
+    hub_port: u16,
+    mcp_port: u16,
+) -> Result<()> {
+    use anyhow::Context;
+    use std::{net::SocketAddr, time::Duration};
+    use wks_native::{
+        controller::Command as BackendCommand,
+        host::{LocalOptions, Mode, NativeHost},
+        launch::CatalogKey,
+    };
+
+    anyhow::ensure!(
+        hub_port > 0 && mcp_port > 0 && hub_port != mcp_port,
+        "Choose distinct nonzero hub and MCP ports"
+    );
+    let mut endpoints = vec![
+        SocketAddr::from(([127, 0, 0, 1], hub_port)),
+        SocketAddr::from(([127, 0, 0, 1], mcp_port)),
+    ];
+    let host = NativeHost::start(Mode::Local(LocalOptions {
+        services_dir: Some(services_dir),
+        database,
+        hub_port,
+        mcp_port,
+        hook_port: 0,
+        api_port: 0,
+        no_plugins: true,
+    }))?;
+    let controller = host.controller();
+    let mut views = controller.views.clone();
+    let probe = tokio::time::timeout(Duration::from_secs(100), async {
+        let ready = host.ready().await?;
+        for endpoint in [&ready.engine_api, &ready.engine_hook] {
+            let endpoint = endpoint
+                .as_ref()
+                .context("Missing embedded engine endpoint")?;
+            let url = url::Url::parse(endpoint)?;
+            anyhow::ensure!(
+                url.host_str() == Some("127.0.0.1"),
+                "Expected loopback engine endpoint"
+            );
+            endpoints.push(SocketAddr::from((
+                [127, 0, 0, 1],
+                url.port().context("Missing engine port")?,
+            )));
+        }
+        loop {
+            if views.borrow_and_update().connected {
+                break;
+            }
+            views
+                .changed()
+                .await
+                .context("Controller closed before connection")?;
+        }
+        let key = CatalogKey {
+            provider: "claude".into(),
+            cwd: String::new(),
+        };
+        controller.command(BackendCommand::LoadModels {
+            key: key.clone(),
+            refresh: true,
+        })?;
+        let (models, sessions) = loop {
+            {
+                let view = views.borrow_and_update();
+                if view.catalog.key == key && !view.catalog.loading {
+                    anyhow::ensure!(view.catalog.error.is_none(), "Claude catalog query failed");
+                    anyhow::ensure!(!view.catalog.models.is_empty(), "Claude catalog is empty");
+                    break (view.catalog.models.len(), view.sessions.len());
+                }
+            }
+            views
+                .changed()
+                .await
+                .context("Controller closed during catalog query")?;
+        };
+        anyhow::Ok(json!({
+            "connected": true,
+            "sessions": sessions,
+            "claude_models": models,
+            "bus_url": ready.bus_url,
+            "engine_api": ready.engine_api,
+            "engine_hook": ready.engine_hook,
+            "mcp_url": format!("http://127.0.0.1:{mcp_port}/mcp"),
+            "agents_launched": 0
+        }))
+    })
+    .await
+    .context("Embedded probe exceeded 100 seconds")
+    .and_then(|result| result);
+
+    // Join on both success and failure so this command never relies on process
+    // exit to clean up its embedded runtime and child service stack.
+    drop(controller);
+    drop(views);
+    let shutdown = host.shutdown().await;
+    let released = endpoints
+        .iter()
+        .all(|endpoint| std::net::TcpListener::bind(endpoint).is_ok());
+    shutdown.context("Embedded backend shutdown failed")?;
+    anyhow::ensure!(
+        released,
+        "An owned service listener remained bound after shutdown"
+    );
+    let mut report = probe?;
+    report["ports_released"] = json!(released);
+    report["checked_ports"] = json!(endpoints.len());
+    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }

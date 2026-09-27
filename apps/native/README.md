@@ -1,9 +1,10 @@
 # Workspacer Native
 
-Experimental GPUI client for an existing Workspacer hub. Rust renders the
-interface directly; no Electron, browser, or webview is used. GPUI and
+Experimental GPUI client with an existing-hub mode and an embedded local backend.
+Rust renders the interface directly; no Electron, browser, or webview is used. GPUI and
 GPUI Component are pinned together; the optional component webview feature is
-disabled. The backend remains claudemon + hub + the existing capability provider.
+disabled. Local mode embeds the claudemon Rust library and retains the hub, brain, and MCP
+facade for shared services and agent tools.
 
 ## Run
 
@@ -29,14 +30,26 @@ make test-native    # protocol and GPUI input tests
 ```
 
 Use **New session** (`Ctrl/Cmd+N`), choose Claude or Codex, and enter an existing
-absolute project directory on the connected hub. A name, model override, and
-first message are optional. **Create session** opens the real agent conversation;
-provider tool approvals remain enabled. The provider CLI must be installed and
-signed in on the hub. Failed launches retain the form. If the connection drops
+absolute project directory on the connected hub. A name and first message are
+optional. Choose a model from the searchable picker or keep Provider default.
+Custom model accepts an exact ID or alias. **Create session** opens the real agent
+conversation; permissions start at Ask to approve. Claude also offers Accept
+edits, Plan mode, and Full access; Codex offers Ask to approve and Full access.
+The provider CLI must be installed and signed in on the hub. Failed launches retain the form. If the connection drops
 before acknowledgement, refresh the session list before retrying to avoid a
 duplicate. An unconfirmed first message is retained as a composer draft.
 
-The launch targets use live data by default and do not start or stop the backend.
+Claude choices come from the hub's family-alias catalog, grouped into one row per
+family with separate context-window choices. Labels do not infer version numbers
+from old transcripts, and historical model IDs are not presented as available
+models. Codex choices come from the hub's live provider catalog for the entered
+project directory. Refresh models retries the query (the hub may serve its cache).
+Loading failures leave Provider default and Custom model available; switching
+providers clears incompatible model/context choices and resets permissions to Ask.
+These are provider-native permissions, separate from Workspacer plugin access.
+
+The launch targets connect to an existing hub by default; use `--local` to own a
+local backend.
 For a different hub, pass `ARGS="--bus wss://host/bus --token-file /path/to/token"`.
 Demo mode remains explicitly opt-in with `ARGS="--demo"`; creation is disabled there.
 The native targets are also included in the root `build`, `test`, and `clean` targets.
@@ -65,9 +78,73 @@ URLs**. Config directory rules match the existing clients (`APPDATA` on Windows;
 are never automatically forwarded to an explicitly remote hub.
 
 The client connects to existing sessions and creates sessions via `agents.spawn`.
-It does not own or stop backend processes on exit. The connected hub needs a provider for `sessions.snapshots`,
+Existing-hub mode does not own or stop backend processes on exit. The connected hub needs a provider for `sessions.snapshots`,
 `sessions.conversation`, `agents.sendMessage`, `claude.approve`, `claude.answer`,
 `claude.signal`, and `agents.spawn`.
+
+## Embedded local backend
+
+Build the Go service binaries, then start the native app from the repository root:
+
+```sh
+make build-hub
+cargo run --locked --manifest-path apps/native/Cargo.toml -- \
+  --local --services-dir ./services/hub
+```
+
+`--local` starts claudemon inside the native process on a dedicated backend
+thread with its own Tokio runtime. The UI communicates through bounded typed
+commands and a latest-state `watch` channel. Local message, approval, interrupt,
+and stream-answer controls use the embedded engine's channel API. Launches,
+model discovery, enriched snapshots, and conversation events still use the hub
+so Workspacer tools, skills, configuration, and launch ownership stay intact.
+The hub is retained in this phase; local mode is not yet a hub-free client.
+
+The app owns `workspacer serve --external-claudemon`, which supervises hub,
+brain, and MCP services while leaving the embedded engine's lifecycle to the
+native host. All four service binaries are required. Startup waits for the
+engine listeners, service readiness, and the session capability provider.
+Startup errors appear in the UI; missing binaries never silently remove agent
+tools. Owned-service failure stops the local stack rather than silently moving
+sessions to a replacement engine.
+
+Existing-hub connections remain the default. `--bus` and `--demo` never start a
+local engine, and `--local` cannot be combined with a remote bus or token file.
+Local startup refuses occupied hub/MCP ports; it does not stop an existing
+Workspacer installation. Use `--bus` to attach to that installation instead.
+
+The local engine binds loopback on allocated hook/API ports. Hub and MCP default
+to ports 7895 and 7897; `--hub-port` and `--mcp-port` can override them. Alternate
+ports require an explicit `--database` to avoid accidental history sharing.
+The default database is `workspacer/native/state.db` in the platform's local data
+directory, separate from the standalone daemon's store. Native launches use
+stream transport; local startup does not rewrite global Claude hook settings.
+
+Closing the window quits by default. `--keep-running` minimizes instead, keeping
+the same backend and agents alive; restore the window from the taskbar/dock.
+Use `Cmd+Q` or `Ctrl+Shift+Q` to quit explicitly. Shutdown first stops owned hub
+services, then shuts down and joins the embedded engine and its owned provider
+processes. External/remote services are never shut down by the native client.
+A native-process crash still shares the embedded backend's failure boundary;
+this is not a separate persistent daemon.
+
+For a repeatable startup/catalog/shutdown smoke without launching agents:
+
+```sh
+# Choose fresh config/data directories and unused ports for isolation.
+env -u WKS_DESKTOP_HOST -u HUB_TOKEN \
+  XDG_CONFIG_HOME=/tmp/wks-native-smoke/config \
+  XDG_DATA_HOME=/tmp/wks-native-smoke/data \
+  WORKSPACER_USAGE_POLL_ON_BOOT=0 \
+  cargo run --locked --manifest-path apps/native/Cargo.toml \
+    --no-default-features --features embedded --bin native-harness -- \
+    embedded-probe --services-dir ./services/hub \
+    --database /tmp/wks-native-smoke/state.db --hub-port 17895 --mcp-port 17897
+```
+
+The probe disables plugins, checks the real service registration and Claude
+catalog, joins shutdown, and verifies that all four listener ports were released.
+It prints no credentials and makes no model calls.
 
 ## First slice
 
@@ -88,7 +165,7 @@ Captured during a real Codex round trip through an isolated backend:
 This experiment intentionally starts with the connected hub's own sessions.
 Federated/paired rows are excluded so a remote session cannot accidentally be
 controlled through an unqualified local method. Terminal emulation,
-historical pagination, attachments, model settings, full theme parity,
+historical pagination, attachments, changing models on running sessions, full theme parity,
 and packaging/updating remain follow-on work. Rich tool input/output is displayed
 as text, without the Electron client's diff cards.
 
@@ -187,7 +264,8 @@ python3 scripts/smoke.py --binary target/debug/wks-native --screen settings --th
 
 ## Performance boundaries
 
-- Network/JSON work lives in a two-thread Tokio runtime, off the GPUI UI thread.
+- Network/JSON work lives in an owned background Tokio runtime, off the GPUI UI
+  thread; local mode also gives the embedded engine its own runtime.
 - Subscribe to one selected conversation; release its topic on selection changes.
 - UI updates use a single-slot latest-value mailbox, capped at approximately
   30 updates/second during streaming. The controller publishes no unchanged idle

@@ -1,3 +1,4 @@
+mod launch;
 mod navigation;
 use gpui::{
     App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
@@ -6,12 +7,15 @@ use gpui::{
 };
 use gpui_component::{
     input::{Input, InputState},
+    select::{SearchableVec, Select, SelectEvent, SelectState},
     text::TextView,
 };
+use launch::{PickerItem, model_items};
 use navigation::Screen;
 use std::{collections::HashMap, sync::Arc};
 use wks_native::appearance::{Appearance, Palette, preference_path};
 use wks_native::controller::{Action, Command, Controller, NewSession, View};
+use wks_native::launch::{CatalogKey, ModelChoice, Permission};
 use wks_native::model::Session;
 use wks_native::navigation::{Project, Provider, Settings, projects};
 
@@ -199,6 +203,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-r", Refresh, Some("Workspace")),
         KeyBinding::new("cmd-r", Refresh, Some("Workspace")),
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("ctrl-shift-q", Quit, None),
     ]);
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
@@ -227,6 +232,12 @@ pub struct Workspace {
     project: Entity<InputState>,
     label: Entity<InputState>,
     model: Entity<InputState>,
+    model_picker: Entity<SelectState<SearchableVec<PickerItem>>>,
+    model_choice: String,
+    context_window: Option<u64>,
+    permission: Permission,
+    catalog_models: Vec<ModelChoice>,
+    model_reload: Option<Task<()>>,
     prompt: Entity<InputState>,
     spawn_pending: bool,
     last_spawn_receipt: u64,
@@ -261,7 +272,16 @@ impl Workspace {
         let project =
             cx.new(|cx| InputState::new(window, cx).placeholder("Absolute project directory"));
         let label = cx.new(|cx| InputState::new(window, cx).placeholder("Optional session name"));
-        let model = cx.new(|cx| InputState::new(window, cx).placeholder("Provider default"));
+        let model = cx.new(|cx| InputState::new(window, cx).placeholder("Exact model ID or alias"));
+        let model_picker = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(model_items(&[])),
+                Some(gpui_component::IndexPath::new(0)),
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
         let prompt = cx.new(|cx| {
             InputState::new(window, cx)
                 .multi_line(true)
@@ -286,9 +306,46 @@ impl Workspace {
                 }
             },
         )];
-        let incoming = controller.views.clone();
+        focus_watch.push(cx.subscribe_in(
+            &model_picker,
+            window,
+            |this, _, event: &SelectEvent<SearchableVec<PickerItem>>, window, cx| {
+                let SelectEvent::Confirm(value) = event;
+                if this.spawn_pending || this.view.creating {
+                    return;
+                }
+                this.model_choice = value.clone().unwrap_or_default();
+                this.context_window = this
+                    .catalog_models
+                    .iter()
+                    .find(|m| m.id == this.model_choice)
+                    .and_then(|m| m.windows.first())
+                    .copied();
+                if this.model_choice == "__custom" {
+                    this.model.update(cx, |input, cx| input.focus(window, cx));
+                }
+                cx.notify();
+            },
+        ));
+        focus_watch.push(cx.subscribe_in(
+            &project,
+            window,
+            |this, _, event: &gpui_component::input::InputEvent, window, cx| {
+                if matches!(event, gpui_component::input::InputEvent::Change) && this.new_session {
+                    this.model_reload = Some(cx.spawn_in(window, async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(400))
+                            .await;
+                        let _ = this.update_in(cx, |this, _, cx| this.load_models(false, cx));
+                    }));
+                    cx.notify();
+                }
+            },
+        ));
+        let mut incoming = controller.views.clone();
         let updates = cx.spawn_in(window, async move |this, cx| {
-            while let Ok(view) = incoming.recv().await {
+            while incoming.changed().await.is_ok() {
+                let view = incoming.borrow_and_update().clone();
                 if this
                     .update_in(cx, |this, window, cx| this.update_view(view, window, cx))
                     .is_err()
@@ -330,6 +387,12 @@ impl Workspace {
             project,
             label,
             model,
+            model_picker,
+            model_choice: String::new(),
+            context_window: None,
+            permission: Permission::Ask,
+            catalog_models: Vec::new(),
+            model_reload: None,
             prompt,
             spawn_pending: false,
             last_spawn_receipt: 0,
@@ -499,7 +562,14 @@ impl Workspace {
         {
             self.navigation_selected = None;
         }
+        let reconnected = !self.view.connected && view.connected;
         self.view = view;
+        if self.new_session {
+            self.sync_models(window, cx);
+            if reconnected {
+                self.load_models(true, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -574,7 +644,7 @@ impl Workspace {
             return;
         }
         if !self.new_session {
-            self.provider = self.settings.default_provider.id();
+            self.choose_provider(self.settings.default_provider.id(), window, cx);
         }
         self.new_session = true;
         self.screen = Screen::Conversation;
@@ -594,6 +664,7 @@ impl Workspace {
                 .update(cx, |input, cx| input.set_value(cwd, window, cx));
         }
         self.project.update(cx, |input, cx| input.focus(window, cx));
+        self.load_models(false, cx);
         cx.notify();
     }
 
@@ -610,10 +681,21 @@ impl Workspace {
             provider: self.provider.into(),
             cwd: self.project.read(cx).value().to_string(),
             label: self.label.read(cx).value().to_string(),
-            model: self.model.read(cx).value().to_string(),
+            model: if self.model_choice == "__custom" {
+                self.model.read(cx).value().to_string()
+            } else {
+                self.model_choice.clone()
+            },
+            context_window: self.context_window,
+            permission: self.permission,
             message: self.prompt.read(cx).value().to_string(),
         };
         self.spawn_error.clear();
+        if self.model_choice == "__custom" && request.model.trim().is_empty() {
+            self.spawn_error = "Enter a custom model or choose Provider default.".into();
+            cx.notify();
+            return;
+        }
         match request
             .params()
             .and_then(|_| self.controller.command(Command::Create(request)))
@@ -1067,14 +1149,11 @@ impl Render for Workspace {
                     }))
                     .text_size(px(11.))
                     .text_color(rgb(p.muted))
-                    .child(format!(
-                        "{}",
-                        if self.view.connected {
-                            "Connected to hub"
-                        } else {
-                            "Reconnecting…"
-                        }
-                    )),
+                    .child(if self.view.connected {
+                        "Connected to hub"
+                    } else {
+                        "Reconnecting…"
+                    }),
             );
 
         if self.new_session {
@@ -1121,8 +1200,9 @@ impl Render for Workspace {
                                                 })
                                                 .when(!busy, |d| {
                                                     d.on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.provider = provider;
+                                                        move |this, _, window, cx| {
+                                                            this.choose_provider(provider, window, cx);
+                                                            this.load_models(false, cx);
                                                             cx.notify();
                                                         },
                                                     ))
@@ -1139,8 +1219,7 @@ impl Render for Workspace {
                                 )
                                 .child("Session name")
                                 .child(Input::new(&self.label).disabled(busy))
-                                .child("Model (optional)")
-                                .child(Input::new(&self.model).disabled(busy))
+                                .child(self.render_launch_options(busy, cx))
                                 .child("First message")
                                 .child(Input::new(&self.prompt).h(px(110.)).disabled(busy))
                                 .when(!self.spawn_error.is_empty(), |d| {
@@ -1283,8 +1362,8 @@ mod tests {
     ) -> (
         Entity<Workspace>,
         VisualTestContext,
-        async_channel::Receiver<Command>,
-        async_channel::Sender<Arc<View>>,
+        tokio::sync::mpsc::Receiver<Command>,
+        tokio::sync::watch::Sender<Arc<View>>,
     ) {
         cx.update(|cx| {
             gpui_component::init(cx);
@@ -1326,7 +1405,7 @@ mod tests {
 
     #[gpui::test]
     fn vim_navigation_never_steals_composer_text(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.update_view(Arc::new(state("a")), window, cx)
@@ -1359,7 +1438,7 @@ mod tests {
 
     #[gpui::test]
     fn project_navigation_filters_and_seeds_new_sessions(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 let mut view = state("a");
@@ -1387,15 +1466,17 @@ mod tests {
         workspace.read_with(&visual, |this, cx| {
             assert!(this.project.read(cx).value().ends_with("jkgn"))
         });
-        assert!(
-            commands.try_recv().is_err(),
-            "typing in form must not launch or select agents"
-        );
+        while let Ok(command) = commands.try_recv() {
+            assert!(
+                matches!(command, Command::LoadModels { .. }),
+                "typing in form must not launch or select agents"
+            );
+        }
     }
 
     #[gpui::test]
     fn search_and_disabled_vim_keep_input_and_modifier_shortcuts(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.update_view(Arc::new(state("a")), window, cx)
@@ -1424,7 +1505,7 @@ mod tests {
 
     #[gpui::test]
     fn project_bookmark_can_be_saved_without_launching_an_agent(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.simulate_keystrokes("g p i");
         visual.simulate_input("/work/jk-project");
         visual.simulate_keystrokes("ctrl-enter");
@@ -1437,7 +1518,7 @@ mod tests {
 
     #[gpui::test]
     fn settings_shortcuts_update_defaults_without_touching_sessions(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.simulate_keystrokes("g s a v");
         workspace.read_with(&visual, |this, _| {
             assert_eq!(this.settings.default_provider, Provider::Codex);
@@ -1468,7 +1549,7 @@ mod tests {
 
     #[gpui::test]
     fn switching_themes_preserves_session_and_draft(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.update_view(Arc::new(state("a")), window, cx);
@@ -1493,7 +1574,7 @@ mod tests {
 
     #[gpui::test]
     fn new_session_form_creates_once_and_keeps_failed_input(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.demo = false;
@@ -1512,8 +1593,12 @@ mod tests {
         });
         visual.simulate_keystrokes("ctrl-enter");
         visual.simulate_keystrokes("ctrl-enter");
-        let Command::Create(request) = commands.try_recv().expect("create command") else {
-            panic!("wrong command")
+        let request = loop {
+            match commands.try_recv().expect("create command") {
+                Command::Create(request) => break request,
+                Command::LoadModels { .. } => {}
+                _ => panic!("wrong command"),
+            }
         };
         assert_eq!(request.cwd, "/work/project");
         assert_eq!(request.provider, "codex");
@@ -1550,7 +1635,7 @@ mod tests {
 
     #[gpui::test]
     fn keyboard_send_preserves_unicode_and_failed_drafts(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.update_view(Arc::new(state("a")), window, cx)
@@ -1672,7 +1757,7 @@ mod tests {
 
     #[gpui::test]
     fn an_explicit_target_never_sends_to_the_default_session(cx: &mut TestAppContext) {
-        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.open_session(Some("b".into()));
@@ -1701,5 +1786,67 @@ mod tests {
             })
         });
         assert!(commands.try_recv().is_err());
+    }
+    #[gpui::test]
+    fn model_picker_keyboard_selection_and_provider_reset(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_new_session(window, cx);
+                this.project
+                    .update(cx, |input, cx| input.set_value("/work/project", window, cx));
+                let mut loaded = state("a");
+                loaded.catalog = wks_native::launch::Catalog {
+                    key: CatalogKey {
+                        provider: "claude".into(),
+                        cwd: String::new(),
+                    },
+                    models: vec![ModelChoice {
+                        id: "opus".into(),
+                        label: "Opus".into(),
+                        windows: vec![200000, 1000000],
+                    }],
+                    ..Default::default()
+                };
+                this.update_view(Arc::new(loaded), window, cx);
+                this.model_picker
+                    .update(cx, |picker, cx| picker.focus(window, cx));
+            });
+        });
+        visual.simulate_keystrokes("enter down enter");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.model_choice, "opus");
+            assert_eq!(this.context_window, Some(200000));
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.context_window = Some(1000000);
+                this.permission = Permission::Plan;
+                this.create(cx);
+                this.spawn_pending = false;
+                this.choose_provider("codex", window, cx);
+                assert!(this.model_choice.is_empty());
+                assert_eq!(this.context_window, None);
+                assert_eq!(this.permission, Permission::Ask);
+                assert!(this.catalog_models.is_empty());
+                this.model_choice = "__custom".into();
+                this.create(cx);
+                assert!(this.spawn_error.contains("Enter a custom model"));
+            });
+        });
+        let requests: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::Create(request) => Some(request),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests.len(), 1);
+        let params = requests[0].params().unwrap();
+        assert_eq!(params["model"], "opus");
+        assert_eq!(params["contextWindow"], 1000000);
+        assert_eq!(params["permissionMode"], "plan");
+        assert_eq!(params["skipPermissions"], false);
     }
 }

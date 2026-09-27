@@ -1,6 +1,6 @@
 ---
 title: Architecture Overview — Clients, Daemons, and Capability Providers
-tags: [architecture, processes, ipc, daemon]
+tags: [architecture, processes, ipc, daemon, native, embedded, tokio]
 related_paths:
   - "apps/desktop/src/main/index.ts"
   - "services/claudemon/src/main.rs"
@@ -8,10 +8,12 @@ related_paths:
   - "services/hub/cmd/brain/main.go"
   - "services/hub/internal/claudemon/bridge.go"
   - "apps/tui/src/main.rs"
+  - "apps/native/src/host.rs"
+  - "apps/native/src/host/local.rs"
   - "apps/desktop/src/main/shared/ipcChannels.ts"
   - "services/claudemon/src/session/state.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-27
 ---
 
 # Architecture Overview — Clients, Daemons, and Capability Providers
@@ -40,6 +42,15 @@ In desktop remote-client mode, Electron starts no local claudemon, hub, or facad
 to the remote bus. The TUI defaults to the bus, with `--direct` for claudemon
 REST/SSE. Providers project claudemon state into client snapshots and add their
 own enrichment; daemon state and the desktop snapshot are not identical models.
+
+The native GPUI app remains an existing-hub client by default. Its explicit
+`--local` mode embeds claudemon on an owned Tokio backend thread and starts
+`workspacer serve --external-claudemon` for hub/brain/MCP services. Typed Tokio
+commands and latest-state watch snapshots separate UI lifetime from backend
+work. Local session controls can use the embedded channel API; launches and
+client projections still use the hub. This phase retains the hub and does not
+port the brain's service responsibilities into the native app. See
+[native embedding](../modules/native-embedded-backend.md).
 
 Federation links named hubs and republishes selected peer events locally with
 peer provenance. Clients can use one bus connection for the merged fleet;

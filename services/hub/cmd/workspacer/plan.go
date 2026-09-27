@@ -28,6 +28,7 @@ type serveOptions struct {
 	TrustedHosts      string // comma-separated reverse-proxy hostname(s) for the hub's --trusted-host
 	PluginOrigin      string // second origin routed to this hub, for framing plugin UI cross-origin
 	DevStreamLogs     bool   // pass --plugins-stream-logs to the hub (plugin dev only)
+	ExternalClaudemon bool   // external host owns daemon lifecycle, hooks and database
 	SkipClaudemonInit bool   // skip the `claudemon init` pre-flight (operator owns ~/.claude/settings.json)
 	DBPath            string // claudemon's SQLite session store; resolved by resolveDBPath, never empty by the time buildServePlan sees it
 
@@ -125,7 +126,7 @@ func buildServePlan(opts serveOptions) servePlan {
 		Bin:  opts.ClaudemonBin,
 		Args: []string{"init", "--hook-port", fmt.Sprintf("%d", opts.HookPort)},
 	}
-	if opts.SkipClaudemonInit {
+	if opts.SkipClaudemonInit || opts.ExternalClaudemon {
 		initStep = childSpec{}
 	}
 
@@ -240,6 +241,9 @@ func buildServePlan(opts serveOptions) servePlan {
 	hubHostPort := net.JoinHostPort(adv, fmt.Sprintf("%d", opts.HubPort))
 	q := "?token=" + url.QueryEscape(opts.Token)
 
+	if opts.ExternalClaudemon {
+		claudemon = childSpec{}
+	}
 	return servePlan{
 		Init:            initStep,
 		Claudemon:       claudemon,

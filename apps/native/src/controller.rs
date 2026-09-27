@@ -1,7 +1,11 @@
 //! A single background reducer owns network state. The UI receives coalesced,
 //! immutable views; it never parses JSON or waits for I/O during rendering.
 use anyhow::{Result, anyhow};
-use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
+use futures_util::{
+    StreamExt,
+    future::{AbortHandle, Abortable, BoxFuture},
+    stream::FuturesUnordered,
+};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -11,7 +15,9 @@ use std::{
 use tokio::time::Instant;
 
 use crate::{
-    bus::{Client, Config, Event},
+    backend::Backend,
+    bus::{Config, Event},
+    launch::{Catalog, CatalogKey, Permission, absolute_directory, parse_models},
     model::{ConversationSnapshot, Delta, Fold, Session, Transcript},
 };
 
@@ -27,7 +33,7 @@ pub enum Action {
 }
 
 impl Action {
-    fn wire(&self, id: &str) -> (&'static str, Value) {
+    pub(crate) fn wire(&self, id: &str) -> (&'static str, Value) {
         match self {
             Self::Send(text) => ("agents.sendMessage", json!({"sessionId":id, "text":text})),
             Self::Approve(yes) => (
@@ -48,6 +54,8 @@ pub struct NewSession {
     pub label: String,
     pub model: String,
     pub message: String,
+    pub context_window: Option<u64>,
+    pub permission: Permission,
 }
 
 impl NewSession {
@@ -57,22 +65,24 @@ impl NewSession {
             "Choose Claude or Codex"
         );
         let cwd = self.cwd.trim();
-        let bytes = cwd.as_bytes();
-        let absolute = cwd.starts_with('/')
-            || cwd.starts_with("\\\\")
-            || (bytes.len() >= 3
-                && bytes[0].is_ascii_alphabetic()
-                && bytes[1] == b':'
-                && matches!(bytes[2], b'/' | b'\\'));
         anyhow::ensure!(
-            absolute && !cwd.contains('\0'),
+            absolute_directory(cwd),
             "Enter an absolute project directory on the hub's machine"
         );
         anyhow::ensure!(
             self.message.len() <= 65536,
             "Initial message must be at most 64 KiB"
         );
-        let mut params = json!({"provider":self.provider,"cwd":cwd,"transport":"stream","skipPermissions":false});
+        let mode = self.permission.wire(&self.provider)?;
+        let mut params = json!({"provider":self.provider,"cwd":cwd,"transport":"stream",
+            "skipPermissions":self.permission == Permission::FullAccess,"permissionMode":mode});
+        if let Some(window) = self.context_window {
+            anyhow::ensure!(
+                window > 0 && !self.model.trim().is_empty(),
+                "Choose a model for the context window"
+            );
+            params["contextWindow"] = json!(window);
+        }
         for (key, value) in [
             ("label", &self.label),
             ("model", &self.model),
@@ -99,6 +109,7 @@ pub enum Command {
     Act { session: String, action: Action },
     Refresh,
     Create(NewSession),
+    LoadModels { key: CatalogKey, refresh: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +122,7 @@ pub struct Receipt {
 
 #[derive(Clone, Debug, Default)]
 pub struct View {
+    pub catalog: Catalog,
     pub connected: bool,
     pub sessions: Arc<Vec<Session>>,
     pub selected: Option<String>,
@@ -123,46 +135,62 @@ pub struct View {
     pub spawn_receipt: Option<SpawnReceipt>,
 }
 
+#[derive(Clone)]
 pub struct Controller {
-    commands: async_channel::Sender<Command>,
-    pub views: async_channel::Receiver<Arc<View>>,
+    commands: tokio::sync::mpsc::Sender<Command>,
+    pub views: tokio::sync::watch::Receiver<Arc<View>>,
 }
 
 impl Controller {
-    /// Deterministic UI harness: the test supplies server views and observes
-    /// commands without a runtime, network, credentials, or agent processes.
+    pub(crate) fn channels() -> (
+        Self,
+        tokio::sync::mpsc::Receiver<Command>,
+        tokio::sync::watch::Sender<Arc<View>>,
+    ) {
+        let (commands, incoming) = tokio::sync::mpsc::channel(32);
+        let (updates, views) = tokio::sync::watch::channel(Arc::new(View::default()));
+        (Self { commands, views }, incoming, updates)
+    }
+
+    /// UI fixtures use the same bounded commands and latest-state channel.
     #[cfg(feature = "ui-tests")]
     pub fn test_channels() -> (
         Self,
-        async_channel::Receiver<Command>,
-        async_channel::Sender<Arc<View>>,
+        tokio::sync::mpsc::Receiver<Command>,
+        tokio::sync::watch::Sender<Arc<View>>,
     ) {
-        let (commands, observed) = async_channel::bounded(32);
-        let (updates, views) = async_channel::bounded(1);
-        (Self { commands, views }, observed, updates)
+        Self::channels()
     }
 
+    /// Attach within an existing runtime (protocol tests and headless harness).
+    /// The desktop uses NativeHost to own its runtime off the UI thread.
     pub fn start(config: Config) -> Self {
-        let (commands, incoming) = async_channel::bounded(32);
-        let (updates, views) = async_channel::bounded(1);
-        let discard = views.clone();
+        let (controller, incoming, updates) = Self::channels();
         tokio::spawn(async move {
-            let (bus, events) = Client::start(config);
-            Worker::new(bus)
-                .run(events, incoming, updates, discard)
-                .await;
+            let (backend, events) = Backend::connect(config);
+            Self::run(backend, events, incoming, updates).await;
         });
-        Self { commands, views }
+        controller
+    }
+
+    pub(crate) async fn run(
+        backend: Backend,
+        events: async_channel::Receiver<Event>,
+        incoming: tokio::sync::mpsc::Receiver<Command>,
+        updates: tokio::sync::watch::Sender<Arc<View>>,
+    ) {
+        Worker::new(backend).run(events, incoming, updates).await;
     }
 
     pub fn command(&self, command: Command) -> Result<()> {
         self.commands
             .try_send(command)
-            .map_err(|_| anyhow!("Client busy; action was not queued"))
+            .map_err(|_| anyhow!("Client busy or stopped; action was not queued"))
     }
 }
 
 enum Completion {
+    Models(u64, u64, Result<Vec<crate::launch::ModelChoice>>),
     Spawn(u64, NewSession, Result<Value>),
     Fleet(u64, Result<Value>),
     Conversation(u64, u64, Result<Value>),
@@ -170,7 +198,7 @@ enum Completion {
 }
 
 struct Worker {
-    bus: Client,
+    backend: Backend,
     view: View,
     sessions: BTreeMap<String, Session>,
     jobs: FuturesUnordered<BoxFuture<'static, Completion>>,
@@ -186,15 +214,17 @@ struct Worker {
     dirty: bool,
     fleet_dirty: bool,
     action_number: u64,
+    catalog_number: u64,
+    catalog_abort: Option<AbortHandle>,
     created_row: Option<Value>,
     last_fleet: Instant,
     last_conversation: Instant,
 }
 
 impl Worker {
-    fn new(bus: Client) -> Self {
+    fn new(backend: Backend) -> Self {
         Self {
-            bus,
+            backend,
             view: View::default(),
             sessions: BTreeMap::new(),
             jobs: FuturesUnordered::new(),
@@ -210,6 +240,8 @@ impl Worker {
             dirty: false,
             fleet_dirty: false,
             action_number: 0,
+            catalog_number: 0,
+            catalog_abort: None,
             created_row: None,
             last_fleet: Instant::now(),
             last_conversation: Instant::now(),
@@ -219,9 +251,8 @@ impl Worker {
     async fn run(
         mut self,
         events: async_channel::Receiver<Event>,
-        commands: async_channel::Receiver<Command>,
-        updates: async_channel::Sender<Arc<View>>,
-        discard: async_channel::Receiver<Arc<View>>,
+        mut commands: tokio::sync::mpsc::Receiver<Command>,
+        updates: tokio::sync::watch::Sender<Arc<View>>,
     ) {
         let mut frame = tokio::time::interval(FRAME_INTERVAL);
         frame.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -229,11 +260,12 @@ impl Worker {
         loop {
             tokio::select! {
                 command = commands.recv() => match command {
-                    Err(_) => break,
-                    Ok(Command::Select(id)) if self.sessions.contains_key(&id) => self.select(Some(id)).await,
-                    Ok(Command::Act { session, action }) => self.act(session, action),
-                    Ok(Command::Create(request)) => self.create(request),
-                    Ok(Command::Refresh) => { self.fetch_fleet(); self.fetch_conversation(); }
+                    None => break,
+                    Some(Command::Select(id)) if self.sessions.contains_key(&id) => self.select(Some(id)).await,
+                    Some(Command::Act { session, action }) => self.act(session, action),
+                    Some(Command::Create(request)) => self.create(request),
+                    Some(Command::LoadModels { key, refresh }) => self.load_models(key, refresh),
+                    Some(Command::Refresh) => { self.fetch_fleet(); self.fetch_conversation(); }
                     _ => {}
                 },
                 event = events.recv() => match event {
@@ -247,11 +279,8 @@ impl Worker {
                         self.fleet_dirty = false;
                     }
                     let view = Arc::new(self.view.clone());
-                    // Latest-value mailbox, never an unbounded queue of UI frames.
-                    if let Err(async_channel::TrySendError::Full(view)) = updates.try_send(view) {
-                        let _ = discard.try_recv();
-                        let _ = updates.try_send(view);
-                    }
+                    // Replaces the latest state even when no window is open.
+                    updates.send_replace(view);
                     self.dirty = false;
                 }
                 _ = maintenance.tick() => {
@@ -268,6 +297,57 @@ impl Worker {
         // Dropping jobs and bus closes pending calls and releases subscriptions.
     }
 
+    fn load_models(&mut self, key: CatalogKey, refresh: bool) {
+        if !matches!(key.provider.as_str(), "claude" | "codex") {
+            return;
+        }
+        if self.view.catalog.key == key
+            && (self.view.catalog.loading
+                || (!refresh
+                    && self.view.catalog.error.is_none()
+                    && !self.view.catalog.models.is_empty()))
+        {
+            return;
+        }
+        self.catalog_number += 1;
+        if let Some(abort) = self.catalog_abort.take() {
+            abort.abort();
+        }
+        if self.view.catalog.key != key {
+            self.view.catalog = Catalog {
+                key: key.clone(),
+                ..Default::default()
+            };
+        }
+        self.view.catalog.error = None;
+        self.dirty = true;
+        if !self.view.connected || (key.provider != "claude" && !absolute_directory(&key.cwd)) {
+            self.view.catalog.loading = false;
+            self.view.catalog.error = Some(
+                if !self.view.connected {
+                    "Connect to the hub to load models."
+                } else {
+                    "Enter an absolute project directory to load models."
+                }
+                .into(),
+            );
+            return;
+        }
+        self.view.catalog.loading = true;
+        let backend = self.backend.clone();
+        let epoch = self.epoch;
+        let number = self.catalog_number;
+        let (abort, registration) = AbortHandle::new_pair();
+        self.catalog_abort = Some(abort);
+        self.jobs.push(Box::pin(async move {
+            let result = Abortable::new(backend.models(&key), registration)
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("Model query superseded")))
+                .and_then(|value| parse_models(&key.provider, value));
+            Completion::Models(epoch, number, result)
+        }));
+    }
+
     fn fetch_fleet(&mut self) {
         if !self.view.connected || self.fleet_pending {
             return;
@@ -275,10 +355,10 @@ impl Worker {
         self.fleet_pending = true;
         self.fleet_overlay.clear();
         self.last_fleet = Instant::now();
-        let bus = self.bus.clone();
+        let backend = self.backend.clone();
         let epoch = self.epoch;
         self.jobs.push(Box::pin(async move {
-            Completion::Fleet(epoch, bus.call("sessions.snapshots", json!({})).await)
+            Completion::Fleet(epoch, backend.snapshots().await)
         }));
     }
 
@@ -294,16 +374,11 @@ impl Worker {
         self.buffered_bytes = 0;
         self.resync_after_read = false;
         self.last_conversation = Instant::now();
-        let bus = self.bus.clone();
+        let backend = self.backend.clone();
         let epoch = self.epoch;
         let selection = self.selection;
         self.jobs.push(Box::pin(async move {
-            Completion::Conversation(
-                epoch,
-                selection,
-                bus.call("sessions.conversation", json!({"sessionId":id}))
-                    .await,
-            )
+            Completion::Conversation(epoch, selection, backend.conversation(&id).await)
         }));
     }
 
@@ -319,7 +394,7 @@ impl Worker {
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));
         }
-        let _ = self.bus.topics(topics).await;
+        let _ = self.backend.topics(topics).await;
         self.fetch_conversation();
         self.dirty = true;
     }
@@ -349,6 +424,9 @@ impl Worker {
             Event::Disconnected(reason) => {
                 self.epoch += 1;
                 self.view.connected = false;
+                self.view.catalog.loading = false;
+                self.view.catalog.error =
+                    Some("Hub disconnected. Reconnect to load models.".into());
                 self.view.loading = false;
                 self.view.notice = format!("{reason}. Reconnecting…");
                 self.push_ready = false;
@@ -482,10 +560,14 @@ impl Worker {
             });
         } else {
             self.view.busy = true;
-            let bus = self.bus.clone();
+            let backend = self.backend.clone();
+            let stream = self
+                .sessions
+                .get(&session)
+                .is_some_and(|s| s.transport == "stream");
             self.jobs.push(Box::pin(async move {
-                let (method, params) = action.wire(&session);
-                Completion::Action(number, session, action, bus.call(method, params).await)
+                let result = backend.action(&session, &action, stream).await;
+                Completion::Action(number, session, action, result)
             }));
         }
         self.dirty = true;
@@ -515,11 +597,9 @@ impl Worker {
             }
             Ok(params) => {
                 self.view.creating = true;
-                let bus = self.bus.clone();
+                let backend = self.backend.clone();
                 self.jobs.push(Box::pin(async move {
-                    let result = bus
-                        .call_with_timeout("agents.spawn", params, Duration::from_secs(360))
-                        .await;
+                    let result = backend.spawn(params).await;
                     Completion::Spawn(number, request, result)
                 }));
             }
@@ -529,6 +609,20 @@ impl Worker {
 
     async fn complete(&mut self, completion: Completion) {
         match completion {
+            Completion::Models(epoch, number, result) => {
+                if epoch != self.epoch || number != self.catalog_number {
+                    return;
+                }
+                self.view.catalog.loading = false;
+                match result {
+                    Ok(models) if !models.is_empty() => {
+                        self.view.catalog.models = models;
+                        self.view.catalog.error = None;
+                    }
+                    Ok(_) => self.view.catalog.error = Some("No models returned. Use the provider default, enter a custom model, or retry.".into()),
+                    Err(error) => self.view.catalog.error = Some(format!("Could not load models: {error}")),
+                }
+            }
             Completion::Spawn(number, request, result) => {
                 self.view.creating = false;
                 let result = result.and_then(|value| {

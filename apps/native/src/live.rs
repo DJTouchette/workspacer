@@ -12,9 +12,10 @@ use std::{
 };
 
 async fn wait_for(controller: &Controller, predicate: impl Fn(&View) -> bool) -> Result<Arc<View>> {
+    let mut views = controller.views.clone();
     tokio::time::timeout(Duration::from_secs(120), async {
         loop {
-            let view = controller.views.recv().await?;
+            let view = views.borrow_and_update().clone();
             if predicate(&view) {
                 return Ok(view);
             }
@@ -23,6 +24,7 @@ async fn wait_for(controller: &Controller, predicate: impl Fn(&View) -> bool) ->
             {
                 return Err(anyhow!("Live action failed: {error}"));
             }
+            views.changed().await?;
         }
     })
     .await

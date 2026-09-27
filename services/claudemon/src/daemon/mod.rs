@@ -1,4 +1,5 @@
 pub mod api;
+pub mod embedded;
 pub mod heartbeat;
 pub mod hook;
 pub mod init;
@@ -38,31 +39,97 @@ pub struct ServeConfig {
     pub db_path: PathBuf,
 }
 
-/// The daemon's own API base URL (`http://host:api_port`), set once at startup.
-/// Provider adapters need it to hand agents callback endpoints on this daemon —
-/// e.g. registering the `/mcp/ask/:session_id` AskUserQuestion MCP server with
-/// a Codex spawn. `None` until `run` is called (unit tests).
-pub static API_BASE: once_cell::sync::OnceCell<String> = once_cell::sync::OnceCell::new();
+/// Callback address for the single active daemon. Resettable so an embedded
+/// daemon can be stopped and restarted without stale provider callbacks.
+pub static API_BASE: CallbackBase = CallbackBase(std::sync::RwLock::new(None));
+pub struct CallbackBase(std::sync::RwLock<Option<String>>);
+impl CallbackBase {
+    pub fn get(&self) -> Option<String> {
+        self.0.read().unwrap().clone()
+    }
+    pub fn set(&self, value: String) -> Result<(), String> {
+        *self.0.write().unwrap() = Some(value);
+        Ok(())
+    }
+}
+
+static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+struct DaemonLease;
+impl DaemonLease {
+    fn acquire() -> Result<Self> {
+        anyhow::ensure!(
+            !RUNNING.swap(true, std::sync::atomic::Ordering::AcqRel),
+            "a claudemon runtime is already active in this process"
+        );
+        Ok(Self)
+    }
+}
+impl Drop for DaemonLease {
+    fn drop(&mut self) {
+        *API_BASE.0.write().unwrap() = None;
+        RUNNING.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
 
 pub async fn run(cfg: ServeConfig) -> Result<()> {
-    let _ = API_BASE.set(format!(
-        "http://{}:{}",
-        if cfg.host == "0.0.0.0" {
-            "127.0.0.1"
-        } else {
-            cfg.host.as_str()
-        },
-        cfg.api_port
-    ));
-    // Windows: confine the daemon — and every PTY child it spawns (claude.exe,
-    // conhost, shells) — in a kill-on-job-close job object, so the whole tree
-    // dies with the daemon no matter how the daemon dies (clean exit, crash,
-    // Task-Manager kill). Without this a hard-killed daemon skips
-    // kill_all_ptys and orphans its agents. No-op elsewhere.
+    let _lease = DaemonLease::acquire()?;
     #[cfg(windows)]
     confine_to_job();
+    run_controlled(cfg, process_shutdown(), None).await
+}
 
+async fn process_shutdown() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+            _ = wait_for_parent_exit() => {},
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = wait_for_parent_exit() => {},
+    }
+}
+
+async fn run_controlled(
+    cfg: ServeConfig,
+    shutdown: impl std::future::Future<Output = ()>,
+    control: Option<embedded::Control>,
+) -> Result<()> {
+    // Bind both ports before starting workers. A partial startup failure drops
+    // the first listener and cannot leak background tasks into a host runtime.
+    let hook_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.hook_port).parse()?;
+    let api_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.api_port).parse()?;
+    let hook_listener = TcpListener::bind(hook_addr)
+        .await
+        .with_context(|| format!("binding hook server to {hook_addr}"))?;
+    let api_listener = TcpListener::bind(api_addr)
+        .await
+        .with_context(|| format!("binding api server to {api_addr}"))?;
+    let hook_addr = hook_listener.local_addr()?;
+    let api_addr = api_listener.local_addr()?;
+    let callback_host = if api_addr.ip().is_unspecified() {
+        if api_addr.is_ipv4() {
+            "127.0.0.1".to_owned()
+        } else {
+            "[::1]".to_owned()
+        }
+    } else if api_addr.is_ipv6() {
+        format!("[{}]", api_addr.ip())
+    } else {
+        api_addr.ip().to_string()
+    };
+    let _ = API_BASE.set(format!("http://{callback_host}:{}", api_addr.port()));
     let store = SessionStore::new();
+    if let Some(control) = &control {
+        *control.cleanup.lock().unwrap() = Some(store.clone());
+    }
     let db = Db::open(&cfg.db_path)
         .with_context(|| format!("opening db at {}", cfg.db_path.display()))?;
     tracing::info!(db = %cfg.db_path.display(), "sqlite store ready");
@@ -108,10 +175,13 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
     // By default every CONFIGURED account is polled, so the gauges are right on
     // a daemon with nothing running. The user can restrict that to accounts
     // with a live session (`usage.pollOnBoot: false` in the workspacer config,
-    // which both spawn sites hand us as WORKSPACER_USAGE_POLL_ON_BOOT). Read
-    // once here rather than inside the loop: this is a boot decision, and a
-    // daemon's own environment does not change under it.
-    let poll_idle_accounts = crate::session::account_usage::poll_on_boot_enabled();
+    // passed by process launchers as WORKSPACER_USAGE_POLL_ON_BOOT or by an
+    // embedded host as an explicit option). Read once here rather than inside
+    // the loop: this is a boot decision.
+    let poll_idle_accounts = control
+        .as_ref()
+        .and_then(|control| control.options.usage_poll_on_boot)
+        .unwrap_or_else(crate::session::account_usage::poll_on_boot_enabled);
     tracing::info!(
         poll_on_boot = poll_idle_accounts,
         "account usage poller starting",
@@ -136,16 +206,6 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
         });
     }
 
-    let hook_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.hook_port).parse()?;
-    let api_addr: SocketAddr = format!("{}:{}", cfg.host, cfg.api_port).parse()?;
-
-    let hook_listener = TcpListener::bind(hook_addr)
-        .await
-        .with_context(|| format!("binding hook server to {hook_addr}"))?;
-    let api_listener = TcpListener::bind(api_addr)
-        .await
-        .with_context(|| format!("binding api server to {api_addr}"))?;
-
     tracing::info!(%hook_addr, "hook server listening");
     tracing::info!(%api_addr, "api server listening");
 
@@ -162,54 +222,73 @@ pub async fn run(cfg: ServeConfig) -> Result<()> {
         Some(cfg.host.clone()),
     );
 
-    let hook_task = tokio::spawn(async move {
-        if let Err(err) = axum::serve(hook_listener, hook_app).await {
-            tracing::error!(?err, "hook server crashed");
-        }
-    });
-    let api_task = tokio::spawn(async move {
-        if let Err(err) = axum::serve(api_listener, api_app).await {
-            tracing::error!(?err, "api server crashed");
-        }
-    });
+    // Fence only spawn handlers: parked MCP questions must not delay shutdown.
+    // The read guard spans admission through PTY registration, so no HTTP
+    // handler can publish a child after shutdown takes its cleanup snapshot.
+    let spawn_closed = std::sync::Arc::new(tokio::sync::RwLock::new(false));
+    let spawn_gate = spawn_closed.clone();
+    let api_app = api_app.layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            let gate = spawn_gate.clone();
+            async move {
+                let path = request.uri().path();
+                if matches!(path, "/sessions/spawn" | "/sessions/spawn-managed") {
+                    let closed = gate.read().await;
+                    if *closed {
+                        use axum::response::IntoResponse;
+                        return (
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                            "daemon is shutting down",
+                        )
+                            .into_response();
+                    }
+                    let response = next.run(request).await;
+                    drop(closed);
+                    response
+                } else {
+                    next.run(request).await
+                }
+            }
+        },
+    ));
 
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{signal, SignalKind};
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-        tokio::select! {
-            _ = hook_task => {},
-            _ = api_task => {},
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("shutting down");
-            }
-            _ = sigterm.recv() => {
-                tracing::info!("received SIGTERM, shutting down");
-            }
-            _ = wait_for_parent_exit() => {
-                tracing::info!("parent process exited; shutting down");
-            }
-        }
+    let command_task = control
+        .map(|control| embedded::serve_commands(control, api_app.clone(), hook_addr, api_addr));
+    let mut hook_task = tokio::spawn(async move { axum::serve(hook_listener, hook_app).await });
+    let mut api_task = tokio::spawn(async move { axum::serve(api_listener, api_app).await });
+    let result = tokio::select! {
+        result = &mut hook_task => result.context("hook listener task failed").and_then(|r| r.context("hook listener failed")),
+        result = &mut api_task => result.context("API listener task failed").and_then(|r| r.context("API listener failed")),
+        _ = shutdown => Ok(()),
+    };
+    // Stop ingress first, then release managed drivers and kill/reap PTYs.
+    // The embedded owner drops its dedicated runtime after this returns,
+    // cancelling all daemon workers and dropping kill-on-drop provider children.
+    hook_task.abort();
+    api_task.abort();
+    if let Some(task) = command_task {
+        task.abort();
+        let _ = task.await;
     }
-    #[cfg(not(unix))]
-    {
-        tokio::select! {
-            _ = hook_task => {},
-            _ = api_task => {},
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("shutting down");
-            }
-            _ = wait_for_parent_exit() => {
-                tracing::info!("parent process exited; shutting down");
-            }
+    // A spawn may still be waiting for an incomplete HTTP request body. Do not
+    // let that client prevent the embedded owner from cancelling its runtime.
+    // On timeout the owner still sweeps PTYs during/after runtime destruction.
+    let drained =
+        tokio::time::timeout(std::time::Duration::from_secs(2), spawn_closed.write()).await;
+    let admission_result = match drained {
+        Ok(mut closed) => {
+            *closed = true;
+            Ok(())
         }
-    }
-
-    // Kill the PTY children we spawned so they don't outlive the daemon (and the
-    // launcher). Managed-provider children use kill_on_drop and are reaped as the
-    // runtime tears down; the portable-pty children are not, so kill them here.
-    store_for_shutdown.kill_all_ptys();
+        Err(_) => Err(anyhow::anyhow!(
+            "timed out draining active spawn requests during shutdown"
+        )),
+    };
+    store_for_shutdown.shutdown_children().await;
+    // Let managed drivers observe closed input channels and run their teardown.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    admission_result?;
+    result?;
 
     Ok(())
 }

@@ -805,6 +805,57 @@ impl SessionStore {
         }
     }
 
+    /// Final sweep after the embedded runtime has stopped all provider tasks.
+    /// Called only on the backend owner thread, never on the UI/executor.
+    pub(crate) fn reap_shutdown_ptys(&self) {
+        self.kill_all_ptys();
+        for entry in self.ptys.iter() {
+            let mut child = entry
+                .value()
+                .child
+                .lock()
+                .expect("PTY child mutex poisoned");
+            if !matches!(child.try_wait(), Ok(Some(_))) {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    /// Stop daemon-owned children and reap PTYs before an embedded host drops
+    /// its runtime. Work happens on the blocking pool, never on the UI thread.
+    pub(crate) async fn shutdown_children(&self) {
+        let managed: Vec<String> = self
+            .managed_inputs
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        for id in managed {
+            self.terminate_managed(&id);
+        }
+        let handles: Vec<_> = self
+            .ptys
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        self.kill_all_ptys();
+        let mut reapers = tokio::task::JoinSet::new();
+        for handle in handles {
+            reapers.spawn_blocking(move || {
+                let mut child = handle.child.lock().expect("PTY child mutex poisoned");
+                if !matches!(child.try_wait(), Ok(Some(_))) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            });
+        }
+        while let Some(result) = reapers.join_next().await {
+            if let Err(error) = result {
+                tracing::warn!(?error, "PTY shutdown reaper failed");
+            }
+        }
+    }
+
     /// Repopulate the in-memory session list from persisted rows at startup,
     /// marking each as [`SessionMode::Stopped`]. The processes themselves are
     /// gone (they were the previous daemon's children), but the rows let clients
