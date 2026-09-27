@@ -17,7 +17,8 @@ HUB       := services/hub
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
         build-cli test test-desktop test-hub test-tui test-claudemon test-routing-harness \
-        claudemon-routes docs-drift package clean dev-native run-native build-native test-native
+        claudemon-routes docs-drift package clean dev-native run-native build-native test-native \
+        dev-native-local run-native-local build-native-local
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -52,18 +53,35 @@ run-tui: build-claudemon build-hub build-tui
 ## dev-native: run the native GUI against the running desktop/headless hub.
 ##             ARGS="--bus wss://host/bus --token-file /path/to/token" for remote.
 ##             Demo data is opt-in only: ARGS="--demo".
+##             Use dev-native-local to own an embedded backend instead.
 dev-native:
 	cargo run --locked --manifest-path $(NATIVE)/Cargo.toml -- $(ARGS)
+
+## dev-native-local: build hub/brain/MCP/launcher and run the embedded native GUI.
+##                   ARGS="--keep-running" minimizes the window on close.
+##                   No standalone claudemon executable is needed.
+dev-native-local: build-hub
+	cargo run --locked --manifest-path $(NATIVE)/Cargo.toml -- --local --services-dir "$(abspath $(HUB))" $(ARGS)
 
 ## run-native: build and launch the release native GUI against the running hub.
 run-native: build-native
 	cargo run --locked --release --manifest-path $(NATIVE)/Cargo.toml -- $(ARGS)
 
+## run-native-local: build and launch the release GUI with its embedded backend.
+run-native-local: build-native-local
+	cargo run --locked --release --manifest-path $(NATIVE)/Cargo.toml -- --local --services-dir "$(abspath $(HUB))" $(ARGS)
+
+## build-native: build the native GUI binary (existing-hub or embedded mode).
 build-native:
 	cd $(NATIVE) && cargo build --locked --release --bin wks-native
 
+## build-native-local: build the native binary and all required local services.
+build-native-local: build-hub build-native
+
+## test-native: native UI/protocol tests and embedded-engine lifecycle regression.
 test-native:
 	cd $(NATIVE) && cargo test --locked --features ui-tests
+	cd $(CLAUDEMON) && cargo test --locked --test embedded
 
 ## install: install desktop JS dependencies
 install:

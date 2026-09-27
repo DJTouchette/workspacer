@@ -23,10 +23,10 @@ results are recorded separately below.
 From the repository root (connects to the running desktop hub or `workspacer serve`):
 
 ```sh
-make dev-native     # build and launch the debug GUI
+make dev-native     # build and launch the debug GUI against an existing hub
 make build-native   # build apps/native/target/release/wks-native
-make run-native     # build and launch the release GUI
-make test-native    # protocol and GPUI input tests
+make run-native     # build and launch the release GUI against an existing hub
+make test-native    # native UI/protocol and embedded-engine lifecycle tests
 ```
 
 Use **New session** (`Ctrl/Cmd+N`), choose Claude or Codex, and enter an existing
@@ -84,12 +84,14 @@ Existing-hub mode does not own or stop backend processes on exit. The connected 
 
 ## Embedded local backend
 
-Build the Go service binaries, then start the native app from the repository root:
+From the repository root, these targets build the required Go services and
+start the native app with its embedded engine:
 
 ```sh
-make build-hub
-cargo run --locked --manifest-path apps/native/Cargo.toml -- \
-  --local --services-dir ./services/hub
+make dev-native-local       # debug build and launch
+make run-native-local       # release build and launch
+make build-native-local     # build the release GUI and services without launching
+make dev-native-local ARGS="--keep-running"
 ```
 
 `--local` starts claudemon inside the native process on a dedicated backend
