@@ -1,23 +1,136 @@
+mod navigation;
 use gpui::{
-    App, ClipboardItem, Context, Div, Entity, FocusHandle, KeyBinding, ListAlignment, ListOffset,
-    ListScrollEvent, ListState, Render, SharedString, Stateful, Task, Window, actions, div, list,
-    prelude::*, px, rgb, uniform_list,
+    App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
+    ListAlignment, ListOffset, ListScrollEvent, ListState, Render, SharedString, Stateful, Task,
+    Window, actions, div, list, prelude::*, px, rgb, uniform_list,
 };
 use gpui_component::{
     input::{Input, InputState},
     text::TextView,
 };
+use navigation::Screen;
 use std::{collections::HashMap, sync::Arc};
+use wks_native::appearance::{Appearance, Palette, preference_path};
 use wks_native::controller::{Action, Command, Controller, NewSession, View};
+use wks_native::model::Session;
+use wks_native::navigation::{Project, Provider, Settings, projects};
 
-// Native equivalents of the desktop semantic tokens. No CSS/browser runtime.
-const BASE: u32 = 0x14171c;
-const SURFACE: u32 = 0x1b2028;
-const SELECTED: u32 = 0x293448;
-const TEXT: u32 = 0xe2e6ed;
-const MUTED: u32 = 0x919cab;
-const ACCENT: u32 = 0x8cb4ff;
-const WARNING: u32 = 0xe4bd78;
+const CHAT_WIDTH: f32 = 900.;
+
+pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: &mut App) {
+    use gpui_component::{Theme, ThemeMode};
+    Theme::change(
+        if appearance == Appearance::Light {
+            ThemeMode::Light
+        } else {
+            ThemeMode::Dark
+        },
+        window,
+        cx,
+    );
+    let p = appearance.palette();
+    let theme = Theme::global_mut(cx);
+    theme.colors.background = rgb(p.base).into();
+    theme.colors.foreground = rgb(p.text).into();
+    theme.colors.border = rgb(p.border).into();
+    theme.colors.input = rgb(p.muted).into();
+    theme.colors.primary = rgb(p.primary).into();
+    theme.colors.primary_foreground = rgb(p.on_primary).into();
+    theme.colors.caret = rgb(p.accent).into();
+    theme.colors.link = rgb(p.accent).into();
+    theme.colors.muted = rgb(p.surface).into();
+    theme.colors.muted_foreground = rgb(p.muted).into();
+    theme.colors.selection = rgb(p.selected).into();
+    theme.font_size = px(14.);
+    theme.radius = px(8.);
+}
+
+fn mono_font() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Menlo"
+    } else if cfg!(target_os = "windows") {
+        "Consolas"
+    } else {
+        "DejaVu Sans Mono"
+    }
+}
+
+// Same brace-and-cursor geometry as desktop components/Brand.tsx.
+fn brand_mark(size: f32, p: Palette) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .gap(px(1.))
+        .font_family(mono_font())
+        .text_size(px(size))
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(p.accent))
+        .child("{")
+        .child(
+            div()
+                .w(px(size * 0.22))
+                .h(px(size * 0.72))
+                .rounded(px(1.))
+                .bg(rgb(p.accent)),
+        )
+        .child("}")
+}
+
+fn status_dot(color: u32) -> Div {
+    div()
+        .size(px(6.))
+        .flex_shrink_0()
+        .rounded_full()
+        .bg(rgb(color))
+}
+
+fn overline(label: impl Into<SharedString>, p: Palette) -> Div {
+    div()
+        .text_size(px(10.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(p.muted))
+        .child(label.into())
+}
+
+fn keycap(label: &'static str, p: Palette) -> Div {
+    div()
+        .px_1()
+        .rounded(px(4.))
+        .bg(rgb(p.surface))
+        .text_size(px(10.))
+        .font_family(mono_font())
+        .text_color(rgb(p.muted))
+        .child(label)
+}
+
+fn session_status(session: &Session, p: Palette) -> (&str, u32) {
+    if session.approval.is_some() {
+        return ("Needs approval", p.warning);
+    }
+    if session.questions.is_some() {
+        return ("Needs your input", p.warning);
+    }
+    match session.state.as_str() {
+        "working" | "thinking" | "streaming" => ("Working", p.busy),
+        "input" | "idle" => ("Ready", p.success),
+        "stopped" | "ended" => ("Ended", p.muted),
+        "" => ("Session", p.muted),
+        state => (state, p.muted),
+    }
+}
+
+fn session_badge(session: &Session, p: Palette) -> Div {
+    let (label, color) = session_status(session, p);
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .text_size(px(11.))
+        .text_color(rgb(color))
+        .child(status_dot(color))
+        .child(label.to_owned())
+}
 
 actions!(
     native,
@@ -28,12 +141,49 @@ actions!(
         PreviousSession,
         FocusComposer,
         Refresh,
+        NormalMode,
+        ShowProjects,
+        ShowSettings,
+        ShowConversation,
+        Search,
+        OpenProject,
+        FirstItem,
+        LastItem,
+        PageUp,
+        PageDown,
+        CycleTheme,
+        ToggleVim,
+        CycleProvider,
         Quit
     ]
 );
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("escape", NormalMode, Some("Workspace")),
+        KeyBinding::new("escape", NormalMode, Some("Workspace > Input")),
+        KeyBinding::new("ctrl-,", ShowSettings, Some("Workspace")),
+        KeyBinding::new("cmd-,", ShowSettings, Some("Workspace")),
+        KeyBinding::new("ctrl-p", ShowProjects, Some("Workspace")),
+        KeyBinding::new("cmd-p", ShowProjects, Some("Workspace")),
+        KeyBinding::new("t", CycleTheme, Some("VimNormal")),
+        KeyBinding::new("v", ToggleVim, Some("VimNormal")),
+        KeyBinding::new("a", CycleProvider, Some("VimNormal")),
+        KeyBinding::new("j", NextSession, Some("VimNormal")),
+        KeyBinding::new("k", PreviousSession, Some("VimNormal")),
+        KeyBinding::new("i", FocusComposer, Some("VimNormal")),
+        KeyBinding::new("n", CreateSession, Some("VimNormal")),
+        KeyBinding::new("/", Search, Some("VimNormal")),
+        KeyBinding::new("g p", ShowProjects, Some("VimNormal")),
+        KeyBinding::new("g s", ShowSettings, Some("VimNormal")),
+        KeyBinding::new("g c", ShowConversation, Some("VimNormal")),
+        KeyBinding::new("h", ShowProjects, Some("VimNormal")),
+        KeyBinding::new("l", OpenProject, Some("VimNormal")),
+        KeyBinding::new("enter", OpenProject, Some("VimNormal")),
+        KeyBinding::new("g g", FirstItem, Some("VimNormal")),
+        KeyBinding::new("shift-g", LastItem, Some("VimNormal")),
+        KeyBinding::new("ctrl-u", PageUp, Some("VimNormal")),
+        KeyBinding::new("ctrl-d", PageDown, Some("VimNormal")),
         KeyBinding::new("ctrl-n", CreateSession, Some("Workspace")),
         KeyBinding::new("cmd-n", CreateSession, Some("Workspace")),
         KeyBinding::new("ctrl-enter", SendMessage, Some("Workspace")),
@@ -54,6 +204,21 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 pub struct Workspace {
+    screen: Screen,
+    settings: Settings,
+    settings_path: Option<std::path::PathBuf>,
+    project_scope: String,
+    settings_error: String,
+    project_filter: Option<String>,
+    project_cursor: usize,
+    project_path: Entity<InputState>,
+    search: Entity<InputState>,
+    navigation_selected: Option<String>,
+    sidebar_scroll: gpui::UniformListScrollHandle,
+    projects_scroll: gpui::UniformListScrollHandle,
+    _focus_watch: Vec<gpui::Subscription>,
+    appearance: Appearance,
+    theme_error: String,
     controller: Controller,
     view: Arc<View>,
     composer: Entity<InputState>,
@@ -91,7 +256,7 @@ impl Workspace {
             InputState::new(window, cx)
                 .multi_line(true)
                 .rows(3)
-                .placeholder("Message this session…")
+                .placeholder("What would you like to work on?")
         });
         let project =
             cx.new(|cx| InputState::new(window, cx).placeholder("Absolute project directory"));
@@ -103,6 +268,24 @@ impl Workspace {
                 .rows(3)
                 .placeholder("What would you like to work on? (optional)")
         });
+        let project_path = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Absolute project directory on this hub")
+        });
+        let search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter sessions or projects…"));
+        let mut focus_watch = vec![cx.subscribe(
+            &search,
+            |this, _, event: &gpui_component::input::InputEvent, cx| {
+                if matches!(event, gpui_component::input::InputEvent::Change) {
+                    this.project_cursor = 0;
+                    this.projects_scroll
+                        .scroll_to_item(0, gpui::ScrollStrategy::Top);
+                    this.sidebar_scroll
+                        .scroll_to_item(0, gpui::ScrollStrategy::Top);
+                    cx.notify();
+                }
+            },
+        )];
         let incoming = controller.views.clone();
         let updates = cx.spawn_in(window, async move |this, cx| {
             while let Ok(view) = incoming.recv().await {
@@ -120,8 +303,25 @@ impl Workspace {
             cx.notify();
         }));
         let focus = cx.focus_handle();
+        focus_watch.push(cx.on_focus(&focus, window, |_, _, cx| cx.notify()));
+        focus_watch.push(cx.on_blur(&focus, window, |_, _, cx| cx.notify()));
         window.focus(&focus);
         Self {
+            screen: Screen::Conversation,
+            settings: Settings::default(),
+            settings_path: None,
+            project_scope: "test".into(),
+            settings_error: String::new(),
+            project_filter: None,
+            project_cursor: 0,
+            project_path,
+            search,
+            navigation_selected: None,
+            sidebar_scroll: gpui::UniformListScrollHandle::new(),
+            projects_scroll: gpui::UniformListScrollHandle::new(),
+            _focus_watch: focus_watch,
+            appearance: Appearance::default(),
+            theme_error: String::new(),
             controller,
             view: Arc::new(View::default()),
             composer,
@@ -149,6 +349,34 @@ impl Workspace {
         }
     }
 
+    pub fn set_appearance(
+        &mut self,
+        appearance: Appearance,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.appearance = appearance;
+        configure_theme(appearance, Some(window), cx);
+        cx.notify();
+    }
+
+    fn choose_theme(
+        &mut self,
+        appearance: Appearance,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_appearance(appearance, window, cx);
+        self.theme_error = match preference_path() {
+            Some(path) => appearance
+                .save(&path)
+                .err()
+                .map(|e| format!("Theme applied, but could not save: {e}"))
+                .unwrap_or_default(),
+            None => "Theme applied, but no settings directory is available.".into(),
+        };
+    }
+
     pub fn open_session(&mut self, session: Option<String>) {
         self.requested_session = session;
     }
@@ -162,6 +390,7 @@ impl Workspace {
             self.spawn_error = receipt.error.clone().unwrap_or_default();
             if let Some(id) = &receipt.session {
                 self.new_session = false;
+                self.screen = Screen::Conversation;
                 if let Some(message) = &receipt.unsent_message {
                     self.drafts.insert(id.clone(), message.clone());
                     if self.view.selected.as_ref() == Some(id) {
@@ -262,6 +491,14 @@ impl Workspace {
                 }
             }
         }
+        if self.navigation_selected.as_ref() == view.selected.as_ref()
+            || self
+                .navigation_selected
+                .as_ref()
+                .is_some_and(|id| !view.sessions.iter().any(|s| &s.id == id))
+        {
+            self.navigation_selected = None;
+        }
         self.view = view;
         cx.notify();
     }
@@ -279,18 +516,44 @@ impl Workspace {
             cx.notify();
             return;
         }
-        self.local_notice = self
-            .controller
-            .command(command)
-            .err()
-            .map(|e| e.to_string())
-            .unwrap_or_default();
+        let selection = match &command {
+            Command::Select(id) => Some(id.clone()),
+            _ => None,
+        };
+        match self.controller.command(command) {
+            Ok(()) => {
+                if let Some(id) = selection {
+                    self.navigation_selected = Some(id);
+                }
+                self.local_notice.clear();
+            }
+            Err(error) => self.local_notice = error.to_string(),
+        }
         cx.notify();
     }
 
-    fn send(&mut self, _: &SendMessage, _: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
         if self.new_session {
             self.create(cx);
+            return;
+        }
+        if self.screen == Screen::Projects {
+            if self
+                .project_path
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+            {
+                self.add_project(window, cx);
+            }
+            return;
+        }
+        if self.screen != Screen::Conversation
+            || self
+                .navigation_selected
+                .as_ref()
+                .is_some_and(|id| Some(id) != self.view.selected.as_ref())
+        {
             return;
         }
         let text = self.composer.read(cx).value().to_string();
@@ -310,7 +573,15 @@ impl Workspace {
         if self.demo || self.requested_session.is_some() {
             return;
         }
+        if !self.new_session {
+            self.provider = self.settings.default_provider.id();
+        }
         self.new_session = true;
+        self.screen = Screen::Conversation;
+        if let Some(path) = self.project_filter.clone() {
+            self.project
+                .update(cx, |input, cx| input.set_value(path, window, cx));
+        }
         if self.project.read(cx).value().is_empty() {
             let cwd = self
                 .view
@@ -354,36 +625,82 @@ impl Workspace {
     }
 
     fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
-        let sessions = &self.view.sessions;
-        if sessions.is_empty() {
+        if self.new_session || self.screen == Screen::Settings {
             return;
         }
-        let index = sessions
+        if self.screen == Screen::Projects {
+            let len = self.project_rows(cx).len();
+            if len > 0 {
+                self.project_cursor =
+                    (self.project_cursor as isize + step).rem_euclid(len as isize) as usize;
+                self.projects_scroll
+                    .scroll_to_item(self.project_cursor, gpui::ScrollStrategy::Center);
+                cx.notify();
+            }
+            return;
+        }
+        let rows = self.visible_sessions(cx);
+        if rows.is_empty() {
+            return;
+        }
+        let selected = self
+            .navigation_selected
+            .as_ref()
+            .or(self.view.selected.as_ref());
+        let current = rows
             .iter()
-            .position(|s| Some(&s.id) == self.view.selected.as_ref())
-            .unwrap_or(0);
-        let index = (index as isize + step).rem_euclid(sessions.len() as isize) as usize;
-        self.command(Command::Select(sessions[index].id.clone()), cx);
+            .position(|&ix| Some(&self.view.sessions[ix].id) == selected);
+        let index = current
+            .map(|ix| (ix as isize + step).rem_euclid(rows.len() as isize) as usize)
+            .unwrap_or(if step < 0 { rows.len() - 1 } else { 0 });
+        self.sidebar_scroll
+            .scroll_to_item(index, gpui::ScrollStrategy::Center);
+        self.command(
+            Command::Select(self.view.sessions[rows[index]].id.clone()),
+            cx,
+        );
     }
 
     fn button(&self, id: &'static str, label: &'static str, enabled: bool) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        let primary = matches!(
+            id,
+            "send" | "create-session" | "new-session" | "welcome-new"
+        );
         div()
             .id(id)
             .px_3()
             .py_2()
+            .font_weight(FontWeight::MEDIUM)
             .rounded_md()
-            .bg(rgb(SURFACE))
-            .text_color(rgb(if enabled { ACCENT } else { MUTED }))
+            .bg(rgb(p.surface))
+            .text_color(rgb(if enabled { p.text } else { p.disabled }))
             .text_size(px(12.))
             .when(enabled, |d| {
-                d.cursor_pointer().hover(|s| s.bg(rgb(SELECTED)))
+                d.cursor_pointer().hover(|s| {
+                    s.bg(if primary {
+                        gpui::Hsla::from(rgb(p.primary)).opacity(0.85)
+                    } else {
+                        rgb(p.selected).into()
+                    })
+                })
             })
+            .when(
+                enabled
+                    && matches!(
+                        id,
+                        "send" | "create-session" | "new-session" | "welcome-new"
+                    ),
+                |d| d.bg(rgb(p.primary)).text_color(rgb(p.on_primary)),
+            )
             .child(label)
     }
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.appearance.palette();
+        let compact = window.viewport_size().height < px(620.);
         let selected = self
             .view
             .sessions
@@ -391,6 +708,10 @@ impl Render for Workspace {
             .find(|s| Some(&s.id) == self.view.selected.as_ref())
             .cloned();
         let enabled = self.view.connected
+            && self
+                .navigation_selected
+                .as_ref()
+                .is_none_or(|id| Some(id) == self.view.selected.as_ref())
             && !self.view.busy
             && selected.as_ref().is_some_and(|s| !s.stopped());
         let snapshot = self.view.clone();
@@ -424,26 +745,52 @@ impl Render for Workspace {
             div()
                 .w_full()
                 .px_5()
-                .py_3()
+                .py_4()
                 .child(
                     div()
                         .w_full()
-                        .max_w(px(900.))
+                        .max_w(px(CHAT_WIDTH))
                         .mx_auto()
                         .flex()
                         .flex_col()
                         .gap_2()
+                        .p_4()
+                        .when(row.role == "You", |d| d.bg(rgb(p.user)).rounded_lg())
+                        .when(!matches!(row.role, "You" | "Assistant"), |d| {
+                            d.border_l_2()
+                                .border_color(rgb(p.border))
+                                .text_color(rgb(p.muted))
+                        })
                         .child(
                             div()
                                 .flex()
                                 .justify_between()
                                 .text_size(px(12.))
-                                .text_color(rgb(MUTED))
-                                .child(row.role)
+                                .text_color(rgb(p.muted))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .when(row.role == "Assistant", |d| {
+                                            d.child(brand_mark(14., p))
+                                        })
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(rgb(p.text))
+                                                .child(row.role),
+                                        ),
+                                )
                                 .child(
                                     div()
                                         .id(("copy", row.key))
                                         .cursor_pointer()
+                                        .px_2()
+                                        .rounded_md()
+                                        .hover(|style| {
+                                            style.bg(rgb(p.surface)).text_color(rgb(p.text))
+                                        })
                                         .child("Copy")
                                         .on_click(move |_, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
@@ -455,7 +802,7 @@ impl Render for Workspace {
                         .when(row.truncated, |d| {
                             d.child(
                                 div()
-                                    .text_color(rgb(WARNING))
+                                    .text_color(rgb(p.warning))
                                     .child("Earlier text in this message was clipped."),
                             )
                         })
@@ -474,118 +821,266 @@ impl Render for Workspace {
         .flex_1()
         .min_h_0();
 
+        let visible_sessions = self.visible_sessions(cx);
         let sidebar = div()
-            .w(px(250.))
+            .w(px(264.))
             .h_full()
             .flex_shrink_0()
-            .bg(rgb(SURFACE))
+            .bg(rgb(p.base))
+            .border_r_1()
+            .border_color(rgb(p.border))
             .flex()
             .flex_col()
             .child(
-                div().p_4().text_size(px(16.)).child("Workspacer").child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(rgb(MUTED))
-                        .child(if self.demo {
-                            "NATIVE EXPERIMENT · DEMO"
+                div()
+                    .px_4()
+                    .py_5()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .size(px(40.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_lg()
+                            .bg(rgb(p.selected))
+                            .child(brand_mark(22., p)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .text_size(px(14.))
+                                    .font_family(mono_font())
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("work")
+                                    .child(div().text_color(rgb(p.accent)).child("{spacer}")),
+                            )
+                            .child(div().text_size(px(10.)).text_color(rgb(p.muted)).child(
+                                if self.demo {
+                                    "NATIVE · DEMO"
+                                } else {
+                                    "YOUR AGENT WORKSPACE"
+                                },
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .pb_2()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        self.button("nav-projects", "Projects", true)
+                            .flex_1()
+                            .when(self.screen == Screen::Projects, |d| d.bg(rgb(p.selected)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_screen(Screen::Projects, window, cx)
+                            })),
+                    )
+                    .child(
+                        self.button("nav-settings", "Settings", true)
+                            .flex_1()
+                            .when(self.screen == Screen::Settings, |d| d.bg(rgb(p.selected)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_screen(Screen::Settings, window, cx)
+                            })),
+                    ),
+            )
+            .child(div().px_3().pb_3().child(Input::new(&self.search)))
+            .child(
+                div().px_3().pb_4().child(
+                    self.button(
+                        "new-session",
+                        "New session",
+                        !self.demo && self.requested_session.is_none(),
+                    )
+                    .w_full()
+                    .flex()
+                    .justify_between()
+                    .child(keycap(
+                        if cfg!(target_os = "macos") {
+                            "⌘ N"
                         } else {
-                            "NATIVE"
-                        }),
+                            "Ctrl N"
+                        },
+                        p,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))),
                 ),
             )
             .child(
-                self.button(
-                    "new-session",
-                    "New session",
-                    !self.demo && self.requested_session.is_none(),
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))),
+                div()
+                    .px_4()
+                    .pb_2()
+                    .flex()
+                    .justify_between()
+                    .text_size(px(10.))
+                    .text_color(rgb(p.muted))
+                    .child("SESSIONS")
+                    .child(visible_sessions.len().to_string()),
             )
+            .when_some(self.project_filter.as_ref(), |d, path| {
+                d.child(
+                    div()
+                        .px_3()
+                        .pb_2()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(11.))
+                                .text_color(rgb(p.accent))
+                                .child(path.clone()),
+                        )
+                        .child(
+                            self.button("all-projects", "All", true)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.project_filter = None;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            })
             .child(
                 uniform_list(
                     "sessions",
-                    self.view.sessions.len(),
-                    cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                    visible_sessions.len(),
+                    cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                         range
                             .map(|ix| {
-                                let session = &this.view.sessions[ix];
+                                let session = &this.view.sessions[visible_sessions[ix]];
                                 let id = session.id.clone();
-                                let active = this.view.selected.as_ref() == Some(&id);
-                                div()
-                                    .id(ix)
-                                    .h(px(68.))
-                                    .px_4()
-                                    .py_2()
-                                    .cursor_pointer()
-                                    .overflow_hidden()
-                                    .when(active, |d| d.bg(rgb(SELECTED)))
-                                    .hover(|s| s.bg(rgb(SELECTED)))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .truncate()
-                                            .child(session.title().to_owned()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(MUTED))
-                                            .truncate()
-                                            .child(session.cwd.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(if session.approval.is_some() {
-                                                WARNING
-                                            } else {
-                                                MUTED
-                                            }))
-                                            .child(if session.approval.is_some() {
-                                                "Needs approval".into()
-                                            } else {
-                                                session.state.clone()
-                                            }),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.new_session = false;
-                                        this.command(Command::Select(id.clone()), cx)
-                                    }))
+                                let active = this
+                                    .navigation_selected
+                                    .as_ref()
+                                    .or(this.view.selected.as_ref())
+                                    == Some(&id);
+                                div().h(px(80.)).px_2().pb_1().child(
+                                    div()
+                                        .id(ix)
+                                        .h_full()
+                                        .px_3()
+                                        .py_2()
+                                        .rounded_lg()
+                                        .cursor_pointer()
+                                        .overflow_hidden()
+                                        .when(active, |d| d.bg(rgb(p.selected)))
+                                        .hover(|style| style.bg(rgb(p.selected)))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    div().w(px(3.)).h(px(14.)).rounded_full().bg(
+                                                        rgb(if active {
+                                                            p.accent
+                                                        } else {
+                                                            p.border
+                                                        }),
+                                                    ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .text_size(px(13.))
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .truncate()
+                                                        .child(session.title().to_owned()),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .pl_3()
+                                                .text_size(px(11.))
+                                                .text_color(rgb(p.muted))
+                                                .truncate()
+                                                .child(session.cwd.clone()),
+                                        )
+                                        .child(div().pl_3().mt_1().child(session_badge(session, p)))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.new_session = false;
+                                            this.screen = Screen::Conversation;
+                                            this.command(Command::Select(id.clone()), cx)
+                                        })),
+                                )
                             })
                             .collect::<Vec<_>>()
                     }),
                 )
+                .track_scroll(self.sidebar_scroll.clone())
                 .flex_1()
                 .min_h_0(),
             )
             .child(
                 div()
-                    .p_4()
-                    .text_size(px(11.))
-                    .text_color(rgb(MUTED))
-                    .child(format!(
-                        "{} · {} sessions",
-                        if self.view.connected {
-                            "Connected"
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(keycap(
+                        if !self.settings.vim_navigation {
+                            "SHORTCUTS"
+                        } else if self.focus.is_focused(window) {
+                            "NORMAL"
                         } else {
-                            "Reconnecting"
+                            "INSERT"
                         },
-                        self.view.sessions.len()
+                        p,
+                    ))
+                    .child(div().text_size(px(10.)).text_color(rgb(p.muted)).child(
+                        if !self.settings.vim_navigation {
+                            "Ctrl P · Ctrl ,"
+                        } else if self.focus.is_focused(window) {
+                            "i edit · g p projects"
+                        } else {
+                            "Esc to navigate"
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .p_4()
+                    .border_t_1()
+                    .border_color(rgb(p.border))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(status_dot(if self.view.connected {
+                        p.success
+                    } else {
+                        p.warning
+                    }))
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(format!(
+                        "{}",
+                        if self.view.connected {
+                            "Connected to hub"
+                        } else {
+                            "Reconnecting…"
+                        }
                     )),
             );
 
         if self.new_session {
             let busy = self.spawn_pending || self.view.creating;
             let can_create = self.view.connected && !busy;
-            return div()
-                .key_context("Workspace")
-                .track_focus(&self.focus)
-                .size_full()
-                .flex()
-                .bg(rgb(BASE))
-                .text_color(rgb(TEXT))
-                .text_size(px(14.))
-                .on_action(cx.listener(Self::send))
+            return self.shell(window, cx)
                 .child(sidebar)
                 .child(
                     div()
@@ -597,25 +1092,32 @@ impl Render for Workspace {
                         .p_5()
                         .child(
                             div()
-                                .max_w(px(640.))
+                                .max_w(px(560.))
                                 .mx_auto()
                                 .flex()
                                 .flex_col()
-                                .gap_3()
-                                .child(div().text_size(px(20.)).child("New session"))
+                                .gap_3().py_4()
+                                .child(overline("NEW SESSION", p))
+                                .child(brand_mark(36., p))
                                 .child(
                                     div()
-                                        .text_color(rgb(MUTED))
+                                        .text_size(px(24.))
+                                        .font_weight(FontWeight::BOLD)
+                                        .child("Start something new"),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(rgb(p.muted))
                                         .text_size(px(12.))
-                                        .child("Start an agent on your connected Workspacer hub."),
+                                        .child("Choose an agent, point it at a project, and make something great."),
                                 )
                                 .child("Provider")
                                 .child(div().flex().gap_2().children(
                                     [("claude", "Claude"), ("codex", "Codex")].into_iter().map(
                                         |(provider, label)| {
-                                            self.button(provider, label, !busy)
+                                            self.button(provider, label, !busy).flex_1().py_3().flex().justify_center()
                                                 .when(self.provider == provider, |d| {
-                                                    d.bg(rgb(SELECTED))
+                                                    d.bg(rgb(p.selected))
                                                 })
                                                 .when(!busy, |d| {
                                                     d.on_click(cx.listener(
@@ -631,7 +1133,7 @@ impl Render for Workspace {
                                 .child("Project directory")
                                 .child(Input::new(&self.project).disabled(busy))
                                 .child(
-                                    div().text_size(px(12.)).text_color(rgb(MUTED)).child(
+                                    div().text_size(px(12.)).text_color(rgb(p.muted)).child(
                                         "Use an existing absolute path on the hub's machine.",
                                     ),
                                 )
@@ -644,14 +1146,14 @@ impl Render for Workspace {
                                 .when(!self.spawn_error.is_empty(), |d| {
                                     d.child(
                                         div()
-                                            .text_color(rgb(WARNING))
+                                            .text_color(rgb(p.warning))
                                             .child(self.spawn_error.clone()),
                                     )
                                 })
                                 .when(!self.view.connected, |d| {
                                     d.child(
                                         div()
-                                            .text_color(rgb(WARNING))
+                                            .text_color(rgb(p.warning))
                                             .child("Waiting for the hub connection…"),
                                     )
                                 })
@@ -662,9 +1164,8 @@ impl Render for Workspace {
                                         .child(self.button("cancel-create", "Back", !busy).when(
                                             !busy,
                                             |d| {
-                                                d.on_click(cx.listener(|this, _, _, cx| {
-                                                    this.new_session = false;
-                                                    cx.notify();
+                                                d.on_click(cx.listener(|this, _, window, cx| {
+                                                    this.show_screen(Screen::Conversation, window, cx);
                                                 }))
                                             },
                                         ))
@@ -695,47 +1196,74 @@ impl Render for Workspace {
                 .into_any_element();
         }
 
-        div().key_context("Workspace").track_focus(&self.focus).size_full().flex().bg(rgb(BASE)).text_color(rgb(TEXT)).text_size(px(14.))
-            .on_action(cx.listener(Self::send))
-            .on_action(cx.listener(|this, _: &CreateSession, window, cx| this.show_new_session(window, cx)))
-            .on_action(cx.listener(|this, _: &NextSession, _, cx| this.move_selection(1, cx)))
-            .on_action(cx.listener(|this, _: &PreviousSession, _, cx| this.move_selection(-1, cx)))
-            .on_action(cx.listener(|this, _: &FocusComposer, window, cx| this.composer.update(cx, |input, cx| input.focus(window, cx))))
-            .on_action(cx.listener(|this, _: &Refresh, _, cx| this.command(Command::Refresh, cx)))
+        if self.screen == Screen::Projects {
+            let content = self.render_projects(cx);
+            return self
+                .shell(window, cx)
+                .child(sidebar)
+                .child(content)
+                .into_any_element();
+        }
+        if self.screen == Screen::Settings {
+            let content = self.render_settings(cx);
+            return self
+                .shell(window, cx)
+                .child(sidebar)
+                .child(content)
+                .into_any_element();
+        }
+
+        self.shell(window, cx)
             .child(sidebar)
-            .child(div().flex_1().min_w_0().h_full().flex().flex_col()
-                .child(div().px_5().py_3().flex().items_center().justify_between()
-                    .child(div().child(title).child(div().text_size(px(11.)).text_color(rgb(MUTED)).child("Alt+↑/↓ sessions · Ctrl/Cmd+L compose")))
+            .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
+                .child(div().px_5().py(px(if compact { 10. } else { 16. })).bg(rgb(p.base)).border_b_1().border_color(rgb(p.border)).flex().items_center().gap_3().justify_between()
+                    .child(div().flex_1().min_w_0().when(!compact, |d| d.child(overline("CONVERSATION", p))).child(div().truncate().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child(title)).child(div().truncate().text_size(px(11.)).text_color(rgb(p.muted)).child(selected.as_ref().map(|s| s.cwd.clone()).unwrap_or_else(|| "Your workspace, ready when you are".into()))))
+                    .when_some(selected.as_ref(), |d, session| d.child(session_badge(session, p)))
                     .child(self.button("refresh", "Refresh", true).on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
-                .when(!notice.is_empty(), |d| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(WARNING)).child(notice)))
-                .when(self.view.transcript.omitted, |d| d.child(div().px_5().text_size(px(11.)).text_color(rgb(MUTED)).child("Showing recent history; older content is retained by the server.")))
-                .when(self.view.loading, |d| d.child(div().px_5().text_color(rgb(MUTED)).child("Loading conversation…")))
-                .when(!self.view.loading && self.view.transcript.rows.is_empty(), |d| d.child(div().p_5().text_color(rgb(MUTED)).child(if self.view.sessions.is_empty() {if self.view.connected {"No sessions yet. Choose New session to get started."} else {"Connecting to Workspacer. Start the desktop app or workspacer serve, or specify --bus."}} else {"No conversation yet."})))
-                .child(transcript)
+                .when(!notice.is_empty(), |d| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(p.warning)).child(notice)))
+                .when(self.view.transcript.omitted, |d| d.child(div().px_5().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent history; older content is retained by the server.")))
+                .when(self.view.loading, |d| d.child(div().px_5().text_color(rgb(p.muted)).child("Loading conversation…")))
+                .when(!self.view.loading && self.view.transcript.rows.is_empty(), |d| d.child(
+                    div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().px_5().gap_4()
+                        .child(div().size(px(80.)).rounded(px(20.)).bg(rgb(p.surface)).flex().items_center().justify_center().child(brand_mark(40., p)))
+                        .child(div().text_center().text_size(px(28.)).font_weight(FontWeight::BOLD).child("A little space for big ideas."))
+                        .child(div().max_w(px(380.)).text_center().text_size(px(14.)).text_color(rgb(p.muted)).child(
+                            if self.view.sessions.is_empty() {
+                                if self.view.connected { "Start a session to bring your next idea to life." }
+                                else { "Connecting to your workspace. Your sessions will appear here when the hub is ready." }
+                            } else { "Ask a question, explore your code, or describe what you want to build." }))
+                        .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-new", "Start a session", self.view.connected && !self.demo && self.requested_session.is_none())
+                            .when(self.view.connected && !self.demo && self.requested_session.is_none(), |d| d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))))))
+                ))
+                .when(!self.view.transcript.rows.is_empty() || self.view.loading, |d| d.child(transcript))
                 .when(!self.follow, |d| d.child(self.button("latest", "Jump to latest", true).on_click(cx.listener(|this, _, _, cx| {
                     this.follow = true;
                     this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); cx.notify();
                 }))))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
-                    let details = approval.get("toolInput").or_else(|| approval.get("raw")).unwrap_or(approval).to_string();
-                    d.child(div().px_5().py_2().flex().flex_col().gap_2().text_size(px(12.)).text_color(rgb(WARNING))
-                        .child(format!("Approval requested: {label}"))
-                        .child(div().id("approval-details").max_h(px(150.)).overflow_y_scroll().child(details))
+                    let details = serde_json::to_string_pretty(approval.get("toolInput").or_else(|| approval.get("raw")).unwrap_or(approval)).unwrap_or_default();
+                    d.child(div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5().py_2().flex().flex_col().gap_2().text_size(px(12.))
+                        .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}")))
+                        .child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded_md().bg(rgb(p.surface)).font_family(mono_font()).text_color(rgb(p.muted)).child(details))
                         .child(div().flex().gap_2()
                             .child(self.button("approve", "Allow once", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
-                .when_some(selected.as_ref().and_then(|s| s.questions.as_ref()), |d, questions| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(WARNING))
+                .when_some(selected.as_ref().and_then(|s| s.questions.as_ref()), |d, questions| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(p.warning))
                     .child(format!("Question: {questions}"))
                     .child(self.button("answer", "Answer with composer", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Answer(this.composer.read(cx).value().to_string()), cx)))))))
-                .child(div().px_5().py_3().flex().flex_col().gap_2()
-                    .child(Input::new(&self.composer).h(px(88.)).disabled(self.view.busy))
-                    .child(div().flex().items_center().justify_between()
-                        .child(div().text_size(px(11.)).text_color(rgb(MUTED)).child("Ctrl/Cmd+Enter send · Enter newline"))
-                        .child(div().flex().gap_2()
-                            .child(self.button("stop", "Interrupt", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx)))))
-                            .child(self.button("send", if self.view.busy {"Sending…"} else {"Send"}, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx)))))))))
+                .when(selected.is_some(), |d| d.child(div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5().pt_3().pb_4().flex().flex_col().gap_2()
+                    .child(div().bg(rgb(p.surface)).rounded_lg().p_3().flex().flex_col().gap_2()
+                        .child(Input::new(&self.composer).appearance(false).h(px(if compact { 48. } else { 88. })).disabled(self.view.busy))
+                        .child(div().flex().items_center().justify_between().gap_2()
+                            .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.view.busy { "Sending your message…" } else if enabled { "Make it happen." } else { "Select an available session to compose" }))
+                            .child(div().flex().gap_2()
+                                .child(self.button("stop", "Interrupt", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx)))))
+                                .child(self.button("send", if self.view.busy {"Sending…"} else {"Send message"}, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
+                    .child(div().flex().items_center().justify_between().text_size(px(10.)).text_color(rgb(p.muted))
+                        .child(div().flex().gap_1().items_center().child(keycap(if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
+                        .child("Enter for a new line")))))
             .into_any_element()
     }
 }
@@ -794,6 +1322,173 @@ mod tests {
             ]),
             ..Default::default()
         }
+    }
+
+    #[gpui::test]
+    fn vim_navigation_never_steals_composer_text(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("j k");
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "a"));
+        visual.simulate_keystrokes("shift-g g g");
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "a"));
+        visual.simulate_keystrokes("ctrl-d ctrl-u i");
+        visual.simulate_input("jkgn/hello");
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "jkgn/hello")
+        });
+        assert!(commands.try_recv().is_err());
+        visual.simulate_keystrokes("escape g s");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Settings));
+        visual.simulate_keystrokes("ctrl-enter");
+        assert!(
+            commands.try_recv().is_err(),
+            "settings must never send a hidden draft"
+        );
+        visual.simulate_keystrokes("escape i");
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "jkgn/hello")
+        });
+    }
+
+    #[gpui::test]
+    fn project_navigation_filters_and_seeds_new_sessions(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                let rows = Arc::make_mut(&mut view.sessions);
+                rows[0].cwd = "/one/app".into();
+                rows[1].cwd = "/two/app".into();
+                this.demo = false;
+                this.settings.default_provider = Provider::Codex;
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.simulate_keystrokes("g p j enter");
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.project_filter.as_deref(), Some("/two/app"));
+            assert_eq!(this.visible_sessions(cx), vec![1]);
+        });
+        visual.simulate_keystrokes("n");
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.new_session);
+            assert_eq!(this.provider, "codex");
+            assert_eq!(this.project.read(cx).value().as_ref(), "/two/app");
+        });
+        visual.simulate_input("jkgn");
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.project.read(cx).value().ends_with("jkgn"))
+        });
+        assert!(
+            commands.try_recv().is_err(),
+            "typing in form must not launch or select agents"
+        );
+    }
+
+    #[gpui::test]
+    fn search_and_disabled_vim_keep_input_and_modifier_shortcuts(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("/");
+        visual.simulate_input("Beta");
+        visual.simulate_keystrokes("escape j");
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settings.vim_navigation = false;
+                cx.notify();
+            })
+        });
+        visual.simulate_keystrokes("j g s");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.screen, Screen::Conversation)
+        });
+        assert!(commands.try_recv().is_err());
+        visual.simulate_keystrokes("ctrl-,");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Settings));
+        visual.simulate_keystrokes("ctrl-p");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Projects));
+    }
+
+    #[gpui::test]
+    fn project_bookmark_can_be_saved_without_launching_an_agent(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        visual.simulate_keystrokes("g p i");
+        visual.simulate_input("/work/jk-project");
+        visual.simulate_keystrokes("ctrl-enter");
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.settings.bookmarks("test"), ["/work/jk-project"]);
+            assert!(this.project_path.read(cx).value().is_empty());
+        });
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn settings_shortcuts_update_defaults_without_touching_sessions(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        visual.simulate_keystrokes("g s a v");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.settings.default_provider, Provider::Codex);
+            assert!(!this.settings.vim_navigation);
+        });
+        assert!(commands.try_recv().is_err());
+        visual.simulate_keystrokes("escape g p");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.screen, Screen::Conversation)
+        });
+        visual.simulate_keystrokes("ctrl-p");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Projects));
+    }
+
+    #[gpui::test]
+    fn failed_selection_does_not_leave_navigation_pending(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        drop(commands);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.command(Command::Select("b".into()), cx);
+                assert!(this.navigation_selected.is_none());
+                assert!(!this.local_notice.is_empty());
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn switching_themes_preserves_session_and_draft(cx: &mut TestAppContext) {
+        let (workspace, mut visual, commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("Keep my draft", window, cx));
+                for appearance in Appearance::ALL {
+                    this.set_appearance(appearance, window, cx);
+                    assert_eq!(this.appearance, appearance);
+                    assert_eq!(this.view.selected.as_deref(), Some("a"));
+                    assert_eq!(this.composer.read(cx).value().as_ref(), "Keep my draft");
+                    let theme = gpui_component::Theme::global(cx);
+                    assert_eq!(theme.is_dark(), appearance != Appearance::Light);
+                    assert_eq!(
+                        theme.colors.background,
+                        gpui::Hsla::from(rgb(appearance.palette().base))
+                    );
+                }
+            });
+        });
+        assert!(commands.try_recv().is_err());
     }
 
     #[gpui::test]

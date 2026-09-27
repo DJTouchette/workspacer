@@ -92,10 +92,98 @@ historical pagination, attachments, model settings, full theme parity,
 and packaging/updating remain follow-on work. Rich tool input/output is displayed
 as text, without the Electron client's diff cards.
 
-The native palette maps the desktop design language's semantic surfaces, accent,
-status colors, spacing, and chat measure into Rust constants. Controls have text
-labels; there is no parallel icon vocabulary. This is an intentional native
-prototype theme, not support for the desktop CSS theme registry.
+Choose **Dark**, **Light**, or **Nord** under **Settings → Appearance**.
+Switching applies immediately to the chrome, brand mark, conversation, inputs,
+and Markdown/code theme without changing sessions or composer drafts. These
+palettes follow the Electron themes (Light uses a darker warning color for
+readability). The choice persists in `workspacer/native-theme.json` under
+`XDG_CONFIG_HOME` (otherwise `~/.config`) or `APPDATA` on Windows. This is a local
+client preference, separate from the hub's `config.yaml`. An unreadable or invalid
+preference falls back to Dark with a startup diagnostic; failed saves are shown
+in Settings while keeping the selected theme active for the current run.
+
+The brace-and-cursor mark and work{spacer} wordmark follow `components/Brand.tsx`.
+Controls retain text labels, and native platform monospace fonts render the mark.
+Custom Electron themes, automatic system appearance, and bundled web fonts are
+not supported by this picker yet.
+
+## Projects, settings, and keyboard navigation
+
+**Projects** groups the connected hub's sessions by their exact directory paths.
+Full paths distinguish projects with the same folder name. Save an absolute path
+for a project without sessions; opening it pre-fills New Session, without launching
+an agent until you submit the form. Paths are interpreted on the hub, not checked
+against the client's filesystem. **Unsave** removes only the bookmark; projects
+with live sessions stay listed. Bookmarks are scoped to the hub endpoint.
+
+Opening a project filters the session sidebar; **All** clears the project filter.
+The sidebar search matches session names/paths and project paths. Keyboard
+navigation follows the filtered list and keeps the highlighted row in view.
+
+**Settings** contains the theme picker, a Vim navigation toggle, a default-agent
+picker (Claude/Codex), and the shortcut reference. Keyboard preferences, default
+provider, and project bookmarks persist in `workspacer/native-settings.json`
+next to `native-theme.json`. These are local client preferences; the shared hub
+configuration and running agents are unaffected. Missing settings use defaults;
+invalid files produce a startup diagnostic. Save errors are shown in the view.
+
+Vim navigation is enabled by default. The sidebar shows **NORMAL** when navigation
+has focus and **INSERT** when a text field has focus. Text fields retain ordinary
+editing; this is Vim-style app navigation, not a modal text editor.
+
+| Keys | Action |
+| --- | --- |
+| `Esc` | Leave a text field; press again to return to the conversation |
+| `j` / `k` | Next / previous session or project |
+| `gg` / `G` | First / last session or project |
+| `i` | Focus composer, new-session project field, or saved-project path field |
+| `/` | Focus the sidebar filter |
+| `g p` / `h` | Projects |
+| `Enter` / `l` | Open the highlighted project |
+| `g s` | Settings |
+| `g c` | Conversation |
+| `n` | New session using the selected project's directory |
+| `Ctrl+U` / `Ctrl+D` | Scroll conversation by half a window |
+| `t` / `v` / `a` in Settings | Cycle theme / toggle Vim / switch default agent |
+| `Ctrl/Cmd+P` | Projects, including with Vim disabled |
+| `Ctrl/Cmd+,` | Settings, including with Vim disabled |
+| `Ctrl/Cmd+Enter` | Send, create a session, or save the focused project-path field |
+
+The existing `Ctrl/Cmd+N`, `Ctrl/Cmd+L`, `Ctrl/Cmd+R`, and `Alt+Up/Down` shortcuts
+remain available. Settings and Projects never send a hidden composer draft.
+
+[Projects preview](docs/ui-projects.png) · [Settings preview](docs/ui-settings.png)
+
+## Visual design and captures
+
+The native workspace uses inset session rows with activity badges, theme preview
+swatches, a centered conversation column, and a single composer surface. Short
+windows compact the header, approval details, and composer to preserve transcript
+space. Without a selected session, the welcome state takes the full content area.
+New-session fields and long approval details remain scrollable.
+
+Current fixture captures (Linux/X11, software Vulkan; synthetic sessions):
+
+![Dark conversation](docs/ui-dark.png)
+
+[Light conversation](docs/ui-light.png) · [Nord at 720 × 480](docs/ui-nord.png) ·
+[Welcome state](docs/ui-empty.png)
+
+The visual pass was checked in all three themes, including the minimum window
+size and the creation form. All 36 native tests passed, including 13 GPUI tests.
+These captures do not establish macOS/Windows appearance or GPU performance.
+
+Repeat the capture with an isolated appearance preference:
+
+```sh
+python3 scripts/smoke.py --binary target/debug/wks-native --theme light --output light.png
+python3 scripts/smoke.py --binary target/debug/wks-native --theme nord --width 720 --height 480 --output compact.png
+# Against an isolated native-harness serve fixture (no agent/model calls):
+python3 scripts/smoke.py --binary target/debug/wks-native --bus ws://127.0.0.1:7896/bus --new-session --output create.png
+python3 scripts/smoke.py --binary target/debug/wks-native --screen projects --no-input --output projects.png
+python3 scripts/smoke.py --binary target/debug/wks-native --screen settings --theme light --no-input --output settings.png
+# --no-input captures the current view without sending a fixture message.
+```
 
 ## Performance boundaries
 
@@ -222,6 +310,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/model.rs` | Session projection and bounded, sequence-aware transcript reducer |
 | `src/controller.rs` | Selection, RPC lifecycle, snapshot/event reconciliation, UI mailbox |
 | `src/ui.rs` | GPUI views, virtualization, keyboard dispatch, drafts |
+| `src/ui/navigation.rs` | Projects/settings views, shared navigation and focus handling |
+| `src/navigation.rs` | Project grouping and persistent native preferences |
 | `src/harness.rs` | Isolated protocol fixture |
 | `src/live.rs` | Explicit disposable live-provider exercise |
 | `src/bin/native-harness.rs` | Repeatable fixture and benchmark commands |

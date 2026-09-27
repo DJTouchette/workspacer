@@ -8,8 +8,10 @@ mod ui;
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use gpui::{AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
-use gpui_component::{Root, Theme, ThemeMode};
+use gpui_component::Root;
 use std::path::PathBuf;
+use wks_native::appearance::{Appearance, preference_path};
+use wks_native::navigation::{Settings, settings_path};
 use wks_native::{bus::Config, controller::Controller};
 
 #[derive(Parser)]
@@ -74,12 +76,43 @@ fn main() -> Result<()> {
         }
         .map(|t| t.trim().to_owned())
         .filter(|t| !t.is_empty());
-        Config::new(args.bus, token)?
+        Config::new(args.bus.clone(), token)?
+    };
+    let appearance = preference_path()
+        .and_then(|path| match Appearance::load(&path) {
+            Ok(appearance) => Some(appearance),
+            Err(error) => {
+                eprintln!("Could not load native theme; using Dark: {error}");
+                None
+            }
+        })
+        .unwrap_or_default();
+    let settings_path = settings_path();
+    let settings = settings_path
+        .as_ref()
+        .map(|p| Settings::load(p))
+        .transpose()
+        .unwrap_or_else(|error| {
+            eprintln!("Could not load native settings: {error}");
+            None
+        })
+        .unwrap_or_default();
+    let project_scope = if args.demo {
+        "demo".to_owned()
+    } else {
+        let url = url::Url::parse(&args.bus)?;
+        format!(
+            "{}://{}:{}{}",
+            url.scheme(),
+            url.host_str().unwrap_or(""),
+            url.port_or_known_default().unwrap_or(0),
+            url.path()
+        )
     };
     let controller = Controller::start(config);
     Application::new().run(move |cx| {
         gpui_component::init(cx);
-        Theme::change(ThemeMode::Dark, None, cx);
+        ui::configure_theme(appearance, None, cx);
         ui::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
         cx.open_window(
@@ -97,6 +130,8 @@ fn main() -> Result<()> {
                 window.set_app_id("workspacer-native");
                 let view = cx.new(|cx| {
                     let mut view = ui::Workspace::new(controller, args.demo, window, cx);
+                    view.configure_settings(settings, settings_path, project_scope);
+                    view.set_appearance(appearance, window, cx);
                     view.open_session(args.session);
                     view
                 });

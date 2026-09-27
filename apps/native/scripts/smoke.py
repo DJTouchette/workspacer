@@ -14,6 +14,7 @@ from pathlib import Path
 import struct
 import subprocess
 import time
+import tempfile
 import zlib
 
 
@@ -84,11 +85,27 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("native-smoke.png"))
     parser.add_argument("--settle-seconds", type=float, default=3)
     parser.add_argument("--sample-seconds", type=float, default=3)
+    parser.add_argument("--screen", choices=("conversation", "projects", "settings"), default="conversation")
+    parser.add_argument("--theme", choices=("dark", "light", "nord"), default="dark")
+    parser.add_argument("--width", type=int, default=1000)
+    parser.add_argument("--height", type=int, default=700)
+    parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
+    parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
     args = parser.parse_args()
+    if args.width < 720 or args.height < 480:
+        parser.error("The native minimum window size is 720 × 480")
+    if args.new_session and not args.bus:
+        parser.error("--new-session requires a fixture --bus; creation is disabled in demo mode")
     command = [str(args.binary.resolve())]
     command += ["--bus", args.bus] if args.bus else ["--demo"]
     started = time.monotonic()
-    process = subprocess.Popen(command, stdout=subprocess.DEVNULL)
+    # Isolate appearance from the user's real preference and credentials.
+    settings = tempfile.TemporaryDirectory(prefix="wks-native-smoke-")
+    config = Path(settings.name) / "workspacer"
+    config.mkdir()
+    (config / "native-theme.json").write_text(json.dumps(args.theme))
+    environment = dict(os.environ, XDG_CONFIG_HOME=settings.name)
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, env=environment)
     try:
         window = subprocess.check_output(
             ["xdotool", "search", "--sync", "--onlyvisible", "--pid", str(process.pid)],
@@ -96,22 +113,29 @@ def main():
         appeared_ms = (time.monotonic() - started) * 1000
         def drive(*commands):
             subprocess.run(["xdotool", *commands], check=True, timeout=5)
-        drive("windowfocus", window, "windowsize", window, "1000", "700")
+        drive("windowfocus", window, "windowsize", window, str(args.width), str(args.height))
         time.sleep(args.settle_seconds)
         before, _ = process_sample(process.pid)
         idle_start = time.monotonic()
         time.sleep(args.sample_seconds)
         after, rss = process_sample(process.pid)
         idle_cpu = 100 * (after - before) / (time.monotonic() - idle_start)
-        drive("key", "ctrl+l")
-        drive("type", "Native window smoke test")
-        drive("key", "ctrl+Return")
+        if args.new_session:
+            drive("key", "ctrl+n")
+        elif not args.no_input:
+            drive("key", "ctrl+l")
+            drive("type", "Native window smoke test")
+            drive("key", "ctrl+Return")
+        if args.screen != "conversation":
+            drive("key", "Escape")
+            drive("key", "--delay", "80", "g", "p" if args.screen == "projects" else "s")
         time.sleep(1)
-        colors = screenshot(int(window), 1000, 700, args.output)
+        colors = screenshot(int(window), args.width, args.height, args.output)
         print(json.dumps({"window_appeared_ms": appeared_ms,
                           "idle_cpu_percent_one_core": idle_cpu,
                           "resident_bytes": rss, "rendered_colors": colors,
-                          "screenshot": str(args.output),
+                          "screenshot": str(args.output), "theme": args.theme, "screen": args.screen,
+                          "width": args.width, "height": args.height,
                           "workload": "external bus" if args.bus else "in-process demo",
                           "scope": "window appearance is not first usable frame; host/build/GPU affect all values"}, indent=2))
         if process.poll() is not None:
@@ -123,6 +147,7 @@ def main():
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+        settings.cleanup()
 
 
 if __name__ == "__main__":
