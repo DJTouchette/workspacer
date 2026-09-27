@@ -23,6 +23,20 @@ export interface ChangelogRelease {
 /** Newest first, exactly as CHANGELOG.md orders them. */
 export const CHANGELOG: readonly ChangelogRelease[] = [
   {
+    version: 'Unreleased',
+    date: '',
+    unreleased: true,
+    sections: [
+      {
+        title: 'Added',
+        items: [
+          'Experimental native Windows x64 installer, separate from the Electron app. The Start menu shortcut launches the Rust/GPUI interface with its embedded local engine and bundled backend services, Node runtime and C++ runtime. The installer is unsigned and updates are manual; agent CLIs and Git remain separate prerequisites. Uninstall preserves sessions and shared settings.',
+          'Native client themes, project and settings views, keyboard navigation, and live session creation for Claude and Codex against local or existing hubs.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.169.0',
     date: '2026-09-26',
     unreleased: false,
