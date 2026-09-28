@@ -175,6 +175,9 @@ fn main() -> Result<()> {
             url.path()
         )
     };
+    let keep_running = Rc::new(std::cell::Cell::new(
+        args.keep_running || settings.keep_running,
+    ));
     let host = NativeHost::start(mode)?;
     let controller = host.controller();
     let backend = Rc::new(RefCell::new(BackendLifetime {
@@ -201,17 +204,21 @@ fn main() -> Result<()> {
                     ..Default::default()
                 },
                 |window, cx| {
-                    if args.keep_running {
-                        window.on_window_should_close(cx, |window, _| {
+                    let close_preference = keep_running.clone();
+                    window.on_window_should_close(cx, move |window, _| {
+                        if close_preference.get() {
                             window.minimize_window();
                             false
-                        });
-                    }
+                        } else {
+                            true
+                        }
+                    });
                     window.set_window_title("Workspacer Native");
                     window.set_app_id("workspacer-native");
                     let view = cx.new(|cx| {
                         let mut view = ui::Workspace::new(controller, args.demo, window, cx);
                         view.configure_settings(settings, settings_path, project_scope);
+                        view.configure_local(args.local, keep_running.clone());
                         view.set_appearance(appearance, window, cx);
                         view.open_session(args.session);
                         view

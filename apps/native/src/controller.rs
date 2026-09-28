@@ -30,18 +30,39 @@ pub enum Action {
     Approve(bool),
     Stop,
     Answer(String),
+    Answers(Vec<String>),
+    Terminate,
+    SetModel {
+        model: String,
+        context_window: Option<u64>,
+    },
 }
 
 impl Action {
     pub(crate) fn wire(&self, id: &str) -> (&'static str, Value) {
         match self {
+            Self::Terminate => ("claude.signal", json!({"sessionId":id,"signal":"SIGTERM"})),
+            Self::Answers(answers) => (
+                "claude.answer",
+                json!({"sessionId":id,"answers":answers,"answerKinds":vec!["text"; answers.len()]}),
+            ),
+            Self::SetModel {
+                model,
+                context_window,
+            } => (
+                "claude.setModel",
+                json!({"sessionId":id,"model":model,"modelIdentity":model,"contextWindow":context_window}),
+            ),
             Self::Send(text) => ("agents.sendMessage", json!({"sessionId":id, "text":text})),
             Self::Approve(yes) => (
                 "claude.approve",
                 json!({"sessionId":id, "decision":if *yes {"yes"} else {"no"}}),
             ),
             Self::Stop => ("claude.signal", json!({"sessionId":id, "signal":"SIGINT"})),
-            Self::Answer(text) => ("claude.answer", json!({"sessionId":id, "text":text})),
+            Self::Answer(text) => (
+                "claude.answer",
+                json!({"sessionId":id, "text":text,"answers":[text],"answerKinds":["text"]}),
+            ),
         }
     }
 }
@@ -56,6 +77,7 @@ pub struct NewSession {
     pub message: String,
     pub context_window: Option<u64>,
     pub permission: Permission,
+    pub resume_session_id: Option<String>,
 }
 
 impl NewSession {
@@ -76,6 +98,9 @@ impl NewSession {
         let mode = self.permission.wire(&self.provider)?;
         let mut params = json!({"provider":self.provider,"cwd":cwd,"transport":"stream",
             "skipPermissions":self.permission == Permission::FullAccess,"permissionMode":mode});
+        if let Some(id) = &self.resume_session_id {
+            params["resumeSessionId"] = json!(id);
+        }
         if let Some(window) = self.context_window {
             anyhow::ensure!(
                 window > 0 && !self.model.trim().is_empty(),
@@ -106,6 +131,8 @@ pub struct SpawnReceipt {
 
 pub enum Command {
     Select(String),
+    OpenRecent(Session),
+    Request(crate::features::Request),
     Act { session: String, action: Action },
     Refresh,
     Create(NewSession),
@@ -123,6 +150,7 @@ pub struct Receipt {
 #[derive(Clone, Debug, Default)]
 pub struct View {
     pub catalog: Catalog,
+    pub requests: BTreeMap<&'static str, crate::features::RequestState>,
     pub connected: bool,
     pub sessions: Arc<Vec<Session>>,
     pub selected: Option<String>,
@@ -190,6 +218,7 @@ impl Controller {
 }
 
 enum Completion {
+    Request(u64, u64, crate::features::Request, Result<Value>),
     Models(u64, u64, Result<Vec<crate::launch::ModelChoice>>),
     Spawn(u64, NewSession, Result<Value>),
     Fleet(u64, Result<Value>),
@@ -216,6 +245,7 @@ struct Worker {
     action_number: u64,
     catalog_number: u64,
     catalog_abort: Option<AbortHandle>,
+    request_aborts: BTreeMap<&'static str, AbortHandle>,
     created_row: Option<Value>,
     last_fleet: Instant,
     last_conversation: Instant,
@@ -242,6 +272,7 @@ impl Worker {
             action_number: 0,
             catalog_number: 0,
             catalog_abort: None,
+            request_aborts: BTreeMap::new(),
             created_row: None,
             last_fleet: Instant::now(),
             last_conversation: Instant::now(),
@@ -262,6 +293,13 @@ impl Worker {
                 command = commands.recv() => match command {
                     None => break,
                     Some(Command::Select(id)) if self.sessions.contains_key(&id) => self.select(Some(id)).await,
+                    Some(Command::OpenRecent(session)) => {
+                        let id = session.id.clone();
+                        self.sessions.entry(id.clone()).or_insert(session);
+                        self.fleet_dirty = true;
+                        self.select(Some(id)).await;
+                    }
+                    Some(Command::Request(request)) => self.request(request),
                     Some(Command::Act { session, action }) => self.act(session, action),
                     Some(Command::Create(request)) => self.create(request),
                     Some(Command::LoadModels { key, refresh }) => self.load_models(key, refresh),
@@ -295,6 +333,39 @@ impl Worker {
             }
         }
         // Dropping jobs and bus closes pending calls and releases subscriptions.
+    }
+
+    fn request(&mut self, request: crate::features::Request) {
+        let key = request.key();
+        if key == "upload" && self.view.requests.get(key).is_some_and(|s| s.loading) {
+            return;
+        }
+        self.action_number += 1;
+        let number = self.action_number;
+        if let Some(abort) = self.request_aborts.remove(key) {
+            abort.abort();
+        }
+        let (abort, registration) = AbortHandle::new_pair();
+        self.request_aborts.insert(key, abort);
+        self.view.requests.insert(
+            key,
+            crate::features::RequestState {
+                number,
+                request: request.clone(),
+                loading: true,
+                value: Arc::new(Value::Null),
+                error: None,
+            },
+        );
+        let backend = self.backend.clone();
+        let epoch = self.epoch;
+        self.jobs.push(Box::pin(async move {
+            let result = Abortable::new(request.run(&backend), registration)
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("Request superseded")));
+            Completion::Request(epoch, number, request, result)
+        }));
+        self.dirty = true;
     }
 
     fn load_models(&mut self, key: CatalogKey, refresh: bool) {
@@ -385,6 +456,12 @@ impl Worker {
     async fn select(&mut self, id: Option<String>) {
         self.selection += 1;
         self.view.selected = id;
+        for key in ["history", "changes", "diff"] {
+            self.view.requests.remove(key);
+            if let Some(abort) = self.request_aborts.remove(key) {
+                abort.abort();
+            }
+        }
         self.view.transcript = Transcript::default();
         self.view.loading = self.view.selected.is_some();
         self.conversation_pending = false;
@@ -424,6 +501,13 @@ impl Worker {
             Event::Disconnected(reason) => {
                 self.epoch += 1;
                 self.view.connected = false;
+                for state in self.view.requests.values_mut() {
+                    if state.loading {
+                        state.loading = false;
+                        state.error =
+                            Some("Connection lost. Check the result before retrying.".into());
+                    }
+                }
                 self.view.catalog.loading = false;
                 self.view.catalog.error =
                     Some("Hub disconnected. Reconnect to load models.".into());
@@ -459,6 +543,10 @@ impl Worker {
                             "ambientState",
                             "status",
                             "transport",
+                            "provider",
+                            "model",
+                            "requestedSelection",
+                            "settings",
                             "pending",
                             "pendingApproval",
                             "pendingQuestions",
@@ -546,7 +634,18 @@ impl Worker {
                             s.questions.is_some() && !text.trim().is_empty() && text.len() <= 65536
                         }
                         Action::Send(text) => !text.trim().is_empty() && text.len() <= 65536,
-                        Action::Stop => true,
+                        Action::Stop | Action::Terminate => true,
+                        Action::Answers(answers) => {
+                            s.questions.is_some()
+                                && !answers.is_empty()
+                                && answers.len() <= 20
+                                && answers
+                                    .iter()
+                                    .all(|s| !s.trim().is_empty() && s.len() <= 65536)
+                        }
+                        Action::SetModel { model, .. } => {
+                            !model.trim().is_empty() && model.len() < 256
+                        }
                     }
             });
         if !valid {
@@ -609,6 +708,32 @@ impl Worker {
 
     async fn complete(&mut self, completion: Completion) {
         match completion {
+            Completion::Request(epoch, number, request, result) => {
+                let key = request.key();
+                if epoch != self.epoch
+                    || !self
+                        .view
+                        .requests
+                        .get(key)
+                        .is_some_and(|s| s.number == number)
+                {
+                    return;
+                }
+                let (value, error) = match result {
+                    Ok(v) => (v, None),
+                    Err(e) => (Value::Null, Some(e.to_string())),
+                };
+                self.view.requests.insert(
+                    key,
+                    crate::features::RequestState {
+                        number,
+                        request,
+                        loading: false,
+                        value: Arc::new(value),
+                        error,
+                    },
+                );
+            }
             Completion::Models(epoch, number, result) => {
                 if epoch != self.epoch || number != self.catalog_number {
                     return;
@@ -636,7 +761,7 @@ impl Worker {
                         let unsent_message = (!request.message.trim().is_empty()
                             && value["messageQueued"] != true)
                             .then(|| request.message.clone());
-                        let row = json!({"sessionId":id,"cwd":request.cwd.trim(),"label":request.label.trim(),"transport":"stream","mode":"unknown"});
+                        let row = json!({"sessionId":id,"cwd":request.cwd.trim(),"label":request.label.trim(),"transport":"stream","mode":"unknown","provider":request.provider,"model":request.model});
                         // Preserve the acknowledged identity across an older fleet read.
                         if !self.sessions.contains_key(&id) {
                             self.upsert(&row);
@@ -670,7 +795,17 @@ impl Worker {
                 self.fleet_pending = false;
                 match result {
                     Ok(Value::Array(rows)) => {
+                        let retained = self
+                            .view
+                            .selected
+                            .as_ref()
+                            .and_then(|id| self.sessions.get(id))
+                            .filter(|s| s.stopped())
+                            .cloned();
                         self.sessions.clear();
+                        if let Some(s) = retained {
+                            self.sessions.insert(s.id.clone(), s);
+                        }
                         for row in rows.into_iter().take(MAX_SESSIONS) {
                             if row
                                 .get("hub")
@@ -745,8 +880,27 @@ impl Worker {
             }
             Completion::Action(number, session, action, result) => {
                 self.view.busy = false;
-                let error = result.err().map(|e| e.to_string());
-                self.view.notice = error.clone().unwrap_or_else(|| "Request accepted".into());
+                let queued = result
+                    .as_ref()
+                    .is_ok_and(|v| v["queued"] == true || v["disposition"] == "queued");
+                let error = result
+                    .and_then(|v| {
+                        anyhow::ensure!(
+                            v["ok"] != false,
+                            "{}",
+                            v["error"].as_str().unwrap_or("Request refused")
+                        );
+                        Ok(v)
+                    })
+                    .err()
+                    .map(|e| e.to_string());
+                self.view.notice = error.clone().unwrap_or_else(|| {
+                    if queued {
+                        "Change queued; the provider will apply it when ready".into()
+                    } else {
+                        "Request accepted".into()
+                    }
+                });
                 self.view.receipt = Some(Receipt {
                     number,
                     session,

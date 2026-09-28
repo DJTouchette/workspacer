@@ -202,9 +202,7 @@ Captured during a real Codex round trip through an isolated backend:
 
 This experiment intentionally starts with the connected hub's own sessions.
 Federated/paired rows are excluded so a remote session cannot accidentally be
-controlled through an unqualified local method. Terminal emulation,
-historical pagination, attachments, changing models on running sessions, full theme parity,
-and packaging/updating remain follow-on work. Rich tool input/output is displayed
+controlled through an unqualified local method. Terminal emulation, federation, and full theme parity remain follow-on work. Rich tool input/output is displayed
 as text, without the Electron client's diff cards.
 
 Choose **Dark**, **Light**, or **Nord** under **Settings → Appearance**.
@@ -268,6 +266,59 @@ The existing `Ctrl/Cmd+N`, `Ctrl/Cmd+L`, `Ctrl/Cmd+R`, and `Alt+Up/Down` shortcu
 remain available. Settings and Projects never send a hidden composer draft.
 
 [Projects preview](docs/ui-projects.png) · [Settings preview](docs/ui-settings.png)
+
+## Everyday workflows
+
+The conversation stays the main workspace. **Changes**, **History**, **Session…**,
+and **Model…** open secondary views without sending or discarding the composer draft.
+At short window sizes, the approval command stays visible while full details can
+be expanded, and attachment controls share the composer action row.
+
+- **Session history** lists the hub’s recent sessions. Open reads an existing
+  conversation; Resume opens a launch form with its identity, known model/context,
+  and Ask permissions. Creation is explicit. Claude and Codex resumes are supported.
+  **Session…** renames, archives/restores, and offers a confirmed **End session**;
+  Interrupt remains a separate control. Names and archives are client-local and
+  scoped to the connection. Archiving does not stop an agent or delete history.
+- **Changes** shows the current repository’s staged, unstaged and untracked files.
+  Select a file’s change type to read its colored unified diff. This is working-tree
+  state, including edits outside the selected session, not an attribution claim.
+  Errors, clean trees and binary/no-text diffs have separate messages. Display is
+  capped at 3,000 diff lines with an explicit notice.
+- **Agent setup** is available in Settings, the welcome state and the launch form.
+  It reports installed CLIs and allows an explicit connection check (which may use
+  provider allowance). Sign-in stays with each CLI. A setup detour preserves a
+  pending resume. Local mode offers a native project-folder picker; remote paths
+  remain paths on the hub machine.
+- **History** browses the server’s retained conversation in pages of 50 chunks.
+  Long messages are split on UTF-8 boundaries into labeled 32 KiB parts instead of
+  silently losing their beginning. The snapshot is independent of live chat.
+  Server-trimmed history is labeled; this cannot recover events the server no
+  longer retains. History responses use the existing 16 MiB bus frame limit.
+- **Settings → Workspace** includes notifications and a persistent keep-running
+  preference. Closing can minimize while local agents continue; explicit Quit
+  still stops the owned backend. Completion, approval and question transitions
+  notify when the window is inactive, without replaying historical alerts on
+  connection. OS settings still govern delivery. The Windows installer registers
+  a dedicated Workspacer Native notification identity.
+- **Attach…** accepts images and PDFs up to 8 MiB. Paste image or normal Ctrl/Cmd+V
+  accepts clipboard screenshots; TIFF/BMP clipboard images are converted to PNG
+  off the UI thread with decode limits. Windows also supports native bitmap
+  clipboard fallback. Attachments are uploaded to the connected hub, remain bound
+  to their original session, and stay in the draft after failed/uncertain sends.
+  Remove discards a draft attachment; uploaded files follow the hub’s retention.
+- **Question choices** support single and multiple selections and custom answers.
+  Labels and typed numbers are sent literally. **Model…** applies a selected model
+  and context to the running session; queued changes are reported as queued.
+- **Settings → Updates** shows the installed build version and can query the latest
+  stable GitHub release. Downloads/release notes open in the browser; updates are
+  installed manually.
+
+Normal-mode shortcuts: `g h` session history, `g d` changes, `g a` setup,
+`g e` session actions, and `g m` model. `Esc` returns from a secondary view;
+text inputs retain ordinary editing and paste behavior.
+
+[Changes preview](docs/ui-changes.png) · [Setup at minimum size](docs/ui-setup.png) · [Compact approval](docs/ui-compact-approval.png)
 
 ## Visual design and captures
 

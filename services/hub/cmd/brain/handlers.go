@@ -1463,10 +1463,11 @@ func (r *registry) approve(ctx context.Context, raw json.RawMessage) (json.RawMe
 // routed through POST /answer instead (mirrors the desktop's transport branch).
 func (r *registry) answer(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var p struct {
-		SessionID string   `json:"sessionId"`
-		Option    *int     `json:"option"`
-		Text      *string  `json:"text"`
-		Answers   []string `json:"answers"`
+		SessionID   string   `json:"sessionId"`
+		Option      *int     `json:"option"`
+		Text        *string  `json:"text"`
+		Answers     []string `json:"answers"`
+		AnswerKinds []string `json:"answerKinds"`
 	}
 	if err := unmarshal(raw, &p); err != nil {
 		return nil, err
@@ -1487,7 +1488,7 @@ func (r *registry) answer(ctx context.Context, raw json.RawMessage) (json.RawMes
 	// the desktop's claude.answer branches on transport === 'stream'. PTY sessions
 	// keep the keystroke path below.
 	if r.cm.sessionTransport(ctx, p.SessionID) == "stream" {
-		if err := r.cm.answer(ctx, p.SessionID, p.Option, p.Text, p.Answers); err != nil {
+		if err := r.cm.answer(ctx, p.SessionID, p.Option, p.Text, p.Answers, p.AnswerKinds); err != nil {
 			return nil, err
 		}
 		return okResult()

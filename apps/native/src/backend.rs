@@ -17,6 +17,18 @@ pub struct Backend {
 }
 
 impl Backend {
+    pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
+        let value = self
+            .hub
+            .call_with_timeout(method, params, Duration::from_secs(90))
+            .await?;
+        anyhow::ensure!(
+            value.get("ok") != Some(&Value::Bool(false)),
+            "{}",
+            value["error"].as_str().unwrap_or("Request was refused")
+        );
+        Ok(value)
+    }
     pub fn connect(config: Config) -> (Self, async_channel::Receiver<Event>) {
         let (hub, events) = Client::start(config);
         (
@@ -86,16 +98,21 @@ impl Backend {
                 Action::Stop => Some(Command::Interrupt { id: id.into() }),
                 Action::Answer(text) if _stream => Some(Command::Answer {
                     id: id.into(),
-                    answer: json!({"text":text}),
+                    answer: json!({"answers":[text],"answerKinds":["text"]}),
+                }),
+                Action::Answers(answers) if _stream => Some(Command::Answer {
+                    id: id.into(),
+                    answer: json!({"answers":answers,"answerKinds":vec!["text"; answers.len()]}),
                 }),
                 // PTY answers require the existing provider's keystroke path.
                 Action::Answer(_) => None,
+                _ => None,
             };
             if let Some(command) = command {
                 return local.request(command).await;
             }
         }
         let (method, params) = action.wire(id);
-        self.hub.call(method, params).await
+        self.call(method, params).await
     }
 }

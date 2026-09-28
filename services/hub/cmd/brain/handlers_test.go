@@ -575,3 +575,29 @@ func containsPair(s []string, a, b string) bool {
 	}
 	return false
 }
+
+func TestAnswerPreservesLiteralNumericLabels(t *testing.T) {
+	var received map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]string{"transport": "stream"})
+			return
+		}
+		if req.URL.Path != "/sessions/s1/answer" {
+			t.Errorf("unexpected path %s", req.URL.Path)
+		}
+		_ = json.NewDecoder(req.Body).Decode(&received)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	reg := newRegistry(newClaudemonClient(srv.URL))
+	_, err := reg.handle(context.Background(), "claude.answer", []byte(`{"sessionId":"s1","answers":["2","3"],"answerKinds":["text","text"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	answers, _ := json.Marshal(received["answers"])
+	kinds, _ := json.Marshal(received["answerKinds"])
+	if string(answers) != `["2","3"]` || string(kinds) != `["text","text"]` {
+		t.Fatalf("literal answers lost their kind tags: %#v", received)
+	}
+}

@@ -1,3 +1,4 @@
+mod features;
 mod launch;
 mod navigation;
 use gpui::{
@@ -149,6 +150,11 @@ actions!(
         ShowProjects,
         ShowSettings,
         ShowConversation,
+        ShowHistory,
+        ShowChanges,
+        ShowSetup,
+        ShowSessionDetails,
+        ShowModel,
         Search,
         OpenProject,
         FirstItem,
@@ -181,6 +187,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g p", ShowProjects, Some("VimNormal")),
         KeyBinding::new("g s", ShowSettings, Some("VimNormal")),
         KeyBinding::new("g c", ShowConversation, Some("VimNormal")),
+        KeyBinding::new("g h", ShowHistory, Some("VimNormal")),
+        KeyBinding::new("g d", ShowChanges, Some("VimNormal")),
+        KeyBinding::new("g a", ShowSetup, Some("VimNormal")),
+        KeyBinding::new("g e", ShowSessionDetails, Some("VimNormal")),
+        KeyBinding::new("g m", ShowModel, Some("VimNormal")),
         KeyBinding::new("h", ShowProjects, Some("VimNormal")),
         KeyBinding::new("l", OpenProject, Some("VimNormal")),
         KeyBinding::new("enter", OpenProject, Some("VimNormal")),
@@ -209,6 +220,7 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 pub struct Workspace {
+    extras: features::Extras,
     screen: Screen,
     settings: Settings,
     settings_path: Option<std::path::PathBuf>,
@@ -364,6 +376,7 @@ impl Workspace {
         focus_watch.push(cx.on_blur(&focus, window, |_, _, cx| cx.notify()));
         window.focus(&focus);
         Self {
+            extras: features::Extras::new(window, cx),
             screen: Screen::Conversation,
             settings: Settings::default(),
             settings_path: None,
@@ -445,6 +458,7 @@ impl Workspace {
     }
 
     fn update_view(&mut self, view: Arc<View>, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_features(&view, window, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt
         {
@@ -545,7 +559,12 @@ impl Workspace {
                 && let Action::Send(sent) | Action::Answer(sent) = &receipt.action
             {
                 if view.selected.as_ref() == Some(&receipt.session) {
-                    if self.composer.read(cx).value().as_ref() == sent {
+                    if self.composer.read(cx).value().as_ref() == sent
+                        || self.attachment_text(
+                            &receipt.session,
+                            self.composer.read(cx).value().as_ref(),
+                        ) == *sent
+                    {
                         self.composer
                             .update(cx, |input, cx| input.set_value("", window, cx));
                     }
@@ -564,7 +583,7 @@ impl Workspace {
         }
         let reconnected = !self.view.connected && view.connected;
         self.view = view;
-        if self.new_session {
+        if self.new_session || self.screen == Screen::Model {
             self.sync_models(window, cx);
             if reconnected {
                 self.load_models(true, cx);
@@ -626,10 +645,23 @@ impl Workspace {
         {
             return;
         }
-        let text = self.composer.read(cx).value().to_string();
-        if text.trim().is_empty() || self.view.busy || !self.view.connected {
+        let draft = self.composer.read(cx).value().to_string();
+        let Some(id) = self.view.selected.clone() else {
+            return;
+        };
+        let text = self.attachment_text(&id, &draft);
+        if text.trim().is_empty() || self.view.busy || !self.view.connected || self.uploading() {
             return;
         }
+        self.extras.sent_drafts.insert(id.clone(), draft);
+        self.extras.sent_attachments.insert(
+            id,
+            self.extras
+                .attachments
+                .get(self.view.selected.as_ref().unwrap())
+                .cloned()
+                .unwrap_or_default(),
+        );
         self.act(Action::Send(text), cx);
     }
 
@@ -640,6 +672,8 @@ impl Workspace {
     }
 
     fn show_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.extras.resume = None;
+        self.extras.return_launch = false;
         if self.demo || self.requested_session.is_some() {
             return;
         }
@@ -689,6 +723,7 @@ impl Workspace {
             context_window: self.context_window,
             permission: self.permission,
             message: self.prompt.read(cx).value().to_string(),
+            resume_session_id: self.extras.resume.clone(),
         };
         self.spawn_error.clear();
         if self.model_choice == "__custom" && request.model.trim().is_empty() {
@@ -707,7 +742,7 @@ impl Workspace {
     }
 
     fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
-        if self.new_session || self.screen == Screen::Settings {
+        if self.new_session || !matches!(self.screen, Screen::Conversation | Screen::Projects) {
             return;
         }
         if self.screen == Screen::Projects {
@@ -802,7 +837,7 @@ impl Render for Workspace {
         let rendered_rows = self.rendered_rows.clone();
         let title = selected
             .as_ref()
-            .map(|s| s.title().to_owned())
+            .map(|s| self.session_title(s))
             .unwrap_or_else(|| "Your sessions".into());
         let notice = if !self.local_notice.is_empty() {
             self.local_notice.clone()
@@ -976,6 +1011,15 @@ impl Render for Workspace {
                             })),
                     ),
             )
+            .child(
+                div().px_3().pb_2().child(
+                    self.button("nav-history", "Session history", true)
+                        .w_full()
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_feature(Screen::Recent, window, cx)
+                        })),
+                ),
+            )
             .child(div().px_3().pb_3().child(Input::new(&self.search)))
             .child(
                 div().px_3().pb_4().child(
@@ -1081,7 +1125,7 @@ impl Render for Workspace {
                                                         .text_size(px(13.))
                                                         .font_weight(FontWeight::SEMIBOLD)
                                                         .truncate()
-                                                        .child(session.title().to_owned()),
+                                                        .child(this.session_title(session)),
                                                 ),
                                         )
                                         .child(
@@ -1210,7 +1254,9 @@ impl Render for Workspace {
                                         },
                                     ),
                                 ))
-                                .child("Project directory")
+                                .child(div().flex().justify_between().child("Project directory")
+                                    .when(self.extras.local_paths, |d| d.child(self.button("browse-project", "Browse…", !busy).when(!busy, |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_folder(false, window, cx)))))))
+                                .when(self.extras.resume.is_some(), |d| d.child(div().text_color(rgb(p.accent)).child("Resume this conversation. Review the model and permissions before continuing.")))
                                 .child(Input::new(&self.project).disabled(busy))
                                 .child(
                                     div().text_size(px(12.)).text_color(rgb(p.muted)).child(
@@ -1219,6 +1265,7 @@ impl Render for Workspace {
                                 )
                                 .child("Session name")
                                 .child(Input::new(&self.label).disabled(busy))
+                                .child(self.button("launch-setup", "Agent setup…", !busy).when(!busy, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx)))))
                                 .child(self.render_launch_options(busy, cx))
                                 .child("First message")
                                 .child(Input::new(&self.prompt).h(px(110.)).disabled(busy))
@@ -1275,6 +1322,22 @@ impl Render for Workspace {
                 .into_any_element();
         }
 
+        if matches!(
+            self.screen,
+            Screen::Recent
+                | Screen::Changes
+                | Screen::History
+                | Screen::Session
+                | Screen::Setup
+                | Screen::Model
+        ) {
+            let content = self.render_feature(window, cx);
+            return self
+                .shell(window, cx)
+                .child(sidebar)
+                .child(content)
+                .into_any_element();
+        }
         if self.screen == Screen::Projects {
             let content = self.render_projects(cx);
             return self
@@ -1299,8 +1362,14 @@ impl Render for Workspace {
                     .child(div().flex_1().min_w_0().when(!compact, |d| d.child(overline("CONVERSATION", p))).child(div().truncate().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child(title)).child(div().truncate().text_size(px(11.)).text_color(rgb(p.muted)).child(selected.as_ref().map(|s| s.cwd.clone()).unwrap_or_else(|| "Your workspace, ready when you are".into()))))
                     .when_some(selected.as_ref(), |d, session| d.child(session_badge(session, p)))
                     .child(self.button("refresh", "Refresh", true).on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
+                .child(div().px_5().py_2().flex().flex_wrap().gap_2()
+                    .child(self.button("open-changes", "Changes", selected.is_some()).when(selected.is_some(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Changes, window, cx)))))
+                    .child(self.button("open-history", "History", selected.is_some()).when(selected.is_some(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::History, window, cx)))))
+                    .child(self.button("open-session", "Session…", selected.is_some()).when(selected.is_some(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Session, window, cx)))))
+                    .child(self.button("open-model", "Model…", enabled && self.supported_session()).when(enabled && self.supported_session(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Model, window, cx))))))
+                .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
                 .when(!notice.is_empty(), |d| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(p.warning)).child(notice)))
-                .when(self.view.transcript.omitted, |d| d.child(div().px_5().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent history; older content is retained by the server.")))
+                .when(self.view.transcript.omitted, |d| d.child(div().px_5().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
                 .when(self.view.loading, |d| d.child(div().px_5().text_color(rgb(p.muted)).child("Loading conversation…")))
                 .when(!self.view.loading && self.view.transcript.rows.is_empty(), |d| d.child(
                     div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().px_5().gap_4()
@@ -1311,6 +1380,7 @@ impl Render for Workspace {
                                 if self.view.connected { "Start a session to bring your next idea to life." }
                                 else { "Connecting to your workspace. Your sessions will appear here when the hub is ready." }
                             } else { "Ask a question, explore your code, or describe what you want to build." }))
+                        .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-setup", "Set up an agent", self.view.connected).when(self.view.connected, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx))))))
                         .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-new", "Start a session", self.view.connected && !self.demo && self.requested_session.is_none())
                             .when(self.view.connected && !self.demo && self.requested_session.is_none(), |d| d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))))))
                 ))
@@ -1321,25 +1391,35 @@ impl Render for Workspace {
                 }))))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
+                    let summary = approval.pointer("/toolInput/command").or_else(|| approval.pointer("/toolInput/file_path")).and_then(serde_json::Value::as_str).unwrap_or("").lines().next().unwrap_or("").to_owned();
                     let details = serde_json::to_string_pretty(approval.get("toolInput").or_else(|| approval.get("raw")).unwrap_or(approval)).unwrap_or_default();
                     d.child(div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5().py_2().flex().flex_col().gap_2().text_size(px(12.))
                         .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}")))
-                        .child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded_md().bg(rgb(p.surface)).font_family(mono_font()).text_color(rgb(p.muted)).child(details))
+                        .when(compact, |d| d.child(div().flex().items_center().gap_2().child(div().flex_1().min_w_0().truncate().font_family(mono_font()).child(summary)).child(self.button("approval-toggle", if self.extras.approval_details { "Hide details" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
+                        .when(!compact || self.extras.approval_details, |d| d.child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded_md().bg(rgb(p.surface)).font_family(mono_font()).text_color(rgb(p.muted)).child(details)))
                         .child(div().flex().gap_2()
                             .child(self.button("approve", "Allow once", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
-                .when_some(selected.as_ref().and_then(|s| s.questions.as_ref()), |d, questions| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(p.warning))
-                    .child(format!("Question: {questions}"))
-                    .child(self.button("answer", "Answer with composer", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Answer(this.composer.read(cx).value().to_string()), cx)))))))
+                .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, cx)))
                 .when(selected.is_some(), |d| d.child(div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5().pt_3().pb_4().flex().flex_col().gap_2()
                     .child(div().bg(rgb(p.surface)).rounded_lg().p_3().flex().flex_col().gap_2()
+                        .when(!compact || self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).is_some_and(|v| !v.is_empty()), |d| d.child(div().flex().flex_wrap().gap_2()
+                            .child(self.button("attach-file", if self.uploading() { "Attaching…" } else { "Attach…" }, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx)))))
+                            .when(!compact, |d| d.child(self.button("paste-image", "Paste image", enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, _, cx| { if !this.paste_image(cx) { this.extras.notice = "No supported image on the clipboard.".into(); cx.notify(); } })))))
+                            .children(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).into_iter().flatten().enumerate().map(|(ix, (name, _))| {
+                                div().id(("attachment", ix)).px_2().py_1().rounded_md().bg(rgb(p.selected)).child(name.clone())
+                                    .child(self.button("remove-attachment", "Remove", !self.view.busy).when(!self.view.busy, |d| d.on_click(cx.listener(move |this, _, _, cx| {
+                                        if let Some(id) = &this.view.selected && let Some(files) = this.extras.attachments.get_mut(id) && ix < files.len() { files.remove(ix); } cx.notify();
+                                    }))))
+                            }))))
                         .child(Input::new(&self.composer).appearance(false).h(px(if compact { 48. } else { 88. })).disabled(self.view.busy))
                         .child(div().flex().items_center().justify_between().gap_2()
-                            .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.view.busy { "Sending your message…" } else if enabled { "Make it happen." } else { "Select an available session to compose" }))
+                            .when(compact, |d| d.child(self.button("compact-attach", if self.uploading() { "Attaching…" } else { "Attach…" }, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx))))))
+                            .when(!compact, |d| d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.view.busy { "Sending your message…" } else if enabled { "Make it happen." } else { "Select an available session to compose" })))
                             .child(div().flex().gap_2()
                                 .child(self.button("stop", "Interrupt", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx)))))
-                                .child(self.button("send", if self.view.busy {"Sending…"} else {"Send message"}, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
+                                .child(self.button("send", if self.view.busy {"Sending…"} else {"Send message"}, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
                     .child(div().flex().items_center().justify_between().text_size(px(10.)).text_color(rgb(p.muted))
                         .child(div().flex().gap_1().items_center().child(keycap(if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
                         .child("Enter for a new line")))))
@@ -1848,5 +1928,222 @@ mod tests {
         assert_eq!(params["contextWindow"], 1000000);
         assert_eq!(params["permissionMode"], "plan");
         assert_eq!(params["skipPermissions"], false);
+    }
+    #[gpui::test]
+    fn secondary_views_preserve_drafts_and_only_request_reads(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("unsent work", window, cx));
+                this.open_feature(Screen::Changes, window, cx);
+                assert_eq!(this.composer.read(cx).value().as_ref(), "unsent work");
+                this.open_feature(Screen::Session, window, cx);
+                this.show_screen(Screen::Conversation, window, cx);
+                assert_eq!(this.composer.read(cx).value().as_ref(), "unsent work");
+            })
+        });
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::Request(wks_native::features::Request::Changes { .. })
+        ));
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn attachment_receipts_preserve_new_drafts_and_other_sessions(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.extras.attachments.insert(
+                    "a".into(),
+                    vec![("screen.png".into(), "/remote/screen.png".into())],
+                );
+                this.composer
+                    .update(cx, |input, cx| input.set_value("inspect this", window, cx));
+                this.send(&SendMessage, window, cx);
+                this.update_view(Arc::new(state("b")), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("other draft", window, cx));
+                let mut next = state("b");
+                next.receipt = Some(Receipt {
+                    number: 1,
+                    session: "a".into(),
+                    action: Action::Send("[Image: /remote/screen.png]\ninspect this".into()),
+                    error: None,
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert_eq!(this.composer.read(cx).value().as_ref(), "other draft");
+                assert!(!this.drafts.contains_key("a"));
+                assert!(this.extras.attachments["a"].is_empty());
+            })
+        });
+        assert!(
+            matches!(commands.try_recv().unwrap(), Command::Act { session, action:Action::Send(text) } if session == "a" && text.contains("[Image: /remote/screen.png]"))
+        );
+    }
+
+    #[gpui::test]
+    fn failed_attachment_send_keeps_original_draft_and_file(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.extras.attachments.insert(
+                    "a".into(),
+                    vec![("screen.png".into(), "/remote/screen.png".into())],
+                );
+                this.composer
+                    .update(cx, |input, cx| input.set_value("inspect this", window, cx));
+                this.send(&SendMessage, window, cx);
+                let mut next = state("a");
+                next.receipt = Some(Receipt {
+                    number: 1,
+                    session: "a".into(),
+                    action: Action::Send("[Image: /remote/screen.png]\ninspect this".into()),
+                    error: Some("Disconnected; outcome unknown".into()),
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert_eq!(this.composer.read(cx).value().as_ref(), "inspect this");
+                assert_eq!(this.extras.attachments["a"].len(), 1);
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn archived_sessions_are_filtered_per_connection(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.settings
+                    .archived
+                    .insert("test".into(), vec!["a".into()]);
+                assert_eq!(this.visible_sessions(cx), vec![1]);
+                this.project_scope = "another-hub".into();
+                assert_eq!(this.visible_sessions(cx), vec![0, 1]);
+            })
+        });
+    }
+    #[gpui::test]
+    fn setup_round_trip_preserves_resume_and_model_picker_tracks_actual_choice(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                let old = Session {
+                    id: "past".into(),
+                    provider: "codex".into(),
+                    cwd: "/project".into(),
+                    state: "stopped".into(),
+                    ..Default::default()
+                };
+                this.resume_session(&old, window, cx);
+                this.open_feature(Screen::Setup, window, cx);
+                this.back_from_feature(window, cx);
+                assert!(this.new_session);
+                assert_eq!(this.extras.resume.as_deref(), Some("past"));
+                this.create(cx);
+                this.spawn_pending = false;
+                this.new_session = false;
+                this.open_feature(Screen::Model, window, cx);
+                assert_eq!(
+                    this.model_picker
+                        .read(cx)
+                        .selected_value()
+                        .map(String::as_str),
+                    Some("__custom")
+                );
+            })
+        });
+        let mut resumed = false;
+        while let Ok(command) = commands.try_recv() {
+            if let Command::Create(request) = command {
+                assert_eq!(request.resume_session_id.as_deref(), Some("past"));
+                resumed = true;
+            }
+        }
+        assert!(resumed);
+    }
+    #[gpui::test]
+    fn question_choices_preserve_punctuation_and_custom_answers(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| workspace.update(cx, |this, cx| {
+            let mut next = state("a");
+            Arc::make_mut(&mut next.sessions)[0].questions = Some(serde_json::json!([{"question":"Which?", "options":[{"label":"Yes, please"},{"label":"No"}],"multiSelect":true}]));
+            this.update_view(Arc::new(next), window, cx);
+            this.extras.selected_options[0].insert(0);
+            assert_eq!(this.question_answers(cx), vec!["Yes, please"]);
+            this.extras.selected_options[0].remove(&0);
+            assert_eq!(this.question_answers(cx), vec![""]);
+            this.extras.answers[0].update(cx, |input, cx| input.set_value("Another approach", window, cx));
+            assert_eq!(this.question_answers(cx), vec!["Another approach"]);
+        }));
+    }
+    #[gpui::test]
+    fn unsupported_provider_is_never_silently_resumed_as_claude(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let old = Session {
+                    id: "other".into(),
+                    provider: "pi".into(),
+                    state: "stopped".into(),
+                    ..Default::default()
+                };
+                this.resume_session(&old, window, cx);
+                assert!(!this.new_session);
+                assert!(this.extras.notice.contains("cannot be resumed"));
+            })
+        });
+        assert!(commands.try_recv().is_err());
+    }
+    #[gpui::test]
+    fn model_and_resume_keep_the_requested_context_pair(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| workspace.update(cx, |this, cx| {
+            this.demo = false;
+            let mut next = state("a");
+            let session = &mut Arc::make_mut(&mut next.sessions)[0];
+            session.merge(&serde_json::json!({"provider":"claude","requestedSelection":{"model":"opus","contextWindow":1000000}}));
+            let session = session.clone();
+            this.update_view(Arc::new(next), window, cx);
+            this.open_feature(Screen::Model, window, cx);
+            assert_eq!(this.context_window, Some(1000000));
+            assert_eq!(this.model.read(cx).value().as_ref(), "opus");
+            this.resume_session(&session, window, cx);
+            assert_eq!(this.context_window, Some(1000000));
+            assert_eq!(this.model.read(cx).value().as_ref(), "opus");
+            this.resume_session(&Session { provider:"claude".into(), id:"old".into(), cwd:"/project".into(), ..Default::default() }, window, cx);
+            assert!(this.model_choice.is_empty());
+            assert_eq!(this.context_window, None);
+        }));
+    }
+    #[gpui::test]
+    fn normal_text_paste_still_reaches_the_composer(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                cx.write_to_clipboard(ClipboardItem::new_string("ordinary paste".into()));
+                this.composer
+                    .update(cx, |input, cx| input.focus(window, cx));
+            })
+        });
+        visual.simulate_keystrokes(if cfg!(target_os = "macos") {
+            "cmd-v"
+        } else {
+            "ctrl-v"
+        });
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "ordinary paste")
+        });
+        assert!(commands.try_recv().is_err());
     }
 }

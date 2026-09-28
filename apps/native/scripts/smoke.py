@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("native-smoke.png"))
     parser.add_argument("--settle-seconds", type=float, default=3)
     parser.add_argument("--sample-seconds", type=float, default=3)
-    parser.add_argument("--screen", choices=("conversation", "projects", "settings"), default="conversation")
+    parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "changes", "setup", "session", "model"), default="conversation")
     parser.add_argument("--theme", choices=("dark", "light", "nord"), default="dark")
     parser.add_argument("--width", type=int, default=1000)
     parser.add_argument("--height", type=int, default=700)
@@ -128,7 +128,7 @@ def main():
             drive("key", "ctrl+Return")
         if args.screen != "conversation":
             drive("key", "Escape")
-            drive("key", "--delay", "80", "g", "p" if args.screen == "projects" else "s")
+            drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "changes": "d", "setup": "a", "session": "e", "model": "m"}[args.screen])
         time.sleep(1)
         colors = screenshot(int(window), args.width, args.height, args.output)
         print(json.dumps({"window_appeared_ms": appeared_ms,

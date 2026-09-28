@@ -96,3 +96,27 @@ Windows/macOS build-and-test jobs are configured, but were not executed locally.
 Live permissions/tool approvals, PTY terminals, and remote TLS/account setup are
 outside this recorded live check. The first implementation's scope and remaining
 features are listed in README.
+
+## Native everyday-workflow pass (2026-09-27)
+
+The full native UI/protocol suite and Clippy with warnings denied were run. New
+regressions cover upload/session binding, failed-send drafts, stale reads, resume
+and termination, model/context preservation, literal answers, setup return, text
+paste, bitmap conversion, and lossless long-message history.
+
+The affected Go brain, MCP, bus and capability-specification packages passed.
+Windows payload tests passed, including NSIS fixture compilation; the Windows
+installation smoke now also asserts notification-identity registration/removal.
+Actual Windows notification/bitmap-clipboard delivery and macOS OS integration
+were not run on this Linux host. A separate claudemon answer-regression build
+ran out of workspace disk space; the Go forwarding and native wire regressions
+passed, but that additional daemon test did not execute.
+
+Real GPUI windows were captured under Xvfb/software Vulkan in dark, light and
+Nord, including 720 × 480. These are fixture UI checks, not live provider/account
+or hardware-performance measurements.
+
+Witness selects no native tests, so the complete native suite was used. Its CLI
+runner also chose root-relative Go invocations and Jest for desktop TypeScript;
+those generated invocations failed before testing. The affected Go packages
+were run directly from services/hub instead.

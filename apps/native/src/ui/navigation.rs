@@ -5,6 +5,12 @@ pub(super) enum Screen {
     Conversation,
     Projects,
     Settings,
+    Recent,
+    Changes,
+    History,
+    Session,
+    Setup,
+    Model,
 }
 
 impl Workspace {
@@ -20,7 +26,7 @@ impl Workspace {
         self.project_scope = scope;
     }
 
-    fn save_settings(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn save_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_error = match &self.settings_path {
             Some(path) => self
                 .settings
@@ -51,10 +57,12 @@ impl Workspace {
             .iter()
             .enumerate()
             .filter(|(_, s)| {
-                self.project_filter
-                    .as_ref()
-                    .is_none_or(|path| &s.cwd == path)
-                    && (s.title().to_lowercase().contains(&query)
+                !self.archived(&s.id)
+                    && self
+                        .project_filter
+                        .as_ref()
+                        .is_none_or(|path| &s.cwd == path)
+                    && (self.session_title(s).to_lowercase().contains(&query)
                         || s.cwd.to_lowercase().contains(&query))
             })
             .map(|(ix, _)| ix)
@@ -89,7 +97,7 @@ impl Workspace {
 
     fn normal_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus.is_focused(window) {
-            self.show_screen(Screen::Conversation, window, cx);
+            self.back_from_feature(window, cx);
         } else {
             window.focus(&self.focus);
             cx.notify();
@@ -165,7 +173,7 @@ impl Workspace {
     }
 
     fn edge(&mut self, last: bool, cx: &mut Context<Self>) {
-        if self.new_session || self.screen == Screen::Settings {
+        if self.new_session || !matches!(self.screen, Screen::Conversation | Screen::Projects) {
             return;
         }
         if self.screen == Screen::Projects {
@@ -212,6 +220,19 @@ impl Workspace {
                 },
             )
             .track_focus(&self.focus)
+            .capture_action(
+                cx.listener(|this, _: &gpui_component::input::Paste, window, cx| {
+                    if this.screen == Screen::Conversation
+                        && !this.new_session
+                        && this.composer.read(cx).focus_handle(cx).is_focused(window)
+                        && this.view.connected
+                        && !this.view.busy
+                        && this.paste_image(cx)
+                    {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .size_full()
             .flex()
             .bg(rgb(p.base))
@@ -256,6 +277,21 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &ShowSettings, window, cx| {
                 this.show_screen(Screen::Settings, window, cx)
             }))
+            .on_action(cx.listener(|this, _: &ShowHistory, window, cx| {
+                this.open_feature(Screen::Recent, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowChanges, window, cx| {
+                this.open_feature(Screen::Changes, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowSetup, window, cx| {
+                this.open_feature(Screen::Setup, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowSessionDetails, window, cx| {
+                this.open_feature(Screen::Session, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowModel, window, cx| {
+                this.open_feature(Screen::Model, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ShowConversation, window, cx| {
                 this.show_screen(Screen::Conversation, window, cx)
             }))
@@ -292,7 +328,8 @@ impl Workspace {
                 .child(overline("WORKSPACE", p))
                 .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Projects"))
                 .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Your sessions, organized by directory. Save a path to start something new."))
-                .child(div().flex().gap_2().child(Input::new(&self.project_path))
+                .child(div().flex().flex_wrap().gap_2().child(Input::new(&self.project_path))
+                    .when(self.extras.local_paths, |d| d.child(self.button("browse-bookmark", "Browse…", true).on_click(cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)))))
                     .child(self.button("save-project", "Save project", true).flex_shrink_0()
                         .on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx)))))
                 .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Saving a path does not create a directory or launch an agent."))
@@ -339,6 +376,21 @@ impl Workspace {
                         .on_click(cx.listener(move |this, _, window, cx| this.choose_theme(appearance, window, cx)))
                 })))
                 .when(!self.theme_error.is_empty(), |d| d.child(div().text_color(rgb(p.warning)).child(self.theme_error.clone())))
+                .child(overline("WORKSPACE", p))
+                .child(self.button("settings-setup", "Agent setup…", true).on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx))))
+                .child(self.button("settings-background", if self.settings.keep_running { "On close: keep agents running" } else { "On close: quit and stop local agents" }, true)
+                    .on_click(cx.listener(|this, _, _, cx| { this.settings.keep_running = !this.settings.keep_running; this.extras.keep_running.set(this.settings.keep_running); this.save_settings(cx); })))
+                .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Keep running minimizes to the taskbar or Dock. Use Quit to stop the local backend."))
+                .child(self.button("settings-notifications", if self.settings.notifications { "Notifications: on" } else { "Notifications: off" }, true)
+                    .on_click(cx.listener(|this, _, _, cx| { this.settings.notifications = !this.settings.notifications; this.save_settings(cx); })))
+                .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Completion, approval and question alerts appear when the window is inactive. Your operating system controls delivery."))
+                .child(overline("UPDATES", p))
+                .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(format!("Installed: {} · Updates are installed manually", wks_native::features::installed_version())))
+                .child(self.button("check-updates", "Check for updates", !self.view.requests.get("updates").is_some_and(|s| s.loading))
+                    .on_click(cx.listener(|this, _, _, cx| this.request(wks_native::features::Request::Updates, cx))))
+                .child(self.feature_message("updates"))
+                .when_some(self.view.requests.get("updates").and_then(|s| s.value["version"].as_str()), |d, version| d.child(format!("Latest stable release: {version}")))
+                .child(self.button("open-releases", "Open downloads and release notes", true).on_click(|_, _, cx| cx.open_url(wks_native::features::RELEASES_URL)))
                 .child(overline("KEYBOARD", p))
                 .child(div().flex().items_center().justify_between().gap_3()
                     .child(div().flex_1().child("Vim navigation").child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Normal mode for navigation. Insert mode for typing.")))
@@ -363,6 +415,7 @@ impl Workspace {
                     ("i", "Compose, edit the new-session form, or add a project path"),
                     ("/", "Filter sessions and projects"),
                     ("g p / h", "Projects"), ("Enter / l", "Open the selected project"),
+                    ("g h / g d", "Session history / changes"), ("g a / g e / g m", "Agent setup / session / model"),
                     ("g s", "Settings"), ("g c", "Conversation"),
                     ("n", "New session in the selected project"),
                     ("t / v / a", "Settings: cycle theme / toggle Vim / switch default agent"),

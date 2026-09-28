@@ -26,6 +26,11 @@ impl Provider {
 #[serde(default)]
 pub struct Settings {
     pub vim_navigation: bool,
+    pub keep_running: bool,
+    pub notifications: bool,
+    /// Client-local session organization, scoped by hub identity.
+    pub names: BTreeMap<String, BTreeMap<String, String>>,
+    pub archived: BTreeMap<String, Vec<String>>,
     pub default_provider: Provider,
     /// Bookmarks are scoped to the hub endpoint so remote paths do not cross hosts.
     pub projects: BTreeMap<String, Vec<String>>,
@@ -34,6 +39,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             vim_navigation: true,
+            keep_running: false,
+            notifications: true,
+            names: BTreeMap::new(),
+            archived: BTreeMap::new(),
             default_provider: Provider::Claude,
             projects: BTreeMap::new(),
         }

@@ -1,0 +1,341 @@
+//! Small, typed requests for the native workspace's secondary views.
+use crate::{backend::Backend, model::Session};
+use anyhow::{Result, bail, ensure};
+use base64::Engine;
+use serde_json::{Value, json};
+use std::{path::PathBuf, sync::Arc};
+
+pub const RELEASES_URL: &str = "https://github.com/DJTouchette/workspacer/releases";
+pub const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub enum Request {
+    Recent,
+    Changes {
+        cwd: String,
+    },
+    Diff {
+        cwd: String,
+        path: String,
+        staged: bool,
+        untracked: bool,
+    },
+    Setup {
+        provider: String,
+        check: bool,
+    },
+    History {
+        session: String,
+    },
+    Upload {
+        session: String,
+        source: AttachmentSource,
+    },
+    Updates,
+}
+
+#[derive(Clone, Debug)]
+pub enum AttachmentSource {
+    File(PathBuf),
+    Image {
+        name: String,
+        bytes: Arc<Vec<u8>>,
+    },
+    #[cfg(target_os = "windows")]
+    WindowsClipboard,
+}
+
+impl Request {
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::Recent => "recent",
+            Self::Changes { .. } => "changes",
+            Self::Diff { .. } => "diff",
+            Self::Setup { .. } => "setup",
+            Self::History { .. } => "history",
+            Self::Upload { .. } => "upload",
+            Self::Updates => "updates",
+        }
+    }
+    pub async fn run(&self, backend: &Backend) -> Result<Value> {
+        match self {
+            Self::Recent => backend.call("sessions.recent", json!({})).await,
+            Self::Changes { cwd } => backend.call("git.status", json!({"cwd":cwd})).await,
+            Self::Diff {
+                cwd,
+                path,
+                staged,
+                untracked,
+            } => {
+                backend
+                    .call(
+                        "git.diff",
+                        json!({"cwd":cwd,"path":path,"staged":staged,"untracked":untracked}),
+                    )
+                    .await
+            }
+            Self::History { session } => history_document(backend.conversation(session).await?),
+            Self::Setup { provider, check } => {
+                let installed = backend.call("providers.checkAll", json!({})).await?;
+                let readiness = backend
+                    .call(
+                        "desktop.providerReadiness",
+                        json!({"provider":provider,"check":check}),
+                    )
+                    .await;
+                Ok(
+                    json!({"installed":installed,"readiness":readiness.as_ref().ok(),"readinessError":readiness.err().map(|e| e.to_string())}),
+                )
+            }
+            Self::Upload { source, .. } => {
+                let source = source.clone();
+                let (name, bytes) = tokio::task::spawn_blocking(move || -> Result<_> {
+                    match source {
+                        AttachmentSource::Image { name, bytes } => {
+                            normalize_clipboard(name, &bytes)
+                        }
+                        #[cfg(target_os = "windows")]
+                        AttachmentSource::WindowsClipboard => {
+                            let mut clipboard = arboard::Clipboard::new()?;
+                            let data = clipboard.get_image()?;
+                            ensure!(
+                                data.width <= 8192
+                                    && data.height <= 8192
+                                    && data.width.saturating_mul(data.height) <= 16_000_000,
+                                "Screenshot dimensions exceed the 16 megapixel limit"
+                            );
+                            let image = image::RgbaImage::from_raw(
+                                data.width as u32,
+                                data.height as u32,
+                                data.bytes.into_owned(),
+                            )
+                            .ok_or_else(|| anyhow::anyhow!("Invalid clipboard bitmap"))?;
+                            encode_png(image::DynamicImage::ImageRgba8(image))
+                        }
+                        AttachmentSource::File(path) => {
+                            use std::io::Read;
+                            let file = std::fs::File::open(&path)?;
+                            ensure!(
+                                file.metadata()?.len() <= MAX_ATTACHMENT_BYTES as u64,
+                                "Attachment exceeds 8 MiB"
+                            );
+                            let mut bytes = Vec::new();
+                            file.take((MAX_ATTACHMENT_BYTES + 1) as u64)
+                                .read_to_end(&mut bytes)?;
+                            Ok((
+                                path.file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned(),
+                                bytes,
+                            ))
+                        }
+                    }
+                })
+                .await??;
+                validate_attachment(&name, bytes.len())?;
+                let response = backend.call("files.upload", json!({"name":name,"dataBase64":base64::engine::general_purpose::STANDARD.encode(bytes)})).await?;
+                let path = response["path"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| anyhow::anyhow!("Upload returned no path"))?;
+                ensure!(
+                    !path.contains(['\n', '\r', ']']),
+                    "Upload returned an invalid path"
+                );
+                Ok(json!({"name":name,"path":path}))
+            }
+            Self::Updates => {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(20))
+                    .build()?;
+                let response = client
+                    .get("https://api.github.com/repos/DJTouchette/workspacer/releases/latest")
+                    .header("User-Agent", "Workspacer-Native")
+                    .send()
+                    .await?
+                    .error_for_status()?;
+                ensure!(
+                    response.content_length().unwrap_or(0) <= 1024 * 1024,
+                    "Release response too large"
+                );
+                let value: Value = response.json().await?;
+                let version = value["tag_name"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Release has no version"))?;
+                Ok(json!({"version":version}))
+            }
+        }
+    }
+}
+
+fn encode_png(image: image::DynamicImage) -> Result<(String, Vec<u8>)> {
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut bytes, image::ImageFormat::Png)?;
+    let bytes = bytes.into_inner();
+    validate_attachment("Screenshot.png", bytes.len())?;
+    Ok(("Screenshot.png".into(), bytes))
+}
+
+fn normalize_clipboard(name: String, bytes: &[u8]) -> Result<(String, Vec<u8>)> {
+    ensure!(
+        bytes.len() <= MAX_ATTACHMENT_BYTES,
+        "Screenshot exceeds 8 MiB"
+    );
+    if name.ends_with(".tiff") || name.ends_with(".bmp") {
+        let mut reader =
+            image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(8192);
+        limits.max_image_height = Some(8192);
+        limits.max_alloc = Some(64 * 1024 * 1024);
+        reader.limits(limits);
+        encode_png(reader.decode()?)
+    } else {
+        Ok((name, bytes.to_vec()))
+    }
+}
+
+pub fn validate_attachment(name: &str, len: usize) -> Result<()> {
+    ensure!(
+        len > 0 && len <= MAX_ATTACHMENT_BYTES,
+        "Choose a nonempty attachment up to 8 MiB"
+    );
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    if !["png", "jpg", "jpeg", "gif", "webp", "pdf"].contains(&ext.as_str()) {
+        bail!("Choose a PNG, JPG, GIF, WebP, or PDF file");
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestState {
+    pub number: u64,
+    pub request: Request,
+    pub loading: bool,
+    pub value: Arc<Value>,
+    pub error: Option<String>,
+}
+
+/// Notification transitions, never historical state inferred on initial connection.
+pub fn attention_transition(old: &Session, new: &Session) -> Option<&'static str> {
+    if new.approval.is_some() && new.approval != old.approval {
+        Some("Approval needed")
+    } else if new.questions.is_some() && new.questions != old.questions {
+        Some("Your answer is needed")
+    } else if matches!(
+        old.state.as_str(),
+        "working" | "thinking" | "running" | "responding" | "tool" | "executing"
+    ) && matches!(new.state.as_str(), "idle" | "done" | "input")
+    {
+        Some("Work completed")
+    } else {
+        None
+    }
+}
+
+/// Chunk long messages before display, so pagination never loses their beginning.
+fn history_document(value: Value) -> Result<Value> {
+    let snapshot: crate::model::ConversationSnapshot = serde_json::from_value(value)?;
+    let mut rows = Vec::new();
+    for item in snapshot.items {
+        if let Some((role, text)) = item.display() {
+            let mut offset = 0;
+            let mut part = 1;
+            while offset < text.len() {
+                let mut end = (offset + 32 * 1024).min(text.len());
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                rows.push(json!({"role":role,"text":&text[offset..end],"part":part,"continued":text.len() > 32 * 1024}));
+                offset = end;
+                part += 1;
+            }
+        }
+    }
+    Ok(json!({"rows":rows,"first_seq":snapshot.first_seq}))
+}
+
+/// The installer records the release independently of Cargo's crate version.
+pub fn installed_version() -> String {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.join("build-stamp.json")))
+                .and_then(|p| std::fs::read(p).ok())
+                .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                .and_then(|v| v["version"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{} (development build)", env!("CARGO_PKG_VERSION")))
+        })
+        .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn attachments_are_bounded_and_typed() {
+        assert!(validate_attachment("screen.PNG", 100).is_ok());
+        assert!(validate_attachment("x.exe", 100).is_err());
+        assert!(validate_attachment("x.png", MAX_ATTACHMENT_BYTES + 1).is_err());
+        assert!(validate_attachment("x.pdf", 0).is_err());
+    }
+    #[test]
+    fn attention_only_notifies_new_decisions_and_completed_work() {
+        let old = Session {
+            state: "working".into(),
+            ..Default::default()
+        };
+        let new = Session {
+            state: "idle".into(),
+            ..Default::default()
+        };
+        assert_eq!(attention_transition(&old, &new), Some("Work completed"));
+        assert_eq!(attention_transition(&new, &new), None);
+        let approval = Session {
+            approval: Some(json!({"tool":"Read"})),
+            ..new
+        };
+        assert_eq!(
+            attention_transition(&old, &approval),
+            Some("Approval needed")
+        );
+        assert_eq!(attention_transition(&approval, &approval), None);
+    }
+    #[test]
+    fn history_preserves_the_start_and_end_of_long_unicode_messages() {
+        let text = format!("BEGIN{}END", "🐙".repeat(40000));
+        let history = history_document(
+            json!({"seq":7,"first_seq":1,"items":[{"kind":"assistant_text","text":text}]}),
+        )
+        .unwrap();
+        let rows = history["rows"].as_array().unwrap();
+        assert!(rows.len() > 4);
+        let rebuilt = rows
+            .iter()
+            .map(|row| row["text"].as_str().unwrap())
+            .collect::<String>();
+        assert_eq!(rebuilt, text);
+        assert!(
+            rows.iter()
+                .all(|row| row["text"].as_str().unwrap().len() <= 32 * 1024)
+        );
+    }
+    #[test]
+    fn clipboard_bitmaps_are_encoded_as_uploadable_png() {
+        let image = image::DynamicImage::new_rgb8(2, 2);
+        for (ext, format) in [
+            ("bmp", image::ImageFormat::Bmp),
+            ("tiff", image::ImageFormat::Tiff),
+        ] {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image.write_to(&mut bytes, format).unwrap();
+            let (name, encoded) =
+                normalize_clipboard(format!("Screenshot.{ext}"), bytes.get_ref()).unwrap();
+            assert_eq!(name, "Screenshot.png");
+            assert!(encoded.starts_with(b"\x89PNG"));
+        }
+    }
+}

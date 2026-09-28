@@ -49,7 +49,7 @@ impl Workspace {
     }
 
     pub(super) fn load_models(&mut self, refresh: bool, cx: &mut Context<Self>) {
-        if self.demo || !self.new_session {
+        if self.demo || (!self.new_session && self.screen != Screen::Model) {
             return;
         }
         self.command(
@@ -147,13 +147,13 @@ impl Workspace {
                         .when(self.context_window == Some(tokens), |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
                         .when(!busy, |d| d.on_click(cx.listener(move |this, _, _, cx| { this.context_window = Some(tokens); cx.notify(); })))
                 }))))
-            .child("Permissions")
+            .when(self.screen != Screen::Model, |d| d.child("Permissions")
             .child(div().flex().flex_wrap().gap_2().children(Permission::choices(self.provider).iter().copied().map(|permission| {
                 self.button(permission.label(), permission.label(), !busy)
                     .when(self.permission == permission, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
                     .when(!busy, |d| d.on_click(cx.listener(move |this, _, _, cx| { this.permission = permission; cx.notify(); })))
             })))
             .child(div().text_size(px(12.)).text_color(rgb(if self.permission == Permission::FullAccess { p.warning } else { p.muted }))
-                .child(self.permission.description()))
+                .child(self.permission.description())))
     }
 }

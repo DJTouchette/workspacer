@@ -73,9 +73,18 @@ pub async fn serve(listener: TcpListener, sessions: usize, turns: usize) -> Resu
                             Some("call") => {
                                 let id = frame["params"]["sessionId"].as_str().unwrap_or_default();
                                 let result = match frame["method"].as_str().unwrap_or_default() {
+                                    "sessions.recent" => json!([
+                                        {"sessionId":"demo-0000","provider":"claude","name":"Native client experiment","cwd":"/workspaces/project-0","mode":"input","transport":"stream"},
+                                        {"sessionId":"past-session","provider":"codex","name":"Yesterday’s investigation","cwd":"/workspaces/project-1","mode":"stopped","transport":"stream"}
+                                    ]),
+                                    "git.status" => json!({"branch":"feature/native-basics","files":[{"path":"src/main.rs","staged":" ","unstaged":"M"},{"path":"README.md","staged":"M","unstaged":" "},{"path":"tests/session.rs","staged":"?","unstaged":"?"}]}),
+                                    "git.diff" => json!({"diff":"diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"}),
+                                    "providers.checkAll" => json!([{"provider":"claude","found":true},{"provider":"codex","found":false}]),
+                                    "desktop.providerReadiness" => json!({"state":"unchecked"}),
+                                    "claude.setModel" => json!({"ok":true,"disposition":"queued"}),
                                     "sessions.snapshots" => Value::Array((0..sessions).map(|i| json!({
                                         "sessionId":format!("demo-{i:04}"), "label":if i == 0 {"Native client experiment".into()} else {format!("Worker {i}")},
-                                        "cwd":format!("/workspaces/project-{}", i % 8), "transport":"stream", "mode":if streaming && active_id == format!("demo-{i:04}") {"responding"} else {"input"},
+                                        "cwd":format!("/workspaces/project-{}", i % 8), "provider":"claude", "model":"sonnet", "transport":"stream", "mode":if streaming && active_id == format!("demo-{i:04}") {"responding"} else {"input"},
                                         "pendingApproval":if i == 0 && pending {json!({"toolName":"Bash", "toolInput":{"command":"cargo test"}})} else {Value::Null}
                                     })).collect()),
                                     "sessions.conversation" => {

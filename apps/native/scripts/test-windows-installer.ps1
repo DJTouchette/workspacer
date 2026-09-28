@@ -8,6 +8,7 @@ $harness = Join-Path $root 'apps/native/target/release/native-harness.exe'
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("native-install-" + [guid]::NewGuid())
 # Spaces exercise installer command-line quoting and sibling binary resolution.
 $installDir = Join-Path $testRoot 'Workspacer Native'
+$notificationKey = 'HKCU:\Software\Classes\AppUserModelId\Workspacer.Native'
 $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Workspacer Native'
 if (Test-Path $key) { throw 'Smoke test requires a user without Workspacer Native installed' }
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Workspacer Native.lnk'
@@ -45,6 +46,7 @@ try {
         throw 'Start menu shortcut must launch the installed GUI in local mode'
     }
     if (!(Test-Path $key)) { throw 'Windows uninstall registration missing' }
+    if (!(Test-Path $notificationKey) -or (Get-ItemProperty $notificationKey).DisplayName -ne 'Workspacer Native') { throw 'Native notification identity missing' }
     $expectedUninstall = '"' + (Join-Path $installDir 'Uninstall.exe') + '"'
     $registration = Get-ItemProperty $key
     if ($registration.UninstallString -ne $expectedUninstall -or $registration.QuietUninstallString -ne "$expectedUninstall /S") {
@@ -90,6 +92,7 @@ try {
     Invoke-Uninstaller
     $uninstalled = $true
     if (Test-Path $key) { throw 'Uninstall registration was not removed' }
+    if (Test-Path $notificationKey) { throw 'Native notification identity was not removed' }
     if (Test-Path $shortcutPath) { throw 'Start menu shortcut was not removed' }
     foreach ($file in Get-ChildItem $stage -File -Recurse) {
         $relative = [System.IO.Path]::GetRelativePath($stage, $file.FullName)

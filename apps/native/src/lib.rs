@@ -3,6 +3,7 @@ pub mod appearance;
 pub mod backend;
 pub mod bus;
 pub mod controller;
+pub mod features;
 pub mod harness;
 pub mod host;
 pub mod launch;

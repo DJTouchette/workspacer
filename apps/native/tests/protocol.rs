@@ -769,3 +769,193 @@ async fn model_discovery_requires_hub_directory_for_codex() {
         "invalid catalog cwd must not reach the hub"
     );
 }
+
+#[tokio::test]
+async fn secondary_reads_are_superseded_and_never_cross_sessions() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([session("a"), session("b")]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "a"))
+        .await;
+    view(&controller, |v| {
+        v.selected.as_deref() == Some("a") && !v.loading
+    })
+    .await;
+    controller
+        .command(Command::Request(Request::Diff {
+            cwd: "/test".into(),
+            path: "old.rs".into(),
+            staged: false,
+            untracked: false,
+        }))
+        .unwrap();
+    let old = hub.frame("call", Some("git.diff")).await;
+    controller
+        .command(Command::Request(Request::Diff {
+            cwd: "/test".into(),
+            path: "new.rs".into(),
+            staged: true,
+            untracked: false,
+        }))
+        .unwrap();
+    let new = hub.frame("call", Some("git.diff")).await;
+    assert_eq!(new.value["params"]["staged"], true);
+    new.result(json!({"diff":"+new"})).await;
+    old.result(json!({"diff":"+old"})).await;
+    view(&controller, |v| {
+        v.requests
+            .get("diff")
+            .is_some_and(|s| s.value["diff"] == "+new")
+    })
+    .await;
+    controller.command(Command::Select("b".into())).unwrap();
+    let selected = view(&controller, |v| v.selected.as_deref() == Some("b")).await;
+    assert!(!selected.requests.contains_key("diff"));
+}
+
+#[tokio::test]
+async fn recent_session_can_be_read_without_launching_and_resume_is_explicit() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    controller
+        .command(Command::OpenRecent(wks_native::model::Session {
+            id: "ended".into(),
+            cwd: "/project".into(),
+            state: "stopped".into(),
+            provider: "codex".into(),
+            ..Default::default()
+        }))
+        .unwrap();
+    let history = hub.frame("call", Some("sessions.conversation")).await;
+    assert_eq!(history.value["params"]["sessionId"], "ended");
+    history.result(snapshot(1, "old work")).await;
+    view(&controller, |v| {
+        v.selected.as_deref() == Some("ended") && !v.loading
+    })
+    .await;
+    controller
+        .command(Command::Act {
+            session: "ended".into(),
+            action: Action::Send("new work".into()),
+        })
+        .unwrap();
+    let rejected = view(&controller, |v| v.receipt.is_some()).await;
+    assert!(rejected.receipt.as_ref().unwrap().error.is_some());
+    let mut resume = launch_request();
+    resume.resume_session_id = Some("ended".into());
+    controller.command(Command::Create(resume)).unwrap();
+    let spawn = hub.frame("call", Some("agents.spawn")).await;
+    assert_eq!(spawn.value["params"]["resumeSessionId"], "ended");
+    assert_eq!(spawn.value["params"]["permissionMode"], "ask");
+}
+
+#[tokio::test]
+async fn end_model_and_question_controls_use_structured_contracts() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let mut row = session("a");
+    row["pendingQuestions"] = json!([{"question":"Which?","options":[{"label":"One"}]}]);
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([row]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "a"))
+        .await;
+    view(&controller, |v| {
+        v.selected.as_deref() == Some("a") && !v.loading
+    })
+    .await;
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::Answers(vec!["One".into()]),
+        })
+        .unwrap();
+    let answer = hub.frame("call", Some("claude.answer")).await;
+    assert_eq!(answer.value["params"]["answers"], json!(["One"]));
+    assert_eq!(answer.value["params"]["answerKinds"], json!(["text"]));
+    answer.result(json!({"ok":true})).await;
+    view(&controller, |v| v.receipt.is_some() && !v.busy).await;
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::SetModel {
+                model: "opus".into(),
+                context_window: Some(1_000_000),
+            },
+        })
+        .unwrap();
+    let model = hub.frame("call", Some("claude.setModel")).await;
+    assert_eq!(model.value["params"]["contextWindow"], 1_000_000);
+    model
+        .result(json!({"ok":true,"disposition":"queued"}))
+        .await;
+    view(&controller, |v| v.notice.contains("queued") && !v.busy).await;
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::Terminate,
+        })
+        .unwrap();
+    let end = hub.frame("call", Some("claude.signal")).await;
+    assert_eq!(end.value["params"]["signal"], "SIGTERM");
+}
+
+#[tokio::test]
+async fn attachment_upload_is_bound_to_original_session_and_checks_limits() {
+    use wks_native::features::{AttachmentSource, Request};
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([session("a"), session("b")]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "a"))
+        .await;
+    view(&controller, |v| {
+        v.selected.as_deref() == Some("a") && !v.loading
+    })
+    .await;
+    controller
+        .command(Command::Request(Request::Upload {
+            session: "a".into(),
+            source: AttachmentSource::Image {
+                name: "screen.png".into(),
+                bytes: Arc::new(vec![1, 2, 3]),
+            },
+        }))
+        .unwrap();
+    let upload = hub.frame("call", Some("files.upload")).await;
+    assert_eq!(upload.value["params"]["dataBase64"], "AQID");
+    controller.command(Command::Select("b".into())).unwrap();
+    view(&controller, |v| v.selected.as_deref() == Some("b")).await;
+    upload
+        .result(json!({"path":"/remote/uploads/abc.png"}))
+        .await;
+    let result = view(&controller, |v| {
+        v.requests.get("upload").is_some_and(|s| !s.loading)
+    })
+    .await;
+    assert!(
+        matches!(&result.requests["upload"].request, Request::Upload { session, .. } if session == "a")
+    );
+    assert_eq!(
+        result.requests["upload"].value["path"],
+        "/remote/uploads/abc.png"
+    );
+}

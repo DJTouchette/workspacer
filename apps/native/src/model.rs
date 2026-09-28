@@ -16,6 +16,9 @@ pub struct Session {
     pub cwd: String,
     pub state: String,
     pub transport: String,
+    pub provider: String,
+    pub model: String,
+    pub context_window: Option<u64>,
     pub approval: Option<Value>,
     pub questions: Option<Value>,
 }
@@ -32,7 +35,12 @@ impl Session {
     pub fn merge(&mut self, value: &Value) {
         for (target, names) in [
             (&mut self.id, &["sessionId", "session_id"][..]),
-            (&mut self.label, &["label", "customName"][..]),
+            (
+                &mut self.label,
+                &["label", "customName", "name", "title"][..],
+            ),
+            (&mut self.provider, &["provider"][..]),
+            (&mut self.model, &["model"][..]),
             (&mut self.cwd, &["cwd"][..]),
             (&mut self.state, &["mode", "ambientState"][..]),
             (&mut self.transport, &["transport"][..]),
@@ -43,6 +51,22 @@ impl Session {
             {
                 *target = s.to_owned();
             }
+        }
+        if let Some(model) = value
+            .pointer("/requestedSelection/model")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/settings/model").and_then(Value::as_str))
+        {
+            self.model = model.to_owned();
+            self.context_window = if value.get("requestedSelection").is_some() {
+                value
+                    .pointer("/requestedSelection/contextWindow")
+                    .and_then(Value::as_u64)
+            } else {
+                value
+                    .pointer("/settings/contextWindow")
+                    .and_then(Value::as_u64)
+            };
         }
         if value.get("status").and_then(Value::as_str) == Some("ended") {
             self.state = "stopped".into();
@@ -106,6 +130,31 @@ pub struct Item {
     pub is_error: bool,
     #[serde(default)]
     pub steps: Value,
+}
+
+impl Item {
+    pub fn display(self) -> Option<(&'static str, String)> {
+        Some(match self.kind.as_str() {
+            "user_message" => ("You", self.text),
+            "assistant_text" => ("Assistant", self.text),
+            "tool_use" => ("Tool", format!("{}\n{}", self.name, self.input)),
+            "tool_result" => (
+                if self.is_error {
+                    "Tool error"
+                } else {
+                    "Tool result"
+                },
+                self.content,
+            ),
+            "slash_command" => ("Command", format!("/{}", self.name)),
+            "command_output" => ("Command output", self.output),
+            "plan" => (
+                "Plan",
+                serde_json::to_string_pretty(&self.steps).unwrap_or_default(),
+            ),
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -199,25 +248,8 @@ impl Transcript {
     }
 
     fn push(&mut self, item: Item, streaming: bool) {
-        let (role, text) = match item.kind.as_str() {
-            "user_message" => ("You", item.text),
-            "assistant_text" => ("Assistant", item.text),
-            "tool_use" => ("Tool", format!("{}\n{}", item.name, item.input)),
-            "tool_result" => (
-                if item.is_error {
-                    "Tool error"
-                } else {
-                    "Tool result"
-                },
-                item.content,
-            ),
-            "slash_command" => ("Command", format!("/{}", item.name)),
-            "command_output" => ("Command output", item.output),
-            "plan" => (
-                "Plan",
-                serde_json::to_string_pretty(&item.steps).unwrap_or_default(),
-            ),
-            _ => return,
+        let Some((role, text)) = item.display() else {
+            return;
         };
         if text.is_empty() {
             return;

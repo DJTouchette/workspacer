@@ -362,7 +362,7 @@ func (c *claudemonClient) postRaw(ctx context.Context, path string, body any, ou
 // control protocol (POST /sessions/:id/answer). This is the ONLY way to answer a
 // headless stream-transport session — it has no PTY to type into — mirroring
 // claudemonSessionClient.answer on the desktop.
-func (c *claudemonClient) answer(ctx context.Context, id string, option *int, text *string, answers []string) error {
+func (c *claudemonClient) answer(ctx context.Context, id string, option *int, text *string, answers []string, answerKinds []string) error {
 	body := map[string]any{}
 	if option != nil {
 		body["option"] = *option
@@ -372,6 +372,9 @@ func (c *claudemonClient) answer(ctx context.Context, id string, option *int, te
 	}
 	if answers != nil {
 		body["answers"] = answers
+	}
+	if answerKinds != nil {
+		body["answerKinds"] = answerKinds
 	}
 	return c.postJSON(ctx, "/sessions/"+id+"/answer", body, nil)
 }

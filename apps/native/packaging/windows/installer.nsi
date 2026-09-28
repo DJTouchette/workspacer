@@ -46,6 +46,9 @@ Section "Workspacer Native" Main
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateShortcut "$SMPROGRAMS\Workspacer Native.lnk" "$INSTDIR\wks-native.exe" "--local" "$INSTDIR\icon.ico"
   WriteRegStr HKCU "Software\Workspacer Native" "InstallDir" "$INSTDIR"
+  ; Give native toasts their own identity instead of PowerShell's default.
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\Workspacer.Native" "DisplayName" "Workspacer Native"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\Workspacer.Native" "IconUri" "$INSTDIR\icon.ico"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "Workspacer Native"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "Workspacer"
@@ -68,5 +71,6 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\Workspacer Native.lnk"
   DeleteRegKey HKCU "${UNINSTALL_KEY}"
   DeleteRegKey HKCU "Software\Workspacer Native"
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\Workspacer.Native"
   ; Session databases, shared config and user-created files are retained.
 SectionEnd
