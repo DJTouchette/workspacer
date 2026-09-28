@@ -589,7 +589,7 @@ impl Workspace {
             .children(sessions.into_iter().take(500).enumerate().map(|(ix, s)| {
                 let open = s.clone(); let resume = s.clone(); let id = s.id.clone();
                 div().id(("recent-row", ix)).p_3().rounded_md().bg(rgb(p.surface)).flex().flex_col().gap_2()
-                    .child(div().flex().justify_between().child(self.session_title(&s)).child(session_badge(&s, p)))
+                    .child(div().flex().justify_between().child(self.session_title(&s)).child(session_badge(&s, p, self.view.connected)))
                     .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(s.cwd.clone()))
                     .child(div().flex().gap_2()
                         .child(self.button("open-recent", "Open", self.view.connected).on_click(cx.listener(move |this, _, window, cx| {

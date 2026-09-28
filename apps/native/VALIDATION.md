@@ -182,3 +182,35 @@ Electron comparison. It excludes layout, painting, GPU, network and provider
 work. It does not establish that the native client feels faster than Electron.
 The complete display-independent native library suite passed (37 tests); no
 new GUI build or hardware measurement was performed for this change.
+
+## Reconciled native chat polish (2026-09-29)
+
+Integrated the `0c89afff` chat polish with main's rich transcript, native feature
+screens and Rust backend. Individual highlighted tool cards now consume the
+existing structured tool model, while response cards, guarded host actions,
+attachment previews, retained history, reading bookmarks and turn-file summaries
+continue through the shared rich renderer. Floating header/composer measurements
+and live scroll-anchor remapping coexist with saved per-session reading state.
+
+Validation on Linux:
+
+- `cargo test --locked --features ui-tests --no-fail-fast`: **121 passed**
+  (52 library, 39 GPUI interaction, 27 protocol, 3 Rust-host tests).
+- `cargo clippy --locked --all-targets --features ui-tests -- -D warnings`:
+  passed. Simplified an existing stale-request Boolean guard without changing
+  its behavior; all 27 protocol tests passed again afterward.
+- `cargo fmt --check` and `git diff --check`: passed.
+- Native application and harness link checked with the default Rust backend.
+
+The recovered regressions cover floating composer growth at normal and minimum
+window sizes, scrollback through updates, keyboard paging, visible-tail follow,
+call-ID expansion through snapshot/result updates, real syntax grammars, pinned
+session creation, server timestamps and persisted durations. Additional coverage
+preserves timestamp-free streaming row identity and namespaced/camel-case edit
+inputs. Existing rich-content, attachment, history, response-action and backend
+ownership tests remain enabled.
+
+Witness returned no usable selection from its original-checkout index; the full
+native suite was used. The X11 real-window smoke was not run on this host because
+Xvfb/xdotool are unavailable. Windows/macOS runtime checks remain CI coverage;
+this validation does not claim fresh cross-platform or hardware GPU results.

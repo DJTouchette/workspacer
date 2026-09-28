@@ -20,6 +20,8 @@ pub struct Tool {
     pub input: String,
     pub output: String,
     pub complete: bool,
+    #[serde(default)]
+    pub completed_at_ms: Option<i64>,
     pub is_error: bool,
     pub clipped: bool,
 }

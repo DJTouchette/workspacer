@@ -1,0 +1,283 @@
+use super::*;
+use gpui::{AnyElement, WeakEntity};
+use gpui_component::{Icon, IconName};
+use wks_native::{model::Row, tool_preview};
+
+pub(super) fn identity(row: &Row) -> String {
+    row.tool
+        .as_ref()
+        .filter(|tool| !tool.id.is_empty())
+        .map(|tool| format!("call:{}", tool.id))
+        .unwrap_or_else(|| format!("row:{}", row.key))
+}
+
+pub(super) fn card(
+    row: &Row,
+    session: &str,
+    expansion: Option<bool>,
+    workspace: WeakEntity<Workspace>,
+    p: Palette,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let tool = row.tool.as_ref().expect("tool row");
+    let mut preview = tool_preview::parse(
+        &tool.name,
+        &tool.input,
+        tool.complete.then_some(tool.output.as_str()),
+    );
+    if matches!(tool.category(), "Skill" | "Subagent" | "Workflow") {
+        preview.target = tool.target();
+    }
+    let expanded = expansion.unwrap_or(preview.file_edit || tool.is_error);
+    let key = row.key;
+    let stable_identity = identity(row);
+    let element_key = format!("{session}-{stable_identity}");
+    let command_title = preview.description.is_empty()
+        && preview
+            .blocks
+            .first()
+            .is_some_and(|block| block.label == "Command")
+        && !preview.target.is_empty();
+    let title = if command_title {
+        preview.target.clone()
+    } else {
+        preview.title.clone()
+    };
+    let subtitle = if command_title { "" } else { &preview.target };
+    let (status, color, icon) = if tool.is_error {
+        ("Failed", p.warning, IconName::TriangleAlert)
+    } else if tool.complete {
+        ("Done", p.success, IconName::Check)
+    } else {
+        ("Started", p.muted, IconName::Minus)
+    };
+    let status = match (row.timestamp_ms, tool.completed_at_ms) {
+        (Some(start), Some(end)) if end >= start => {
+            format!("{status} · {}", timing::duration_label(end - start))
+        }
+        _ => status.into(),
+    };
+    let details =
+        if expanded {
+            let mut body = div()
+                .id(SharedString::from(format!("{element_key}-details")))
+                .max_h(px(520.))
+                .overflow_y_scroll()
+                .px_3()
+                .pb_3()
+                .pt_2()
+                .border_t_1()
+                .border_color(rgb(p.border))
+                .flex()
+                .flex_col()
+                .gap_3()
+                .when(!preview.working_directory.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(p.muted))
+                            .child(preview.working_directory.clone()),
+                    )
+                })
+                .when(!preview.description.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(p.text))
+                            .child(preview.description.clone()),
+                    )
+                });
+            for (index, block) in preview.blocks.iter().take(16).enumerate() {
+                let text = block.text.lines().take(160).collect::<Vec<_>>().join("\n");
+                let text: String = text.chars().take(12_000).collect();
+                let clipped = text.len() < block.text.trim_end_matches('\n').len();
+                body = body.child(
+                    div()
+                        .flex_shrink_0()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .child(block.label.clone()),
+                                )
+                                .when(block.label == "Output", |d| {
+                                    d.child(timing::timestamp_label(
+                                        tool.completed_at_ms,
+                                        timing::now_ms(),
+                                    ))
+                                })
+                                .when(block.language != "text", |d| d.child(block.language)),
+                        )
+                        .child(
+                            TextView::markdown(
+                                SharedString::from(format!("{element_key}-{index}")),
+                                tool_preview::fenced(block.language, &text),
+                                window,
+                                cx,
+                            )
+                            .selectable(true),
+                        )
+                        .when(clipped, |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child("Preview shortened"),
+                            )
+                        }),
+                );
+            }
+            if preview.blocks.len() > 16 {
+                body = body.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                    format!(
+                        "{} additional sections omitted from preview",
+                        preview.blocks.len() - 16
+                    ),
+                ));
+            }
+            Some(body)
+        } else {
+            None
+        };
+    div()
+        .id(SharedString::from(format!("{element_key}-card")))
+        .rounded(px(10.))
+        .bg(rgb(p.surface))
+        .overflow_hidden()
+        .child(
+            div()
+                .id(SharedString::from(format!("{element_key}-toggle")))
+                .debug_selector(|| format!("tool-toggle-{key}"))
+                .cursor_pointer()
+                .px_3()
+                .py_2()
+                .flex()
+                .items_start()
+                .gap_2()
+                .hover(|s| s.bg(rgb(p.selected)))
+                .child(
+                    Icon::new(if expanded {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .size(px(14.))
+                    .mt(px(2.))
+                    .text_color(rgb(p.muted)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .when(command_title, |d| d.font_family(mono_font()))
+                                        .child(title),
+                                )
+                                .when(preview.added > 0, |d| {
+                                    d.child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(p.success))
+                                            .child(format!("+{}", preview.added)),
+                                    )
+                                })
+                                .when(preview.removed > 0, |d| {
+                                    d.child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(p.warning))
+                                            .child(format!("−{}", preview.removed)),
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(10.))
+                                        .text_color(rgb(p.muted))
+                                        .child(timing::timestamp_label(
+                                            row.timestamp_ms,
+                                            timing::now_ms(),
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .text_size(px(10.))
+                                        .text_color(rgb(color))
+                                        .child(Icon::new(icon).size(px(12.)))
+                                        .child(status),
+                                ),
+                        )
+                        .when(!subtitle.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .font_family(mono_font())
+                                    .child(subtitle.to_owned()),
+                            )
+                        }),
+                )
+                .on_click(move |_, _, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        if let Some(ix) = this
+                            .view
+                            .transcript
+                            .rows
+                            .iter()
+                            .position(|r| identity(r) == stable_identity)
+                        {
+                            this.pause_follow();
+                            let anchor = this.scroll_anchor();
+                            this.tool_expansion
+                                .insert(stable_identity.clone(), !expanded);
+                            this.list.splice(ix..ix + 1, 1);
+                            this.list.scroll_to(anchor);
+                        }
+                        cx.notify();
+                    });
+                }),
+        )
+        .when(row.truncated, |d| {
+            d.child(
+                div()
+                    .px_3()
+                    .pb_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.warning))
+                    .child("Tool content was clipped to the retained-history limit."),
+            )
+        })
+        .children(details)
+        .into_any_element()
+}

@@ -878,11 +878,11 @@ impl Worker {
             Completion::Request(epoch, number, request, result) => {
                 let key = request.key();
                 if epoch != self.epoch
-                    || !self
+                    || self
                         .view
                         .requests
                         .get(key)
-                        .is_some_and(|s| s.number == number)
+                        .is_none_or(|s| s.number != number)
                 {
                     return;
                 }

@@ -134,6 +134,16 @@ impl Session {
         }
     }
 
+    pub fn working(&self) -> bool {
+        !self.stopped()
+            && self.approval.is_none()
+            && self.questions.is_none()
+            && matches!(
+                self.state.as_str(),
+                "responding" | "working" | "thinking" | "streaming" | "running"
+            )
+    }
+
     pub fn stopped(&self) -> bool {
         self.state == "stopped" || self.state == "ended"
     }
@@ -184,7 +194,7 @@ pub struct Item {
     pub is_error: bool,
     #[serde(default)]
     pub steps: Value,
-    #[serde(default)]
+    #[serde(default, alias = "updatedAt")]
     pub timestamp: Option<String>,
     #[serde(default)]
     pub args: Option<String>,
@@ -248,11 +258,29 @@ pub struct Row {
     pub text: String,
     pub truncated: bool,
     pub timestamp: Option<String>,
+    pub timestamp_ms: Option<i64>,
     pub tool: Option<crate::transcript::Tool>,
     pub result_id: String,
 }
 
 impl Row {
+    pub fn same_content(&self, other: &Self) -> bool {
+        self.role == other.role
+            && self.text == other.text
+            && self.truncated == other.truncated
+            && self.timestamp == other.timestamp
+            && self.timestamp_ms == other.timestamp_ms
+            && self.tool == other.tool
+            && self.result_id == other.result_id
+    }
+
+    pub fn copy_text(&self) -> String {
+        self.tool
+            .as_ref()
+            .map(|t| format!("{}\n{}\n{}", t.name, t.input, t.output))
+            .unwrap_or_else(|| self.text.clone())
+    }
+
     pub fn fingerprint(&self) -> u64 {
         let mut hash = 0xcbf29ce484222325u64;
         let mut add = |text: &str| {
@@ -314,6 +342,7 @@ impl Transcript {
     }
 
     pub fn snapshot(&mut self, snapshot: ConversationSnapshot) {
+        let previous_order = self.rows.clone();
         let mut previous = std::collections::HashMap::<String, VecDeque<Arc<Row>>>::new();
         for row in self.rows.drain(..) {
             previous.entry(row.identity()).or_default().push_back(row);
@@ -323,11 +352,29 @@ impl Transcript {
         for item in snapshot.items {
             self.push(item, false);
         }
-        for row in &mut self.rows {
-            if let Some(old) = previous
+        for (ix, row) in self.rows.iter_mut().enumerate() {
+            let old = previous
                 .get_mut(&row.identity())
                 .and_then(VecDeque::pop_front)
-            {
+                .or_else(|| {
+                    // A timestamp-free streamed reply may grow on reseed. Keep
+                    // its key only when it remains at the same position and the
+                    // old row has not already been reused by an exact match.
+                    let old = previous_order.get(ix)?;
+                    if row.role != old.role
+                        || row.tool.is_some()
+                        || old.tool.is_some()
+                        || !row.text.starts_with(&old.text)
+                    {
+                        return None;
+                    }
+                    let candidates = previous.get_mut(&old.identity())?;
+                    if candidates.front()?.key != old.key {
+                        return None;
+                    }
+                    candidates.pop_front()
+                });
+            if let Some(old) = old {
                 Arc::make_mut(row).key = old.key;
                 if **row == *old {
                     *row = old;
@@ -368,6 +415,10 @@ impl Transcript {
     }
 
     fn push(&mut self, item: Item, streaming: bool) {
+        let timestamp_ms = item
+            .timestamp
+            .as_deref()
+            .and_then(crate::timing::parse_timestamp);
         let timestamp = item
             .timestamp
             .clone()
@@ -394,6 +445,7 @@ impl Transcript {
             }
             tool.is_error = item.is_error;
             tool.complete = true;
+            tool.completed_at_ms = timestamp_ms.or(tool.completed_at_ms);
             self.bytes += row.bytes();
             self.enforce_bounds();
             return;
@@ -420,6 +472,8 @@ impl Transcript {
         {
             self.bytes -= last.bytes();
             let last = Arc::make_mut(last);
+            last.timestamp_ms = last.timestamp_ms.or(timestamp_ms);
+            last.timestamp = last.timestamp.take().or(timestamp.clone());
             if text.starts_with(&last.text) && !last.truncated {
                 last.text = text;
             } else {
@@ -440,6 +494,7 @@ impl Transcript {
                 },
                 truncated: truncated || tool.as_ref().is_some_and(|t| t.clipped),
                 timestamp,
+                timestamp_ms,
                 tool,
                 result_id,
             };
@@ -672,5 +727,88 @@ mod tests {
         assert_eq!(s.title(), "Build");
         s.merge(&json!({"sessionId":"s", "pendingApproval":null, "mode":"input"}));
         assert!(s.approval.is_none());
+    }
+    #[test]
+    fn message_times_keep_stream_start_and_join_tool_completion() {
+        let start = "2026-09-27T12:00:00Z";
+        let end = "2026-09-27T12:00:07Z";
+        let mut t = Transcript::default();
+        t.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![Item {
+                kind: "assistant_text".into(),
+                text: "Hello".into(),
+                timestamp: Some(start.into()),
+                ..Default::default()
+            }],
+        });
+        t.delta(
+            Delta {
+                seq: 2,
+                items: vec![Item {
+                    kind: "assistant_text".into(),
+                    text: " world".into(),
+                    timestamp: Some(end.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(
+            t.rows[0].timestamp_ms,
+            crate::timing::parse_timestamp(start)
+        );
+        t.push(
+            Item {
+                kind: "tool_use".into(),
+                id: "t1".into(),
+                name: "Read".into(),
+                timestamp: Some(start.into()),
+                ..Default::default()
+            },
+            false,
+        );
+        t.push(
+            Item {
+                kind: "tool_result".into(),
+                tool_use_id: "t1".into(),
+                content: "result".into(),
+                timestamp: Some(end.into()),
+                ..Default::default()
+            },
+            false,
+        );
+        assert_eq!(
+            t.rows[1].timestamp_ms,
+            crate::timing::parse_timestamp(start)
+        );
+        assert_eq!(
+            t.rows[1].tool.as_ref().unwrap().completed_at_ms,
+            crate::timing::parse_timestamp(end)
+        );
+        let missing: Item =
+            serde_json::from_value(json!({"kind":"user_message","text":"legacy"})).unwrap();
+        assert!(missing.timestamp.is_none());
+    }
+    #[test]
+    fn reseeding_history_preserves_unchanged_rows_and_streaming_identity() {
+        let mut t = Transcript::default();
+        t.snapshot(ConversationSnapshot {
+            seq: 2,
+            first_seq: 1,
+            items: vec![assistant("First"), assistant("Second")],
+        });
+        let before = t.clone();
+        t.snapshot(ConversationSnapshot {
+            seq: 3,
+            first_seq: 1,
+            items: vec![assistant("First"), assistant("Second grows")],
+        });
+        assert!(Arc::ptr_eq(&t.rows[0], &before.rows[0]));
+        assert!(!Arc::ptr_eq(&t.rows[1], &before.rows[1]));
+        assert_eq!(t.rows[1].key, before.rows[1].key);
+        assert_eq!(before.rows[1].text, "Second");
     }
 }

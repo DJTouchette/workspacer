@@ -2,11 +2,14 @@ mod bus_commands;
 mod features;
 mod launch;
 mod navigation;
+mod scroll;
+mod tools;
 mod transcript;
 use gpui::{
-    App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
-    ListAlignment, ListOffset, ListScrollEvent, ListState, Render, SharedString, Stateful, Task,
-    Window, actions, div, list, prelude::*, px, rgb, uniform_list,
+    Animation, AnimationExt, App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable,
+    FontWeight, KeyBinding, ListAlignment, ListOffset, ListScrollEvent, ListState, Render,
+    SharedString, Stateful, Task, Window, actions, canvas, div, list, prelude::*, px, rgb,
+    uniform_list,
 };
 use gpui_component::{
     input::{Input, InputState},
@@ -21,6 +24,7 @@ use wks_native::controller::{Action, Command, Controller, NewSession, View};
 use wks_native::launch::{CatalogKey, ModelChoice, Permission};
 use wks_native::model::Session;
 use wks_native::navigation::{Project, Provider, Settings, projects};
+use wks_native::timing::{self, TurnClock};
 
 const CHAT_WIDTH: f32 = 900.;
 
@@ -49,6 +53,8 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
     theme.colors.muted_foreground = rgb(p.muted).into();
     theme.colors.selection = rgb(p.selected).into();
     theme.font_size = px(14.);
+    theme.mono_font_family = mono_font().into();
+    theme.mono_font_size = px(12.);
     theme.radius = px(8.);
 }
 
@@ -84,6 +90,45 @@ fn brand_mark(size: f32, p: Palette) -> Div {
         .child("}")
 }
 
+// Electron BrandSpinner: an 0.8s eased journey in each direction.
+fn brand_spinner(size: f32, p: Palette, id: impl Into<gpui::ElementId>) -> Div {
+    let bar_width = (size * 0.18).max(2.);
+    let track_width = (size * 0.85).round();
+    div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .gap(px((size * 0.06).max(1.)))
+        .font_family(mono_font())
+        .text_size(px(size))
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(p.accent))
+        .child("{")
+        .child(
+            div()
+                .relative()
+                .w(px(track_width))
+                .h(px(size * 0.72))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .w(px(bar_width))
+                        .h_full()
+                        .rounded(px((size * 0.05).max(1.)))
+                        .bg(rgb(p.accent))
+                        .with_animation(
+                            id,
+                            Animation::new(std::time::Duration::from_millis(1600))
+                                .repeat()
+                                .with_easing(gpui::bounce(gpui::ease_in_out)),
+                            move |bar, progress| bar.left(px((track_width - bar_width) * progress)),
+                        ),
+                ),
+        )
+        .child("}")
+}
+
 fn status_dot(color: u32) -> Div {
     div()
         .size(px(6.))
@@ -112,6 +157,9 @@ fn keycap(label: &'static str, p: Palette) -> Div {
 }
 
 fn session_status(session: &Session, p: Palette) -> (&str, u32) {
+    if session.stopped() {
+        return ("Ended", p.muted);
+    }
     if session.approval.is_some() {
         return ("Needs approval", p.warning);
     }
@@ -119,7 +167,11 @@ fn session_status(session: &Session, p: Palette) -> (&str, u32) {
         return ("Needs your input", p.warning);
     }
     match session.state.as_str() {
-        "working" | "thinking" | "streaming" => ("Working", p.busy),
+        "responding" | "working" | "thinking" | "streaming" | "running" => ("Working", p.busy),
+        "approval" | "waiting_approval" => ("Needs approval", p.warning),
+        "question" | "waiting_input" => ("Needs your input", p.warning),
+        "starting" | "initializing" => ("Starting", p.muted),
+        "background" => ("Background", p.muted),
         "input" | "idle" => ("Ready", p.success),
         "stopped" | "ended" => ("Ended", p.muted),
         "" => ("Session", p.muted),
@@ -127,15 +179,27 @@ fn session_status(session: &Session, p: Palette) -> (&str, u32) {
     }
 }
 
-fn session_badge(session: &Session, p: Palette) -> Div {
-    let (label, color) = session_status(session, p);
+fn session_badge(session: &Session, p: Palette, connected: bool) -> Div {
+    let (label, color) = if connected {
+        session_status(session, p)
+    } else {
+        ("Offline", p.muted)
+    };
     div()
         .flex()
         .items_center()
         .gap_2()
         .text_size(px(11.))
         .text_color(rgb(color))
-        .child(status_dot(color))
+        .child(if connected && session.working() {
+            brand_spinner(
+                12.,
+                p,
+                SharedString::from(format!("session-working-{}", session.id)),
+            )
+        } else {
+            status_dot(color)
+        })
         .child(label.to_owned())
 }
 
@@ -243,6 +307,11 @@ pub struct Workspace {
     controller: Controller,
     view: Arc<View>,
     composer: Entity<InputState>,
+    composer_dock_bounds: gpui::Bounds<gpui::Pixels>,
+    header_bounds: gpui::Bounds<gpui::Pixels>,
+    tool_expansion: HashMap<String, bool>,
+    turn_clocks: HashMap<String, TurnClock>,
+    duration_labels: HashMap<u64, String>,
     new_session: bool,
     provider: &'static str,
     project: Entity<InputState>,
@@ -281,8 +350,7 @@ impl Workspace {
     ) -> Self {
         let composer = cx.new(|cx| {
             InputState::new(window, cx)
-                .multi_line(true)
-                .rows(3)
+                .auto_grow(1, 4)
                 .placeholder("What would you like to work on?")
         });
         let project =
@@ -418,6 +486,11 @@ impl Workspace {
             controller,
             view: Arc::new(View::default()),
             composer,
+            composer_dock_bounds: Default::default(),
+            header_bounds: Default::default(),
+            tool_expansion: HashMap::new(),
+            turn_clocks: HashMap::new(),
+            duration_labels: HashMap::new(),
             new_session: false,
             provider: "claude",
             project,
@@ -542,6 +615,7 @@ impl Workspace {
         }
         self.local_notice.clear();
         if self.view.selected != view.selected {
+            self.tool_expansion.clear();
             if let Some(id) = &self.view.selected {
                 self.drafts
                     .insert(id.clone(), self.composer.read(cx).value().to_string());
@@ -560,12 +634,13 @@ impl Workspace {
             self.chat.unread = None;
             self.follow = true;
         } else {
+            let anchor = (!self.follow).then(|| self.scroll_anchor());
             let old = &self.view.transcript.rows;
             let new = &view.transcript.rows;
             let first = old
                 .iter()
                 .zip(new)
-                .position(|(a, b)| !Arc::ptr_eq(a, b))
+                .position(|(a, b)| !Arc::ptr_eq(a, b) && !a.same_content(b))
                 .unwrap_or(old.len().min(new.len()));
             // Invalidate only changed measurements. Retain the scroll anchor
             // while reading history; bottom alignment follows when at the tail.
@@ -573,9 +648,10 @@ impl Workspace {
             // and count remain authoritative even if two revisions collide.
             let changed = first < old.len() || first < new.len();
             if changed {
+                let restored = anchor.map(|anchor| scroll::remap_anchor(anchor, old, new));
                 self.list.splice(first..old.len(), new.len() - first);
-                if !self.follow {
-                    self.chat.restored = false;
+                if let Some(anchor) = restored {
+                    self.list.scroll_to(anchor);
                 }
             }
             if changed
@@ -593,6 +669,12 @@ impl Workspace {
             && receipt.number > self.last_receipt
         {
             self.last_receipt = receipt.number;
+            if receipt.error.is_none()
+                && matches!(receipt.action, Action::Stop)
+                && let Some(clock) = self.turn_clocks.get_mut(&receipt.session)
+            {
+                clock.interrupt();
+            }
             if receipt.error.is_none()
                 && let Action::Send(sent) | Action::Answer(sent) = &receipt.action
             {
@@ -620,6 +702,67 @@ impl Workspace {
             self.navigation_selected = None;
         }
         let reconnected = !self.view.connected && view.connected;
+        if !view.loading {
+            let identities = view
+                .transcript
+                .rows
+                .iter()
+                .filter(|r| r.tool.is_some())
+                .map(|r| tools::identity(r))
+                .collect::<std::collections::HashSet<_>>();
+            self.tool_expansion
+                .retain(|key, _| identities.contains(key));
+        }
+        let now = timing::now_ms();
+        if !view.connected {
+            for clock in self.turn_clocks.values_mut() {
+                clock.update(&Session::default(), None, false, now);
+            }
+        }
+        if let Some(id) = &view.selected
+            && !self.turn_clocks.contains_key(id)
+        {
+            if self.turn_clocks.len() >= 128
+                && let Some(old) = self.turn_clocks.keys().next().cloned()
+            {
+                self.turn_clocks.remove(&old);
+            }
+            let clock = self
+                .settings_path
+                .as_ref()
+                .map(|path| TurnClock::load(&timing::history_path(path, &self.project_scope, id)))
+                .transpose()
+                .unwrap_or_else(|error| {
+                    eprintln!("Could not load native timing history: {error}");
+                    None
+                })
+                .unwrap_or_default();
+            self.turn_clocks.insert(id.clone(), clock);
+        }
+        for session in view.sessions.iter() {
+            if let Some(clock) = self.turn_clocks.get_mut(&session.id) {
+                let previous_end = clock.completed.back().map(|turn| turn.ended_ms);
+                let transcript = (!view.loading && view.selected.as_ref() == Some(&session.id))
+                    .then_some(&view.transcript);
+                clock.update(session, transcript, view.connected, now);
+                if previous_end != clock.completed.back().map(|turn| turn.ended_ms)
+                    && let Some(path) = &self.settings_path
+                    && let Err(error) = clock.save(&timing::history_path(
+                        path,
+                        &self.project_scope,
+                        &session.id,
+                    ))
+                {
+                    self.local_notice = format!("Could not save completed timing: {error}");
+                }
+            }
+        }
+        self.duration_labels = view
+            .selected
+            .as_ref()
+            .and_then(|id| self.turn_clocks.get(id))
+            .map(|clock| clock.message_labels(&view.transcript))
+            .unwrap_or_default();
         self.view = view;
         self.restore_reading(window, cx);
         if self.new_session || self.screen == Screen::Model {
@@ -719,8 +862,16 @@ impl Workspace {
     fn show_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.extras.resume = None;
         self.extras.return_launch = false;
-        if self.demo || self.requested_session.is_some() {
+        if self.demo {
             return;
+        }
+        // --session protects automatic startup/refresh selection. An explicit
+        // New session action is the user's decision to leave that pinned view.
+        if self.requested_session.take().is_some() {
+            self.selection_requested = false;
+            self.navigation_selected = None;
+            self.local_notice.clear();
+            self.command(Command::Refresh, cx);
         }
         if !self.new_session {
             self.choose_provider(self.settings.default_provider.id(), window, cx);
@@ -884,6 +1035,35 @@ impl Render for Workspace {
                 .is_none_or(|id| Some(id) == self.view.selected.as_ref())
             && !self.view.busy
             && selected.as_ref().is_some_and(|s| !s.stopped());
+        let now = timing::now_ms();
+        let clock = self
+            .view
+            .selected
+            .as_ref()
+            .and_then(|id| self.turn_clocks.get(id));
+        let working = self.view.connected && selected.as_ref().is_some_and(Session::working);
+        let animate_activity =
+            !self.view.connected || self.view.loading || self.view.busy || working;
+        let activity = if !self.view.connected {
+            Some("Reconnecting…".to_owned())
+        } else if self.view.loading {
+            Some("Loading conversation…".to_owned())
+        } else if self.view.busy {
+            Some("Sending…".to_owned())
+        } else if working {
+            Some(
+                clock
+                    .and_then(|clock| clock.elapsed_label(now))
+                    .map(|elapsed| format!("Working · {elapsed}"))
+                    .unwrap_or_else(|| "Working…".into()),
+            )
+        } else if clock.and_then(|clock| clock.elapsed_label(now)).is_some() {
+            Some("Waiting…".to_owned())
+        } else {
+            clock.and_then(|clock| clock.latest_completion_for(&self.view.transcript))
+        };
+        let dock_view = cx.entity().downgrade();
+        let header_view = cx.entity().downgrade();
         let title = selected
             .as_ref()
             .map(|s| self.session_title(s))
@@ -900,7 +1080,15 @@ impl Render for Workspace {
                 .unwrap_or_else(|_| div().into_any_element())
         })
         .flex_1()
-        .min_h_0();
+        .min_h_0()
+        .pt(self.header_bounds.size.height + px(16.))
+        // This is scrollable tail space, not a smaller viewport: history still
+        // paints behind the floating dock, while the last message can clear it.
+        .pb(if selected.is_some() {
+            self.composer_dock_bounds.size.height + px(12.)
+        } else {
+            px(0.)
+        });
 
         let visible_sessions = self.visible_sessions(cx);
         let sidebar = div()
@@ -1009,23 +1197,22 @@ impl Render for Workspace {
             .child(div().px_3().pb_3().child(Input::new(&self.search)))
             .child(
                 div().px_3().pb_4().child(
-                    self.button(
-                        "new-session",
-                        "New session",
-                        !self.demo && self.requested_session.is_none(),
-                    )
-                    .w_full()
-                    .flex()
-                    .justify_between()
-                    .child(keycap(
-                        if cfg!(target_os = "macos") {
-                            "⌘ N"
-                        } else {
-                            "Ctrl N"
-                        },
-                        p,
-                    ))
-                    .on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))),
+                    self.button("new-session", "New session", !self.demo)
+                        .debug_selector(|| "new-session-button".into())
+                        .w_full()
+                        .flex()
+                        .justify_between()
+                        .child(keycap(
+                            if cfg!(target_os = "macos") {
+                                "⌘ N"
+                            } else {
+                                "Ctrl N"
+                            },
+                            p,
+                        ))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.show_new_session(window, cx)),
+                        ),
                 ),
             )
             .child(
@@ -1122,7 +1309,11 @@ impl Render for Workspace {
                                                 .truncate()
                                                 .child(session.cwd.clone()),
                                         )
-                                        .child(div().pl_3().mt_1().child(session_badge(session, p)))
+                                        .child(div().pl_3().mt_1().child(session_badge(
+                                            session,
+                                            p,
+                                            this.view.connected,
+                                        )))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.new_session = false;
                                             this.screen = Screen::Conversation;
@@ -1343,22 +1534,46 @@ impl Render for Workspace {
                 .into_any_element();
         }
 
-        self.shell(window, cx)
-            .child(sidebar)
-            .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
-                .child(div().px_5().py(px(if compact { 10. } else { 16. })).bg(rgb(p.base)).border_b_1().border_color(rgb(p.border)).flex().items_center().gap_3().justify_between()
-                    .child(div().flex_1().min_w_0().when(!compact, |d| d.child(overline("CONVERSATION", p))).child(div().truncate().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).child(title)).child(div().truncate().text_size(px(11.)).text_color(rgb(p.muted)).child(selected.as_ref().map(|s| s.cwd.clone()).unwrap_or_else(|| "Your workspace, ready when you are".into()))))
-                    .when_some(selected.as_ref(), |d, session| d.child(session_badge(session, p)))
-                    .child(self.button("refresh", "Refresh", true).on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
-                .child(div().px_5().py_2().flex().flex_wrap().gap_2()
+        let header = div().absolute().top_0().left_0().w_full().flex().justify_center()
+            .child(div().relative().w_full().max_w(px(CHAT_WIDTH + 40.)).px_5().pt_3().flex().flex_col().gap_2()
+                .child(canvas(move |bounds, _, cx| {
+                    cx.defer(move |cx| {
+                        let _ = header_view.update(cx, |this, cx| {
+                            if this.header_bounds != bounds {
+                                let delta = bounds.size.height - this.header_bounds.size.height;
+                                if !this.follow && delta != px(0.) {
+                                    let mut anchor = this.scroll_anchor();
+                                    anchor.offset_in_item += delta;
+                                    this.list.scroll_to(anchor);
+                                }
+                                this.header_bounds = bounds;
+                                cx.notify();
+                            }
+                        });
+                    });
+                }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
+                .child(div().px_3().py_2().occlude().rounded(px(16.)).bg(gpui::Hsla::from(rgb(p.surface)).opacity(0.97)).border_1().border_color(rgb(p.border)).shadow_md().flex().items_center().gap_3().justify_between()
+                    .child(div().flex_1().min_w_0().flex().items_center().gap_3()
+                        .when_some(selected.as_ref(), |d, session| d
+                            .child(div().min_w_0().max_w(px(320.)).truncate().text_size(px(11.)).text_color(rgb(p.muted)).child(session.cwd.clone()))
+                            .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("/")))
+                        .child(div().flex_1().min_w_0().truncate().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(title)))
+                    .when_some(selected.as_ref(), |d, session| d.child(session_badge(session, p, self.view.connected)))
+                    .child(self.button("refresh", "Refresh", true).py_1().rounded(px(12.)).flex_shrink_0().on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
+                .child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().py_2().flex().flex_wrap().gap_2()
                     .child(self.button("open-changes", "Changes", selected.is_some()).when(selected.is_some(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Changes, window, cx)))))
                     .child(self.button("open-history", "History", selected.is_some()).when(selected.is_some(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::History, window, cx)))))
                     .child(self.button("open-session", "Session…", selected.is_some()).when(selected.is_some(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Session, window, cx)))))
                     .child(self.button("open-model", "Model…", enabled && self.supported_session()).when(enabled && self.supported_session(), |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Model, window, cx))))))
                 .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
-                .when(!notice.is_empty(), |d| d.child(div().px_5().py_2().text_size(px(12.)).text_color(rgb(p.warning)).child(notice)))
-                .when(self.view.transcript.omitted, |d| d.child(div().px_5().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
-                .when(self.view.loading, |d| d.child(div().px_5().text_color(rgb(p.muted)).child("Loading conversation…")))
+                .when(!notice.is_empty(), |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().py_2().text_size(px(12.)).text_color(rgb(p.warning)).child(notice)))
+                .when(self.view.transcript.omitted, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
+                .when(self.view.loading, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_color(rgb(p.muted)).child("Loading conversation…")))
+);
+
+        self.shell(window, cx)
+            .child(sidebar)
+            .child(div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
                 .when(!self.view.loading && self.view.transcript.rows.is_empty(), |d| d.child(
                     div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().px_5().gap_4()
                         .child(div().size(px(80.)).rounded(px(20.)).bg(rgb(p.surface)).flex().items_center().justify_center().child(brand_mark(40., p)))
@@ -1369,24 +1584,37 @@ impl Render for Workspace {
                                 else { "Connecting to your workspace. Your sessions will appear here when the hub is ready." }
                             } else { "Ask a question, explore your code, or describe what you want to build." }))
                         .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-setup", "Set up an agent", self.view.connected).when(self.view.connected, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx))))))
-                        .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-new", "Start a session", self.view.connected && !self.demo && self.requested_session.is_none())
-                            .when(self.view.connected && !self.demo && self.requested_session.is_none(), |d| d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))))))
+                        .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-new", "Start a session", self.view.connected && !self.demo)
+                            .when(self.view.connected && !self.demo, |d| d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))))))
                 ))
                 .when(!self.view.transcript.rows.is_empty() || self.view.loading, |d| d.child(transcript))
+                .child(header)
+                .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).debug_selector(|| "jump-latest".into()).mx_auto().rounded(px(12.)).occlude().on_click(cx.listener(|this, _, window, cx| {
+                    this.follow = true;
+                    this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); this.chat.unread = None; this.capture_reading(window, cx); cx.notify();
+                })))))
+                .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center()
+                    .child(div().id("conversation-dock").relative().w_full().max_w(px(CHAT_WIDTH + 40.)).px_5().pt_3().pb_4().max_h(window.viewport_size().height * 0.55).overflow_y_scroll().flex().flex_col().gap_2()
+                .child(canvas(move |bounds, _, cx| {
+                    cx.defer(move |cx| {
+                        let _ = dock_view.update(cx, |this, cx| {
+                            if this.composer_dock_bounds != bounds {
+                                this.composer_dock_bounds = bounds;
+                                cx.notify();
+                            }
+                        });
+                    });
+                }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
                 .when_some(self.chat.unread, |d, ix| d.child(self.button("new-activity", "New activity · jump to first unread", true).on_click(cx.listener(move |this, _, _, cx| {
                     this.follow = false;
                     this.list.scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) }); cx.notify();
                 }))))
                 .child(self.render_pending(window, cx))
-                .when(!self.follow, |d| d.child(self.button("latest", "Jump to latest", true).on_click(cx.listener(|this, _, window, cx| {
-                    this.follow = true;
-                    this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); this.chat.unread = None; this.capture_reading(window, cx); cx.notify();
-                }))))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
                     let summary = approval.pointer("/toolInput/command").or_else(|| approval.pointer("/toolInput/file_path")).and_then(serde_json::Value::as_str).unwrap_or("").lines().next().unwrap_or("").to_owned();
                     let details = serde_json::to_string_pretty(approval.get("toolInput").or_else(|| approval.get("raw")).unwrap_or(approval)).unwrap_or_default();
-                    d.child(div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5().py_2().flex().flex_col().gap_2().text_size(px(12.))
+                    d.child(div().occlude().w_full().p_3().rounded(px(16.)).bg(rgb(p.surface)).flex_shrink_0().flex().flex_col().gap_2().text_size(px(12.))
                         .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}")))
                         .when(compact, |d| d.child(div().flex().items_center().gap_2().child(div().flex_1().min_w_0().truncate().font_family(mono_font()).child(summary)).child(self.button("approval-toggle", if self.extras.approval_details { "Hide details" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
                         .when(!compact || self.extras.approval_details, |d| d.child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded_md().bg(rgb(p.surface)).font_family(mono_font()).text_color(rgb(p.muted)).child(details)))
@@ -1395,8 +1623,8 @@ impl Render for Workspace {
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
                 .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, cx)))
-                .when(selected.is_some(), |d| d.child(div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5().pt_3().pb_4().flex().flex_col().gap_2()
-                    .child(div().bg(rgb(p.surface)).rounded_lg().p_3().flex().flex_col().gap_2()
+                .when(selected.is_some(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
+                    .child(div().id("floating-composer").occlude().bg(gpui::Hsla::from(rgb(p.surface)).opacity(0.97)).border_1().border_color(rgb(p.border)).rounded(px(20.)).shadow_lg().p_3().flex().flex_col().gap_2()
                         .when(!compact || self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).is_some_and(|v| !v.is_empty()), |d| d.child(div().flex().flex_wrap().gap_2()
                             .child(self.button("attach-file", if self.uploading() { "Attaching…" } else { "Attach…" }, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx)))))
                             .when(!compact, |d| d.child(self.button("paste-image", "Paste image", enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, _, cx| { if !this.paste_image(cx) { this.extras.notice = "No supported image on the clipboard.".into(); cx.notify(); } })))))
@@ -1406,16 +1634,16 @@ impl Render for Workspace {
                                         if let Some(id) = &this.view.selected && let Some(files) = this.extras.attachments.get_mut(id) && ix < files.len() { files.remove(ix); } cx.notify();
                                     }))))
                             }))))
-                        .child(Input::new(&self.composer).appearance(false).h(px(if compact { 48. } else { 88. })).disabled(self.view.busy))
+                        .child(Input::new(&self.composer).appearance(false).disabled(self.view.busy))
                         .child(div().flex().items_center().justify_between().gap_2()
                             .when(compact, |d| d.child(self.button("compact-attach", if self.uploading() { "Attaching…" } else { "Attach…" }, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx))))))
-                            .when(!compact, |d| d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.view.busy { "Sending your message…" } else if enabled { "Make it happen." } else { "Select an available session to compose" })))
+                            .child(div().flex().items_center().gap_2().text_size(px(11.)).text_color(rgb(p.muted)).when(animate_activity, |d| d.child(brand_spinner(14., p, "composer-activity"))).child(activity.unwrap_or_else(|| if enabled { "Make it happen." } else { "Select an available session to compose" }.into())))
                             .child(div().flex().gap_2()
                                 .child(self.button("stop", "Interrupt", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx)))))
                                 .child(self.button("send", if self.view.busy {"Sending…"} else {"Send message"}, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
                     .child(div().flex().items_center().justify_between().text_size(px(10.)).text_color(rgb(p.muted))
                         .child(div().flex().gap_1().items_center().child(keycap(if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
-                        .child("Enter for a new line")))))
+                        .child("Enter for a new line"))))) ))
             .into_any_element()
     }
 }
@@ -1646,6 +1874,59 @@ mod tests {
     }
 
     #[gpui::test]
+    fn new_session_click_leaves_a_pinned_view_and_creates_the_selected_session(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.open_session(Some("a".into()));
+                let mut initial = state("a");
+                Arc::make_mut(&mut initial.sessions)[0].cwd = "/work/project".into();
+                this.update_view(Arc::new(initial), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let button = visual.debug_bounds("new-session-button").unwrap();
+        visual.simulate_click(button.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.new_session);
+            assert!(this.requested_session.is_none());
+            assert_eq!(this.project.read(cx).value().as_ref(), "/work/project");
+        });
+        while let Ok(command) = commands.try_recv() {
+            assert!(
+                matches!(command, Command::Refresh | Command::LoadModels { .. }),
+                "opening the form must not launch anything"
+            );
+        }
+        visual.simulate_keystrokes("ctrl-enter");
+        let Command::Create(request) = commands.try_recv().expect("create from the pinned window")
+        else {
+            panic!("expected create")
+        };
+        assert_eq!(request.cwd, "/work/project");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut created = state("b");
+                created.spawn_receipt = Some(wks_native::controller::SpawnReceipt {
+                    number: 1,
+                    session: Some("b".into()),
+                    error: None,
+                    unsent_message: None,
+                });
+                this.update_view(Arc::new(created), window, cx);
+                assert_eq!(this.view.selected.as_deref(), Some("b"));
+                assert!(!this.new_session);
+                assert!(this.requested_session.is_none());
+            })
+        });
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
     fn new_session_form_creates_once_and_keeps_failed_input(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
@@ -1796,6 +2077,469 @@ mod tests {
             assert!(
                 rendered > 0 && rendered < 100,
                 "constructed {rendered} of 2000 rows"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn floating_composer_keeps_the_last_message_clear_without_shortening_the_viewport(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 30,
+            first_seq: 1,
+            items: (0..30)
+                .map(|i| Item {
+                    kind: "assistant_text".into(),
+                    text: format!("Message {i}\n\nA paragraph in the conversation."),
+                    ..Default::default()
+                })
+                .collect(),
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let last_row = visual.debug_bounds("last-transcript-row").unwrap();
+        let initial_height = workspace.read_with(&visual, |this, _| {
+            let dock = this.composer_dock_bounds;
+            assert!(dock.size.height > px(60.));
+            assert!(this.header_bounds.size.height > px(30.));
+            assert!(this.list.viewport_bounds().top() < this.header_bounds.bottom());
+            assert!(this.list.viewport_bounds().bottom() > dock.top() + px(60.));
+            assert!(last_row.bottom() <= dock.top());
+            dock.size.height
+        });
+        visual.simulate_keystrokes("ctrl-l");
+        visual.simulate_input("First line\nSecond line\nThird line\nFourth line");
+        visual.run_until_parked();
+        let last_row = visual.debug_bounds("last-transcript-row").unwrap();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.composer_dock_bounds.size.height > initial_height);
+            assert!(last_row.bottom() <= this.composer_dock_bounds.top());
+        });
+        visual.simulate_resize(size(px(720.), px(480.)));
+        visual.run_until_parked();
+        let last_row = visual.debug_bounds("last-transcript-row").unwrap();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.composer_dock_bounds.top() > px(180.));
+            assert!(last_row.bottom() <= this.composer_dock_bounds.top());
+        });
+    }
+
+    #[gpui::test]
+    fn tool_cards_expand_without_sending_and_code_languages_are_highlighted(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 2,
+            first_seq: 1,
+            items: vec![
+                Item {
+                    kind: "tool_use".into(),
+                    id: "call".into(),
+                    name: "Bash".into(),
+                    input: serde_json::json!({"command":"printf hello"}),
+                    ..Default::default()
+                },
+                Item {
+                    kind: "tool_result".into(),
+                    tool_use_id: "call".into(),
+                    content: "hello".into(),
+                    ..Default::default()
+                },
+            ],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let collapsed = visual.debug_bounds("last-transcript-row").unwrap();
+        let toggle = visual.debug_bounds("tool-toggle-0").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(
+            visual
+                .debug_bounds("last-transcript-row")
+                .unwrap()
+                .size
+                .height
+                > collapsed.size.height
+        );
+        assert!(commands.try_recv().is_err());
+        let toggle = visual.debug_bounds("tool-toggle-0").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(
+            visual
+                .debug_bounds("last-transcript-row")
+                .unwrap()
+                .size
+                .height,
+            collapsed.size.height
+        );
+        for (language, code) in [
+            ("rust", "fn main() { let count = 42; }"),
+            ("typescript", "const count: number = 42;"),
+            ("diff", "@@ -1 +1 @@\n-old\n+new\n"),
+        ] {
+            let mut highlighter = gpui_component::highlighter::SyntaxHighlighter::new(language);
+            highlighter.update(None, &gpui_component::input::Rope::from_str(code));
+            let styles = highlighter.styles(
+                &(0..code.len()),
+                &gpui_component::highlighter::HighlightTheme::default_dark(),
+            );
+            assert!(
+                !styles.is_empty(),
+                "{language} must have real syntax highlighting"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn open_tool_cards_survive_reseeds_and_late_results(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let call = Item {
+            kind: "tool_use".into(),
+            id: "stable-call".into(),
+            name: "Bash".into(),
+            input: serde_json::json!({"command":"cargo test"}),
+            ..Default::default()
+        };
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![call.clone()],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let closed_height = visual
+            .debug_bounds("last-transcript-row")
+            .unwrap()
+            .size
+            .height;
+        let toggle = visual.debug_bounds("tool-toggle-0").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        for _ in 0..3 {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut view = (*this.view).clone();
+                    view.transcript.snapshot(ConversationSnapshot {
+                        seq: 3,
+                        first_seq: 1,
+                        items: vec![
+                            Item {
+                                kind: "assistant_text".into(),
+                                text: "Running the checks.".into(),
+                                ..Default::default()
+                            },
+                            call.clone(),
+                            Item {
+                                kind: "tool_result".into(),
+                                tool_use_id: "stable-call".into(),
+                                content: "All tests passed".into(),
+                                ..Default::default()
+                            },
+                        ],
+                    });
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            });
+            visual.run_until_parked();
+            assert!(
+                visual
+                    .debug_bounds("last-transcript-row")
+                    .unwrap()
+                    .size
+                    .height
+                    > closed_height
+            );
+            workspace.read_with(&visual, |this, _| {
+                assert_eq!(this.tool_expansion.get("call:stable-call"), Some(&true))
+            });
+        }
+        // A deliberate collapse must also survive the next server snapshot.
+        let toggle = visual.debug_bounds("tool-toggle-0").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.transcript.snapshot(ConversationSnapshot {
+                    seq: 1,
+                    first_seq: 1,
+                    items: vec![call],
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.tool_expansion.get("call:stable-call"), Some(&false))
+        });
+        assert_eq!(
+            visual
+                .debug_bounds("last-transcript-row")
+                .unwrap()
+                .size
+                .height,
+            closed_height
+        );
+    }
+
+    #[gpui::test]
+    fn reading_history_stays_anchored_through_updates_and_scroll_stop(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let mut items: Vec<Item> = (0..40)
+            .map(|i| Item {
+                kind: "assistant_text".into(),
+                text: format!("Message {i}\n\nA paragraph to read without the view jumping."),
+                ..Default::default()
+            })
+            .collect();
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 40,
+            first_seq: 1,
+            items: items.clone(),
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let dock_height =
+            workspace.read_with(&visual, |this, _| this.composer_dock_bounds.size.height);
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: gpui::point(px(600.), px(300.)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(350.))),
+            ..Default::default()
+        });
+        visual.run_until_parked();
+        let (tracked_row, y) = workspace.read_with(&visual, |this, _| {
+            assert!(!this.follow);
+            assert_eq!(this.composer_dock_bounds.size.height, dock_height);
+            let anchor = this.list.logical_scroll_top();
+            // Header notices can change which row intersects the logical top.
+            // Track content fully below the header, whose screen position must
+            // remain fixed even when that first logical row advances.
+            let tracked_row = (anchor.item_ix + 2).min(this.list.item_count() - 1);
+            (
+                tracked_row,
+                this.list.bounds_for_item(tracked_row).unwrap().top()
+                    + this.header_bounds.size.height
+                    + px(16.),
+            )
+        });
+        for round in 0..3 {
+            items[0].text.push_str(" Changed earlier content.");
+            items.push(Item {
+                kind: "assistant_text".into(),
+                text: format!("New tail {round}"),
+                ..Default::default()
+            });
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut next = (*this.view).clone();
+                    next.notice = if round % 2 == 0 {
+                        "Refreshing conversation".into()
+                    } else {
+                        String::new()
+                    };
+                    next.transcript.snapshot(ConversationSnapshot {
+                        seq: items.len() as u64,
+                        first_seq: 1,
+                        items: items.clone(),
+                    });
+                    this.update_view(Arc::new(next), window, cx);
+                })
+            });
+            visual.run_until_parked();
+            visual.simulate_event(gpui::ScrollWheelEvent {
+                position: gpui::point(px(600.), px(300.)),
+                touch_phase: gpui::TouchPhase::Ended,
+                ..Default::default()
+            });
+            visual.run_until_parked();
+            workspace.read_with(&visual, |this, _| {
+                assert!(!this.follow);
+                assert!(
+                    (this.list.bounds_for_item(tracked_row).unwrap().top()
+                        + this.header_bounds.size.height
+                        + px(16.)
+                        - y)
+                        .abs()
+                        < px(1.)
+                );
+                assert_eq!(this.composer_dock_bounds.size.height, dock_height);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn scrolling_to_the_end_hides_jump_and_resumes_following(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 40,
+            first_seq: 1,
+            items: (0..40)
+                .map(|i| Item {
+                    kind: "assistant_text".into(),
+                    text: format!("Message {i}\n\nA paragraph."),
+                    ..Default::default()
+                })
+                .collect(),
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        for delta in [350., -100_000.] {
+            visual.simulate_event(gpui::ScrollWheelEvent {
+                position: gpui::point(px(600.), px(300.)),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(delta))),
+                ..Default::default()
+            });
+            visual.run_until_parked();
+            workspace.read_with(&visual, |this, _| assert_eq!(this.follow, delta < 0.));
+            assert_eq!(visual.debug_bounds("jump-latest").is_none(), delta < 0.);
+        }
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = (*this.view).clone();
+                next.transcript.delta(
+                    wks_native::model::Delta {
+                        seq: 41,
+                        items: vec![Item {
+                            kind: "assistant_text".into(),
+                            text: "New reply".into(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    false,
+                );
+                this.update_view(Arc::new(next), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.follow);
+            assert_eq!(
+                this.list.logical_scroll_top().item_ix,
+                this.list.item_count()
+            );
+        });
+    }
+
+    #[test]
+    fn working_badges_understand_daemon_modes_and_pending_states() {
+        let p = Appearance::Dark.palette();
+        let mut session = Session {
+            state: "responding".into(),
+            ..Default::default()
+        };
+        assert_eq!(session_status(&session, p).0, "Working");
+        assert!(session.working());
+        session.approval = Some(serde_json::json!({"toolName":"Bash"}));
+        assert_eq!(session_status(&session, p).0, "Needs approval");
+        assert!(!session.working());
+        session.state = "stopped".into();
+        assert_eq!(session_status(&session, p).0, "Ended");
+        assert!(!session.working());
+        session.approval = None;
+        session.state = "input".into();
+        assert_eq!(session_status(&session, p).0, "Ready");
+        assert!(!session.working());
+    }
+
+    #[gpui::test]
+    fn reaching_the_tail_after_layout_resumes_follow_without_an_extra_wheel_event(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 60,
+            first_seq: 1,
+            items: (0..60)
+                .map(|i| Item {
+                    kind: "assistant_text".into(),
+                    text: format!("Message {i}\n\nSome content."),
+                    ..Default::default()
+                })
+                .collect(),
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        visual.simulate_keystrokes("ctrl-u");
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("jump-latest").is_some());
+        for _ in 0..3 {
+            visual.simulate_keystrokes("ctrl-d");
+            visual.run_until_parked();
+        }
+        let tail = visual.debug_bounds("last-transcript-row").unwrap();
+        workspace.read_with(&visual, |this, _| {
+            assert!(tail.bottom() <= this.composer_dock_bounds.top());
+            assert!(
+                this.follow,
+                "visible bottom must resume follow even when no wheel callback runs"
+            );
+        });
+        // GPUI 0.2.2 retains debug_bounds entries across reused frames, so an
+        // old selector's presence cannot establish whether a button was drawn.
+    }
+
+    #[gpui::test]
+    fn page_up_leaves_the_tail_and_repeated_pages_keep_moving(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 100,
+            first_seq: 1,
+            items: (0..100)
+                .map(|i| Item {
+                    kind: "assistant_text".into(),
+                    text: format!("Message {i}\n\nSome content."),
+                    ..Default::default()
+                })
+                .collect(),
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        visual.simulate_keystrokes("ctrl-u");
+        visual.run_until_parked();
+        let first = workspace.read_with(&visual, |this, _| {
+            assert!(!this.follow);
+            this.list.logical_scroll_top().item_ix
+        });
+        assert!(first < 99);
+        visual.simulate_keystrokes("ctrl-u");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.list.logical_scroll_top().item_ix < first)
+        });
+        let jump = visual.debug_bounds("jump-latest").unwrap();
+        visual.simulate_click(jump.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.follow);
+            assert_eq!(
+                this.list.logical_scroll_top().item_ix,
+                this.list.item_count()
             );
         });
     }

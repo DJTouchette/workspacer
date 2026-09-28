@@ -23,6 +23,7 @@ base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 notify-rust = "4"
 image = { version = "0.25", default-features = false, features = ["png", "bmp", "tiff", "jpeg", "gif", "webp"] }
+chrono = "0.4"
 async-channel = "2"
 clap = { version = "4", features = ["derive", "env"] }
 directories = "5"
@@ -32,9 +33,11 @@ html5ever = "0.27"
 markup5ever_rcdom = "0.3"
 gpui = { version = "=0.2.2", optional = true }
 gpui-component-assets = { version = "=0.5.1", optional = true }
-gpui-component = { version = "=0.5.1", optional = true, default-features = false }
+gpui-component = { version = "=0.5.1", optional = true, default-features = false, features = ["tree-sitter-languages"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+shell-words = "1.1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 url = "2"

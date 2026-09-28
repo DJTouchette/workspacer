@@ -199,9 +199,11 @@ Transcript rendering is described below.
 
 ## Rich conversation display
 
-- Consecutive tool calls form collapsible work groups. Results attach to their
-  call IDs, including empty results and failures. Expanded calls show input,
-  output, read content, and colored edit/unified-patch diffs with copy controls.
+- Tool calls render as individual expandable cards; expansion follows the call
+  ID across refreshes. Results attach to their call IDs, including empty results
+  and failures. Expanded calls show syntax-highlighted commands, reads, and
+  before/after or unified-patch previews. Copy retains the recorded payload;
+  History keeps full pageable input/output when live previews are shortened.
   Skill, subagent and workflow calls have specialized labels and use reported
   inventory/status when the connected backend supplies it.
 - User messages preserve literal text. Assistant messages retain Markdown/code;
@@ -585,3 +587,29 @@ An in-process pause retains the owning backend and reports its typed close reaso
 It does not create a replacement hub or stop the embedded engine merely because a
 viewer paused. Restarting that connection remains the embedding host's explicit
 responsibility; the native library does not infer OS shutdown or restart authority.
+
+## Chat polish
+
+`--session` pins automatic selection until you explicitly choose **New session**
+(`Ctrl/Cmd+N`). That opens the creation form and leaves the pin; a successful
+creation selects the new session. Opening the form does not launch an agent.
+For ordinary browsing and creation, omit `--session`.
+
+The compact title bar and rounded composer float above the full conversation.
+Scrollable space at both ends keeps the first and last messages reachable;
+the bottom spacing follows the growing composer and approval panels.
+The composer and session status use Electron's bouncing brace cursor while working.
+Assistant replies omit the repeated assistant heading. Pending approval, waiting for input, ready,
+and offline remain distinct states. Follow resumes when the painted latest message
+reaches the reading area above the composer, including after keyboard scrolling
+and virtual-list layout, without requiring another wheel event.
+
+Messages and tool calls show server timestamps in local time (with the date for
+older days). The composer shows elapsed minutes/seconds while working and a frozen
+duration when the turn finishes; completed assistant replies also retain that
+duration. Tool durations use their call/result timestamps. Turn timers keep the
+same start through queued follow-ups and approval waits, so they measure elapsed
+wall time. Observed completed durations are saved under `native-turn-timings/`
+beside native settings, scoped by hashed hub and session identifiers. Missing
+timestamps and unobserved historical completions are not guessed; a disconnect
+during a turn prevents recording an unreliable finish duration.

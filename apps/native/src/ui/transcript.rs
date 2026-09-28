@@ -376,12 +376,15 @@ impl Workspace {
                 if this.chat.open.len() > 2048 {
                     this.chat.open.clear();
                 }
+                this.pause_follow();
+                let anchor = this.scroll_anchor();
                 let value = this.chat.open.entry(key.clone()).or_insert(false);
                 *value = !*value;
                 this.list.splice(
                     0..this.view.transcript.rows.len(),
                     this.view.transcript.rows.len(),
                 );
+                this.list.scroll_to(anchor);
                 cx.notify();
             }))
     }
@@ -411,50 +414,7 @@ impl Workspace {
                     .child("New activity"),
             );
         }
-        if row.tool.is_some() {
-            let start = (0..=ix)
-                .rev()
-                .take_while(|i| rows[*i].tool.is_some())
-                .last()
-                .unwrap_or(ix);
-            let end = (ix + 1..rows.len())
-                .find(|i| rows[*i].tool.is_none())
-                .unwrap_or(rows.len());
-            let key = format!("{session}:work:{}", rows[start].key);
-            let expanded = self.chat.open.get(&key).copied().unwrap_or(false);
-            if ix == start {
-                let failed = rows
-                    .iter()
-                    .skip(start)
-                    .take(end - start)
-                    .filter(|r| r.tool.as_ref().is_some_and(|t| t.is_error))
-                    .count();
-                let pending = rows
-                    .iter()
-                    .skip(start)
-                    .take(end - start)
-                    .filter(|r| r.tool.as_ref().is_some_and(|t| !t.complete))
-                    .count();
-                body = body.child(self.toggle_chat(
-                    key,
-                    format!(
-                        "{} {} tool calls · {} awaiting result · {} failed",
-                        if expanded { "Collapse" } else { "Expand" },
-                        end - start,
-                        pending,
-                        failed
-                    ),
-                    cx,
-                ));
-            } else if !expanded && ix + 1 != end {
-                return div().into_any_element();
-            }
-            if expanded {
-                body = body.child(self.render_message(row, "live", false, window, cx));
-            }
-        } else {
-            body = body.child(self.render_message(row, "live", false, window, cx));
-        }
+        body = body.child(self.render_message(row, "live", false, window, cx));
         if row.role != "You" && (ix + 1 == rows.len() || rows[ix + 1].role == "You") {
             let start = (0..=ix)
                 .rev()
@@ -497,7 +457,31 @@ impl Workspace {
                 );
             }
         }
+        let tail_probe = (ix + 1 == rows.len()).then(|| {
+            let entity = cx.entity().downgrade();
+            let session = session.clone();
+            let row = row.clone();
+            canvas(
+                move |bounds, _, cx| {
+                    cx.defer(move |cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.resume_at_visible_tail(&session, &row, bounds, cx)
+                        });
+                    });
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        });
         div()
+            .relative()
+            .children(tail_probe)
+            .when(ix + 1 == rows.len(), |d| {
+                d.debug_selector(|| "last-transcript-row".into())
+            })
             .w_full()
             .max_w(px(CHAT_WIDTH))
             .mx_auto()
@@ -515,11 +499,7 @@ impl Workspace {
         let p = self.appearance.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = format!("{namespace}:{session}:{}", row.key);
-        let copy = row
-            .tool
-            .as_ref()
-            .map(|t| format!("{}\n{}\n{}", t.name, t.input, t.output))
-            .unwrap_or_else(|| row.text.clone());
+        let copy = row.copy_text();
         let mut body = div()
             .w_full()
             .p_3()
@@ -533,14 +513,25 @@ impl Workspace {
                     .justify_between()
                     .text_size(px(12.))
                     .text_color(rgb(p.muted))
-                    .child(format!(
-                        "{}{}",
-                        row.role,
-                        row.timestamp
-                            .as_ref()
-                            .map(|s| format!(" · {s}"))
-                            .unwrap_or_default()
-                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(row.role != "Assistant", |d| d.child(row.role.clone()))
+                            .when_some(
+                                (namespace == "live")
+                                    .then(|| self.duration_labels.get(&row.key))
+                                    .flatten(),
+                                |d, label| d.child(label.clone()),
+                            )
+                            .child(timing::timestamp_label(
+                                row.timestamp_ms.or_else(|| {
+                                    row.timestamp.as_deref().and_then(timing::parse_timestamp)
+                                }),
+                                timing::now_ms(),
+                            )),
+                    )
                     .child(
                         self.button(SharedString::from(format!("copy-{key}")), "Copy", true)
                             .on_click(move |_, _, cx| {
@@ -556,23 +547,30 @@ impl Workspace {
                 )
             });
         if let Some(tool) = &row.tool {
-            let status = if tool.is_error {
-                "Failed"
-            } else if tool.complete {
-                "Completed"
+            if namespace == "live" {
+                body = body.child(tools::card(
+                    row,
+                    &session,
+                    self.tool_expansion.get(&tools::identity(row)).copied(),
+                    cx.entity().downgrade(),
+                    p,
+                    window,
+                    cx,
+                ));
             } else {
-                "Awaiting result"
-            };
-            body = body.child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(if tool.is_error { p.error } else { p.text }))
-                    .child(format!(
-                        "{} · {} · {status}",
-                        tool.category(),
-                        tool.target()
-                    )),
-            );
+                body = body.child(format!(
+                    "{} · {} · {}",
+                    tool.category(),
+                    tool.target(),
+                    if tool.is_error {
+                        "Failed"
+                    } else if tool.complete {
+                        "Completed"
+                    } else {
+                        "Awaiting result"
+                    }
+                ));
+            }
             if tool.category() == "Skill" {
                 let target = tool.target();
                 if let Some(skill) = self
@@ -597,35 +595,41 @@ impl Workspace {
                     .unwrap_or("");
                 body = body.child(literal(format!("{key}-task"), description, window, cx));
             }
-            let changes = tool.changes();
-            for (n, file) in changes.iter().enumerate() {
-                body = body
-                    .child(div().text_color(rgb(p.accent)).child(file.path.clone()))
-                    .child(self.diff_lines(&format!("{key}-diff-{n}"), &file.diff, window, cx));
-            }
-            let details = format!("{key}-input");
-            let expanded = self.chat.open.get(&details).copied().unwrap_or(false);
-            body = body.child(self.toggle_chat(
-                details.clone(),
-                if expanded { "Hide input" } else { "Show input" }.into(),
-                cx,
-            ));
-            if expanded {
-                body = body.child(self.render_raw(
-                    &details,
-                    &if tool.clipped {
-                        tool.input.clone()
-                    } else {
-                        serde_json::to_string_pretty(&tool.value())
-                            .unwrap_or_else(|_| tool.input.clone())
-                    },
-                    window,
+            if namespace != "live" {
+                let changes = tool.changes();
+                for (n, file) in changes.iter().enumerate() {
+                    body = body
+                        .child(div().text_color(rgb(p.accent)).child(file.path.clone()))
+                        .child(self.diff_lines(&format!("{key}-diff-{n}"), &file.diff, window, cx));
+                }
+                let details = format!("{key}-input");
+                let expanded = self.chat.open.get(&details).copied().unwrap_or(false);
+                body = body.child(self.toggle_chat(
+                    details.clone(),
+                    if expanded { "Hide input" } else { "Show input" }.into(),
                     cx,
                 ));
-            }
-            if !tool.output.is_empty() {
-                body =
-                    body.child(self.render_raw(&format!("{key}-output"), &tool.output, window, cx));
+                if expanded {
+                    body = body.child(self.render_raw(
+                        &details,
+                        &if tool.clipped {
+                            tool.input.clone()
+                        } else {
+                            serde_json::to_string_pretty(&tool.value())
+                                .unwrap_or_else(|_| tool.input.clone())
+                        },
+                        window,
+                        cx,
+                    ));
+                }
+                if !tool.output.is_empty() {
+                    body = body.child(self.render_raw(
+                        &format!("{key}-output"),
+                        &tool.output,
+                        window,
+                        cx,
+                    ));
+                }
             }
             let input = tool.value();
             if let Some(path) = input["file_path"]

@@ -202,9 +202,9 @@ impl Workspace {
 
     fn page(&mut self, direction: f32, window: &Window, cx: &mut Context<Self>) {
         if self.screen == Screen::Conversation && !self.new_session {
-            self.follow = false;
+            self.pause_follow();
             self.list
-                .scroll_by(window.viewport_size().height * (direction * 0.5));
+                .scroll_by(self.list.viewport_bounds().size.height * (direction * 0.5));
             cx.defer_in(window, |this, window, cx| this.capture_reading(window, cx));
             cx.notify();
         }
