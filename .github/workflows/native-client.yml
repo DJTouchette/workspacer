@@ -40,14 +40,24 @@ jobs:
       - name: Reducer, WebSocket and GPUI interaction tests
         run: cargo test --locked --features ui-tests
       - name: Link the native application
-        run: cargo build --locked --bin wks-native
+        run: cargo build --locked --bin wks-native --bin native-harness
       - name: Real Linux window, keyboard and pixel smoke
         if: runner.os == 'Linux'
         run: xvfb-run -a -s '-screen 0 1280x900x24' python3 scripts/smoke.py
+      - name: Rich transcript real-window smoke
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/native-harness serve --bind 127.0.0.1:17996 --sessions 3 --turns 0 --rich-transcript &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          xvfb-run -a -s '-screen 0 1280x1000x24' python3 scripts/smoke.py --bus ws://127.0.0.1:17996/bus --no-input --height 900 --output native-transcript-smoke.png
+          xvfb-run -a -s '-screen 0 1280x1000x24' python3 scripts/smoke.py --bus ws://127.0.0.1:17996/bus --no-input --height 900 --scroll-pages 10 --output native-attachment-smoke.png
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux' && always()
         with:
           name: native-linux-smoke
-          path: apps/native/native-smoke.png
+          path: apps/native/native-*smoke.png
       - name: Measure bounded transcript workload
         run: cargo run --locked --release --no-default-features --bin native-harness -- bench --events 20000

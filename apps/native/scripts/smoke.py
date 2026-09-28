@@ -89,6 +89,7 @@ def main():
     parser.add_argument("--theme", choices=("dark", "light", "nord"), default="dark")
     parser.add_argument("--width", type=int, default=1000)
     parser.add_argument("--height", type=int, default=700)
+    parser.add_argument("--scroll-pages", type=int, default=0, help="Scroll chat upward by this many half-pages before capture")
     parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
     args = parser.parse_args()
@@ -129,6 +130,9 @@ def main():
         if args.screen != "conversation":
             drive("key", "Escape")
             drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "changes": "d", "setup": "a", "session": "e", "model": "m"}[args.screen])
+        if args.scroll_pages:
+            drive("key", "Escape")
+            drive("key", "--delay", "80", *(["ctrl+u"] * min(50, max(0, args.scroll_pages))))
         time.sleep(1)
         colors = screenshot(int(window), args.width, args.height, args.output)
         print(json.dumps({"window_appeared_ms": appeared_ms,

@@ -19,12 +19,14 @@ anyhow = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 notify-rust = "4"
-image = { version = "0.25", default-features = false, features = ["png", "bmp", "tiff"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "tiff", "jpeg", "gif", "webp"] }
 async-channel = "2"
 clap = { version = "4", features = ["derive", "env"] }
 directories = "5"
 env_logger = { version = "0.11", default-features = false }
 futures-util = "0.3"
+html5ever = "0.27"
+markup5ever_rcdom = "0.3"
 gpui = { version = "=0.2.2", optional = true }
 gpui-component-assets = { version = "=0.5.1", optional = true }
 gpui-component = { version = "=0.5.1", optional = true, default-features = false }

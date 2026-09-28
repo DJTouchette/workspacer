@@ -33,6 +33,10 @@ $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
 ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Setup-$version-x64.exe"
 ```
 
+CI resolves the checksum-verified NSIS compiler from the pinned Electron build
+toolchain using `scripts/resolve-nsis.mjs`, avoiding a separate Chocolatey lookup.
+Manual builds can still set `MAKENSIS`.
+
 Packaging uses the Node executable running the script (x64 Node 22.13+), and
 expects its adjacent `LICENSE` file from the official Node distribution.
 `MAKENSIS` can override the compiler path. The smoke test requires a disposable
@@ -202,8 +206,56 @@ Captured during a real Codex round trip through an isolated backend:
 
 This experiment intentionally starts with the connected hub's own sessions.
 Federated/paired rows are excluded so a remote session cannot accidentally be
-controlled through an unqualified local method. Terminal emulation, federation, and full theme parity remain follow-on work. Rich tool input/output is displayed
-as text, without the Electron client's diff cards.
+controlled through an unqualified local method. Terminal emulation, federation, and full theme parity remain follow-on work.
+Transcript rendering is described below.
+
+## Rich conversation display
+
+- Consecutive tool calls form collapsible work groups. Results attach to their
+  call IDs, including empty results and failures. Expanded calls show input,
+  output, read content, and colored edit/unified-patch diffs with copy controls.
+  Skill, subagent and workflow calls have specialized labels and use reported
+  inventory/status when the connected backend supplies it.
+- User messages preserve literal text. Assistant messages retain Markdown/code;
+  Markdown file targets open a guarded, read-only preview on the connected host.
+  Image attachment markers and mentioned image paths load host-backed thumbnails.
+  Missing/unsupported previews leave the original text visible.
+- Sent messages remain visibly provisional until a new authoritative user turn
+  acknowledges them. Messages sent during work say **Queued**. Failed or uncertain
+  sends preserve the existing draft behavior; acceptance alone does not remove
+  the provisional bubble.
+- Reading positions persist per hub/session, including the viewport offset and
+  last-read content. Session switches, empty attach snapshots and background
+  updates preserve them. **New activity** jumps to the first unread location;
+  **Jump to latest** resumes following. Bookmarks are capped at 200 sessions.
+- Each turn has a changed-files summary. Observed live turn completion captures
+  repository counts; historical turns and unavailable/committed files use clearly
+  labelled estimates from successful tool calls. Captures are client-local and
+  bounded, like Electron's transient snapshot cache.
+- Fleet wakes show worker links, reply prefills and result/escalation blocks,
+  with the complete original wake available. Reply actions preserve your draft.
+- Closed assistant `wks-html-card` fences render inert native text/tables and
+  explicit **Open worker**, **View diff**, and **Prefill** buttons. Worker actions
+  validate the parent relationship; diff reads use the existing owner-validated
+  service. Prefill never sends. CSS, JavaScript and browser-only HTML are not
+  executed; the required fallback text remains readable. Tool output and user
+  text never activate response-card actions.
+
+Live chat retains its 2,000-row / 4 MiB budget, including tool payloads. History
+uses the same message renderer and retains full server-provided tool inputs and
+outputs. Long text is paginated as literal text instead of splitting Markdown
+fences into misleading fragments. The server's existing retention/frame limits
+still apply.
+
+For a repeatable visual fixture without an agent or model call:
+
+```sh
+cargo run --locked --bin native-harness -- serve --bind 127.0.0.1:17996 --sessions 3 --turns 0 --rich-transcript
+# In another terminal:
+cargo run --locked --bin wks-native -- --bus ws://127.0.0.1:17996/bus
+# Linux/X11 automation against that fixture:
+python3 scripts/smoke.py --bus ws://127.0.0.1:17996/bus --no-input --scroll-pages 10
+```
 
 Choose **Dark**, **Light**, or **Nord** under **Settings → Appearance**.
 Switching applies immediately to the chrome, brand mark, conversation, inputs,

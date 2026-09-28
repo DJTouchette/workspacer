@@ -17,6 +17,10 @@ pub struct Session {
     pub state: String,
     pub transport: String,
     pub provider: String,
+    pub parent_session_id: String,
+    pub skills: Value,
+    pub subagents: Value,
+    pub workflows: Value,
     pub model: String,
     pub context_window: Option<u64>,
     pub approval: Option<Value>,
@@ -40,6 +44,10 @@ impl Session {
                 &["label", "customName", "name", "title"][..],
             ),
             (&mut self.provider, &["provider"][..]),
+            (
+                &mut self.parent_session_id,
+                &["parentSessionId", "parent_session_id"][..],
+            ),
             (&mut self.model, &["model"][..]),
             (&mut self.cwd, &["cwd"][..]),
             (&mut self.state, &["mode", "ambientState"][..]),
@@ -67,6 +75,29 @@ impl Session {
                     .pointer("/settings/contextWindow")
                     .and_then(Value::as_u64)
             };
+        }
+        if let Some(skills) = value.pointer("/statusLine/capabilities/inventory/skills") {
+            self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
+        }
+        if let Some(items) = value.get("subagents") {
+            self.subagents = bounded_inventory(
+                items,
+                &[
+                    "id",
+                    "toolUseId",
+                    "description",
+                    "type",
+                    "status",
+                    "model",
+                    "lastToolName",
+                ],
+            );
+        }
+        if let Some(items) = value.get("workflows") {
+            self.workflows = bounded_inventory(
+                items,
+                &["runId", "toolUseId", "name", "description", "status"],
+            );
         }
         if value.get("status").and_then(Value::as_str) == Some("ended") {
             self.state = "stopped".into();
@@ -108,6 +139,29 @@ impl Session {
     }
 }
 
+fn bounded_inventory(value: &Value, fields: &[&str]) -> Value {
+    Value::Array(
+        value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(32)
+            .map(|item| {
+                let mut projected = serde_json::Map::new();
+                for field in fields {
+                    if let Some(text) = item[*field].as_str() {
+                        projected.insert(
+                            (*field).into(),
+                            Value::String(crate::transcript::head(text, 512)),
+                        );
+                    }
+                }
+                Value::Object(projected)
+            })
+            .collect(),
+    )
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Item {
     #[serde(default, alias = "type")]
@@ -130,6 +184,10 @@ pub struct Item {
     pub is_error: bool,
     #[serde(default)]
     pub steps: Value,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub args: Option<String>,
 }
 
 impl Item {
@@ -146,7 +204,10 @@ impl Item {
                 },
                 self.content,
             ),
-            "slash_command" => ("Command", format!("/{}", self.name)),
+            "slash_command" => (
+                "Command",
+                format!("/{} {}", self.name, self.args.unwrap_or_default()),
+            ),
             "command_output" => ("Command output", self.output),
             "plan" => (
                 "Plan",
@@ -179,12 +240,51 @@ pub struct Delta {
     pub items: Vec<Item>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Row {
     pub key: u64,
-    pub role: &'static str,
+    pub role: String,
     pub text: String,
     pub truncated: bool,
+    pub timestamp: Option<String>,
+    pub tool: Option<crate::transcript::Tool>,
+    pub result_id: String,
+}
+
+impl Row {
+    pub fn fingerprint(&self) -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        let mut add = |text: &str| {
+            for b in text.bytes() {
+                hash = (hash ^ u64::from(b)).wrapping_mul(0x100000001b3);
+            }
+        };
+        add(&self.text);
+        if let Some(t) = &self.tool {
+            add(&t.input);
+            add(&t.output);
+            add(if t.complete { "complete" } else { "pending" });
+            add(if t.is_error { "error" } else { "ok" });
+        }
+        hash
+    }
+    fn identity(&self) -> String {
+        let identity = self
+            .tool
+            .as_ref()
+            .map(|t| t.id.clone())
+            .filter(|id| !id.is_empty())
+            .or_else(|| self.timestamp.clone())
+            .unwrap_or_else(|| crate::transcript::head(&self.text, 64));
+        format!("{}:{identity}", self.role)
+    }
+    pub fn bytes(&self) -> usize {
+        self.text.len()
+            + self.timestamp.as_ref().map_or(0, String::len)
+            + self.result_id.len()
+            + self.tool.as_ref().map_or(0, crate::transcript::Tool::bytes)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,15 +304,35 @@ pub struct Transcript {
     pub omitted: bool,
     pub revision: u64,
     next_key: u64,
+    history: bool,
 }
 
 impl Transcript {
+    pub(crate) fn append_history(&mut self, item: Item) {
+        self.history = true;
+        self.push(item, false);
+    }
+
     pub fn snapshot(&mut self, snapshot: ConversationSnapshot) {
-        self.rows.clear();
+        let mut previous = std::collections::HashMap::<String, VecDeque<Arc<Row>>>::new();
+        for row in self.rows.drain(..) {
+            previous.entry(row.identity()).or_default().push_back(row);
+        }
         self.bytes = 0;
         self.omitted = snapshot.first_seq > 1;
         for item in snapshot.items {
             self.push(item, false);
+        }
+        for row in &mut self.rows {
+            if let Some(old) = previous
+                .get_mut(&row.identity())
+                .and_then(VecDeque::pop_front)
+            {
+                Arc::make_mut(row).key = old.key;
+                if **row == *old {
+                    *row = old;
+                }
+            }
         }
         self.seq = Some(snapshot.seq);
         self.revision += 1;
@@ -248,10 +368,48 @@ impl Transcript {
     }
 
     fn push(&mut self, item: Item, streaming: bool) {
+        let timestamp = item
+            .timestamp
+            .clone()
+            .map(|s| crate::transcript::head(&s, 128));
+        let result_id = if item.tool_use_id.len() <= 512 {
+            item.tool_use_id.clone()
+        } else {
+            String::new()
+        };
+        if item.kind == "tool_result"
+            && !result_id.is_empty()
+            && let Some(row) = self
+                .rows
+                .iter_mut()
+                .rev()
+                .find(|r| r.tool.as_ref().is_some_and(|t| t.id == result_id))
+        {
+            self.bytes -= row.bytes();
+            let row = Arc::make_mut(row);
+            let tool = row.tool.as_mut().unwrap();
+            tool.output = item.content;
+            if !self.history {
+                row.truncated |= truncate(&mut tool.output, MAX_ROW_BYTES / 2);
+            }
+            tool.is_error = item.is_error;
+            tool.complete = true;
+            self.bytes += row.bytes();
+            self.enforce_bounds();
+            return;
+        }
+        let tool = (item.kind == "tool_use").then(|| {
+            let mut tool = crate::transcript::Tool::from_item(&item);
+            if self.history {
+                tool.input = serde_json::to_string(&item.input).unwrap_or_default();
+                tool.clipped = false;
+            }
+            tool
+        });
         let Some((role, text)) = item.display() else {
             return;
         };
-        if text.is_empty() {
+        if text.is_empty() && tool.is_none() {
             return;
         }
         // Only stream transports coalesce fragments; PTY transcript blocks are
@@ -260,7 +418,7 @@ impl Transcript {
             && role == "Assistant"
             && let Some(last) = self.rows.back_mut().filter(|r| r.role == role)
         {
-            self.bytes -= last.text.len();
+            self.bytes -= last.bytes();
             let last = Arc::make_mut(last);
             if text.starts_with(&last.text) && !last.truncated {
                 last.text = text;
@@ -268,26 +426,40 @@ impl Transcript {
                 last.text.push_str(&text);
             }
             last.truncated |= truncate(&mut last.text, MAX_ROW_BYTES);
-            self.bytes += last.text.len();
+            self.bytes += last.bytes();
         } else {
             let mut text = text;
-            let truncated = truncate(&mut text, MAX_ROW_BYTES);
-            self.bytes += text.len();
-            self.rows.push_back(Arc::new(Row {
+            let truncated = !self.history && truncate(&mut text, MAX_ROW_BYTES);
+            let row = Row {
                 key: self.next_key,
-                role,
-                text,
-                truncated,
-            }));
+                role: role.into(),
+                text: if let Some(t) = &tool {
+                    t.name.clone()
+                } else {
+                    text
+                },
+                truncated: truncated || tool.as_ref().is_some_and(|t| t.clipped),
+                timestamp,
+                tool,
+                result_id,
+            };
+            self.bytes += row.bytes();
+            self.rows.push_back(Arc::new(row));
             self.next_key += 1;
+        }
+        self.enforce_bounds();
+    }
+
+    fn enforce_bounds(&mut self) {
+        if self.history {
+            return;
         }
         while self.rows.len() > MAX_ROWS || self.bytes > MAX_TRANSCRIPT_BYTES {
             self.bytes -= self
                 .rows
                 .pop_front()
                 .expect("over budget implies a row")
-                .text
-                .len();
+                .bytes();
             self.omitted = true;
         }
     }
@@ -392,6 +564,103 @@ mod tests {
         );
         assert!(t.omitted);
         assert!(t.rows.iter().all(|r| r.text.capacity() <= MAX_ROW_BYTES));
+    }
+
+    #[test]
+    fn tools_pair_by_id_preserve_empty_errors_and_survive_refresh() {
+        let items = vec![
+            Item {
+                kind: "tool_use".into(),
+                id: "a".into(),
+                name: "Read".into(),
+                input: json!({"file_path":"a.rs"}),
+                ..Default::default()
+            },
+            Item {
+                kind: "tool_use".into(),
+                id: "b".into(),
+                name: "Edit".into(),
+                input: json!({"file_path":"b.rs","old_string":"a","new_string":"b"}),
+                ..Default::default()
+            },
+            Item {
+                kind: "tool_result".into(),
+                tool_use_id: "b".into(),
+                content: "".into(),
+                is_error: true,
+                ..Default::default()
+            },
+            Item {
+                kind: "tool_result".into(),
+                tool_use_id: "a".into(),
+                content: "1 code".into(),
+                ..Default::default()
+            },
+        ];
+        let mut t = Transcript::default();
+        t.snapshot(ConversationSnapshot {
+            seq: 4,
+            first_seq: 1,
+            items: items.clone(),
+        });
+        assert_eq!(t.rows.len(), 2);
+        assert_eq!(t.rows[0].tool.as_ref().unwrap().output, "1 code");
+        assert!(t.rows[1].tool.as_ref().unwrap().is_error);
+        assert!(t.rows[1].tool.as_ref().unwrap().complete);
+        let before = t.rows[0].clone();
+        t.snapshot(ConversationSnapshot {
+            seq: 4,
+            first_seq: 1,
+            items,
+        });
+        assert!(Arc::ptr_eq(&before, &t.rows[0]));
+        assert_eq!(t.bytes, t.rows.iter().map(|r| r.bytes()).sum::<usize>());
+        assert_eq!(
+            t.delta(
+                Delta {
+                    seq: 5,
+                    items: vec![Item {
+                        kind: "tool_result".into(),
+                        tool_use_id: "evicted".into(),
+                        content: "Still visible".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                true
+            ),
+            Fold::Changed
+        );
+        assert_eq!(t.rows.back().unwrap().text, "Still visible");
+    }
+    #[test]
+    fn structured_payloads_obey_the_transcript_budget() {
+        let mut t = Transcript::default();
+        for n in 0..100 {
+            t.push(
+                Item {
+                    kind: "tool_use".into(),
+                    id: n.to_string(),
+                    name: "Write".into(),
+                    input: json!({"content":"x".repeat(100000)}),
+                    ..Default::default()
+                },
+                false,
+            );
+            t.push(
+                Item {
+                    kind: "tool_result".into(),
+                    tool_use_id: n.to_string(),
+                    content: "y".repeat(100000),
+                    ..Default::default()
+                },
+                false,
+            );
+        }
+        assert!(t.bytes <= MAX_TRANSCRIPT_BYTES);
+        assert!(t.omitted);
+        assert!(t.rows.iter().all(|r| r.truncated));
+        assert_eq!(t.bytes, t.rows.iter().map(|r| r.bytes()).sum::<usize>());
     }
 
     #[test]

@@ -10,6 +10,22 @@ pub const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub enum Request {
+    FilePreview {
+        session: String,
+        path: String,
+    },
+    Previews {
+        paths: Vec<String>,
+    },
+    CardDiff {
+        session: String,
+        path: String,
+    },
+    TurnChanges {
+        session: String,
+        turn: String,
+        cwd: String,
+    },
     Recent,
     Changes {
         cwd: String,
@@ -48,6 +64,10 @@ pub enum AttachmentSource {
 impl Request {
     pub fn key(&self) -> &'static str {
         match self {
+            Self::FilePreview { .. } => "file-preview",
+            Self::Previews { .. } => "previews",
+            Self::CardDiff { .. } => "card-diff",
+            Self::TurnChanges { .. } => "turn-changes",
             Self::Recent => "recent",
             Self::Changes { .. } => "changes",
             Self::Diff { .. } => "diff",
@@ -59,6 +79,49 @@ impl Request {
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
         match self {
+            Self::FilePreview { path, .. } => {
+                let value = backend.call("fs.read", json!({"path":path})).await?;
+                ensure!(
+                    value["contents"]
+                        .as_str()
+                        .is_some_and(|s| s.len() <= 1024 * 1024),
+                    "File preview supports text files up to 1 MiB"
+                );
+                Ok(value)
+            }
+            Self::Previews { paths } => {
+                let mut previews = serde_json::Map::new();
+                for path in paths.iter().take(8) {
+                    let preview = backend.call("fs.readImage", json!({"path":path})).await;
+                    let preview = match preview {
+                        Ok(value) => tokio::task::spawn_blocking(move || thumbnail(value))
+                            .await
+                            .unwrap_or_else(|e| Err(e.into())),
+                        Err(error) => Err(error),
+                    };
+                    previews.insert(
+                        path.clone(),
+                        preview.unwrap_or_else(|e| json!({"error":e.to_string()})),
+                    );
+                }
+                Ok(Value::Object(previews))
+            }
+            Self::CardDiff { session, path } => {
+                backend
+                    .call(
+                        "desktop.htmlCardReadDiff",
+                        json!({"ownerId":session,"target":path}),
+                    )
+                    .await
+            }
+            Self::TurnChanges { cwd, .. } => {
+                let (status, staged, unstaged) = tokio::join!(
+                    backend.call("git.status", json!({"cwd":cwd})),
+                    backend.call("git.numstat", json!({"cwd":cwd,"staged":true})),
+                    backend.call("git.numstat", json!({"cwd":cwd,"staged":false}))
+                );
+                Ok(json!({"status":status?,"staged":staged?,"unstaged":unstaged?}))
+            }
             Self::Recent => backend.call("sessions.recent", json!({})).await,
             Self::Changes { cwd } => backend.call("git.status", json!({"cwd":cwd})).await,
             Self::Diff {
@@ -169,6 +232,31 @@ impl Request {
     }
 }
 
+fn thumbnail(value: Value) -> Result<Value> {
+    let url = value["dataUrl"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("No image preview available"))?;
+    ensure!(url.len() <= 12 * 1024 * 1024, "Image preview exceeds 8 MiB");
+    let encoded = url
+        .split_once(";base64,")
+        .ok_or_else(|| anyhow::anyhow!("Invalid preview encoding"))?
+        .1;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode()?.thumbnail(640, 320);
+    let width = image.width();
+    let height = image.height();
+    let (_, bytes) = encode_png(image)?;
+    Ok(
+        json!({"width":width,"height":height,"dataUrl":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(bytes))}),
+    )
+}
+
 fn encode_png(image: image::DynamicImage) -> Result<(String, Vec<u8>)> {
     let mut bytes = std::io::Cursor::new(Vec::new());
     image.write_to(&mut bytes, image::ImageFormat::Png)?;
@@ -237,23 +325,30 @@ pub fn attention_transition(old: &Session, new: &Session) -> Option<&'static str
 /// Chunk long messages before display, so pagination never loses their beginning.
 fn history_document(value: Value) -> Result<Value> {
     let snapshot: crate::model::ConversationSnapshot = serde_json::from_value(value)?;
-    let mut rows = Vec::new();
+    let first_seq = snapshot.first_seq;
+    let mut transcript = crate::model::Transcript::default();
     for item in snapshot.items {
-        if let Some((role, text)) = item.display() {
+        transcript.append_history(item);
+    }
+    let mut rows = Vec::new();
+    for row in &transcript.rows {
+        if row.tool.is_none() && row.text.len() > crate::model::MAX_ROW_BYTES {
             let mut offset = 0;
             let mut part = 1;
-            while offset < text.len() {
-                let mut end = (offset + 32 * 1024).min(text.len());
-                while !text.is_char_boundary(end) {
-                    end -= 1;
-                }
-                rows.push(json!({"role":role,"text":&text[offset..end],"part":part,"continued":text.len() > 32 * 1024}));
-                offset = end;
+            while offset < row.text.len() {
+                let chunk = crate::transcript::head(&row.text[offset..], 32768);
+                offset += chunk.len();
+                rows.push(json!({"role":row.role,"text":chunk,"part":part,"continued":true,"timestamp":row.timestamp}));
                 part += 1;
             }
+        } else {
+            rows.push(serde_json::to_value(&**row)?);
         }
     }
-    Ok(json!({"rows":rows,"first_seq":snapshot.first_seq}))
+    for (ix, row) in rows.iter_mut().enumerate() {
+        row["key"] = json!(ix);
+    }
+    Ok(json!({"rows":rows,"first_seq":first_seq}))
 }
 
 /// The installer records the release independently of Cargo's crate version.
@@ -322,6 +417,30 @@ mod tests {
             rows.iter()
                 .all(|row| row["text"].as_str().unwrap().len() <= 32 * 1024)
         );
+    }
+    #[test]
+    fn history_keeps_large_tool_payloads_paired_and_lossless() {
+        let input = "input".repeat(20000);
+        let output = "output".repeat(20000);
+        let history = history_document(json!({"seq":2,"first_seq":1,"items":[
+            {"kind":"tool_use","id":"t","name":"Bash","input":{"command":input}},
+            {"kind":"tool_result","tool_use_id":"t","content":output}
+        ]}))
+        .unwrap();
+        assert_eq!(history["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(history["rows"][0]["tool"]["output"], output);
+        let tool: crate::transcript::Tool =
+            serde_json::from_value(history["rows"][0]["tool"].clone()).unwrap();
+        assert_eq!(tool.value()["command"], input);
+        assert!(!tool.clipped);
+    }
+    #[test]
+    fn image_previews_are_decoded_and_resized_before_reaching_the_ui() {
+        let (_, bytes) = encode_png(image::DynamicImage::new_rgb8(1280, 640)).unwrap();
+        let preview=thumbnail(json!({"dataUrl":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(bytes))})).unwrap();
+        assert_eq!(preview["width"], 640);
+        assert_eq!(preview["height"], 320);
+        assert!(thumbnail(json!({"dataUrl":"data:image/png;base64,bm90IGFuIGltYWdl"})).is_err());
     }
     #[test]
     fn clipboard_bitmaps_are_encoded_as_uploadable_png() {

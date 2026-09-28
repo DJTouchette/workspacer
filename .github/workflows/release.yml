@@ -221,14 +221,17 @@ jobs:
         working-directory: apps/native
         run: cargo build --locked --release --bin wks-native --bin native-harness
 
+      - name: Resolve native installer compiler
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}
+        run: node apps/native/scripts/resolve-nsis.mjs
+
       - name: Package native Windows installer (unsigned)
         if: runner.os == 'Windows'
         working-directory: ${{ github.workspace }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          choco install nsis --no-progress -y
-          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (!$vs) { throw 'Visual Studio C++ tools not found' }
@@ -236,7 +239,6 @@ jobs:
             Sort-Object FullName -Descending | Select-Object -First 1
           if (!$crt) { throw 'Redistributable x64 CRT not found' }
           $env:NATIVE_CRT_DIR = $crt.FullName
-          $env:MAKENSIS = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           node --test apps/native/scripts/windows-payload.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Native payload tests failed' }
           node apps/native/scripts/package-windows.mjs

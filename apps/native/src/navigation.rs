@@ -25,6 +25,7 @@ impl Provider {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub reading: BTreeMap<String, crate::reading::Bookmark>,
     pub vim_navigation: bool,
     pub keep_running: bool,
     pub notifications: bool,
@@ -38,6 +39,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            reading: BTreeMap::new(),
             vim_navigation: true,
             keep_running: false,
             notifications: true,

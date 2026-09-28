@@ -131,7 +131,7 @@ pub struct SpawnReceipt {
 
 pub enum Command {
     Select(String),
-    OpenRecent(Session),
+    OpenRecent(Box<Session>),
     Request(crate::features::Request),
     Act { session: String, action: Action },
     Refresh,
@@ -147,6 +147,16 @@ pub struct Receipt {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct PendingMessage {
+    pub number: u64,
+    pub session: String,
+    pub text: String,
+    pub queued: bool,
+    pub accepted: bool,
+    pub before: Option<crate::reading::Anchor>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct View {
     pub catalog: Catalog,
@@ -155,6 +165,7 @@ pub struct View {
     pub sessions: Arc<Vec<Session>>,
     pub selected: Option<String>,
     pub transcript: Transcript,
+    pub pending_messages: Vec<PendingMessage>,
     pub loading: bool,
     pub busy: bool,
     pub notice: String,
@@ -295,7 +306,7 @@ impl Worker {
                     Some(Command::Select(id)) if self.sessions.contains_key(&id) => self.select(Some(id)).await,
                     Some(Command::OpenRecent(session)) => {
                         let id = session.id.clone();
-                        self.sessions.entry(id.clone()).or_insert(session);
+                        self.sessions.entry(id.clone()).or_insert(*session);
                         self.fleet_dirty = true;
                         self.select(Some(id)).await;
                     }
@@ -316,6 +327,7 @@ impl Worker {
                         self.view.sessions = Arc::new(self.sessions.values().cloned().collect());
                         self.fleet_dirty = false;
                     }
+                    self.reconcile_messages();
                     let view = Arc::new(self.view.clone());
                     // Replaces the latest state even when no window is open.
                     updates.send_replace(view);
@@ -333,6 +345,43 @@ impl Worker {
             }
         }
         // Dropping jobs and bus closes pending calls and releases subscriptions.
+    }
+
+    fn reconcile_messages(&mut self) {
+        if self.view.loading {
+            return;
+        }
+        let rows = &self.view.transcript.rows;
+        let mut consumed_through: Option<usize> = None;
+        self.view.pending_messages.retain_mut(|pending| {
+            if self.view.selected.as_ref() != Some(&pending.session) {
+                return true;
+            }
+            let start = match &pending.before {
+                Some(anchor) => match anchor.locate(rows) {
+                    Some(ix) => ix + 1,
+                    None => return true,
+                },
+                None => 0,
+            };
+            let start = start.max(consumed_through.map_or(0, |ix| ix + 1));
+            if let Some((ix, _)) = rows
+                .iter()
+                .enumerate()
+                .skip(start)
+                .find(|(_, r)| r.role == "You" && r.text == pending.text)
+            {
+                consumed_through = Some(ix);
+                false
+            } else {
+                // Retain the consumed boundary across frames. Otherwise a second
+                // identical queued send could reuse the first send's echo later.
+                if let Some(ix) = consumed_through {
+                    pending.before = crate::reading::Anchor::at(rows, ix);
+                }
+                true
+            }
+        });
     }
 
     fn request(&mut self, request: crate::features::Request) {
@@ -456,7 +505,7 @@ impl Worker {
     async fn select(&mut self, id: Option<String>) {
         self.selection += 1;
         self.view.selected = id;
-        for key in ["history", "changes", "diff"] {
+        for key in ["history", "changes", "diff", "card-diff", "file-preview"] {
             self.view.requests.remove(key);
             if let Some(abort) = self.request_aborts.remove(key) {
                 abort.abort();
@@ -544,6 +593,8 @@ impl Worker {
                             "status",
                             "transport",
                             "provider",
+                            "parentSessionId",
+                            "parent_session_id",
                             "model",
                             "requestedSelection",
                             "settings",
@@ -633,7 +684,9 @@ impl Worker {
                         Action::Answer(text) => {
                             s.questions.is_some() && !text.trim().is_empty() && text.len() <= 65536
                         }
-                        Action::Send(text) => !text.trim().is_empty() && text.len() <= 65536,
+                        Action::Send(text) => {
+                            !self.view.loading && !text.trim().is_empty() && text.len() <= 65536
+                        }
                         Action::Stop | Action::Terminate => true,
                         Action::Answers(answers) => {
                             s.questions.is_some()
@@ -658,6 +711,33 @@ impl Worker {
                 ),
             });
         } else {
+            if let Action::Send(text) = &action {
+                if self.view.pending_messages.len() >= 32 {
+                    self.view.receipt = Some(Receipt { number, session, action, error: Some("Too many unacknowledged messages; wait for delivery before sending more".into()) });
+                    self.dirty = true;
+                    return;
+                }
+                let rows = &self.view.transcript.rows;
+                let before = rows
+                    .iter()
+                    .rposition(|r| r.role == "You")
+                    .and_then(|ix| crate::reading::Anchor::at(rows, ix));
+                let queued = self.sessions.get(&session).is_some_and(|s| {
+                    !matches!(s.state.as_str(), "input" | "idle" | "done" | "background")
+                }) || self
+                    .view
+                    .pending_messages
+                    .iter()
+                    .any(|p| p.session == session);
+                self.view.pending_messages.push(PendingMessage {
+                    number,
+                    session: session.clone(),
+                    text: text.clone(),
+                    queued,
+                    accepted: false,
+                    before,
+                });
+            }
             self.view.busy = true;
             let backend = self.backend.clone();
             let stream = self
@@ -894,6 +974,17 @@ impl Worker {
                     })
                     .err()
                     .map(|e| e.to_string());
+                if error.is_some() {
+                    self.view.pending_messages.retain(|p| p.number != number);
+                } else if let Some(pending) = self
+                    .view
+                    .pending_messages
+                    .iter_mut()
+                    .find(|p| p.number == number)
+                {
+                    pending.accepted = true;
+                    pending.queued |= queued;
+                }
                 self.view.notice = error.clone().unwrap_or_else(|| {
                     if queued {
                         "Change queued; the provider will apply it when ready".into()

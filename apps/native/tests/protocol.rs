@@ -829,13 +829,13 @@ async fn recent_session_can_be_read_without_launching_and_resume_is_explicit() {
         .await;
     view(&controller, |v| v.connected).await;
     controller
-        .command(Command::OpenRecent(wks_native::model::Session {
+        .command(Command::OpenRecent(Box::new(wks_native::model::Session {
             id: "ended".into(),
             cwd: "/project".into(),
             state: "stopped".into(),
             provider: "codex".into(),
             ..Default::default()
-        }))
+        })))
         .unwrap();
     let history = hub.frame("call", Some("sessions.conversation")).await;
     assert_eq!(history.value["params"]["sessionId"], "ended");
@@ -957,5 +957,131 @@ async fn attachment_upload_is_bound_to_original_session_and_checks_limits() {
     assert_eq!(
         result.requests["upload"].value["path"],
         "/remote/uploads/abc.png"
+    );
+}
+
+#[tokio::test]
+async fn queued_bubbles_wait_for_a_new_authoritative_user_turn() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    let mut s = session("a");
+    s["mode"] = json!("responding");
+    fleet.result(json!([s])).await;
+    let read = hub.frame("call", Some("sessions.conversation")).await;
+    let old = json!({"seq":2,"first_seq":1,"items":[{"kind":"user_message","text":"again"},{"kind":"assistant_text","text":"Working"}]});
+    read.result(old.clone()).await;
+    view(&controller, |v| v.transcript.seq == Some(2)).await;
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::Send("again".into()),
+        })
+        .unwrap();
+    let send = hub.frame("call", Some("agents.sendMessage")).await;
+    let pending = view(&controller, |v| !v.pending_messages.is_empty()).await;
+    assert!(pending.pending_messages[0].queued);
+    assert!(!pending.pending_messages[0].accepted);
+    send.result(json!({"ok":true,"queued":true})).await;
+    let reread = hub.frame("call", Some("sessions.conversation")).await;
+    reread.result(old).await;
+    let accepted = view(&controller, |v| {
+        v.pending_messages.first().is_some_and(|p| p.accepted) && !v.loading
+    })
+    .await;
+    assert_eq!(
+        accepted.pending_messages.len(),
+        1,
+        "an identical historical send is not acknowledgement"
+    );
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::Send("again".into()),
+        })
+        .unwrap();
+    let second = hub.frame("call", Some("agents.sendMessage")).await;
+    second.result(json!({"ok":true,"queued":true})).await;
+    hub.frame("call",Some("sessions.conversation")).await.result(json!({"seq":2,"first_seq":1,"items":[{"kind":"user_message","text":"again"},{"kind":"assistant_text","text":"Working"}]})).await;
+    view(&controller, |v| {
+        v.pending_messages.len() == 2 && v.pending_messages[1].accepted
+    })
+    .await;
+    reread
+        .event(
+            "agent.conversation.a",
+            json!({"seq":3,"items":[{"kind":"user_message","text":"again"}]}),
+        )
+        .await;
+    view(&controller, |v| {
+        v.transcript.seq == Some(3) && v.pending_messages.len() == 1
+    })
+    .await;
+    reread
+        .event(
+            "agent.snapshot",
+            json!({"sessionId":"a","label":"after first echo"}),
+        )
+        .await;
+    let next = view(&controller, |v| {
+        v.sessions.iter().any(|s| s.label == "after first echo")
+    })
+    .await;
+    assert_eq!(
+        next.pending_messages.len(),
+        1,
+        "the first echo cannot acknowledge a second identical send on the next frame"
+    );
+    reread
+        .event(
+            "agent.conversation.a",
+            json!({"seq":4,"items":[{"kind":"user_message","text":"again"}]}),
+        )
+        .await;
+    view(&controller, |v| {
+        v.transcript.seq == Some(4) && v.pending_messages.is_empty()
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn native_card_diffs_use_the_owner_validated_desktop_service() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([session("a")]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "Ready"))
+        .await;
+    view(&controller, |v| v.transcript.seq == Some(1)).await;
+    controller
+        .command(Command::Request(wks_native::features::Request::CardDiff {
+            session: "a".into(),
+            path: "src/lib.rs".into(),
+        }))
+        .unwrap();
+    let request = hub.frame("call", Some("desktop.htmlCardReadDiff")).await;
+    assert_eq!(
+        request.value["params"],
+        json!({"ownerId":"a","target":"src/lib.rs"})
+    );
+    request
+        .result(json!({"ok":false,"error":"Path is outside the owning project"}))
+        .await;
+    let v = view(&controller, |v| {
+        v.requests
+            .get("card-diff")
+            .is_some_and(|r| r.error.is_some())
+    })
+    .await;
+    assert!(
+        v.requests["card-diff"]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("outside")
     );
 }

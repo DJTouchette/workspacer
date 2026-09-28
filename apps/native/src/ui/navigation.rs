@@ -205,6 +205,7 @@ impl Workspace {
             self.follow = false;
             self.list
                 .scroll_by(window.viewport_size().height * (direction * 0.5));
+            cx.defer_in(window, |this, window, cx| this.capture_reading(window, cx));
             cx.notify();
         }
     }

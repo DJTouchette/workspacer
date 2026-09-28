@@ -54,6 +54,9 @@ enum Command {
         sessions: usize,
         #[arg(long, default_value_t = 1000)]
         turns: usize,
+        /// Include image, tool/diff, skill, and response-card examples.
+        #[arg(long)]
+        rich_transcript: bool,
     },
     /// Repeatable reducer workload. Reports measured values, not GUI frame time.
     Bench {
@@ -137,10 +140,17 @@ async fn main() -> Result<()> {
             bind,
             sessions,
             turns,
+            rich_transcript,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
-            wks_native::harness::serve(listener, sessions.min(10000), turns.min(5000)).await?;
+            wks_native::harness::serve_with_transcript(
+                listener,
+                sessions.min(10000),
+                turns.min(5000),
+                rich_transcript,
+            )
+            .await?;
         }
         Command::Bench { events } => {
             let mut transcript = Transcript::default();

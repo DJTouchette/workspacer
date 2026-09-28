@@ -120,3 +120,29 @@ Witness selects no native tests, so the complete native suite was used. Its CLI
 runner also chose root-relative Go invocations and Jest for desktop TypeScript;
 those generated invocations failed before testing. The affected Go packages
 were run directly from services/hub instead.
+
+
+## Rich transcript pass (2026-09-28)
+
+- Full native suite: **82 passed** (33 core, 26 GPUI interaction, 23 protocol).
+  Added cases cover paired and failed tools, bounded structured payloads,
+  snapshot row reuse, lossless large tool history, thumbnail decoding, literal
+  attachment/file targets, inert card HTML, queued acknowledgement, session
+  reading restoration, and owner-validated response actions.
+- Native Clippy with warnings denied and rustfmt checks passed. The embedded
+  claudemon dependency still emits its pre-existing `time::format_description`
+  deprecation warning; native code has no Clippy warnings.
+- Linux real-window smoke passed under Xvfb/Mesa software Vulkan against the
+  new `native-harness serve --rich-transcript` fixture. Inspected captures of
+  the response card/table and attachment preview. This is not a hardware GPU
+  performance measurement or a real-provider round trip.
+- All three Windows payload tests passed locally, including compiling the NSIS
+  fixture with the same checksum-verified compiler resolved for CI. Actual
+  Windows install/backend/uninstall behavior remains the hosted release smoke's
+  responsibility.
+- Witness selected no native tests and reported the files as unmapped, so the
+  full native suite was run rather than treating the empty selection as a pass.
+
+The prior release's Windows packaging failure was a Chocolatey NSIS lookup
+failure, before installer compilation. The release workflow now resolves NSIS
+from the desktop packaging toolchain and carries its `NSISDIR` into packaging.

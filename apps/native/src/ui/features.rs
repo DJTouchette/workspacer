@@ -478,7 +478,7 @@ impl Workspace {
             .child(message)
     }
     pub(super) fn render_feature(
-        &self,
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -589,7 +589,7 @@ impl Workspace {
                     .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(s.cwd.clone()))
                     .child(div().flex().gap_2()
                         .child(self.button("open-recent", "Open", self.view.connected).on_click(cx.listener(move |this, _, window, cx| {
-                            this.show_screen(Screen::Conversation, window, cx); this.command(Command::OpenRecent(open.clone()), cx);
+                            this.show_screen(Screen::Conversation, window, cx); this.command(Command::OpenRecent(Box::new(open.clone())), cx);
                         })))
                         .when(s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"), |d| d.child(self.button("resume-recent", "Resume…", self.view.connected).on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx)))))
                         .child(self.button("archive-recent", if self.archived(&s.id) { "Restore" } else { "Archive" }, true).on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx)))))
@@ -726,9 +726,10 @@ impl Workspace {
                     .when(text.lines().count() > 3000, |d| d.child("Showing the first 3,000 diff lines. Review the full file in your editor."))
             })
     }
-    fn render_history(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn render_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
-        let state = self.view.requests.get("history");
+        let history = self.view.requests.get("history").cloned();
+        let state = history.as_ref();
         let items = state.and_then(|s| s.value["rows"].as_array());
         let count = items.map(Vec::len).unwrap_or(0);
         let pages = count.div_ceil(50).max(1);
@@ -743,9 +744,11 @@ impl Workspace {
             .when(state.is_some_and(|s| s.value["first_seq"].as_u64().unwrap_or(0) > 1), |d| d.child("The server has trimmed earlier events; this starts at its oldest retained event."))
             .when(count == 0 && state.is_some_and(|s| !s.loading && s.error.is_none()), |d| d.child("No retained messages are available for this session."))
             .child(div().id("history-content").max_h(px(600.)).overflow_y_scroll().track_scroll(&self.extras.history_scroll)
-                .children(items.into_iter().flatten().skip(start).take(50).enumerate().map(|(ix, row)| div().p_3().flex().flex_col().gap_2()
-                    .child(overline(format!("{}{}", row["role"].as_str().unwrap_or("Message"), if row["continued"] == true { format!(" · part {}", row["part"]) } else { String::new() }), p))
-                    .child(TextView::markdown(("history-text", start + ix), row["text"].as_str().unwrap_or("").to_owned(), window, cx).selectable(true)))))
+                .children(items.into_iter().flatten().skip(start).take(50).filter_map(|value| {
+                    let row = serde_json::from_value::<wks_native::model::Row>(value.clone()).ok()?;
+                    Some(div().when(value["continued"] == true, |d| d.child(overline(format!("Long message · part {} · literal text", value["part"]), p)))
+                        .child(self.render_message(&row, "history", value["continued"] == true, window, cx)))
+                })))
     }
     fn render_setup(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();

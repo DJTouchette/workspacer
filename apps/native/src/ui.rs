@@ -1,6 +1,7 @@
 mod features;
 mod launch;
 mod navigation;
+mod transcript;
 use gpui::{
     App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable, FontWeight, KeyBinding,
     ListAlignment, ListOffset, ListScrollEvent, ListState, Render, SharedString, Stateful, Task,
@@ -221,6 +222,7 @@ pub fn bind_keys(cx: &mut App) {
 
 pub struct Workspace {
     extras: features::Extras,
+    chat: transcript::ChatUi,
     screen: Screen,
     settings: Settings,
     settings_path: Option<std::path::PathBuf>,
@@ -367,16 +369,34 @@ impl Workspace {
             }
         });
         let list = ListState::new(0, ListAlignment::Bottom, px(250.));
-        list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, _, cx| {
+        list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, window, cx| {
             this.follow = !event.is_scrolled;
+            cx.defer_in(window, |this, window, cx| this.capture_reading(window, cx));
             cx.notify();
         }));
         let focus = cx.focus_handle();
         focus_watch.push(cx.on_focus(&focus, window, |_, _, cx| cx.notify()));
         focus_watch.push(cx.on_blur(&focus, window, |_, _, cx| cx.notify()));
+        focus_watch.push(cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.chat.restored = false;
+                this.restore_reading(window, cx);
+            } else {
+                this.capture_reading(window, cx);
+            }
+            cx.notify();
+        }));
+        focus_watch.push(cx.on_release(|this, _| {
+            if let Some(path) = &this.settings_path
+                && let Err(error) = this.settings.save(path)
+            {
+                eprintln!("Could not save native reading positions: {error}");
+            }
+        }));
         window.focus(&focus);
         Self {
             extras: features::Extras::new(window, cx),
+            chat: transcript::ChatUi::default(),
             screen: Screen::Conversation,
             settings: Settings::default(),
             settings_path: None,
@@ -458,6 +478,8 @@ impl Workspace {
     }
 
     fn update_view(&mut self, view: Arc<View>, window: &mut Window, cx: &mut Context<Self>) {
+        self.capture_reading(window, cx);
+        self.receive_chat_requests(&view, cx);
         self.sync_features(&view, window, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt
@@ -527,6 +549,9 @@ impl Workspace {
             self.composer
                 .update(cx, |input, cx| input.set_value(draft, window, cx));
             self.list.reset(view.transcript.rows.len());
+            self.chat.restored = false;
+            self.chat.wanted.clear();
+            self.chat.unread = None;
             self.follow = true;
         } else {
             let old = &self.view.transcript.rows;
@@ -543,8 +568,15 @@ impl Workspace {
             let changed = first < old.len() || first < new.len();
             if changed {
                 self.list.splice(first..old.len(), new.len() - first);
+                if !self.follow {
+                    self.chat.restored = false;
+                }
             }
-            if changed && self.follow {
+            if changed
+                && self.follow
+                && window.is_window_active()
+                && self.screen == Screen::Conversation
+            {
                 self.list.scroll_to(ListOffset {
                     item_ix: new.len(),
                     offset_in_item: px(0.),
@@ -583,6 +615,7 @@ impl Workspace {
         }
         let reconnected = !self.view.connected && view.connected;
         self.view = view;
+        self.restore_reading(window, cx);
         if self.new_session || self.screen == Screen::Model {
             self.sync_models(window, cx);
             if reconnected {
@@ -778,14 +811,21 @@ impl Workspace {
         );
     }
 
-    fn button(&self, id: &'static str, label: &'static str, enabled: bool) -> Stateful<Div> {
+    fn button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+    ) -> Stateful<Div> {
         let p = self.appearance.palette();
+        let id = id.into();
+        let label = label.into();
         let primary = matches!(
-            id,
+            id.as_ref(),
             "send" | "create-session" | "new-session" | "welcome-new"
         );
         div()
-            .id(id)
+            .id(id.clone())
             .px_3()
             .py_2()
             .font_weight(FontWeight::MEDIUM)
@@ -805,7 +845,7 @@ impl Workspace {
             .when(
                 enabled
                     && matches!(
-                        id,
+                        id.as_ref(),
                         "send" | "create-session" | "new-session" | "welcome-new"
                     ),
                 |d| d.bg(rgb(p.primary)).text_color(rgb(p.on_primary)),
@@ -825,16 +865,13 @@ impl Render for Workspace {
             .find(|s| Some(&s.id) == self.view.selected.as_ref())
             .cloned();
         let enabled = self.view.connected
+            && !self.view.loading
             && self
                 .navigation_selected
                 .as_ref()
                 .is_none_or(|id| Some(id) == self.view.selected.as_ref())
             && !self.view.busy
             && selected.as_ref().is_some_and(|s| !s.stopped());
-        let snapshot = self.view.clone();
-        let session_key = self.view.selected.clone().unwrap_or_default();
-        #[cfg(feature = "ui-tests")]
-        let rendered_rows = self.rendered_rows.clone();
         let title = selected
             .as_ref()
             .map(|s| self.session_title(s))
@@ -844,96 +881,11 @@ impl Render for Workspace {
         } else {
             self.view.notice.clone()
         };
+        let entity = cx.entity().downgrade();
         let transcript = list(self.list.clone(), move |ix, window, cx| {
-            #[cfg(feature = "ui-tests")]
-            rendered_rows.borrow_mut().insert(ix);
-            let Some(row) = snapshot.transcript.rows.get(ix) else {
-                return div().into_any_element();
-            };
-            let copy = row.text.clone();
-            let content = if matches!(row.role, "Assistant" | "You") {
-                row.text.clone()
-            } else {
-                row.text
-                    .lines()
-                    .map(|line| format!("    {line}\n"))
-                    .collect::<String>()
-            };
-            div()
-                .w_full()
-                .px_5()
-                .py_4()
-                .child(
-                    div()
-                        .w_full()
-                        .max_w(px(CHAT_WIDTH))
-                        .mx_auto()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .p_4()
-                        .when(row.role == "You", |d| d.bg(rgb(p.user)).rounded_lg())
-                        .when(!matches!(row.role, "You" | "Assistant"), |d| {
-                            d.border_l_2()
-                                .border_color(rgb(p.border))
-                                .text_color(rgb(p.muted))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .justify_between()
-                                .text_size(px(12.))
-                                .text_color(rgb(p.muted))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_2()
-                                        .when(row.role == "Assistant", |d| {
-                                            d.child(brand_mark(14., p))
-                                        })
-                                        .child(
-                                            div()
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .text_color(rgb(p.text))
-                                                .child(row.role),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id(("copy", row.key))
-                                        .cursor_pointer()
-                                        .px_2()
-                                        .rounded_md()
-                                        .hover(|style| {
-                                            style.bg(rgb(p.surface)).text_color(rgb(p.text))
-                                        })
-                                        .child("Copy")
-                                        .on_click(move |_, _, cx| {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                copy.clone(),
-                                            ))
-                                        }),
-                                ),
-                        )
-                        .when(row.truncated, |d| {
-                            d.child(
-                                div()
-                                    .text_color(rgb(p.warning))
-                                    .child("Earlier text in this message was clipped."),
-                            )
-                        })
-                        .child(
-                            TextView::markdown(
-                                SharedString::from(format!("{session_key}-{}", row.key)),
-                                content,
-                                window,
-                                cx,
-                            )
-                            .selectable(true),
-                        ),
-                )
-                .into_any_element()
+            entity
+                .update(cx, |this, cx| this.render_chat_row(ix, window, cx))
+                .unwrap_or_else(|_| div().into_any_element())
         })
         .flex_1()
         .min_h_0();
@@ -1385,9 +1337,14 @@ impl Render for Workspace {
                             .when(self.view.connected && !self.demo && self.requested_session.is_none(), |d| d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))))))
                 ))
                 .when(!self.view.transcript.rows.is_empty() || self.view.loading, |d| d.child(transcript))
-                .when(!self.follow, |d| d.child(self.button("latest", "Jump to latest", true).on_click(cx.listener(|this, _, _, cx| {
+                .when_some(self.chat.unread, |d, ix| d.child(self.button("new-activity", "New activity · jump to first unread", true).on_click(cx.listener(move |this, _, _, cx| {
+                    this.follow = false;
+                    this.list.scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) }); cx.notify();
+                }))))
+                .child(self.render_pending(window, cx))
+                .when(!self.follow, |d| d.child(self.button("latest", "Jump to latest", true).on_click(cx.listener(|this, _, window, cx| {
                     this.follow = true;
-                    this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); cx.notify();
+                    this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); this.chat.unread = None; this.capture_reading(window, cx); cx.notify();
                 }))))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
@@ -1833,6 +1790,97 @@ mod tests {
                 }
             })
         });
+    }
+
+    #[gpui::test]
+    fn reading_position_survives_switch_and_marks_new_activity(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, _| window.activate_window());
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut a = state("a");
+                a.transcript.snapshot(ConversationSnapshot {
+                    seq: 50,
+                    first_seq: 1,
+                    items: (0..50)
+                        .map(|i| Item {
+                            kind: "user_message".into(),
+                            text: format!("Message {i}"),
+                            ..Default::default()
+                        })
+                        .collect(),
+                });
+                this.update_view(Arc::new(a.clone()), window, cx);
+                this.follow = false;
+                this.list.scroll_to(ListOffset {
+                    item_ix: 12,
+                    offset_in_item: px(7.),
+                });
+                this.capture_reading(window, cx);
+                this.update_view(Arc::new(state("b")), window, cx);
+                // Empty attach snapshots must not erase a saved bookmark.
+                let mut loading = state("a");
+                loading.loading = true;
+                this.update_view(Arc::new(loading), window, cx);
+                a.transcript.delta(
+                    wks_native::model::Delta {
+                        seq: 51,
+                        items: vec![Item {
+                            kind: "assistant_text".into(),
+                            text: "New activity".into(),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    true,
+                );
+                this.update_view(Arc::new(a), window, cx);
+                assert!(!this.follow);
+                assert_eq!(this.list.logical_scroll_top().item_ix, 12);
+                assert_eq!(f32::from(this.list.logical_scroll_top().offset_in_item), 7.);
+                assert_eq!(this.chat.unread, Some(50));
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn response_actions_preserve_drafts_and_validate_worker_ownership(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("My draft", window, cx));
+                this.card_action(
+                    "a",
+                    &wks_native::transcript::CardAction::FillComposer {
+                        label: "Continue".into(),
+                        text: "Proposed follow-up".into(),
+                    },
+                    window,
+                    cx,
+                );
+                assert_eq!(
+                    this.composer.read(cx).value().as_ref(),
+                    "My draft\nProposed follow-up"
+                );
+                this.card_action(
+                    "a",
+                    &wks_native::transcript::CardAction::OpenWorker {
+                        label: "Unrelated".into(),
+                        session_id: "b".into(),
+                    },
+                    window,
+                    cx,
+                );
+                assert!(this.local_notice.contains("not a live worker"));
+            });
+        });
+        assert!(
+            commands.try_recv().is_err(),
+            "prefills do not send and unrelated workers do not open"
+        );
     }
 
     #[gpui::test]
