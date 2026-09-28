@@ -124,7 +124,7 @@ were run directly from services/hub instead.
 
 ## Rich transcript pass (2026-09-28)
 
-- Full native suite: **82 passed** (33 core, 26 GPUI interaction, 23 protocol).
+- Full native suite: **83 passed** (34 core, 26 GPUI interaction, 23 protocol).
   Added cases cover paired and failed tools, bounded structured payloads,
   snapshot row reuse, lossless large tool history, thumbnail decoding, literal
   attachment/file targets, inert card HTML, queued acknowledgement, session
@@ -146,3 +146,9 @@ were run directly from services/hub instead.
 The prior release's Windows packaging failure was a Chocolatey NSIS lookup
 failure, before installer compilation. The release workflow now resolves NSIS
 from the desktop packaging toolchain and carries its `NSISDIR` into packaging.
+
+CI screenshot inspection also caught a GPUI Component 0.5.1 double-parse issue:
+its HTML minifier emits decoded text without re-escaping it. Native literal text
+and sanitized card text now encode for both parser passes. A regression verifies
+that tags/entities remain literal and escaped image/script text cannot become
+active nodes. The corrected literal text was checked in a real-window capture.

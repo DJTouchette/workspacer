@@ -388,6 +388,15 @@ fn parse_card(raw: &str) -> Option<Card> {
         actions,
     })
 }
+/// GPUI Component 0.5.1 parses HTML twice: its minifier decodes text entities
+/// and writes them without re-escaping before the final parser. Encode for both
+/// passes or literal tags disappear (and escaped tags can become live nodes).
+pub fn escape_native_html_text(text: &str) -> String {
+    text.replace('&', "&amp;amp;")
+        .replace('<', "&amp;lt;")
+        .replace('>', "&amp;gt;")
+}
+
 /// Convert response HTML into inert native text/table layout. No URLs, style,
 /// scripts, forms or event handlers cross into the GPUI text parser.
 pub fn native_card_html(html: &str) -> String {
@@ -398,13 +407,9 @@ pub fn native_card_html(html: &str) -> String {
             return;
         }
         match &node.data {
-            NodeData::Text { contents } => out.push_str(
-                &contents
-                    .borrow()
-                    .replace('&', "&amp;")
-                    .replace('<', "&lt;")
-                    .replace('>', "&gt;"),
-            ),
+            NodeData::Text { contents } => {
+                out.push_str(&escape_native_html_text(&contents.borrow()))
+            }
             NodeData::Element { name, .. } => {
                 let tag = name.local.as_ref();
                 if matches!(
@@ -667,6 +672,58 @@ mod tests {
             assert!(!html.contains(forbidden), "{html}");
         }
     }
+    #[test]
+    fn literal_entities_survive_the_native_html_double_parse_boundary() {
+        use html5ever::tendril::TendrilSink;
+        use markup5ever_rcdom::{Handle, NodeData, RcDom};
+        // Reproduce the component's minifier contract: parsed text is written
+        // verbatim, then the result is parsed again by its native HTML renderer.
+        fn minified(node: &Handle) -> String {
+            match &node.data {
+                NodeData::Text { contents } => contents.borrow().to_string(),
+                NodeData::Element { name, .. } => format!(
+                    "<{}>{}</{}>",
+                    name.local,
+                    node.children
+                        .borrow()
+                        .iter()
+                        .map(minified)
+                        .collect::<String>(),
+                    name.local
+                ),
+                _ => node.children.borrow().iter().map(minified).collect(),
+            }
+        }
+        fn text_only(node: &Handle, text: &mut String) {
+            match &node.data {
+                NodeData::Text { contents } => text.push_str(&contents.borrow()),
+                NodeData::Element { name, attrs, .. } => {
+                    assert!(!matches!(name.local.as_ref(), "img" | "script" | "iframe"));
+                    assert!(attrs.borrow().is_empty());
+                }
+                _ => {}
+            }
+            for child in node.children.borrow().iter() {
+                text_only(child, text);
+            }
+        }
+        let original = "Keep <tags>, &lt;entities&gt;, **stars**, <img src=https://example.com>, and <script>alert(1)</script>.";
+        let html = format!("<pre>{}</pre>", escape_native_html_text(original));
+        let first = html5ever::parse_document(RcDom::default(), Default::default()).one(html);
+        let second = html5ever::parse_document(RcDom::default(), Default::default())
+            .one(minified(&first.document));
+        let mut rendered = String::new();
+        text_only(&second.document, &mut rendered);
+        assert_eq!(rendered, original);
+        let card = native_card_html("<p>&lt;img src=https://example.com&gt;</p>");
+        let first = html5ever::parse_document(RcDom::default(), Default::default()).one(card);
+        let second = html5ever::parse_document(RcDom::default(), Default::default())
+            .one(minified(&first.document));
+        let mut rendered = String::new();
+        text_only(&second.document, &mut rendered);
+        assert_eq!(rendered, "<img src=https://example.com>");
+    }
+
     #[test]
     fn fleet_wakes_preserve_results_and_never_misidentify_cwd_as_session_id() {
         let text = "[fleet] Worker finished:\n- Builder (session:child-1, cwd /repo) — last reply: Done\n\nStructured result — Builder (session:child-1):\n{\"ok\":true}\n\nFull final message — Builder (session:child-1):\nAll the details";
