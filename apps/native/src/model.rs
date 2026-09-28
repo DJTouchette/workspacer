@@ -82,10 +82,22 @@ impl Session {
     pub fn stopped(&self) -> bool {
         self.state == "stopped" || self.state == "ended"
     }
+
+    pub fn working(&self) -> bool {
+        !self.stopped()
+            && self.approval.is_none()
+            && self.questions.is_none()
+            && matches!(
+                self.state.as_str(),
+                "responding" | "working" | "thinking" | "streaming" | "running"
+            )
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Item {
+    #[serde(default, alias = "updatedAt")]
+    pub timestamp: Option<String>,
     #[serde(default, alias = "type")]
     pub kind: String,
     #[serde(default)]
@@ -136,6 +148,49 @@ pub struct Row {
     pub role: &'static str,
     pub text: String,
     pub truncated: bool,
+    pub tool: Option<ToolCall>,
+    pub timestamp_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub result: Option<String>,
+    pub is_error: bool,
+    pub completed_at_ms: Option<i64>,
+}
+
+impl Row {
+    pub fn same_content(&self, other: &Self) -> bool {
+        self.role == other.role
+            && self.text == other.text
+            && self.truncated == other.truncated
+            && self.tool == other.tool
+            && self.timestamp_ms == other.timestamp_ms
+    }
+
+    fn retained_bytes(&self) -> usize {
+        self.text.len()
+            + self.tool.as_ref().map_or(0, |t| {
+                t.id.len() + t.name.len() + t.result.as_ref().map_or(0, String::len)
+            })
+    }
+
+    pub fn copy_text(&self) -> String {
+        match &self.tool {
+            Some(tool) => format!(
+                "{}\n{}{}",
+                tool.name,
+                self.text,
+                tool.result
+                    .as_ref()
+                    .map(|r| format!("\n\n{r}"))
+                    .unwrap_or_default()
+            ),
+            None => self.text.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,11 +214,26 @@ pub struct Transcript {
 
 impl Transcript {
     pub fn snapshot(&mut self, snapshot: ConversationSnapshot) {
-        self.rows.clear();
+        let previous = std::mem::take(&mut self.rows);
         self.bytes = 0;
         self.omitted = snapshot.first_seq > 1;
         for item in snapshot.items {
             self.push(item, false);
+        }
+        // Reseeding identical history must not discard text-view state or
+        // measured row heights. Changed content still gets a fresh Arc.
+        for (row, old) in self.rows.iter_mut().zip(&previous) {
+            if row.same_content(old) {
+                *row = old.clone();
+            } else if row.role == old.role
+                && match (&row.tool, &old.tool) {
+                    (Some(a), Some(b)) => !a.id.is_empty() && a.id == b.id,
+                    (None, None) => row.text.starts_with(&old.text),
+                    _ => false,
+                }
+            {
+                Arc::make_mut(row).key = old.key;
+            }
         }
         self.seq = Some(snapshot.seq);
         self.revision += 1;
@@ -199,10 +269,48 @@ impl Transcript {
     }
 
     fn push(&mut self, item: Item, streaming: bool) {
+        let timestamp_ms = item
+            .timestamp
+            .as_deref()
+            .and_then(crate::timing::parse_timestamp);
+        if item.kind == "tool_result"
+            && !item.tool_use_id.is_empty()
+            && let Some(row) = self
+                .rows
+                .iter_mut()
+                .rev()
+                .find(|r| r.tool.as_ref().is_some_and(|t| t.id == item.tool_use_id))
+        {
+            self.bytes -= row.retained_bytes();
+            let row = Arc::make_mut(row);
+            let mut output = item.content;
+            row.truncated |= truncate(&mut output, MAX_ROW_BYTES / 2);
+            let tool = row.tool.as_mut().unwrap();
+            tool.result = Some(output);
+            tool.is_error = item.is_error;
+            tool.completed_at_ms = timestamp_ms.or(tool.completed_at_ms);
+            self.bytes += row.retained_bytes();
+            self.trim();
+            return;
+        }
+        let mut metadata_truncated = false;
+        let tool = (item.kind == "tool_use").then(|| {
+            let mut id = item.id.clone();
+            let mut name = item.name.clone();
+            metadata_truncated |= truncate(&mut id, 1024);
+            metadata_truncated |= truncate(&mut name, 1024);
+            ToolCall {
+                id,
+                name,
+                result: None,
+                is_error: false,
+                completed_at_ms: None,
+            }
+        });
         let (role, text) = match item.kind.as_str() {
             "user_message" => ("You", item.text),
             "assistant_text" => ("Assistant", item.text),
-            "tool_use" => ("Tool", format!("{}\n{}", item.name, item.input)),
+            "tool_use" => ("Tool", item.input.to_string()),
             "tool_result" => (
                 if item.is_error {
                     "Tool error"
@@ -230,6 +338,7 @@ impl Transcript {
         {
             self.bytes -= last.text.len();
             let last = Arc::make_mut(last);
+            last.timestamp_ms = last.timestamp_ms.or(timestamp_ms);
             if text.starts_with(&last.text) && !last.truncated {
                 last.text = text;
             } else {
@@ -239,23 +348,36 @@ impl Transcript {
             self.bytes += last.text.len();
         } else {
             let mut text = text;
-            let truncated = truncate(&mut text, MAX_ROW_BYTES);
-            self.bytes += text.len();
-            self.rows.push_back(Arc::new(Row {
+            let truncated = truncate(
+                &mut text,
+                if tool.is_some() {
+                    MAX_ROW_BYTES / 2
+                } else {
+                    MAX_ROW_BYTES
+                },
+            ) | metadata_truncated;
+            let row = Arc::new(Row {
                 key: self.next_key,
                 role,
                 text,
                 truncated,
-            }));
+                tool,
+                timestamp_ms,
+            });
+            self.bytes += row.retained_bytes();
+            self.rows.push_back(row);
             self.next_key += 1;
         }
+        self.trim();
+    }
+
+    fn trim(&mut self) {
         while self.rows.len() > MAX_ROWS || self.bytes > MAX_TRANSCRIPT_BYTES {
             self.bytes -= self
                 .rows
                 .pop_front()
                 .expect("over budget implies a row")
-                .text
-                .len();
+                .retained_bytes();
             self.omitted = true;
         }
     }
@@ -360,6 +482,189 @@ mod tests {
         );
         assert!(t.omitted);
         assert!(t.rows.iter().all(|r| r.text.capacity() <= MAX_ROW_BYTES));
+    }
+
+    #[test]
+    fn tool_results_join_by_id_without_changing_wire_sequence_or_old_snapshots() {
+        let mut t = Transcript::default();
+        t.snapshot(ConversationSnapshot {
+            seq: 2,
+            first_seq: 1,
+            items: ["a", "b"]
+                .map(|id| Item {
+                    kind: "tool_use".into(),
+                    id: id.into(),
+                    name: "Read".into(),
+                    input: json!({"file_path":format!("{id}.rs")}),
+                    ..Default::default()
+                })
+                .into(),
+        });
+        let before = t.clone();
+        assert_eq!(
+            t.delta(
+                Delta {
+                    seq: 4,
+                    items: vec![
+                        Item {
+                            kind: "tool_result".into(),
+                            tool_use_id: "b".into(),
+                            content: "failed".into(),
+                            is_error: true,
+                            ..Default::default()
+                        },
+                        Item {
+                            kind: "tool_result".into(),
+                            tool_use_id: "a".into(),
+                            content: String::new(),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                true
+            ),
+            Fold::Changed
+        );
+        assert_eq!(t.seq, Some(4));
+        assert_eq!(t.rows.len(), 2);
+        assert_eq!(t.rows[0].tool.as_ref().unwrap().result.as_deref(), Some(""));
+        assert!(t.rows[1].tool.as_ref().unwrap().is_error);
+        assert!(before.rows[1].tool.as_ref().unwrap().result.is_none());
+        assert_eq!(
+            t.bytes,
+            t.rows.iter().map(|r| r.retained_bytes()).sum::<usize>()
+        );
+        t.push(
+            Item {
+                kind: "tool_result".into(),
+                tool_use_id: "missing".into(),
+                content: "orphan".into(),
+                ..Default::default()
+            },
+            false,
+        );
+        assert_eq!(t.rows.back().unwrap().text, "orphan");
+    }
+
+    #[test]
+    fn tool_inputs_results_and_metadata_share_the_retained_history_budget() {
+        let mut t = Transcript::default();
+        for i in 0..100 {
+            t.push(
+                Item {
+                    kind: "tool_use".into(),
+                    id: i.to_string(),
+                    name: "Write".into(),
+                    input: json!({"content":"🦀".repeat(40_000)}),
+                    ..Default::default()
+                },
+                false,
+            );
+            t.push(
+                Item {
+                    kind: "tool_result".into(),
+                    tool_use_id: i.to_string(),
+                    content: "🦀".repeat(40_000),
+                    ..Default::default()
+                },
+                false,
+            );
+        }
+        assert!(t.bytes <= MAX_TRANSCRIPT_BYTES);
+        assert!(t.omitted);
+        assert!(t.rows.iter().all(|r| r.truncated
+            && r.text.capacity() <= MAX_ROW_BYTES / 2
+            && r.tool.as_ref().unwrap().result.as_ref().unwrap().capacity() <= MAX_ROW_BYTES / 2));
+        assert_eq!(
+            t.bytes,
+            t.rows.iter().map(|r| r.retained_bytes()).sum::<usize>()
+        );
+    }
+
+    #[test]
+    fn reseeding_history_preserves_unchanged_rows_and_streaming_identity() {
+        let mut t = Transcript::default();
+        t.snapshot(ConversationSnapshot {
+            seq: 2,
+            first_seq: 1,
+            items: vec![assistant("First"), assistant("Second")],
+        });
+        let before = t.clone();
+        t.snapshot(ConversationSnapshot {
+            seq: 3,
+            first_seq: 1,
+            items: vec![assistant("First"), assistant("Second grows")],
+        });
+        assert!(Arc::ptr_eq(&t.rows[0], &before.rows[0]));
+        assert!(!Arc::ptr_eq(&t.rows[1], &before.rows[1]));
+        assert_eq!(t.rows[1].key, before.rows[1].key);
+        assert_eq!(before.rows[1].text, "Second");
+    }
+
+    #[test]
+    fn message_times_keep_stream_start_and_join_tool_completion() {
+        let start = "2026-09-27T12:00:00Z";
+        let end = "2026-09-27T12:00:07Z";
+        let mut t = Transcript::default();
+        t.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![Item {
+                kind: "assistant_text".into(),
+                text: "Hello".into(),
+                timestamp: Some(start.into()),
+                ..Default::default()
+            }],
+        });
+        t.delta(
+            Delta {
+                seq: 2,
+                items: vec![Item {
+                    kind: "assistant_text".into(),
+                    text: " world".into(),
+                    timestamp: Some(end.into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(
+            t.rows[0].timestamp_ms,
+            crate::timing::parse_timestamp(start)
+        );
+        t.push(
+            Item {
+                kind: "tool_use".into(),
+                id: "t1".into(),
+                name: "Read".into(),
+                timestamp: Some(start.into()),
+                ..Default::default()
+            },
+            false,
+        );
+        t.push(
+            Item {
+                kind: "tool_result".into(),
+                tool_use_id: "t1".into(),
+                content: "result".into(),
+                timestamp: Some(end.into()),
+                ..Default::default()
+            },
+            false,
+        );
+        assert_eq!(
+            t.rows[1].timestamp_ms,
+            crate::timing::parse_timestamp(start)
+        );
+        assert_eq!(
+            t.rows[1].tool.as_ref().unwrap().completed_at_ms,
+            crate::timing::parse_timestamp(end)
+        );
+        let missing: Item =
+            serde_json::from_value(json!({"kind":"user_message","text":"legacy"})).unwrap();
+        assert!(missing.timestamp.is_none());
     }
 
     #[test]

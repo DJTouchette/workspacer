@@ -43,7 +43,7 @@ struct Args {
     /// Run against an isolated local fixture, without agents or credentials.
     #[arg(long)]
     demo: bool,
-    /// Pin this window to one session; disable controls if it becomes unavailable.
+    /// Pin initial conversation selection; New session explicitly leaves the pin.
     #[arg(long)]
     session: Option<String>,
 }

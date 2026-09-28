@@ -71,6 +71,11 @@ cargo run --locked --release -- --bus wss://my-host/bus --token-file /path/to/to
 cargo run --locked -- --session SESSION_ID
 ```
 
+`--session` pins automatic selection until you explicitly choose **New session**
+(`Ctrl/Cmd+N`). That opens the creation form and leaves the pin; a successful
+creation selects the new session. Opening the form does not launch an agent.
+For ordinary browsing and creation, omit `--session`.
+
 `WKS_HUB_BUS` can supply the URL. Credentials resolve from `--token-file`, then
 `HUB_TOKEN`, then the existing Workspacer `remote-token` file **only for loopback
 URLs**. Config directory rules match the existing clients (`APPDATA` on Windows;
@@ -161,15 +166,44 @@ Captured during a real Codex round trip through an isolated backend:
 - Reconnection, snapshot reseeding, delta-gap recovery, and stale-response guards.
 - `Alt+Up/Down` switches sessions; `Ctrl/Cmd+L` focuses the composer;
   `Ctrl/Cmd+Enter` sends; plain Enter inserts a newline; `Ctrl/Cmd+R` refreshes.
-- Scrollback retains its position while new text arrives. Jump to latest resumes
-  following the conversation.
+- Scrollback retains its position while new text arrives. Scrolling to the bottom
+  or clicking Jump to latest resumes following; stopping a gesture in history does not.
+  Opening tool details also pauses following. Snapshot refreshes preserve the
+  visible message and its position, and keyboard paging starts from that position.
 
 This experiment intentionally starts with the connected hub's own sessions.
 Federated/paired rows are excluded so a remote session cannot accidentally be
 controlled through an unqualified local method. Terminal emulation,
 historical pagination, attachments, changing models on running sessions, full theme parity,
-and packaging/updating remain follow-on work. Rich tool input/output is displayed
-as text, without the Electron client's diff cards.
+and packaging/updating remain follow-on work. Tool calls render as expandable
+cards with results joined by call ID and compact completion/error status. Supplied
+descriptions become card titles; otherwise shell commands appear directly without
+a redundant title. Expanded commands separate selectable command and output text.
+Open/closed state follows the
+call ID across conversation refreshes. File edits
+open with syntax-highlighted before/after snippets or per-file patches; reads and
+writes use the recorded file extension for highlighting. Unknown tools retain
+their JSON arguments and output. Previews are bounded and use recorded content,
+never the current contents of files on disk.
+
+The compact title bar and rounded composer float above the full conversation.
+Scrollable space at both ends keeps the first and last messages reachable;
+the bottom spacing follows the growing composer and approval panels.
+The composer and session status use Electron's bouncing brace cursor while working.
+Assistant replies omit the repeated assistant heading. Pending approval, waiting for input, ready,
+and offline remain distinct states. Follow resumes when the painted latest message
+reaches the reading area above the composer, including after keyboard scrolling
+and virtual-list layout, without requiring another wheel event.
+
+Messages and tool calls show server timestamps in local time (with the date for
+older days). The composer shows elapsed minutes/seconds while working and a frozen
+duration when the turn finishes; completed assistant replies also retain that
+duration. Tool durations use their call/result timestamps. Turn timers keep the
+same start through queued follow-ups and approval waits, so they measure elapsed
+wall time. Observed completed durations are saved under `native-turn-timings/`
+beside native settings, scoped by hashed hub and session identifiers. Missing
+timestamps and unobserved historical completions are not guessed; a disconnect
+during a turn prevents recording an unreliable finish duration.
 
 Choose **Dark**, **Light**, or **Nord** under **Settings → Appearance**.
 Switching applies immediately to the chrome, brand mark, conversation, inputs,
