@@ -444,7 +444,7 @@ impl Workspace {
                 },
                 cx,
             );
-            return true;
+            true
         }
         #[cfg(not(target_os = "windows"))]
         false
