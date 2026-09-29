@@ -91,5 +91,16 @@ process-ownership evidence.
 Validation at this change: Rust legacy/account2, analytics5; retained Electron
 service96, downstream capability/spawn395, source retirement guard2, output
 cleanup1 and retained analytics corpus1 passed. Full main/renderer typecheck
-and main production build passed. Full renderer/web production build is still
-pending at this writing; final platform CI remains a separate gate.
+and main production build passed. Full renderer/web production build also passed; final platform CI remains
+a separate gate.
+
+The final Go companion-boundary review additionally exposed and closed two Rust
+behavior gaps: rendered receipts now truncate at 16,000 Unicode scalar values
+(as Go `[]rune` does), and an acknowledged launch whose first prompt was not
+queued gets one owned fallback delivery. Unknown spawn acknowledgement never
+triggers that fallback; message uncertainty preserves the accepted session receipt.
+`agent_spawn` passed all 14 tests, including forged-owner rejection before any
+engine/worktree effect. `manager_replacements` passed all 16 tests, including
+production kickoff text, exact held-message content plus its parent correction,
+committed worker/task ownership, predecessor retirement and no duplicate delivery
+on repeated binding. Final migration-ledger updates remain separately reviewed.

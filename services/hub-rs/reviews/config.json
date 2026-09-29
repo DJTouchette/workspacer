@@ -1,0 +1,213 @@
+{
+  "records": {
+    "services/hub/cmd/brain/config_orphans.go": {
+      "sha256": "4f307f5e6a9fbd7853680bcfa1247cf4d1186d909fafd3eacd2a83b76d438a1d",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed every pruning branch and all old shape cases: exactly the top-level supervisor key retires; nested supervisor, prefixed names, plugin keys, comments, ordering, quotes and CRLF bytes survive.",
+          "Rust actual-disk matrix checks EOF/no-newline/first/flow/null/quoted/only-block cases, repeated load without rewrite, and preserving unsupported textual spellings while removing the retired in-memory value. Empty/comment-only files remain protected."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config_orphans_test.go": {
+      "sha256": "98f7efe9d559ca2727635c2d267c717116549e325452457a9feddc19ca7056fe",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed every pruning branch and all old shape cases: exactly the top-level supervisor key retires; nested supervisor, prefixed names, plugin keys, comments, ordering, quotes and CRLF bytes survive.",
+          "Rust actual-disk matrix checks EOF/no-newline/first/flow/null/quoted/only-block cases, repeated load without rewrite, and preserving unsupported textual spellings while removing the retired in-memory value. Empty/comment-only files remain protected."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config_vanished_test.go": {
+      "sha256": "b7868ded12e892bb888e764a30772e9d884c5679f186f90fbc9ff3dc68f60869",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Child-process stderr regression opens an isolated genuine first-run directory and an established directory missing config.yaml. Only established state emits STATE LOSS naming config.yaml; both seed and permit later saves. No global environment mutation."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config_wholesale_test.go": {
+      "sha256": "3ad6d5ff94356fc7b47797788fee11724cac579ff140598f5c51f62ad0ce4856",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "All11 unchanged shared value cases now exercise both pure merge and actual disk save/reopen; three exact paths and seven refusal cases are pinned. Malformed maps leave the entire request and prior bytes unchanged.",
+          "Actual in-memory hub RPC verifies refused stringified projects returns a path-specific error, no unrelated theme update, and legal subsequent project deletion preserves surviving yolo and unknown pluginSettings objects.",
+          "Deterministic outside-writer seam invokes real disk writes between merge and stamp check. One outside edit retries and retains both projects and requested change; continuous churn reaches exactly five attempts, publishes no caller write, releases lock and allows later recovery."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config_wholesale_typeguard_test.go": {
+      "sha256": "1c0109b003e4c41da8462c0cd548d99b909472a4bfa214ab83ece5502eb1db5c",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "All11 unchanged shared value cases now exercise both pure merge and actual disk save/reopen; three exact paths and seven refusal cases are pinned. Malformed maps leave the entire request and prior bytes unchanged.",
+          "Actual in-memory hub RPC verifies refused stringified projects returns a path-specific error, no unrelated theme update, and legal subsequent project deletion preserves surviving yolo and unknown pluginSettings objects.",
+          "Deterministic outside-writer seam invokes real disk writes between merge and stamp check. One outside edit retries and retains both projects and requested change; continuous churn reaches exactly five attempts, publishes no caller write, releases lock and allows later recovery."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config_wipeguard_test.go": {
+      "sha256": "bfd958a4c4ed47fce2dc1346958e7e3bd57daa6fb1fa08eba6eedf9d9d7ea51d",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Whole-document writer unit reconstructs the actual legacy keybinding migration shape; a resulting bare-defaults document refuses replacement of populated bytes. First-run seed and defaults-on-defaults rewrite still work; ordinary saves retain unrelated permissions/projects/custom keys.",
+          "Rust Config requires an explicit path; all regression paths are tempfile-owned, replacing the Go package-global TestMain config-home fence."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config_defaults.json": {
+      "sha256": "9ec49ee10363d2d6f0d1963478271a6f5855744dc9ff0f3f2829aadb22f66169",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared parsed old embedded defaults with services/hub-rs/assets/config-defaults.json: identical. Desktop main/renderer generator now reads the Rust canonical asset; retained configService drift tests ran in successful main599be31f desktop CI."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config.go": {
+      "sha256": "188aa33ac8e0ec096ba9135ecb44b3f4880b92ac1a63269be2d4c51cf36eb9b9",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/tests/models.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every merge/load/normalization/save/atomic-write/migration branch against Rust Config, including absence versus null, current manager compatibility mode, named retired keys, explicit workflow selection preservation, host-trusted filtering, unconditional save reread, bounded stamp retry and write-failure prior-value return.",
+          "Rust regressions cover actual lock/stale recovery, actual bus refusal, same-time/same-size saves, outside-writer retry/exhaustion, original-byte protection/recovery backups, defaults wipe guard, read-time keybinding migrations and nullable preferences across restart."
+        ],
+        "intentionalChanges": [
+          "Config uses explicit per-instance paths. Rust atomic writes propagate fsync failure instead of treating a failed flush as successful durability; ordinary file publication remains temp-file plus rename.",
+          "Recovery backup names use epoch milliseconds rather than a formatted UTC date; the compatible .broken- prefix and once-per-unchanged-document behavior remain."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    },
+    "services/hub/cmd/brain/config_test.go": {
+      "sha256": "800714c12ec8fde4ffa53bedbb1acfcd61f1fdc1389710a2949c7ff9ae607305",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/tests/models.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped all24 old test functions:10 deep-merge cases,13 host-trusted cases, complete defaults and backtick binding, external read refresh and save merge, artifact cleanup/startup prefs, manager legacy1M migration/explicitnull/Copilot refusal, invalid model reset without blocking or backup, theme/budget whole replacement, legacy Vim and nested chord migration, unreadable/malformed/empty/vanished preservation, actual claude.listModels RPC using persisted default+seen, statusSummary null and unknown sibling survival.",
+          "Actual Unix unreadable-file test runs a child under an unprivileged uid when the runner is root; the directory permits replacement but the original file cannot be read. It asserts real EACCES, blocked in-memory save and unchanged recoverable bytes. This avoids the old root skip."
+        ],
+        "intentionalChanges": [
+          "Config uses explicit per-instance paths. Rust atomic writes propagate fsync failure instead of treating a failed flush as successful durability; ordinary file publication remains temp-file plus rename.",
+          "Recovery backup names use epoch milliseconds rather than a formatted UTC date; the compatible .broken- prefix and once-per-unchanged-document behavior remain."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      }
+    }
+  }
+}

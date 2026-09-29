@@ -10,6 +10,46 @@ use std::{
     sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
+// Retained public evidence intentionally uses a generic reason. Diagnostics
+// identify typed failure stages/errno without printing Git output, file content,
+// argv, or credentials that an arbitrary error Display could contain.
+fn capture_diagnostic(error: &anyhow::Error) -> String {
+    let mut tags = Vec::new();
+    for cause in error.chain() {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            tags.push(format!(
+                "io(kind={:?},errno={:?})",
+                io.kind(),
+                io.raw_os_error()
+            ));
+        } else if cause
+            .downcast_ref::<super::owned_process::OutputLimit>()
+            .is_some()
+        {
+            tags.push("output-limit".into());
+        } else {
+            match cause.to_string().as_str() {
+                "command cleanup outcome is unknown" => tags.push("cleanup-unconfirmed".into()),
+                "command anchor was reaped; refusing a numeric group signal" => {
+                    tags.push("anchor-check".into())
+                }
+                "command cleanup did not confirm child exit" => {
+                    tags.push("reap-unconfirmed".into())
+                }
+                "command does not own a separate process group" => {
+                    tags.push("group-ownership".into())
+                }
+                "review capture deadline exceeded" => tags.push("capture-timeout".into()),
+                _ => (),
+            }
+        }
+    }
+    if tags.is_empty() {
+        "unclassified-capture-failure".into()
+    } else {
+        tags.join(" -> ")
+    }
+}
 const TOTAL: usize = 24 * 1024 * 1024;
 const DIFF: usize = 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -379,6 +419,13 @@ impl ReviewStore {
                 || error
                     .downcast_ref::<super::owned_process::OutputLimit>()
                     .is_some();
+            if !big {
+                eprintln!(
+                    "review capture {} unavailable: {}",
+                    text(&evidence, "id"),
+                    capture_diagnostic(&error)
+                );
+            }
             evidence["files"] = json!([]);
             evidence["availability"] = if big { "oversized" } else { "unavailable" }.into();
             evidence["reason"]=if big{"Review exceeds the 200-file / 1 MiB capture limit; no partial diff retained."}else{"Worktree or commit range unavailable, changed, or contains restricted paths. No fallback repository is used."}.into();
@@ -641,4 +688,28 @@ pub(crate) fn selected_secret(target: &Path, config_dir: &Path, home: &Path) -> 
             root != config && paths::contained(&root, &config) && paths::contained(&target, &root)
         })
     })
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    #[test]
+    fn capture_diagnostics_expose_errno_but_never_error_output_or_content() {
+        let error = anyhow::Error::new(std::io::Error::from_raw_os_error(1))
+            .context("credential=PRIVATE diff=PRIVATE")
+            .context("command cleanup outcome is unknown");
+        let message = super::capture_diagnostic(&error);
+        assert!(message.contains("cleanup-unconfirmed"));
+        assert!(message.contains("errno=Some(1)"));
+        assert!(!message.contains("PRIVATE"));
+        assert_eq!(
+            super::capture_diagnostic(&anyhow::anyhow!("raw private stderr")),
+            "unclassified-capture-failure"
+        );
+        assert_eq!(
+            super::capture_diagnostic(&anyhow::Error::new(
+                super::super::owned_process::OutputLimit(100)
+            )),
+            "output-limit"
+        );
+    }
 }

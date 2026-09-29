@@ -217,6 +217,93 @@ fn saved_state_crud_counts_sorting_and_unidentified_files_match_legacy() {
 }
 
 #[test]
+fn store_read_write_delete_and_quarantine_respect_resolved_entry_boundaries() {
+    fn link(target: &std::path::Path, path: &std::path::Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, path).unwrap();
+    }
+    for kind in ["sessions", "layouts"] {
+        for unresolved in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let folder = dir.path().join(kind);
+            let outside = dir.path().join(format!("{kind}-backup"));
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            let victim = outside.join("victim.yaml");
+            std::fs::write(&victim, "name: precious\nagents: []\n").unwrap();
+            let planted = folder.join("precious.yaml");
+            link(if unresolved { &planted } else { &victim }, &planted);
+            let stores = Stores::new(dir.path().into());
+            assert_eq!(
+                stores.call(&format!("{kind}.list"), json!({})).unwrap(),
+                json!([])
+            );
+            if kind == "sessions" {
+                assert!(
+                    stores
+                        .call("sessions.load", json!({"filename":"precious.yaml"}))
+                        .unwrap()
+                        .is_null()
+                );
+            }
+            assert!(
+                stores
+                    .call(
+                        &format!("{kind}.save"),
+                        json!({"name":"precious","id":"precious","agents":[]})
+                    )
+                    .is_err()
+            );
+            stores
+                .call(
+                    &format!("{kind}.delete"),
+                    json!({"filename":"precious.yaml","id":"precious"}),
+                )
+                .unwrap();
+            assert!(
+                std::fs::symlink_metadata(&planted)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(
+                std::fs::read_to_string(&victim).unwrap(),
+                "name: precious\nagents: []\n"
+            );
+            // Invalid victim bytes must never be copied into the visible store.
+            std::fs::write(&victim, "[unparseable secret").unwrap();
+            assert_eq!(
+                stores.call(&format!("{kind}.list"), json!({})).unwrap(),
+                json!([])
+            );
+            assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+            assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 1);
+        }
+    }
+    // An alias that resolves inside a store remains a valid catalog entry.
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::new(dir.path().into());
+    stores
+        .call("layouts.save", json!({"name":"Real","agents":[]}))
+        .unwrap();
+    link(
+        &dir.path().join("layouts/real.yaml"),
+        &dir.path().join("layouts/alias.yaml"),
+    );
+    assert_eq!(
+        stores
+            .call("layouts.list", json!({}))
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
 fn collision_at_a_symlink_slot_never_falls_back_to_overwriting_the_first_session() {
     let dir = tempfile::tempdir().unwrap();
     let stores = Stores::new(dir.path().into());
@@ -296,13 +383,24 @@ fn selected_session_filename_shared_contract() {
             assert!(error.contains(expected), "{}: {error}", row["name"]);
             let stores = Stores::new(at("config/workspacer"));
             let params = json!({"filename":row["filename"]});
-            assert!(
-                stores
-                    .call("sessions.load", params.clone())
-                    .unwrap()
-                    .is_null()
-            );
-            stores.call("sessions.delete", params).unwrap();
+            if row["filename"] == "" {
+                // The public envelope rejects absence before the underlying
+                // store resolver (the legacy direct helper returned null).
+                for method in ["sessions.load", "sessions.delete"] {
+                    assert_eq!(
+                        stores.call(method, params.clone()).unwrap_err().to_string(),
+                        format!("{method} requires {{ filename }}")
+                    );
+                }
+            } else {
+                assert!(
+                    stores
+                        .call("sessions.load", params.clone())
+                        .unwrap()
+                        .is_null()
+                );
+                stores.call("sessions.delete", params).unwrap();
+            }
             for (name, text) in row["tree"]["files"].as_object().into_iter().flatten() {
                 assert_eq!(
                     std::fs::read_to_string(at(name)).unwrap(),

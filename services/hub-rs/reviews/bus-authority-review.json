@@ -1,0 +1,95 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "TS busAuthorityRegistry2 + busPublicationSites4 PASS, including reverse36-row producer coverage and mutations/CRLF. Actual runtime topic identity matrix444 assertions PASS in237pass/1fail lib checkpoint; unrelated closed-peer delivery assertion exposed a now-fixed early-filter gap awaiting rerun. New routing event tests pending next lib build. No broad bus runtime certification.",
+  "records": {
+    "services/hub/internal/bus/authorize_test.go": {
+      "status": "retired",
+      "sha256": "f6ff0c0441767249868df2ad88fccb61d6ec89c5ace0912d1422399fec919477",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ],
+      "note": "Architectural retirement of the synthetic anonymous conn{caps:...} filesystem-grant harness. The retained Go conn.authorize immediately bypasses that harness for EVERY real wire identity: trusted host/operator, non-nil scoped methods, or pluginID. Rust Identity::Kind exhaustively models those same Host/Scoped/Plugin identities; it cannot construct the obsolete anonymous filesystem-grant identity. authorize_edges tests paramString/canonRoots and resolver-denial wiring exclusively through that dead harness; hostgate_test is solely skip accounting for its two symlink tests. Active object/owner guards, selected-project confinement and component-wise symlink resolution remain in Rust paths and their separate tests, and are not retired by this record.",
+      "reason": "The anonymous per-capability filesystem-grant identity exists only in the legacy test harness; every real Go wire identity bypasses it, and Rust has no such identity. Active path confinement remains separately implemented and tested."
+    },
+    "services/hub/internal/bus/authorize_edges_test.go": {
+      "status": "retired",
+      "sha256": "1533c247f8418a2a4845568c2a57f09b91b79657500ee4e16fffc7489504f005",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ],
+      "note": "Architectural retirement of the synthetic anonymous conn{caps:...} filesystem-grant harness. The retained Go conn.authorize immediately bypasses that harness for EVERY real wire identity: trusted host/operator, non-nil scoped methods, or pluginID. Rust Identity::Kind exhaustively models those same Host/Scoped/Plugin identities; it cannot construct the obsolete anonymous filesystem-grant identity. authorize_edges tests paramString/canonRoots and resolver-denial wiring exclusively through that dead harness; hostgate_test is solely skip accounting for its two symlink tests. Active object/owner guards, selected-project confinement and component-wise symlink resolution remain in Rust paths and their separate tests, and are not retired by this record.",
+      "reason": "The anonymous per-capability filesystem-grant identity exists only in the legacy test harness; every real Go wire identity bypasses it, and Rust has no such identity. Active path confinement remains separately implemented and tested."
+    },
+    "services/hub/internal/bus/hostgate_test.go": {
+      "status": "retired",
+      "sha256": "3a16fb52d8532ee1bd6f21b277b453b5f52439f1073280447d6e63489aa45840",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ],
+      "note": "Architectural retirement of the synthetic anonymous conn{caps:...} filesystem-grant harness. The retained Go conn.authorize immediately bypasses that harness for EVERY real wire identity: trusted host/operator, non-nil scoped methods, or pluginID. Rust Identity::Kind exhaustively models those same Host/Scoped/Plugin identities; it cannot construct the obsolete anonymous filesystem-grant identity. authorize_edges tests paramString/canonRoots and resolver-denial wiring exclusively through that dead harness; hostgate_test is solely skip accounting for its two symlink tests. Active object/owner guards, selected-project confinement and component-wise symlink resolution remain in Rust paths and their separate tests, and are not retired by this record.",
+      "reason": "The anonymous per-capability filesystem-grant identity exists only in the legacy test harness; every real Go wire identity bypasses it, and Rust has no such identity. Active path confinement remains separately implemented and tested."
+    },
+    "services/hub/internal/capspec/publisher_test.go": {
+      "status": "ported",
+      "sha256": "3f8bbf89163d912bed926053cd603e3bbe91217bed502f24597bd329a4387253",
+      "replacement": [
+        "services/hub-rs/assets/hub-vocabulary.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/provider_relay/methods.rs"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
+        "apps/desktop/src/main/services/busPublicationSites.test.ts"
+      ],
+      "note": "Actual Rust provider-relay TOPICS plus demand-driven conversation family must name nonempty concrete publishing grants; all publisher methods must exist in authorization vocabulary. Literal/dynamic Rust and retained Electron publishers are independently discovered and classified by the publication guard. Negative forgery targets layout/plugin-settings/plugin-log/agent-state/node-state/plugin-install remain publisher-free, with mutation tests. This checks current authoritative relay declarations rather than continuing to scan deleted Go brain code."
+    },
+    "services/hub/internal/capspec/eventtopics.go": {
+      "status": "ported",
+      "sha256": "d2dcf84c08328e78da26aa626fee0f17927d54d810d779f10fb2b6c7c5c79888",
+      "replacement": [
+        "services/hub-rs/assets/hub-vocabulary.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/busPublicationSites.test.ts",
+        "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint."
+    },
+    "services/hub/internal/capspec/eventtopics_test.go": {
+      "status": "ported",
+      "sha256": "137ca99a763d344f7eb0fda3a28479398f9c9b361119a82de538252800b7b9f2",
+      "replacement": [
+        "services/hub-rs/assets/hub-vocabulary.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/busPublicationSites.test.ts",
+        "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint."
+    }
+  }
+}

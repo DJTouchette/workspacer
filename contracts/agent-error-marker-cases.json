@@ -59,7 +59,7 @@
         "loaders": [
           "services/claudemon/src/providers/mod.rs::error_marker_matches_the_cross_language_contract",
           "apps/desktop/src/main/shared/workerFailure.test.ts::agent-error marker (cross-language contract)",
-          "services/hub/cmd/brain/workerfailure_test.go::TestWorkerFailureMatchesTheAgentErrorMarkerContract"
+          "services/hub-rs/tests/wakes.rs::failure_reader_replays_marker_reason_overage_and_remedy_contract"
         ]
       }
     }

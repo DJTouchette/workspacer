@@ -525,18 +525,7 @@ impl ReplacementHost for NativeHost {
         })
     }
     fn kickoff(&self, op: &Value) -> Result<String> {
-        Ok(format!(
-            "{}\n\nThe user says:\n\nHOST-OWNED MANAGER HANDOFF {}. Your fresh manager session is {}; predecessor {} is audit history only. Host committed worker AND task ownership. Do not adopt, resume or terminate predecessor, or use shared handoff.md. Use validated handoff retained at {}, SHA256 {}. Preserve pending decisions; take next action within existing authority.\n{}",
-            launch_instructions::manager_doctrine(),
-            text(&op["operationId"]),
-            text(&op["successorSessionId"]),
-            text(&op["sourceSessionId"]),
-            op["sealedArtifactPath"]
-                .as_str()
-                .unwrap_or(text(&op["artifactPath"])),
-            text(&op["artifactHash"]),
-            text(&op["artifact"])
-        ))
+        Ok(kickoff_message(op))
     }
     fn recover_finishes(&self, op: &Value) -> Result<()> {
         self.wakes.recover(op)
@@ -604,4 +593,20 @@ pub fn install(
         }
     });
     Ok((options, service))
+}
+
+/// Render the validated handoff journal using the same host doctrine as native delivery.
+pub fn kickoff_message(op: &Value) -> String {
+    format!(
+        "{}\n\nThe user says:\n\nHOST-OWNED MANAGER HANDOFF {}. Your fresh manager session is {}; predecessor {} is audit history only. Host committed worker AND task ownership. Do not adopt, resume or terminate predecessor, or use shared handoff.md. Use validated handoff retained at {}, SHA256 {}. Preserve pending decisions; take next action within existing authority.\n{}",
+        launch_instructions::manager_doctrine(),
+        text(&op["operationId"]),
+        text(&op["successorSessionId"]),
+        text(&op["sourceSessionId"]),
+        op["sealedArtifactPath"]
+            .as_str()
+            .unwrap_or(text(&op["artifactPath"])),
+        text(&op["artifactHash"]),
+        text(&op["artifact"])
+    )
 }

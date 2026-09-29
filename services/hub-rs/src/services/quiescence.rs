@@ -482,9 +482,15 @@ fn activity_field<'a>(value: &'a Value, name: &str) -> Result<Option<&'a Value>,
         return Ok(None);
     }
     let object = value.as_object().ok_or(())?;
-    let mut fields = object
-        .iter()
-        .filter(|(key, _)| key.eq_ignore_ascii_case(name));
+    let mut fields = object.iter().filter(|(key, _)| {
+        key.chars()
+            .map(|c| match c {
+                '\u{212a}' => 'k', // encoding/json's Unicode SimpleFold aliases
+                '\u{017f}' => 's',
+                c => c.to_ascii_lowercase(),
+            })
+            .eq(name.chars())
+    });
     let field = fields.next().map(|(_, value)| value);
     if fields.next().is_some() {
         return Err(());

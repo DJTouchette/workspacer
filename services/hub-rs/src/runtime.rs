@@ -1321,7 +1321,10 @@ impl Core {
             event.time = now();
         }
         for peer in self.peers.values() {
-            if !peer.identity.may_consume(&event.topic)
+            // Revocation/overflow marks a peer closed before the actor removes
+            // it. Do not enqueue protected data or desync metadata in that gap.
+            if *peer.closed.borrow()
+                || !peer.identity.may_consume(&event.topic)
                 || !peer.topics.iter().any(|t| matches(t, &event.topic))
             {
                 continue;

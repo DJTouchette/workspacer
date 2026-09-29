@@ -453,7 +453,10 @@ async fn oversize_file_diff_and_record_retention_never_publish_partial_ranges() 
         .unwrap()
         .unwrap();
     let large = f.review.read(&request(&id, None));
-    assert_eq!(large["evidence"]["availability"], "oversized");
+    assert_eq!(
+        large["evidence"]["availability"], "oversized",
+        "complete evidence: {large:#}"
+    );
     assert_eq!(large["evidence"]["files"], json!([]));
     let mut state = f.persisted();
     state["records"] = json!(

@@ -15,12 +15,15 @@ last_reviewed: 2026-09-26
 
 ## Sources and ownership
 
-`config.yaml` has two writer implementations: TypeScript
-`apps/desktop/src/main/services/configService.ts` (Electron and shared headless
-services) and Go `services/hub/cmd/brain/config.go`. The Node companion reuses
-TypeScript logic; “two writers” does not mean exactly two running processes.
+`config.yaml` has two active writer implementations: TypeScript
+`apps/desktop/src/main/services/configService.ts` inside Electron and Rust
+`services/hub-rs/src/services/config.rs` inside the standalone or embedded backend.
+The private Node companion has been removed. Go
+`services/hub/cmd/brain/config.go` remains a reference during the retirement audit;
+it is no longer the default backend. “Two writers” does not mean exactly two
+running processes.
 
-`services/hub/cmd/brain/config_defaults.json` is the defaults source. The desktop
+`services/hub-rs/assets/config-defaults.json` is the defaults source. The desktop
 generator emits main/renderer default modules from it; do not independently edit
 those outputs. Default keybindings also have a preset representation whose
 contract tests must remain aligned. Types do not validate arbitrary YAML.
@@ -43,13 +46,13 @@ a filesystem compare-and-swap atomic with the final rename. An outside writer
 can still race after the last check.
 
 `contracts/config-lock.json` pins lock filename and the ten-second stale threshold.
-TS waits up to 250 ms synchronously; Go’s wait budget is two seconds. The lock
+TS waits up to 250 ms synchronously; Rust's wait budget is two seconds. The lock
 serializes cooperating writers across refresh→merge→write; mtime checking alone
 would leave the read/modify/write race open. A timeout never means write anyway.
 Read-time migrations and seed helpers have their own paths, so inspect those too
 when changing publication rather than assuming every write calls public save.
 
-The Go writer additionally checks against replacing existing non-default content
+The Rust writer additionally checks against replacing existing non-default content
 with a bare defaults-shaped file (`refuseWipeWithDefaults`). This guard does not
 make every arbitrary partial safe or eliminate the wholesale-map rules below.
 
@@ -65,7 +68,7 @@ Exactly these user maps are replaced wholesale when supplied:
 
 Send the complete desired remaining map, not only the changed entry. `{}` means
 empty the map; null, arrays, strings and other non-object values are refused.
-The shared TS list is `main/shared/configWholesale.ts`; Go and the facade are
+The shared TS list is `main/shared/configWholesale.ts`; Rust and the facade are
 pinned to it through `contracts/wholesale-config-paths.json` including value cases.
 A malformed map must never be coerced into a successful empty replacement.
 
@@ -91,7 +94,7 @@ Distinguish malformed existing data from a transient write problem:
 | Save while persist-blocked | A merged value may be returned in memory, without writing the protected file |
 | Lock timeout, write failure or exhausted stamp retries | Log and retain/return the prior configuration; do not latch persistBlocked |
 | Invalid selection or wholesale-map request | Refuse through the relevant validation error path |
-| Missing file on first load | Seed defaults; the Go loader also diagnoses suspected loss of an established install |
+| Missing file on first load | Seed defaults; the Rust loader also diagnoses suspected loss of an established install |
 
 A returned object is therefore not always proof a requested change was saved.
 `ConfigProvider` warns on a rejected promise, but a host returning the prior value
@@ -105,7 +108,7 @@ must remain retryable rather than becoming a permanent load-failure latch.
 
 ## Create-once state and identity
 
-The Go `statelost` and TS `stateLoss` helpers look for other state beside a
+The Rust `state_loss` and TS `stateLoss` helpers look for other state beside a
 missing file. Empty pre-created directories are not evidence of previous use;
 files, including zero-byte files, and nonempty directories are evidence. This is
 a diagnostic heuristic, not a definitive filesystem history.
@@ -117,13 +120,14 @@ Different loaders deliberately respond differently:
 - Missing/unreadable VAPID key with subscriptions: push generates a new key,
   warns and drops now-invalid subscriptions. Failure constructing push disables
   push, not the entire hub.
-- Missing config at the Go process’s first read amid prior state: warn and seed
+- Missing config at the Rust backend's first read amid prior state: warn and seed
   defaults without persistence-blocking, since other state may predate config.
   Do not confuse this with an existing unreadable file or mid-run disappearance.
 
 A regenerated credential is a new identity; it cannot preserve old pairings.
 Read the token/push-specific guide before applying config recovery behavior to a
-credential file. Preserve TS/Go diagnostic parity where they write the same file.
+credential file. Preserve the established diagnostic behavior when changing
+either writer.
 
 ## Renderer and generated-state maintenance
 
@@ -137,6 +141,8 @@ Generated defaults, keybinding presets, project identity and manager selections
 have distinct shared contracts. Run the relevant loaders rather than assuming
 one successful config-service test covers every mirror. From `apps/desktop`,
 `npx vitest run src/main/services/configService.test.ts` exercises the TS writer;
-from `services/hub`, `go test ./cmd/brain -run 'Config|Wholesale'` exercises its Go
-counterpart. Source-changing work also needs generator drift/type checks and
+from the repository root, `cargo test --manifest-path services/hub-rs/Cargo.toml
+--test config` exercises its Rust counterpart, and the library's
+`services::config` tests cover write failure and concurrent-save seams.
+Source-changing work also needs generator drift/type checks and
 renderer patch/save tests.

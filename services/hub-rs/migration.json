@@ -240,10 +240,25 @@
       "tests": []
     },
     "services/hub/cmd/brain/cachepin_test.go": {
-      "replacement": [],
+      "reason": "This Go-AST analysis enforces using a Go-cache workaround in retiring Go test packages; those readers and their result cache disappear.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed all four planted raw-reader bypass shapes, compliant-reader controls, escaping-name floor and fixed-point AST scan. Requiring extinput in Rust/TS would be an unused synthetic compatibility layer. Independent fixture ownership and vocabulary guards remain mandatory."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      },
       "sha256": "bb68024a1d77af10674e62e9a48b8c1d3a422370d7241bab4165e89c4d44d2c3",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ]
     },
     "services/hub/cmd/brain/capspec_guard_test.go": {
       "replacement": [],
@@ -264,64 +279,235 @@
       "tests": []
     },
     "services/hub/cmd/brain/config.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every merge/load/normalization/save/atomic-write/migration branch against Rust Config, including absence versus null, current manager compatibility mode, named retired keys, explicit workflow selection preservation, host-trusted filtering, unconditional save reread, bounded stamp retry and write-failure prior-value return.",
+          "Rust regressions cover actual lock/stale recovery, actual bus refusal, same-time/same-size saves, outside-writer retry/exhaustion, original-byte protection/recovery backups, defaults wipe guard, read-time keybinding migrations and nullable preferences across restart."
+        ],
+        "intentionalChanges": [
+          "Config uses explicit per-instance paths. Rust atomic writes propagate fsync failure instead of treating a failed flush as successful durability; ordinary file publication remains temp-file plus rename.",
+          "Recovery backup names use epoch milliseconds rather than a formatted UTC date; the compatible .broken- prefix and once-per-unchanged-document behavior remain."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "188aa33ac8e0ec096ba9135ecb44b3f4880b92ac1a63269be2d4c51cf36eb9b9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/tests/models.rs"
+      ]
     },
     "services/hub/cmd/brain/config_atomic_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original inode/temporary-file assertions. Actual config integration checks inode replacement plus a still-open reader retaining all old bytes; actual stores integration repeats session and layout saves and asserts changed inodes plus exactly one final entry per store. Shared atomic_bytes flushes and persists a same-directory temporary file. Unix-specific inode assertions remain Unix-only; ordinary config/store behavior runs on all platforms."
+        ],
+        "intentionalChanges": [
+          "Rust errors are Result values; direct helper null/no-op responses are checked through the public method envelope with its required-parameter validation. Malformed records without a string name remain unidentified instead of being coerced into an empty-name identity."
+        ],
+        "verifiedCheckpoint": "Recovered current compiled integrations: stores8 and config20 passed on Linux. Actual Windows/Mac latest-head rerun remains a cutover gate; no claim that Linux executes Windows branches."
+      },
       "sha256": "dd617c4481060cb89e93a833eca878fc7b319720cfcb5077b2c788383cc72fd1",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/config.rs"
+      ]
     },
     "services/hub/cmd/brain/config_defaults.json": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared parsed old embedded defaults with services/hub-rs/assets/config-defaults.json: identical. Desktop main/renderer generator now reads the Rust canonical asset; retained configService drift tests ran in successful main599be31f desktop CI."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "9ec49ee10363d2d6f0d1963478271a6f5855744dc9ff0f3f2829aadb22f66169",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ]
     },
     "services/hub/cmd/brain/config_orphans.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed every pruning branch and all old shape cases: exactly the top-level supervisor key retires; nested supervisor, prefixed names, plugin keys, comments, ordering, quotes and CRLF bytes survive.",
+          "Rust actual-disk matrix checks EOF/no-newline/first/flow/null/quoted/only-block cases, repeated load without rewrite, and preserving unsupported textual spellings while removing the retired in-memory value. Empty/comment-only files remain protected."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "4f307f5e6a9fbd7853680bcfa1247cf4d1186d909fafd3eacd2a83b76d438a1d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ]
     },
     "services/hub/cmd/brain/config_orphans_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed every pruning branch and all old shape cases: exactly the top-level supervisor key retires; nested supervisor, prefixed names, plugin keys, comments, ordering, quotes and CRLF bytes survive.",
+          "Rust actual-disk matrix checks EOF/no-newline/first/flow/null/quoted/only-block cases, repeated load without rewrite, and preserving unsupported textual spellings while removing the retired in-memory value. Empty/comment-only files remain protected."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "98f7efe9d559ca2727635c2d267c717116549e325452457a9feddc19ca7056fe",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ]
     },
     "services/hub/cmd/brain/config_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped all24 old test functions:10 deep-merge cases,13 host-trusted cases, complete defaults and backtick binding, external read refresh and save merge, artifact cleanup/startup prefs, manager legacy1M migration/explicitnull/Copilot refusal, invalid model reset without blocking or backup, theme/budget whole replacement, legacy Vim and nested chord migration, unreadable/malformed/empty/vanished preservation, actual claude.listModels RPC using persisted default+seen, statusSummary null and unknown sibling survival.",
+          "Actual Unix unreadable-file test runs a child under an unprivileged uid when the runner is root; the directory permits replacement but the original file cannot be read. It asserts real EACCES, blocked in-memory save and unchanged recoverable bytes. This avoids the old root skip."
+        ],
+        "intentionalChanges": [
+          "Config uses explicit per-instance paths. Rust atomic writes propagate fsync failure instead of treating a failed flush as successful durability; ordinary file publication remains temp-file plus rename.",
+          "Recovery backup names use epoch milliseconds rather than a formatted UTC date; the compatible .broken- prefix and once-per-unchanged-document behavior remain."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "800714c12ec8fde4ffa53bedbb1acfcd61f1fdc1389710a2949c7ff9ae607305",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/tests/models.rs"
+      ]
     },
     "services/hub/cmd/brain/config_vanished_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Child-process stderr regression opens an isolated genuine first-run directory and an established directory missing config.yaml. Only established state emits STATE LOSS naming config.yaml; both seed and permit later saves. No global environment mutation."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "b7868ded12e892bb888e764a30772e9d884c5679f186f90fbc9ff3dc68f60869",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ]
     },
     "services/hub/cmd/brain/config_wholesale_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "review": {
+        "behaviors": [
+          "All11 unchanged shared value cases now exercise both pure merge and actual disk save/reopen; three exact paths and seven refusal cases are pinned. Malformed maps leave the entire request and prior bytes unchanged.",
+          "Actual in-memory hub RPC verifies refused stringified projects returns a path-specific error, no unrelated theme update, and legal subsequent project deletion preserves surviving yolo and unknown pluginSettings objects.",
+          "Deterministic outside-writer seam invokes real disk writes between merge and stamp check. One outside edit retries and retains both projects and requested change; continuous churn reaches exactly five attempts, publishes no caller write, releases lock and allows later recovery."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "3ad6d5ff94356fc7b47797788fee11724cac579ff140598f5c51f62ad0ce4856",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ]
     },
     "services/hub/cmd/brain/config_wholesale_typeguard_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "review": {
+        "behaviors": [
+          "All11 unchanged shared value cases now exercise both pure merge and actual disk save/reopen; three exact paths and seven refusal cases are pinned. Malformed maps leave the entire request and prior bytes unchanged.",
+          "Actual in-memory hub RPC verifies refused stringified projects returns a path-specific error, no unrelated theme update, and legal subsequent project deletion preserves surviving yolo and unknown pluginSettings objects.",
+          "Deterministic outside-writer seam invokes real disk writes between merge and stamp check. One outside edit retries and retains both projects and requested change; continuous churn reaches exactly five attempts, publishes no caller write, releases lock and allows later recovery."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "1c0109b003e4c41da8462c0cd548d99b909472a4bfa214ab83ece5502eb1db5c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ]
     },
     "services/hub/cmd/brain/config_wipeguard_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/assets/config-defaults.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Whole-document writer unit reconstructs the actual legacy keybinding migration shape; a resulting bare-defaults document refuses replacement of populated bytes. First-run seed and defaults-on-defaults rewrite still work; ordinary saves retain unrelated permissions/projects/custom keys.",
+          "Rust Config requires an explicit path; all regression paths are tempfile-owned, replacing the Go package-global TestMain config-home fence."
+        ],
+        "intentionalChanges": [
+          "Configuration paths are explicit instance dependencies rather than process-global config-home resolution."
+        ],
+        "verifiedCheckpoint": "Actual current-batch config20 passed on Linux uid10001; library config failure-plane3 passed earlier and in CI3bbf78a8. The later test-only root privilege drop relocation after executable loading has not run as uid0; original Go root permission cases skipped, while nonroot EACCES regression ran and passed."
+      },
       "sha256": "bfd958a4c4ed47fce2dc1346958e7e3bd57daa6fb1fa08eba6eedf9d9d7ea51d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ]
     },
     "services/hub/cmd/brain/config_writefailure_test.go": {
       "replacement": [],
@@ -388,22 +574,62 @@
       "tests": []
     },
     "services/hub/cmd/brain/desktophost.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/host_status.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
+      "review": "Mixed file ported, not blanket retired: private Node discovery/stdio/correlation/child-generation lifecycle disappears with owned Backend; desktop owner services, host-observed context, result capture, workflow observations and spawn admission remain in the listed Rust owners. New agent_spawn14 PASS pins Unicode scalar16000 echo without shortening engine prompt, once-only fallback after acknowledged unqueued launch, accepted receipt on message uncertainty, no fallback after unknown spawn, and forged owner refused before engine/worktree effects. Existing concrete tests cover real Git/template execution cwd and schema, failed post-acceptance tracking, result validation/review persistence, workflow events, heartbeat bounds and typed launch callback context/revocation. There is no replacement private subprocess.",
       "sha256": "04911263f55278b347bef41e87bac6feefbfcc165af4540e56e83801f5622eef",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/manager_replacements.rs",
+        "services/hub-rs/tests/fleet_review.rs",
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/tests/workflow_artifacts.rs",
+        "services/hub-rs/tests/legacy_preservation.rs",
+        "services/hub-rs/src/services/host_status.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs"
+      ]
     },
     "services/hub/cmd/brain/desktophost_integration_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/fleet_review.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
+      "review": "Reviewed original template/execution-cwd/schema, result/evidence/history, forged-owner-before-daemon, and private integration callback assertions. Real Git coordinator fixture checks rendered execution cwd, schema instructions and task reservation; fleet_review/worker_results check captured committed evidence, validation and cleanup survival. New forged_task_owner_is_rejected_before_any_engine_or_worktree_admission asserts zero engine plans/messages/launch records/worktree and unchanged existing task. Plugin launch tests check typed owner permit/context-only callback, final args/env patch, revoked reply and delayed cancellation. Agent_spawn14 PASS; tests compose actual Rust owners with a fake external engine, replacing rather than reproducing Go/Node transport.",
       "sha256": "cdd378f6fb478f414c7cf27980b8591cbe2720276ea3e81b2f841eb074c84c48",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/fleet_review.rs",
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs"
+      ]
     },
     "services/hub/cmd/brain/desktopnode_test.go": {
-      "replacement": [],
+      "reason": "Private Node runtime discovery (including sibling node.exe and PATH fallback) no longer exists: owned Rust Backend provides services in process, and Electron retains its public dispatcher in its existing main process. This does not retire external provider/plugin Node runtimes.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "apps/desktop/src/main/services/nativeDesktopServices.ts",
+        "apps/desktop/scripts/prepare-main-build.mjs"
+      ],
+      "review": "Read all TestDesktopNodeExecutable cases: missing candidate, directory candidate, Windows regular sibling, other OS PATH fallback, missing executable. These only selected the deleted private runtime and deliberately have no replacement discovery routine. Rust real-backend preservation/account tests2 passed; retained Electron public manifest/source-retirement2 and stale-output1 passed; current full Electron production build emitted no private stdio/bridge/analytics/replacement JS. Windows payload negative fixture explicitly seeds old node/CJS/Go files and proves they are not packaged; its final-head platform rerun remains a separate cutover gate.",
       "sha256": "2eac92efc524d402c80fd3072173102e0b47fb8ad07d6ea04562c2ef0d82912c",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/legacy_preservation.rs",
+        "apps/desktop/src/main/shared/desktopServices.test.ts",
+        "apps/desktop/scripts/prepare-main-build.test.mjs",
+        "apps/native/scripts/windows-payload.test.mjs"
+      ]
     },
     "services/hub/cmd/brain/desktopruntime.go": {
       "replacement": [],
@@ -1046,10 +1272,18 @@
       ]
     },
     "services/hub/cmd/brain/replacement_integration_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/manager_replacements.rs",
+        "services/hub-rs/src/services/manager_replacements/service.rs",
+        "services/hub-rs/src/services/manager_replacements/messages.rs",
+        "services/hub-rs/src/services/manager_replacements/native.rs"
+      ],
+      "review": "Reviewed task AND worker ownership transfer, binding wait, held message, predecessor retirement and kickoff assertions. binding_delivers_real_kickoff_then_exact_held_message_once_and_retires_predecessor uses real ReplacementService/MessageTracker and production kickoff formatter; external host only is fake. Checks ownership transfers before binding, no early held send, exact kickoff and original held bytes plus authoritative new-parent annotation, accepted journal, exactly-one original-text occurrence and no repeat on duplicate viewer bind. Existing actual-view-ACK, uncertain-delivery, late-spawn and restart cases retained. Corrected manager_replacements16 PASS. Initial fixture incorrectly expected raw-only text; corrected expectation preserves source-compatible transfer annotation rather than changing production behavior.",
       "sha256": "a4727fa2bb51527d4437c028643463d45d4142d8eb8b19734c98845149196f6e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/manager_replacements.rs"
+      ]
     },
     "services/hub/cmd/brain/replacementhost.go": {
       "replacement": [],
@@ -1058,10 +1292,25 @@
       "tests": []
     },
     "services/hub/cmd/brain/repofile_test.go": {
-      "replacement": [],
+      "reason": "The Go-specific test-hub/CI -count=1 requirement and cmd/go-pinned reader helpers are replaced by Cargo/Vitest test entry points.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "review": {
+        "behaviors": [
+          "Makefile test-hub now calls Cargo; explicit temporary test-hub-reference retains -race -count=1 until Go deletion. Rust roots derive from CARGO_MANIFEST_DIR and missing required fixture/source reads fail rather than silently claiming an extracted module pass. The cross-language discovery guards are preserved separately."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      },
       "sha256": "f10b85acd41d8bbe700a394b827cb0221f36fb7047a1d724bde2bcfe8c662bb0",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ]
     },
     "services/hub/cmd/brain/reregister_test.go": {
       "replacement": [],
@@ -1379,16 +1628,52 @@
       ]
     },
     "services/hub/cmd/brain/stores.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed complete saved-layout/session stores and old regression file: native slug identities/collisions, repeated save stability, unreadable YAML preservation and once-only literal-prefix quarantine, global-agent/pane counts, legacy tabs/flat panes, sorting, version stamp, missing load null and delete behavior.",
+          "Actual eight-test Rust stores target passed: original17-case three-variant slug corpus, actual saved-state CRUD/metadata/legacy counts, skipped unidentified corrupt file, quarantine both stores with hostile glob names and time-separated polls, atomic replacement with no temporary leftovers, and collision-at-refused-slot preservation.",
+          "Selected-filename corpus uses actual native filesystem trees on Windows/Unix, exact refusal reasons and inert public load/delete checks; empty public filename correctly returns the required-envelope error while nonempty refused paths return null. Actual symlink tests cover out-of-store prefix collision, unresolvable cycles, unchanged victim and link after save/delete, no quarantine copies of escaped bytes, and successful in-store alias listing."
+        ],
+        "intentionalChanges": [
+          "Rust errors are Result values; direct helper null/no-op responses are checked through the public method envelope with its required-parameter validation. Malformed records without a string name remain unidentified instead of being coerced into an empty-name identity."
+        ],
+        "verifiedCheckpoint": "Recovered current compiled integrations: stores8 and config20 passed on Linux. Actual Windows/Mac latest-head rerun remains a cutover gate; no claim that Linux executes Windows branches."
+      },
       "sha256": "1d8f639241c09033664975e831acdc208338a6bf64b216a169ac6401595de73e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/config.rs"
+      ]
     },
     "services/hub/cmd/brain/stores_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed complete saved-layout/session stores and old regression file: native slug identities/collisions, repeated save stability, unreadable YAML preservation and once-only literal-prefix quarantine, global-agent/pane counts, legacy tabs/flat panes, sorting, version stamp, missing load null and delete behavior.",
+          "Actual eight-test Rust stores target passed: original17-case three-variant slug corpus, actual saved-state CRUD/metadata/legacy counts, skipped unidentified corrupt file, quarantine both stores with hostile glob names and time-separated polls, atomic replacement with no temporary leftovers, and collision-at-refused-slot preservation.",
+          "Selected-filename corpus uses actual native filesystem trees on Windows/Unix, exact refusal reasons and inert public load/delete checks; empty public filename correctly returns the required-envelope error while nonempty refused paths return null. Actual symlink tests cover out-of-store prefix collision, unresolvable cycles, unchanged victim and link after save/delete, no quarantine copies of escaped bytes, and successful in-store alias listing."
+        ],
+        "intentionalChanges": [
+          "Rust errors are Result values; direct helper null/no-op responses are checked through the public method envelope with its required-parameter validation. Malformed records without a string name remain unidentified instead of being coerced into an empty-name identity."
+        ],
+        "verifiedCheckpoint": "Recovered current compiled integrations: stores8 and config20 passed on Linux. Actual Windows/Mac latest-head rerun remains a cutover gate; no claim that Linux executes Windows branches."
+      },
       "sha256": "4d4053e2b7c0d45209271de194a86f7bfb9b245d628406e1ecaa1d193401e88e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/config.rs"
+      ]
     },
     "services/hub/cmd/brain/sweepmeta_test.go": {
       "replacement": [],
@@ -1451,10 +1736,25 @@
       "tests": []
     },
     "services/hub/cmd/brain/testenv_test.go": {
-      "replacement": [],
+      "reason": "Go package-global home/config redirection helpers retire with the package; Rust service instances take explicit paths and environment-dependent CLI/provider fixtures run isolated child processes.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "review": {
+        "behaviors": [
+          "Read tempConfigHome/setConfigHome/tempHome/setHome/absTestPath/mustSave. Rust tempfile roots are native absolute paths; actual config saves assert Result success, while refusal cases assert errors. Config, CLI and embedded backend fixtures retain isolated home/config/data paths across Windows and Unix."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      },
       "sha256": "874736bf7607248d59cd9c4dbaad8c3186918fc1fea9f38221553b490b21c093",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/legacy_preservation.rs"
+      ]
     },
     "services/hub/cmd/brain/unpinnedguards_test.go": {
       "replacement": [],
@@ -2795,16 +3095,34 @@
       "tests": []
     },
     "services/hub/internal/bus/authorize_edges_test.go": {
-      "replacement": [],
+      "note": "Architectural retirement of the synthetic anonymous conn{caps:...} filesystem-grant harness. The retained Go conn.authorize immediately bypasses that harness for EVERY real wire identity: trusted host/operator, non-nil scoped methods, or pluginID. Rust Identity::Kind exhaustively models those same Host/Scoped/Plugin identities; it cannot construct the obsolete anonymous filesystem-grant identity. authorize_edges tests paramString/canonRoots and resolver-denial wiring exclusively through that dead harness; hostgate_test is solely skip accounting for its two symlink tests. Active object/owner guards, selected-project confinement and component-wise symlink resolution remain in Rust paths and their separate tests, and are not retired by this record.",
+      "reason": "The anonymous per-capability filesystem-grant identity exists only in the legacy test harness; every real Go wire identity bypasses it, and Rust has no such identity. Active path confinement remains separately implemented and tested.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
       "sha256": "1533c247f8418a2a4845568c2a57f09b91b79657500ee4e16fffc7489504f005",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ]
     },
     "services/hub/internal/bus/authorize_test.go": {
-      "replacement": [],
+      "note": "Architectural retirement of the synthetic anonymous conn{caps:...} filesystem-grant harness. The retained Go conn.authorize immediately bypasses that harness for EVERY real wire identity: trusted host/operator, non-nil scoped methods, or pluginID. Rust Identity::Kind exhaustively models those same Host/Scoped/Plugin identities; it cannot construct the obsolete anonymous filesystem-grant identity. authorize_edges tests paramString/canonRoots and resolver-denial wiring exclusively through that dead harness; hostgate_test is solely skip accounting for its two symlink tests. Active object/owner guards, selected-project confinement and component-wise symlink resolution remain in Rust paths and their separate tests, and are not retired by this record.",
+      "reason": "The anonymous per-capability filesystem-grant identity exists only in the legacy test harness; every real Go wire identity bypasses it, and Rust has no such identity. Active path confinement remains separately implemented and tested.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
       "sha256": "f6ff0c0441767249868df2ad88fccb61d6ec89c5ace0912d1422399fec919477",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ]
     },
     "services/hub/internal/bus/bench_test.go": {
       "replacement": [],
@@ -2843,16 +3161,32 @@
       "tests": []
     },
     "services/hub/internal/bus/demand.go": {
-      "replacement": [],
+      "note": "Actor-owned exact-topic demand counts, wildcard exclusion, duplicate subscription accounting, zero/one transitions, disconnect release, entitled watcher replay and replacement/empty-prefix clear. New direct actor tests preserve the seven old demand assertions; shared bus corpus provides wire replay coverage.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
       "sha256": "ebcb086565dceefa42f77da310babaa53c62f8a87fcc0e3c7eb0947e2421761a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/compatibility.rs"
+      ]
     },
     "services/hub/internal/bus/demand_test.go": {
-      "replacement": [],
+      "note": "Actor-owned exact-topic demand counts, wildcard exclusion, duplicate subscription accounting, zero/one transitions, disconnect release, entitled watcher replay and replacement/empty-prefix clear. New direct actor tests preserve the seven old demand assertions; shared bus corpus provides wire replay coverage.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
       "sha256": "4d74e1a0a3d4b8e4710db509de4920ba1a44740e72ef1900e99b4337b77f1ca3",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/compatibility.rs"
+      ]
     },
     "services/hub/internal/bus/desktop.go": {
       "replacement": [],
@@ -2891,10 +3225,17 @@
       "tests": []
     },
     "services/hub/internal/bus/headofline_test.go": {
-      "replacement": [],
+      "note": "Direct actor regressions prove40 forwarded calls preserve order/correlation, full reliable provider queues cannot block another caller control frame, pending calls fail after provider eviction, and saturated caller cannot stall sibling response/error delivery. Rust closes bounded reliable consumers on overflow rather than reproducing Go goroutine queue internals; no unbounded buffering or silent abandoned pending calls.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
       "sha256": "83dd87cae14fb71f8fd7104295700dfe2f53dfb4757125e4528ca7c070cf3bb9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/bus/hostauthority_test.go": {
       "replacement": [],
@@ -2903,10 +3244,19 @@
       "tests": []
     },
     "services/hub/internal/bus/hostgate_test.go": {
-      "replacement": [],
+      "note": "Architectural retirement of the synthetic anonymous conn{caps:...} filesystem-grant harness. The retained Go conn.authorize immediately bypasses that harness for EVERY real wire identity: trusted host/operator, non-nil scoped methods, or pluginID. Rust Identity::Kind exhaustively models those same Host/Scoped/Plugin identities; it cannot construct the obsolete anonymous filesystem-grant identity. authorize_edges tests paramString/canonRoots and resolver-denial wiring exclusively through that dead harness; hostgate_test is solely skip accounting for its two symlink tests. Active object/owner guards, selected-project confinement and component-wise symlink resolution remain in Rust paths and their separate tests, and are not retired by this record.",
+      "reason": "The anonymous per-capability filesystem-grant identity exists only in the legacy test harness; every real Go wire identity bypasses it, and Rust has no such identity. Active path confinement remains separately implemented and tested.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
       "sha256": "3a16fb52d8532ee1bd6f21b277b453b5f52439f1073280447d6e63489aa45840",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ]
     },
     "services/hub/internal/bus/hostpin_test.go": {
       "replacement": [],
@@ -3234,16 +3584,34 @@
       "tests": []
     },
     "services/hub/internal/capspec/eventtopics.go": {
-      "replacement": [],
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint.",
+      "replacement": [
+        "services/hub-rs/assets/hub-vocabulary.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
       "sha256": "d2dcf84c08328e78da26aa626fee0f17927d54d810d779f10fb2b6c7c5c79888",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/busPublicationSites.test.ts",
+        "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/capspec/eventtopics_test.go": {
-      "replacement": [],
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint.",
+      "replacement": [
+        "services/hub-rs/assets/hub-vocabulary.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
       "sha256": "137ca99a763d344f7eb0fda3a28479398f9c9b361119a82de538252800b7b9f2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/busPublicationSites.test.ts",
+        "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/capspec/httproutes.go": {
       "note": "70 current Rust hub/MCP/daemon route bindings are classified independently of runtime smoke. Actual method/handler registrations, bound guard call chains, stronger host gates, dynamic plugin operation arms/default refusal, cross-plane event/method twins and applied daemon Host/Origin layers are checked. Mutation battery rejects additions/deletions, duplicate paths or methods, unparsed router suffixes, weakened guards, stale twins, unreviewed operation arms, public side effects, and newly discovered production modules. Test-only exclusions must originate in actual cfg(test) module declarations and cannot hide a production import. Existing caller/served fixture guards remain linked. No Go runner is needed; Go package registry was otherwise consumed by reference snapshot generation only.",
@@ -3282,10 +3650,18 @@
       "tests": []
     },
     "services/hub/internal/capspec/publisher_test.go": {
-      "replacement": [],
+      "note": "Actual Rust provider-relay TOPICS plus demand-driven conversation family must name nonempty concrete publishing grants; all publisher methods must exist in authorization vocabulary. Literal/dynamic Rust and retained Electron publishers are independently discovered and classified by the publication guard. Negative forgery targets layout/plugin-settings/plugin-log/agent-state/node-state/plugin-install remain publisher-free, with mutation tests. This checks current authoritative relay declarations rather than continuing to scan deleted Go brain code.",
+      "replacement": [
+        "services/hub-rs/assets/hub-vocabulary.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/provider_relay/methods.rs"
+      ],
       "sha256": "3f8bbf89163d912bed926053cd603e3bbe91217bed502f24597bd329a4387253",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
+        "apps/desktop/src/main/services/busPublicationSites.test.ts"
+      ]
     },
     "services/hub/internal/capspec/repofile_test.go": {
       "replacement": [],
@@ -3334,16 +3710,46 @@
       "tests": []
     },
     "services/hub/internal/extinput/extinput.go": {
-      "replacement": [],
+      "reason": "Go test-result cache pinning is removed with the Go test runner. Cargo/Vitest execute the retained fixture and source guards; their readers need no lexical traversal trick into a Go module root.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "review": {
+        "behaviors": [
+          "Read Path/ReadFile/ReadDir/WalkDir/root capture/error identity branches. Retained Rust discovery reads actual files and directory listings on each execution, fails on unavailable roots, and excludes named build/runtime caches. Existing Cargo CI runs the ownership/vocabulary tests rather than reporting Go cached results."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      },
       "sha256": "910d23b67b5bd0690191c02a5f9e38bc3d89d93b0d99b60d596d41fb7b24b3ae",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ]
     },
     "services/hub/internal/extinput/extinput_test.go": {
-      "replacement": [],
+      "reason": "The scratch Go modules and cached-versus-uncached control experiment test only the retired cmd/go workaround.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "review": {
+        "behaviors": [
+          "Read lexical root/same-file, scratch three-package cache mutation, external file and directory readers, and recursive traversal/pruning/error tests. No production application behavior lives here. Runtime discovery/fixture guards remain in Rust and TypeScript with their own mutation tests; this does not retire corpus coverage floors."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      },
       "sha256": "76b55a0f3e87ae9b62d6a541cabb92bcee0a2eb923510c378770eef6d55eddef",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ]
     },
     "services/hub/internal/federation/controller.go": {
       "replacement": [],
@@ -3684,28 +4090,88 @@
       ]
     },
     "services/hub/internal/modelselection/manager.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      },
       "sha256": "8360b75c45346ca2e10d86de460c1a91e002446b3056553542495e9e772a7f11",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/internal/modelselection/manager_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      },
       "sha256": "b95c93e6e944eb58201d155a7c3a950e59d16ca6b609d705d6e83fd9a9417335",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/internal/modelselection/modelselection.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      },
       "sha256": "725c0f43e86ca8e3721b06f14d6160f90e1081c362c7167622fe6bb1ad946b94",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/internal/modelselection/modelselection_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      },
       "sha256": "da3a5b9063a7718bae6b4cbc94546b9b9c7be1e5336afb955f6154da7449e2e3",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/internal/nodes/deployid_test.go": {
       "replacement": [

@@ -1,0 +1,81 @@
+{
+  "records": {
+    "services/hub/cmd/brain/desktopnode_test.go": {
+      "sha256": "2eac92efc524d402c80fd3072173102e0b47fb8ad07d6ea04562c2ef0d82912c",
+      "status": "retired",
+      "reason": "Private Node runtime discovery (including sibling node.exe and PATH fallback) no longer exists: owned Rust Backend provides services in process, and Electron retains its public dispatcher in its existing main process. This does not retire external provider/plugin Node runtimes.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "apps/desktop/src/main/services/nativeDesktopServices.ts",
+        "apps/desktop/scripts/prepare-main-build.mjs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/legacy_preservation.rs",
+        "apps/desktop/src/main/shared/desktopServices.test.ts",
+        "apps/desktop/scripts/prepare-main-build.test.mjs",
+        "apps/native/scripts/windows-payload.test.mjs"
+      ],
+      "review": "Read all TestDesktopNodeExecutable cases: missing candidate, directory candidate, Windows regular sibling, other OS PATH fallback, missing executable. These only selected the deleted private runtime and deliberately have no replacement discovery routine. Rust real-backend preservation/account tests2 passed; retained Electron public manifest/source-retirement2 and stale-output1 passed; current full Electron production build emitted no private stdio/bridge/analytics/replacement JS. Windows payload negative fixture explicitly seeds old node/CJS/Go files and proves they are not packaged; its final-head platform rerun remains a separate cutover gate."
+    },
+    "services/hub/cmd/brain/desktophost.go": {
+      "sha256": "04911263f55278b347bef41e87bac6feefbfcc165af4540e56e83801f5622eef",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/host_status.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/manager_replacements.rs",
+        "services/hub-rs/tests/fleet_review.rs",
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/tests/workflow_artifacts.rs",
+        "services/hub-rs/tests/legacy_preservation.rs",
+        "services/hub-rs/src/services/host_status.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs"
+      ],
+      "review": "Mixed file ported, not blanket retired: private Node discovery/stdio/correlation/child-generation lifecycle disappears with owned Backend; desktop owner services, host-observed context, result capture, workflow observations and spawn admission remain in the listed Rust owners. New agent_spawn14 PASS pins Unicode scalar16000 echo without shortening engine prompt, once-only fallback after acknowledged unqueued launch, accepted receipt on message uncertainty, no fallback after unknown spawn, and forged owner refused before engine/worktree effects. Existing concrete tests cover real Git/template execution cwd and schema, failed post-acceptance tracking, result validation/review persistence, workflow events, heartbeat bounds and typed launch callback context/revocation. There is no replacement private subprocess."
+    },
+    "services/hub/cmd/brain/desktophost_integration_test.go": {
+      "sha256": "cdd378f6fb478f414c7cf27980b8591cbe2720276ea3e81b2f841eb074c84c48",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/fleet_review.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/fleet_review.rs",
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs"
+      ],
+      "review": "Reviewed original template/execution-cwd/schema, result/evidence/history, forged-owner-before-daemon, and private integration callback assertions. Real Git coordinator fixture checks rendered execution cwd, schema instructions and task reservation; fleet_review/worker_results check captured committed evidence, validation and cleanup survival. New forged_task_owner_is_rejected_before_any_engine_or_worktree_admission asserts zero engine plans/messages/launch records/worktree and unchanged existing task. Plugin launch tests check typed owner permit/context-only callback, final args/env patch, revoked reply and delayed cancellation. Agent_spawn14 PASS; tests compose actual Rust owners with a fake external engine, replacing rather than reproducing Go/Node transport."
+    },
+    "services/hub/cmd/brain/replacement_integration_test.go": {
+      "sha256": "a4727fa2bb51527d4437c028643463d45d4142d8eb8b19734c98845149196f6e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/manager_replacements.rs",
+        "services/hub-rs/src/services/manager_replacements/service.rs",
+        "services/hub-rs/src/services/manager_replacements/messages.rs",
+        "services/hub-rs/src/services/manager_replacements/native.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/manager_replacements.rs"
+      ],
+      "review": "Reviewed task AND worker ownership transfer, binding wait, held message, predecessor retirement and kickoff assertions. binding_delivers_real_kickoff_then_exact_held_message_once_and_retires_predecessor uses real ReplacementService/MessageTracker and production kickoff formatter; external host only is fake. Checks ownership transfers before binding, no early held send, exact kickoff and original held bytes plus authoritative new-parent annotation, accepted journal, exactly-one original-text occurrence and no repeat on duplicate viewer bind. Existing actual-view-ACK, uncertain-delivery, late-spawn and restart cases retained. Corrected manager_replacements16 PASS. Initial fixture incorrectly expected raw-only text; corrected expectation preserves source-compatible transfer annotation rather than changing production behavior."
+    }
+  },
+  "validation": {
+    "agent_spawn": "14 passed /tmp/workspacer-direct-agent_spawn-*.log",
+    "manager_replacements": "16 passed /tmp/workspacer-review-manager_replacements-ba5e87eaf29b70f3.log",
+    "scope": "Focused retirement regressions green. Broader broker/config checkpoint failures are separate root-owned work; no final cutover claim."
+  }
+}

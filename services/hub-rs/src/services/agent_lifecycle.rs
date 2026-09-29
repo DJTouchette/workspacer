@@ -36,6 +36,9 @@ pub trait LaunchEngine: Send + Sync + 'static {
     }
     fn spawn<'a>(&'a self, plan: &'a Plan) -> Operation<'a, Value>;
     fn stop<'a>(&'a self, session: &'a str) -> Operation<'a, ()>;
+    fn message<'a>(&'a self, _session: &'a str, _content: &'a str) -> Operation<'a, ()> {
+        Box::pin(async { bail!("initial message delivery is unavailable") })
+    }
 }
 impl LaunchEngine for EmbeddedClient {
     fn sessions(&self) -> Operation<'_, Value> {
@@ -49,6 +52,16 @@ impl LaunchEngine for EmbeddedClient {
                 payload: Some(plan.request.clone()),
             })
             .await
+        })
+    }
+    fn message<'a>(&'a self, session: &'a str, content: &'a str) -> Operation<'a, ()> {
+        Box::pin(async move {
+            self.request(Command::Message {
+                id: session.into(),
+                text: content.into(),
+            })
+            .await?;
+            Ok(())
         })
     }
     fn stop<'a>(&'a self, session: &'a str) -> Operation<'a, ()> {
@@ -460,7 +473,43 @@ impl Lifecycle {
         }
         .await;
         match result {
-            Ok(receipt) => Ok(receipt),
+            Ok(mut receipt) => {
+                // A definitive spawn acknowledgement may say the engine did not
+                // queue its initial prompt (including older response shapes).
+                // Deliver once inside this owned launch task. Never enter this
+                // branch after a lost spawn acknowledgement, and never turn a
+                // message failure into a failed spawn inviting another process.
+                if let Some(message) = plan.request["first_message"]
+                    .as_str()
+                    .filter(|m| !m.is_empty())
+                {
+                    if receipt["messageQueued"] != true {
+                        match self
+                            .phase("initial message", self.engine.message(&session, message))
+                            .await
+                        {
+                            Ok(()) => {
+                                receipt["messageQueued"] = json!(true);
+                            }
+                            Err(error) => {
+                                receipt["messageQueued"] = json!(false);
+                                receipt["messageError"] = json!(format!(
+                                    "Initial message acknowledgement unavailable; do not retry automatically: {error}"
+                                ));
+                            }
+                        }
+                        if let Err(error) = self.update(|rows| {
+                            rows.get_mut(&session).unwrap().receipt = Some(receipt.clone());
+                            Ok(())
+                        }) {
+                            receipt["messageError"] = json!(format!(
+                                "Initial message receipt could not be retained; do not retry automatically: {error}"
+                            ));
+                        }
+                    }
+                }
+                Ok(receipt)
+            }
             Err(error) => {
                 let definitive_rejection = error
                     .downcast_ref::<claudemon::daemon::embedded::CommandRejected>()

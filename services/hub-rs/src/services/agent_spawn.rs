@@ -856,15 +856,9 @@ fn effective(params: &Value, plan: &Plan, project: &str) -> Value {
     output
 }
 fn truncate(value: &str, max: usize) -> (String, bool) {
-    let mut units = 0;
-    let mut out = String::new();
-    for c in value.chars() {
-        let len = c.len_utf16();
-        if units + len > max {
-            return (out, true);
-        }
-        out.push(c);
-        units += len;
-    }
-    (out, false)
+    // The retiring Go receipt limits []rune (Unicode scalar values), not UTF-16
+    // units or UTF-8 bytes. The engine always receives the full rendered prompt.
+    let mut chars = value.chars();
+    let out = chars.by_ref().take(max).collect();
+    (out, chars.next().is_some())
 }

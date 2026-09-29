@@ -1,0 +1,47 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "Fresh full lib snapshot:237 passed,1 new closed-peer regression failed separately. The named demand replay/entitlement/clear,40-call ordering/bounded provider and slow caller sibling tests in these3 records all passed. Closed-peer production filter has since been corrected and awaits rerun; it does not certify extra legacy files here. Log /tmp/workspacer-wake-controls-lib-retry.log.",
+  "records": {
+    "services/hub/internal/bus/demand.go": {
+      "status": "ported",
+      "sha256": "ebcb086565dceefa42f77da310babaa53c62f8a87fcc0e3c7eb0947e2421761a",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/compatibility.rs"
+      ],
+      "note": "Actor-owned exact-topic demand counts, wildcard exclusion, duplicate subscription accounting, zero/one transitions, disconnect release, entitled watcher replay and replacement/empty-prefix clear. New direct actor tests preserve the seven old demand assertions; shared bus corpus provides wire replay coverage."
+    },
+    "services/hub/internal/bus/demand_test.go": {
+      "status": "ported",
+      "sha256": "4d74e1a0a3d4b8e4710db509de4920ba1a44740e72ef1900e99b4337b77f1ca3",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/compatibility.rs"
+      ],
+      "note": "Actor-owned exact-topic demand counts, wildcard exclusion, duplicate subscription accounting, zero/one transitions, disconnect release, entitled watcher replay and replacement/empty-prefix clear. New direct actor tests preserve the seven old demand assertions; shared bus corpus provides wire replay coverage."
+    },
+    "services/hub/internal/bus/headofline_test.go": {
+      "status": "ported",
+      "sha256": "83dd87cae14fb71f8fd7104295700dfe2f53dfb4757125e4528ca7c070cf3bb9",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "note": "Direct actor regressions prove40 forwarded calls preserve order/correlation, full reliable provider queues cannot block another caller control frame, pending calls fail after provider eviction, and saturated caller cannot stall sibling response/error delivery. Rust closes bounded reliable consumers on overflow rather than reproducing Go goroutine queue internals; no unbounded buffering or silent abandoned pending calls."
+    }
+  }
+}

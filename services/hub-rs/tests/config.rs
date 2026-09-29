@@ -260,13 +260,63 @@ fn invalid_document_shapes_keep_original_bytes_and_quarantine_only_recoverable_d
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn unreadable_existing_file_is_preserved_even_when_its_directory_is_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "WORKSPACER_UNREADABLE_CONFIG_TEST";
+    if let Some(path) = std::env::var_os(CHILD) {
+        // Drop privileges after loading the executable: Cargo targets can be
+        // private directories that an unprivileged child cannot exec through.
+        if unsafe { libc::geteuid() } == 0 {
+            assert_eq!(unsafe { libc::setgid(65534) }, 0);
+            assert_eq!(unsafe { libc::setuid(65534) }, 0);
+        }
+        let path = std::path::PathBuf::from(path);
+        assert_eq!(
+            std::fs::read(&path).unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+        let config = Config::open(path);
+        let saved = config
+            .save(json!({"ui":{"theme":"memory-only"}}), false)
+            .unwrap();
+        assert_eq!(saved["ui"]["theme"], "memory-only");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    let original = "ui:\n  theme: recoverable\ncustom: keep\n";
+    std::fs::write(&path, original).unwrap();
+    // Directory replacement is possible, so a false successful read would
+    // really overwrite recoverable data. Restrict only the original file.
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args([
+            "--exact",
+            "unreadable_existing_file_is_preserved_even_when_its_directory_is_writable",
+            "--nocapture",
+        ])
+        .env(CHILD, &path);
+    let output = child.output().unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+}
+
 #[test]
 fn two_writers_refresh_before_merge_and_explicit_context_null_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.yaml");
     let first = Config::open(path.clone());
     let second = Config::open(path.clone());
-    first.save(json!({"ui":{"theme":"my-theme"},"agents":{"managerContextWindows":{"claude":1000000,"codex":272000}}}),false).unwrap();
+    first.save(json!({"ui":{"theme":"my-theme"},"agents":{"managerModels":{"claude":"opus"},"managerContextWindows":{"claude":1000000,"codex":272000}}}),false).unwrap();
     second
         .save(
             json!({"ui":{"fontSize":19},"agents":{"managerContextWindows":{"codex":null}}}),
@@ -431,6 +481,17 @@ async fn config_bus_reports_refused_maps_and_roundtrips_unknown_object_settings(
     let restored = Config::open(path).get();
     assert_eq!(restored["projects"], json!({"a":{"label":"A","yolo":true}}));
     assert_eq!(restored["pluginSettings"], saved["pluginSettings"]);
+    client
+        .call(
+            "config.save",
+            json!({"claude":{"defaultModel":"opus","seenModels":["sonnet"]}}),
+        )
+        .await
+        .unwrap();
+    let models = client.call("claude.listModels", json!({})).await.unwrap();
+    assert_eq!(models["defaultModel"], "opus");
+    assert_eq!(models["seen"], json!(["sonnet"]));
+    assert_eq!(models["aliases"].as_array().unwrap().len(), 6);
     client.close();
     hub.shutdown().unwrap();
 }
@@ -496,6 +557,163 @@ fn integral_config_numbers_are_compatible_with_json_and_yaml_writers() {
     assert_eq!(saved["claude"]["contextWindow"], 1000000);
     assert_eq!(saved["agents"]["managerContextWindows"]["codex"], 272000);
     assert!(merge_patch(&defaults(), json!({"claude":{"contextWindow":1.5}}), false).is_err());
+}
+
+#[test]
+fn read_migrations_preserve_custom_settings_and_persist_only_retired_bindings() {
+    for raw in [
+        "customTop: keep\nkeybindings:\n  mode: vim\n  leader: space\n",
+        "customTop: keep\nkeybindings:\n  prefix: ctrl+a\n  shortcuts:\n    close-pane: prefix t w\n    new-terminal: custom-command\n    cycle-view: prefix x\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, raw).unwrap();
+        let config = Config::open(path.clone());
+        let value = config.get();
+        assert_eq!(value["customTop"], "keep");
+        assert!(value["editor"].get("vim").is_none());
+        assert!(value["keybindings"].get("mode").is_none());
+        assert!(
+            value["keybindings"]["shortcuts"]
+                .get("cycle-view")
+                .is_none()
+        );
+        if raw.contains("mode: vim") {
+            assert_eq!(value["keybindings"], defaults()["keybindings"]);
+        } else {
+            assert_eq!(value["keybindings"]["prefix"], "ctrl+a");
+            assert_eq!(value["keybindings"]["shortcuts"]["close-pane"], "prefix w");
+            assert_eq!(
+                value["keybindings"]["shortcuts"]["new-terminal"],
+                "custom-command"
+            );
+        }
+        assert_eq!(Config::open(path.clone()).get(), value);
+        let bytes = std::fs::read(path).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("cycle-view"));
+    }
+}
+
+#[test]
+fn defaults_and_nullable_agent_preferences_survive_unrelated_saves() {
+    let initial = defaults();
+    for section in [
+        "ui",
+        "terminal",
+        "browser",
+        "panes",
+        "keybindings",
+        "notifications",
+        "editor",
+        "claude",
+        "agents",
+        "directories",
+        "scripts",
+        "updates",
+        "apps",
+        "usage",
+    ] {
+        assert!(initial.get(section).is_some(), "{section}");
+    }
+    assert_eq!(initial["claude"]["transport"], "stream");
+    assert_eq!(initial["ui"]["theme"], "everforest");
+    assert_eq!(
+        initial["keybindings"]["shortcuts"]["toggle-terminal"],
+        "mod+`"
+    );
+    assert_eq!(initial["usage"]["pollOnBoot"], true);
+    assert!(initial["agents"].get("binaries").is_some());
+    assert_eq!(
+        initial["agents"]["artifactCleanup"],
+        json!({"enabled":true,"minAgeHours":1})
+    );
+    assert_eq!(initial["agents"]["worktreeRoot"], "");
+    assert_eq!(initial["agents"]["checkProviderOnStartup"], true);
+    assert_eq!(
+        initial["agents"]["statusSummary"],
+        json!({"enabled":true,"provider":"claude","model":"haiku"})
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    std::fs::write(&path, "customTop: keep\nagents:\n  managerModels:\n    claude: opus[1m]\n    codex: gpt-5-codex\n  managerContextWindows:\n    codex: 400000\n").unwrap();
+    let config = Config::open(path.clone());
+    assert_eq!(config.get()["agents"]["managerModels"]["claude"], "opus");
+    assert_eq!(
+        config.get()["agents"]["managerContextWindows"]["claude"],
+        1000000
+    );
+    let desired = json!({"worktreeRoot":"/custom/worktrees","artifactCleanup":{"enabled":false,"minAgeHours":24},"checkProviderOnStartup":false,"statusSummary":{"enabled":false,"provider":"codex","model":null},"managerContextWindows":{"codex":null}});
+    config.save(json!({"agents":desired}), false).unwrap();
+    config
+        .save(
+            json!({"ui":{"fontSize":16},"agents":{"managerProvider":"codex"}}),
+            false,
+        )
+        .unwrap();
+    let restored = Config::open(path).get();
+    for (key, value) in desired.as_object().unwrap() {
+        if key == "managerContextWindows" {
+            continue;
+        }
+        assert_eq!(&restored["agents"][key], value, "{key}");
+    }
+    assert_eq!(
+        restored["agents"]["managerContextWindows"]["claude"],
+        1000000
+    );
+    assert_eq!(
+        restored["agents"]["managerContextWindows"].get("codex"),
+        Some(&Value::Null)
+    );
+    assert_eq!(restored["customTop"], "keep");
+    assert!(
+        config
+            .save(
+                json!({"agents":{"managerContextWindows":{"copilot":1000000}}}),
+                false
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported-context-window")
+    );
+}
+
+#[test]
+fn invalid_selection_resets_only_its_pair_and_read_cache_tracks_external_lengths() {
+    for invalid in ["null", "42"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            format!("customTop: keep\nui:\n  theme: light\nclaude:\n  defaultModel: {invalid}\n"),
+        )
+        .unwrap();
+        let config = Config::open(path.clone());
+        let value = config.get();
+        assert_eq!(
+            value["claude"]["defaultModel"],
+            defaults()["claude"]["defaultModel"]
+        );
+        assert_eq!(
+            value["claude"]["contextWindow"],
+            defaults()["claude"]["contextWindow"]
+        );
+        assert_eq!(value["customTop"], "keep");
+        assert_eq!(value["ui"]["theme"], "light");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        config.save(json!({"ui":{"fontSize":16}}), false).unwrap();
+        assert_eq!(Config::open(path.clone()).get()["ui"]["fontSize"], 16);
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::write(&path, "ui:\n  theme: external\n").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(stamp))
+            .unwrap();
+        assert_eq!(config.get()["ui"]["theme"], "external");
+        assert!(config.get()["terminal"].is_object());
+    }
 }
 
 #[test]

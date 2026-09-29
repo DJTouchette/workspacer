@@ -1,5 +1,6 @@
 //! Live switches and handoff/history adapters over the owned daemon.
 mod confirmation;
+mod handoff;
 use super::agent_lifecycle::Lifecycle;
 use crate::{Handle, Options, protocol::Event};
 use anyhow::{Result, bail};
@@ -193,21 +194,10 @@ impl Controls {
                 if effort.is_empty() {
                     return Ok(failed("requires a session and an effort level"));
                 }
-                let response = if self.provider(id).await == "claude" {
-                    self.engine
-                        .request(Command::Message {
-                            id: id.into(),
-                            text: format!("/effort {effort}"),
-                        })
-                        .await
-                } else {
-                    self.request(
-                        "POST",
-                        format!("/sessions/{id}/model"),
-                        Some(json!({"effort":effort})),
-                    )
-                    .await
-                };
+                let response = self
+                    .engine
+                    .request(effort_command(&self.provider(id).await, id, effort))
+                    .await;
                 match response {
                     Err(error) => Ok(failed(error)),
                     Ok(value) if value["ok"] == false => {
@@ -245,40 +235,14 @@ impl Controls {
                 {
                     Err(error) => Ok(failed(error)),
                     Ok(reply) => {
-                        let model = reply["model"]
-                            .as_str()
-                            .filter(|s| !s.is_empty())
-                            .unwrap_or_else(|| text(&payload, "model"));
-                        let selection = owner_selection(&reply, &payload);
-                        let mut result = json!({"ok":true});
-                        if !model.is_empty() {
-                            result["model"] = model.into();
-                        }
-                        if let Some(selection) = selection.clone() {
-                            result["requestedSelection"] = selection;
-                        }
-                        if reply["queued"] == true {
-                            result["queued"] = true.into();
-                        } else {
-                            let mut patch = json!({"settings":{}});
-                            if !model.is_empty() {
-                                patch["settings"]["model"] = model.into();
+                        let (result, patch) =
+                            model_receipt(&reply, &payload, text(&p, "effort").trim());
+                        Ok(match patch {
+                            Some(patch) => {
+                                acknowledged(result, self.note(id, &generation, stamp, patch).await)
                             }
-                            if !text(&p, "effort").trim().is_empty() {
-                                patch["settings"]["effort"] = text(&p, "effort").trim().into();
-                            }
-                            if let Some(selection) = selection {
-                                patch["requestedSelection"] = selection;
-                            }
-                            result = acknowledged(
-                                result,
-                                self.note(id, &generation, stamp, patch).await,
-                            );
-                        }
-                        if !text(&reply, "disposition").is_empty() {
-                            result["disposition"] = reply["disposition"].clone();
-                        }
-                        Ok(result)
+                            None => result,
+                        })
                     }
                 }
             }
@@ -298,58 +262,74 @@ impl Controls {
         }
     }
     async fn agent_brief(&self, id: &str) -> Result<Value> {
-        anyhow::ensure!(self.home.is_absolute(), "home directory unavailable");
-        let directory = self.home.join(".workspacer/handoffs");
-        tokio::fs::create_dir_all(&directory).await?;
-        let target = directory.join(format!(
-            "{}-{}-agent.md",
-            chrono::Utc::now().format("%Y%m%d-%H%M%S"),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        ));
-        let instruction = format!(
-            "Stop what you're doing and write a handoff brief to {} — another AI coding agent is about to take over this session and will read that file first. Create the file (markdown) with:\n1. The goal of this session, in one paragraph.\n2. State of the work: what's done and verified, what's in progress, what hasn't been started.\n3. Key files touched and why.\n4. Decisions and constraints your successor must respect (including approaches tried and rejected, and why).\n5. Gotchas or surprises you hit.\n6. The exact next step you would take.\nWrite only that file, then reply \"Handoff brief written.\" — do not continue any other work.",
-            target.display()
-        );
-        let accepted = self
-            .engine
-            .request(Command::Message {
-                id: id.into(),
-                text: instruction,
-            })
-            .await
-            .is_ok_and(|v| v["ok"] != false);
-        let reason = if accepted {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(150);
-            loop {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                if tokio::fs::symlink_metadata(&target)
+        handoff::authored(
+            &self.home,
+            Duration::from_secs(150),
+            Duration::from_secs(1),
+            |instruction| async move {
+                self.engine
+                    .request(Command::Message {
+                        id: id.into(),
+                        text: instruction,
+                    })
                     .await
-                    .is_ok_and(|m| m.is_file() && m.len() > 0)
-                {
-                    return Ok(json!({"ok":true,"path":target}));
-                }
-                if tokio::time::Instant::now() >= deadline {
-                    break;
-                }
-            }
-            "Source agent did not write the brief before the deadline"
-        } else {
-            "Source agent could not accept the brief request"
-        };
-        Ok(
-            match self
-                .request("POST", format!("/sessions/{id}/handoff"), Some(json!({})))
-                .await
-            {
-                Ok(reply) => {
-                    json!({"ok":!text(&reply,"path").is_empty(),"path":reply["path"],"fallback":true,"error":reason})
-                }
-                Err(error) => failed(format!(
-                    "{reason}; mechanical fallback also failed: {error}"
-                )),
+                    .map(|value| value["ok"] != false)
+            },
+            || async move {
+                self.request("POST", format!("/sessions/{id}/handoff"), Some(json!({})))
+                    .await
             },
         )
+        .await
     }
+}
+fn effort_command(provider: &str, id: &str, effort: &str) -> Command {
+    if provider == "claude" {
+        Command::Message {
+            id: id.into(),
+            text: format!("/effort {effort}"),
+        }
+    } else {
+        Command::Request {
+            method: "POST".into(),
+            path: format!("/sessions/{id}/model"),
+            payload: Some(json!({"effort":effort})),
+        }
+    }
+}
+fn model_receipt(reply: &Value, payload: &Value, effort: &str) -> (Value, Option<Value>) {
+    let model = reply["model"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| text(payload, "model"));
+    let selection = owner_selection(reply, payload);
+    let mut result = json!({"ok":true});
+    if !model.is_empty() {
+        result["model"] = model.into();
+    }
+    if let Some(selection) = &selection {
+        result["requestedSelection"] = selection.clone();
+    }
+    let patch = if reply["queued"] == true {
+        result["queued"] = true.into();
+        None
+    } else {
+        let mut patch = json!({"settings":{}});
+        if !model.is_empty() {
+            patch["settings"]["model"] = model.into();
+        }
+        if !effort.is_empty() {
+            patch["settings"]["effort"] = effort.into();
+        }
+        if let Some(selection) = selection {
+            patch["requestedSelection"] = selection;
+        }
+        Some(patch)
+    };
+    if !text(reply, "disposition").is_empty() {
+        result["disposition"] = reply["disposition"].clone();
+    }
+    (result, patch)
 }
 fn owner_selection(reply: &Value, payload: &Value) -> Option<Value> {
     let (source, model_key) = match reply.get("requested_selection").filter(|v| v.is_object()) {
@@ -497,6 +477,46 @@ mod tests {
         assert_eq!(
             model_payload("claude", &json!({"model":"opus","effort":"  \t "})).unwrap(),
             json!({"model":"opus","model_identity":"opus"})
+        );
+    }
+    #[test]
+    fn effort_uses_provider_route_and_queued_model_ack_cannot_become_live_metadata() {
+        match effort_command("claude", "s1", "high") {
+            Command::Message { id, text } => {
+                assert_eq!(id, "s1");
+                assert_eq!(text, "/effort high");
+            }
+            _ => panic!("Claude effort must be a normal queued slash message"),
+        }
+        match effort_command("codex", "s2", "xhigh") {
+            Command::Request {
+                method,
+                path,
+                payload,
+            } => {
+                assert_eq!(method, "POST");
+                assert_eq!(path, "/sessions/s2/model");
+                assert_eq!(payload, Some(json!({"effort":"xhigh"})));
+            }
+            _ => panic!("managed effort must use the settings endpoint"),
+        }
+        let payload = json!({"model":"opus","model_identity":"opus","effort":"high"});
+        let owner = json!({"model":"accepted","requested_selection":{"model":"accepted","context_window":1000000},"queued":true,"disposition":"queued"});
+        let (result, patch) = model_receipt(&owner, &payload, "high");
+        assert_eq!(
+            result,
+            json!({"ok":true,"model":"accepted","requestedSelection":{"model":"accepted","contextWindow":1000000},"queued":true,"disposition":"queued"})
+        );
+        assert!(
+            patch.is_none(),
+            "queued acknowledgment must never note a live switch"
+        );
+        let mut owner = owner;
+        owner["queued"] = false.into();
+        let (_, patch) = model_receipt(&owner, &payload, "high");
+        assert_eq!(
+            patch.unwrap(),
+            json!({"settings":{"model":"accepted","effort":"high"},"requestedSelection":{"model":"accepted","contextWindow":1000000}})
         );
     }
     #[test]

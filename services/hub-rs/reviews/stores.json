@@ -1,0 +1,74 @@
+{
+  "records": {
+    "services/hub/cmd/brain/stores.go": {
+      "sha256": "1d8f639241c09033664975e831acdc208338a6bf64b216a169ac6401595de73e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/config.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed complete saved-layout/session stores and old regression file: native slug identities/collisions, repeated save stability, unreadable YAML preservation and once-only literal-prefix quarantine, global-agent/pane counts, legacy tabs/flat panes, sorting, version stamp, missing load null and delete behavior.",
+          "Actual eight-test Rust stores target passed: original17-case three-variant slug corpus, actual saved-state CRUD/metadata/legacy counts, skipped unidentified corrupt file, quarantine both stores with hostile glob names and time-separated polls, atomic replacement with no temporary leftovers, and collision-at-refused-slot preservation.",
+          "Selected-filename corpus uses actual native filesystem trees on Windows/Unix, exact refusal reasons and inert public load/delete checks; empty public filename correctly returns the required-envelope error while nonempty refused paths return null. Actual symlink tests cover out-of-store prefix collision, unresolvable cycles, unchanged victim and link after save/delete, no quarantine copies of escaped bytes, and successful in-store alias listing."
+        ],
+        "intentionalChanges": [
+          "Rust errors are Result values; direct helper null/no-op responses are checked through the public method envelope with its required-parameter validation. Malformed records without a string name remain unidentified instead of being coerced into an empty-name identity."
+        ],
+        "verifiedCheckpoint": "Recovered current compiled integrations: stores8 and config20 passed on Linux. Actual Windows/Mac latest-head rerun remains a cutover gate; no claim that Linux executes Windows branches."
+      }
+    },
+    "services/hub/cmd/brain/stores_test.go": {
+      "sha256": "4d4053e2b7c0d45209271de194a86f7bfb9b245d628406e1ecaa1d193401e88e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/config.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed complete saved-layout/session stores and old regression file: native slug identities/collisions, repeated save stability, unreadable YAML preservation and once-only literal-prefix quarantine, global-agent/pane counts, legacy tabs/flat panes, sorting, version stamp, missing load null and delete behavior.",
+          "Actual eight-test Rust stores target passed: original17-case three-variant slug corpus, actual saved-state CRUD/metadata/legacy counts, skipped unidentified corrupt file, quarantine both stores with hostile glob names and time-separated polls, atomic replacement with no temporary leftovers, and collision-at-refused-slot preservation.",
+          "Selected-filename corpus uses actual native filesystem trees on Windows/Unix, exact refusal reasons and inert public load/delete checks; empty public filename correctly returns the required-envelope error while nonempty refused paths return null. Actual symlink tests cover out-of-store prefix collision, unresolvable cycles, unchanged victim and link after save/delete, no quarantine copies of escaped bytes, and successful in-store alias listing."
+        ],
+        "intentionalChanges": [
+          "Rust errors are Result values; direct helper null/no-op responses are checked through the public method envelope with its required-parameter validation. Malformed records without a string name remain unidentified instead of being coerced into an empty-name identity."
+        ],
+        "verifiedCheckpoint": "Recovered current compiled integrations: stores8 and config20 passed on Linux. Actual Windows/Mac latest-head rerun remains a cutover gate; no claim that Linux executes Windows branches."
+      }
+    },
+    "services/hub/cmd/brain/config_atomic_test.go": {
+      "sha256": "dd617c4481060cb89e93a833eca878fc7b319720cfcb5077b2c788383cc72fd1",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/config.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original inode/temporary-file assertions. Actual config integration checks inode replacement plus a still-open reader retaining all old bytes; actual stores integration repeats session and layout saves and asserts changed inodes plus exactly one final entry per store. Shared atomic_bytes flushes and persists a same-directory temporary file. Unix-specific inode assertions remain Unix-only; ordinary config/store behavior runs on all platforms."
+        ],
+        "intentionalChanges": [
+          "Rust errors are Result values; direct helper null/no-op responses are checked through the public method envelope with its required-parameter validation. Malformed records without a string name remain unidentified instead of being coerced into an empty-name identity."
+        ],
+        "verifiedCheckpoint": "Recovered current compiled integrations: stores8 and config20 passed on Linux. Actual Windows/Mac latest-head rerun remains a cutover gate; no claim that Linux executes Windows branches."
+      }
+    }
+  }
+}

@@ -24,6 +24,9 @@ struct Fake {
     plans: Mutex<Vec<Plan>>,
     fail_prepare: AtomicBool,
     fail_spawn: AtomicBool,
+    leave_message_unqueued: AtomicBool,
+    fail_message: AtomicBool,
+    messages: Mutex<Vec<(String, String)>>,
     definitive_rejection: AtomicBool,
     end_owner: Mutex<Option<Arc<RwLock<Value>>>>,
 }
@@ -69,7 +72,21 @@ impl LaunchEngine for Fake {
             if let Some(owner) = self.end_owner.lock().unwrap().as_ref() {
                 owner.write().unwrap()["status"] = json!("ended");
             }
-            Ok(json!({"session_id":plan.session_id,"first_message_queued":true}))
+            Ok(
+                json!({"session_id":plan.session_id,"first_message_queued":!self.leave_message_unqueued.load(Ordering::SeqCst)}),
+            )
+        })
+    }
+    fn message<'a>(&'a self, session: &'a str, content: &'a str) -> Operation<'a, ()> {
+        Box::pin(async move {
+            self.messages
+                .lock()
+                .unwrap()
+                .push((session.into(), content.into()));
+            if self.fail_message.load(Ordering::SeqCst) {
+                bail!("message acknowledgement lost");
+            }
+            Ok(())
         })
     }
     fn stop<'a>(&'a self, _: &'a str) -> Operation<'a, ()> {
@@ -794,4 +811,135 @@ async fn symlink_project_workflow_spawns_with_canonical_or_legacy_manager_and_ta
             fixture.coordinator.close().await;
         }
     }
+}
+
+#[tokio::test]
+async fn rendered_receipt_truncates_unicode_codepoints_without_truncating_the_launch_prompt() {
+    let fixture = Fixture::new(None);
+    let directory = fixture.dir.path().join("config");
+    let library = directory.join("library");
+    std::fs::create_dir_all(&library).unwrap();
+    for repeats in [4000, 4001] {
+        let body = "界🦀e\u{301}".repeat(repeats);
+        std::fs::write(
+            library.join("unicode.md"),
+            format!("---\ntitle: Unicode\nkind: dispatch\n---\n{body}"),
+        )
+        .unwrap();
+        let items = workspacer_hub::services::library::Library::new(directory.clone())
+            .list(&json!({"cwd":fixture.project,"kind":"dispatch"}))
+            .unwrap();
+        let template = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["title"] == "Unicode")
+            .unwrap()["id"]
+            .clone();
+        let receipt = fixture.coordinator.spawn_sanitized(json!({"cwd":fixture.project,"provider":"codex","model":"gpt-5.4","template":template,"trackTask":false})).await.unwrap();
+        let expected: String = body.chars().take(16_000).collect();
+        assert_eq!(receipt["renderedMessage"], expected);
+        assert_eq!(
+            receipt["renderedMessage"].as_str().unwrap().chars().count(),
+            16_000
+        );
+        if repeats == 4001 {
+            assert_eq!(receipt["renderedMessageTruncated"], true);
+        } else {
+            assert!(receipt.get("renderedMessageTruncated").is_none());
+        }
+        assert_eq!(
+            fixture.fake.plans.lock().unwrap().last().unwrap().request["first_message"],
+            body
+        );
+        assert!(
+            fixture.fake.messages.lock().unwrap().is_empty(),
+            "engine-queued prompt must not be sent twice"
+        );
+    }
+    fixture.coordinator.close().await;
+}
+
+#[tokio::test]
+async fn forged_task_owner_is_rejected_before_any_engine_or_worktree_admission() {
+    let fixture = Fixture::new(None);
+    let mut params = fixture.workflow_params();
+    fixture.parents.write().unwrap().insert(
+        "forged".into(),
+        json!({"sessionId":"forged","cwd":fixture.project,"isWakeTarget":true,"status":"active"}),
+    );
+    params["dispatchOwnerSessionId"] = json!("forged");
+    let task_id = params["taskId"].as_str().unwrap();
+    let before = fixture
+        .coordinator
+        .workflow
+        .tasks
+        .task(task_id)
+        .unwrap()
+        .unwrap();
+    assert!(
+        fixture
+            .coordinator
+            .spawn_sanitized(params.clone())
+            .await
+            .is_err()
+    );
+    assert!(fixture.fake.plans.lock().unwrap().is_empty());
+    assert!(fixture.fake.messages.lock().unwrap().is_empty());
+    assert!(fixture.coordinator.lifecycle.records().is_empty());
+    assert_eq!(
+        fixture
+            .coordinator
+            .workflow
+            .tasks
+            .task(task_id)
+            .unwrap()
+            .unwrap(),
+        before
+    );
+    assert!(!fixture.dir.path().join("trees").exists());
+    fixture.coordinator.close().await;
+}
+
+#[tokio::test]
+async fn acknowledged_launch_falls_back_once_and_preserves_receipt_on_message_uncertainty() {
+    for failed_message in [false, true] {
+        let fixture = Fixture::new(None);
+        fixture
+            .fake
+            .leave_message_unqueued
+            .store(true, Ordering::SeqCst);
+        fixture
+            .fake
+            .fail_message
+            .store(failed_message, Ordering::SeqCst);
+        let receipt = fixture.coordinator.spawn_sanitized(json!({"cwd":fixture.project,"provider":"codex","model":"gpt-5.4","message":"Exact initial prompt 🦀","trackTask":false})).await.unwrap();
+        let id = receipt["sessionId"].as_str().unwrap();
+        assert_eq!(fixture.fake.plans.lock().unwrap().len(), 1);
+        assert_eq!(
+            *fixture.fake.messages.lock().unwrap(),
+            vec![(id.into(), "Exact initial prompt 🦀".into())]
+        );
+        assert_eq!(receipt["messageQueued"], !failed_message);
+        if failed_message {
+            assert!(
+                receipt["messageError"]
+                    .as_str()
+                    .unwrap()
+                    .contains("do not retry automatically")
+            );
+        }
+        let records = fixture.coordinator.lifecycle.records();
+        assert_eq!(
+            records[id].receipt.as_ref().unwrap()["messageQueued"],
+            !failed_message
+        );
+        fixture.coordinator.close().await;
+        assert_eq!(fixture.fake.messages.lock().unwrap().len(), 1);
+    }
+    let fixture = Fixture::new(None);
+    fixture.fake.fail_spawn.store(true, Ordering::SeqCst);
+    assert!(fixture.coordinator.spawn_sanitized(json!({"cwd":fixture.project,"provider":"codex","model":"gpt-5.4","message":"Never replay after unknown spawn","trackTask":false})).await.is_err());
+    assert!(fixture.fake.messages.lock().unwrap().is_empty());
+    fixture.coordinator.close().await;
 }

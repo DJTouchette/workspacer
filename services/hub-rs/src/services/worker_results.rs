@@ -251,7 +251,7 @@ pub fn read_escalation(message: &str) -> Option<Escalation> {
             let value = map
                 .get(key)
                 .and_then(Value::as_str)
-                .map(str::trim)
+                .map(|value| value.trim_matches(super::progress::js_space))
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| format!("{key}: expected a non-empty string"))?
                 .to_owned();

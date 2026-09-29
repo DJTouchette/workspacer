@@ -295,7 +295,7 @@ pub fn install(
 ) -> crate::Options {
     let mut sampler = UsageSampler::new(engine);
     sampler.external = options.external_claudemon.clone();
-    sampler.hub = Some(hub);
+    sampler.hub = Some(hub.clone());
     let sampler = Arc::new(sampler);
     for method in [
         "routing.select",
@@ -308,9 +308,11 @@ pub fn install(
     ] {
         let service = routing.clone();
         let sampler = sampler.clone();
+        let publisher = hub.clone();
         options = options.handler(method, move |caller, params| {
             let service = service.clone();
             let sampler = sampler.clone();
+            let publisher = publisher.clone();
             async move {
                 if method.starts_with("routing.preferences.") {
                     return tokio::task::spawn_blocking(move || {
@@ -359,6 +361,15 @@ pub fn install(
                 }
                 if method == "routing.select" {
                     service.log_decision(&decision);
+                    // Failure to deliver during shutdown cannot invalidate an
+                    // already recorded decision, matching the reference sink.
+                    let _ = publisher
+                        .publish_wait(crate::protocol::Event::new(
+                            "routing.decision",
+                            "routing",
+                            super::events::projection(&decision),
+                        ))
+                        .await;
                 }
                 Ok(decision)
             }

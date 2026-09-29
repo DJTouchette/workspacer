@@ -726,3 +726,65 @@ async fn terminal_wire_distinguishes_stopped_failed_long_and_invalid_escalation(
     }
     Ok(())
 }
+
+#[test]
+fn failure_reader_replays_marker_reason_overage_and_remedy_contract() {
+    use workspacer_hub::services::{fleet_messages, wakes::failure_reason};
+    let corpus: Value = serde_json::from_str(include_str!(
+        "../../../contracts/agent-error-marker-cases.json"
+    ))
+    .unwrap();
+    let cases = corpus["cases"].as_array().unwrap();
+    assert!(cases.len() >= 8);
+    assert!(cases.iter().any(|c| c["reasonWithOverage"].is_string()));
+    assert!(cases.iter().any(|c| c["creditBalance"] == true));
+    for case in cases {
+        let reply = case["finalMessage"].as_str().unwrap();
+        let plain = failure_reason(&json!({}), reply);
+        assert_eq!(plain.is_some(), case["failed"] == true, "{}", case["name"]);
+        if let Some(reason) = &plain {
+            assert_eq!(reason, case["reason"].as_str().unwrap(), "{}", case["name"]);
+        }
+        let enriched = failure_reason(&json!({"statusLine":{"overageOutOfCredits":true}}), reply);
+        assert_eq!(enriched.is_some(), plain.is_some());
+        if let Some(reason) = enriched {
+            assert_eq!(
+                reason,
+                case["reasonWithOverage"]
+                    .as_str()
+                    .or_else(|| case["reason"].as_str())
+                    .unwrap(),
+                "{}",
+                case["name"]
+            );
+        }
+        let entry =
+            json!({"sessionId":"worker","label":"Worker","failed":plain.unwrap_or_default()});
+        let message = fleet_messages::build("worker-finished", &[entry], false).unwrap();
+        assert_eq!(
+            message.contains("A FAILED entry's reason names the credit-balance refusal"),
+            case["creditBalance"] == true,
+            "{}",
+            case["name"]
+        );
+    }
+    let reason = failure_reason(
+        &json!({}),
+        "⚠️ Error: boom — FAILED: not really — last reply: nonsense",
+    )
+    .unwrap();
+    assert_eq!(reason, "boom - FAILED: not really - last reply: nonsense");
+    assert_eq!(
+        fleet_messages::entry(&json!({"sessionId":"s","label":"w","failed":reason}))
+            .matches(" — ")
+            .count(),
+        1
+    );
+    assert_eq!(
+        failure_reason(&json!({}), &format!("⚠️ Error: {}", "x".repeat(400)))
+            .unwrap()
+            .chars()
+            .count(),
+        201
+    );
+}

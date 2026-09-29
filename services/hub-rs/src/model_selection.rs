@@ -82,7 +82,12 @@ pub fn manager_preferences(agents: &Value, strict: bool) -> Result<Value> {
         for (provider, value) in map {
             if !PROVIDERS.contains(&provider.as_str()) {
                 if strict {
-                    bail!("{error}: agents.{name}.{provider}");
+                    let reason = if name == "managerContextWindows" {
+                        "unsupported-context-window"
+                    } else {
+                        error
+                    };
+                    bail!("{reason}: agents.{name}.{provider}");
                 } else {
                     continue;
                 }
@@ -171,6 +176,20 @@ pub fn manager_preferences(agents: &Value, strict: bool) -> Result<Value> {
                 }
             }
         }
+    } else if output
+        .get("managerContextWindows")
+        .and_then(|contexts| contexts.get("claude"))
+        .is_some_and(|window| !window.is_null())
+    {
+        if strict {
+            bail!("invalid-context-window: Claude context requires a manager model");
+        }
+        output
+            .get_mut("managerContextWindows")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("claude");
     }
     Ok(Value::Object(output))
 }

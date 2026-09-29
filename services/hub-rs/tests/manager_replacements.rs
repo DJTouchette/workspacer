@@ -150,7 +150,7 @@ struct Host {
     spawned: AtomicUsize,
     fail_transfer: AtomicBool,
     spawn_delay: AtomicU64,
-    sent: Mutex<Vec<String>>,
+    sent: Mutex<Vec<(String, String)>>,
     closed: Mutex<Vec<String>>,
     outcomes: Mutex<Vec<SendOutcome>>,
     inventory: Mutex<Vec<Value>>,
@@ -225,9 +225,14 @@ impl ReplacementHost for Host {
     fn restore(&self, _: Vec<Value>) -> BoxFuture<'_, Result<()>> {
         Box::pin(async { Ok(()) })
     }
-    fn send(&self, id: String, _: String, _: Option<Value>) -> BoxFuture<'_, Result<SendOutcome>> {
+    fn send(
+        &self,
+        id: String,
+        content: String,
+        _: Option<Value>,
+    ) -> BoxFuture<'_, Result<SendOutcome>> {
         Box::pin(async move {
-            self.sent.lock().unwrap().push(id);
+            self.sent.lock().unwrap().push((id, content));
             let mut outcomes = self.outcomes.lock().unwrap();
             Ok(if outcomes.is_empty() {
                 SendOutcome::Accepted
@@ -245,8 +250,8 @@ impl ReplacementHost for Host {
             Ok(())
         })
     }
-    fn kickoff(&self, _: &Value) -> Result<String> {
-        Ok("Host-owned handoff; do not adopt again".into())
+    fn kickoff(&self, op: &Value) -> Result<String> {
+        Ok(workspacer_hub::services::manager_replacements::native::kickoff_message(op))
     }
     fn recover_finishes(&self, _: &Value) -> Result<()> {
         Ok(())
@@ -600,4 +605,98 @@ fn manual_transfer_exclusively_fences_both_owners_and_releases_on_drop() {
     assert!(state.admit(&["unrelated"]).is_ok());
     drop(transfer);
     assert!(state.admit(&["old", "new"]).is_ok());
+}
+
+#[tokio::test]
+async fn binding_delivers_real_kickoff_then_exact_held_message_once_and_retires_predecessor() {
+    use workspacer_hub::services::manager_replacements::{BeginDelivery, MessageTracker};
+    let (_dir, tasks, host, service) = service_fixture();
+    let response = service.request(json!({"action":"start","sourceSessionId":"old","paneId":"pane","workspaceId":"workspace"})).await;
+    assert!(response["error"].is_null(), "{response}");
+    let id = response["operations"][0]["operationId"].as_str().unwrap();
+    service.idle(id).await;
+    let op = service.state.get(id).unwrap();
+    assert_eq!(op["phase"], "binding");
+    let successor = op["successorSessionId"].as_str().unwrap();
+    let tracker = MessageTracker::new(service.state.clone());
+    let message = "Retain this exact queued message 🦀\nincluding its second line";
+    assert!(matches!(
+        tracker.begin("old", message, &[], None, false).unwrap(),
+        BeginDelivery::Held
+    ));
+    assert_eq!(
+        host.sent.lock().unwrap().len(),
+        1,
+        "binding must not deliver a held prompt early"
+    );
+    assert!(host.closed.lock().unwrap().is_empty());
+    assert_eq!(
+        tasks.task("task").unwrap().unwrap()["ownerSessionId"],
+        successor
+    );
+    assert_eq!(
+        host.inventory
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|row| row["sessionId"] == "worker")
+            .unwrap()["parentSessionId"],
+        successor
+    );
+    host.bound.store(true, Ordering::SeqCst);
+    service
+        .request(json!({"action":"bind","operationId":id}))
+        .await;
+    service.idle(id).await;
+    let completed = service.state.get(id).unwrap();
+    assert_eq!(completed["phase"], "complete");
+    let expected =
+        workspacer_hub::services::manager_replacements::native::kickoff_message(&completed);
+    assert!(expected.contains(&format!("HOST-OWNED MANAGER HANDOFF {id}")));
+    assert!(expected.contains("Host committed worker AND task ownership"));
+    assert!(expected.contains("predecessor old is audit history only"));
+    // Source-compatible transfer annotation follows, without changing any
+    // byte of the original message. It corrects stale parent IDs in quoted work.
+    let expected_held = format!(
+        "{message}\n\n[Host manager handoff {id}] Current manager/parentSessionId is {successor}. Earlier owner IDs in quoted instructions refer to predecessor. Preserve task IDs and pinned policy; inspect next_workflow_step before continuation. Do not adopt again or replay worker tasks."
+    );
+
+    {
+        let sent = host.sent.lock().unwrap();
+        let successor_messages: Vec<_> = sent
+            .iter()
+            .filter(|(target, _)| target == successor)
+            .map(|(_, text)| text.as_str())
+            .collect();
+        assert_eq!(
+            successor_messages,
+            vec![expected.as_str(), expected_held.as_str()]
+        );
+        assert_eq!(
+            sent.iter()
+                .map(|(_, text)| text.matches(message).count())
+                .sum::<usize>(),
+            1
+        );
+    }
+    assert_eq!(*host.closed.lock().unwrap(), vec!["old".to_owned()]);
+    service
+        .request(json!({"action":"bind","operationId":id}))
+        .await;
+    service.idle(id).await;
+    assert_eq!(
+        host.sent.lock().unwrap().len(),
+        3,
+        "repeat viewer acknowledgement must not replay kickoff or held text"
+    );
+    assert_eq!(
+        service.state.get(id).unwrap()["deliveries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|delivery| delivery["text"] == expected_held && delivery["status"] == "accepted")
+            .count(),
+        1
+    );
+    service.close().await.unwrap();
 }

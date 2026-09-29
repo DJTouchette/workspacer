@@ -1,6 +1,7 @@
 //! Shared standalone/embedded routing policy. Requests never supply quota evidence.
 use super::limits;
 mod audit;
+mod events;
 pub(crate) mod path;
 mod preferences;
 use path::path_within;

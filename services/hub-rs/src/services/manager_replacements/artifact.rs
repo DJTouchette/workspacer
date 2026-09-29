@@ -15,11 +15,30 @@ fn text(v: &Value) -> &str {
 pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+#[cfg(windows)]
+fn disk_spelling(path: &Path) -> Option<String> {
+    use std::path::Prefix;
+    let spelling = path.to_string_lossy();
+    match path.components().next()? {
+        Component::Prefix(prefix) => match prefix.kind() {
+            Prefix::Disk(_) => Some(spelling.into_owned()),
+            // The OS canonicalizer emits this prefix. It is still a local
+            // disk path; validate the remainder with the ordinary strict
+            // component grammar before using it. Never admit UNC/devices.
+            Prefix::VerbatimDisk(_) => spelling.strip_prefix(r"\\?\").map(str::to_owned),
+            _ => None,
+        },
+        _ => None,
+    }
+}
 fn candidate(path: &Path) -> String {
     let s = path.to_string_lossy();
     #[cfg(windows)]
     {
-        s.replace('/', "\\").to_lowercase()
+        disk_spelling(path)
+            .unwrap_or_else(|| s.into_owned())
+            .replace('/', "\\")
+            .to_lowercase()
     }
     #[cfg(not(windows))]
     {
@@ -34,7 +53,9 @@ fn same_spelling(a: &Path, b: &Path) -> bool {
     #[cfg(windows)]
     {
         fn normalized(p: &Path) -> String {
-            let mut s = p.to_string_lossy().replace('/', "\\");
+            let mut s = disk_spelling(p)
+                .unwrap_or_else(|| p.to_string_lossy().into_owned())
+                .replace('/', "\\");
             if s.as_bytes().get(1) == Some(&b':') {
                 s.replace_range(0..1, &s[0..1].to_uppercase());
             }
@@ -47,9 +68,11 @@ fn plain(path: &Path) -> bool {
     if !path.is_absolute() {
         return false;
     }
-    let value = path.to_string_lossy();
     #[cfg(windows)]
     {
+        let Some(value) = disk_spelling(path) else {
+            return false;
+        };
         let b = value.as_bytes();
         if b.len() < 3
             || !b[0].is_ascii_alphabetic()
@@ -73,6 +96,7 @@ fn plain(path: &Path) -> bool {
     }
     #[cfg(not(windows))]
     {
+        let value = path.to_string_lossy();
         value == "/"
             || value[1..]
                 .split('/')
@@ -191,9 +215,8 @@ fn verify(path: &Path) -> Result<Verified> {
             bail!("Path changed before inspection");
         }
     }
-    // Keep the host's canonical DOS spelling on Windows. std canonicalize
-    // returns a verbatim \?\ prefix that our caller-path grammar rightly
-    // refuses, and propagating it makes a verified path fail its next check.
+    // Shared canonicalization preserves the OS-selected path, including a
+    // Windows verbatim-disk prefix accepted by the strict local-disk grammar.
     let canonical = super::super::paths::canonicalize(path)?;
     let final_file = open_nofollow(&canonical)?;
     let final_id = identity(&final_file)?;
@@ -421,6 +444,23 @@ pub fn preparation_prompt(op: &Value) -> String {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
+    #[test]
+    fn canonical_disk_prefix_never_admits_device_or_unc_names() {
+        for path in [r"\\?\C:\safe\brief.md", r"C:\safe\brief.md"] {
+            assert!(super::plain(std::path::Path::new(path)), "{path}");
+        }
+        for path in [
+            r"\\?\UNC\server\share\brief.md",
+            r"\\.\C:\safe\brief.md",
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1\brief.md",
+            r"\\?\C:\safe\NUL",
+            r"\\?\C:\safe\brief.md:stream",
+            r"\\?\C:\safe\brief.md.",
+            r"\\?\C:\safe\..\brief.md",
+        ] {
+            assert!(!super::plain(std::path::Path::new(path)), "{path}");
+        }
+    }
     #[test]
     fn verified_canonical_path_stays_plain_on_reinspection() {
         let dir = tempfile::tempdir().unwrap();

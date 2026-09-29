@@ -1,0 +1,109 @@
+{
+  "records": {
+    "services/hub/internal/extinput/extinput.go": {
+      "sha256": "910d23b67b5bd0690191c02a5f9e38bc3d89d93b0d99b60d596d41fb7b24b3ae",
+      "status": "retired",
+      "reason": "Go test-result cache pinning is removed with the Go test runner. Cargo/Vitest execute the retained fixture and source guards; their readers need no lexical traversal trick into a Go module root.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read Path/ReadFile/ReadDir/WalkDir/root capture/error identity branches. Retained Rust discovery reads actual files and directory listings on each execution, fails on unavailable roots, and excludes named build/runtime caches. Existing Cargo CI runs the ownership/vocabulary tests rather than reporting Go cached results."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      }
+    },
+    "services/hub/internal/extinput/extinput_test.go": {
+      "sha256": "76b55a0f3e87ae9b62d6a541cabb92bcee0a2eb923510c378770eef6d55eddef",
+      "status": "retired",
+      "reason": "The scratch Go modules and cached-versus-uncached control experiment test only the retired cmd/go workaround.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read lexical root/same-file, scratch three-package cache mutation, external file and directory readers, and recursive traversal/pruning/error tests. No production application behavior lives here. Runtime discovery/fixture guards remain in Rust and TypeScript with their own mutation tests; this does not retire corpus coverage floors."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      }
+    },
+    "services/hub/cmd/brain/cachepin_test.go": {
+      "sha256": "bb68024a1d77af10674e62e9a48b8c1d3a422370d7241bab4165e89c4d44d2c3",
+      "status": "retired",
+      "reason": "This Go-AST analysis enforces using a Go-cache workaround in retiring Go test packages; those readers and their result cache disappear.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed all four planted raw-reader bypass shapes, compliant-reader controls, escaping-name floor and fixed-point AST scan. Requiring extinput in Rust/TS would be an unused synthetic compatibility layer. Independent fixture ownership and vocabulary guards remain mandatory."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      }
+    },
+    "services/hub/cmd/brain/repofile_test.go": {
+      "sha256": "f10b85acd41d8bbe700a394b827cb0221f36fb7047a1d724bde2bcfe8c662bb0",
+      "status": "retired",
+      "reason": "The Go-specific test-hub/CI -count=1 requirement and cmd/go-pinned reader helpers are replaced by Cargo/Vitest test entry points.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Makefile test-hub now calls Cargo; explicit temporary test-hub-reference retains -race -count=1 until Go deletion. Rust roots derive from CARGO_MANIFEST_DIR and missing required fixture/source reads fail rather than silently claiming an extracted module pass. The cross-language discovery guards are preserved separately."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      }
+    },
+    "services/hub/cmd/brain/testenv_test.go": {
+      "sha256": "874736bf7607248d59cd9c4dbaad8c3186918fc1fea9f38221553b490b21c093",
+      "status": "retired",
+      "reason": "Go package-global home/config redirection helpers retire with the package; Rust service instances take explicit paths and environment-dependent CLI/provider fixtures run isolated child processes.",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        ".github/workflows/ci.yml",
+        "Makefile"
+      ],
+      "tests": [
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/legacy_preservation.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read tempConfigHome/setConfigHome/tempHome/setHome/absTestPath/mustSave. Rust tempfile roots are native absolute paths; actual config saves assert Result success, while refusal cases assert errors. Config, CLI and embedded backend fixtures retain isolated home/config/data paths across Windows and Unix."
+        ],
+        "verifiedCheckpoint": "CI3bbf78a8 executed retained corpus ownership/vocabulary and config targets successfully; source discovery mutation suite and local config20/legacy2 actual tests passed. This retirement does not certify unrelated source-enumeration guards or the remaining sweepguard tally semantics."
+      }
+    }
+  }
+}

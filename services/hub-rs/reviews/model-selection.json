@@ -1,0 +1,88 @@
+{
+  "records": {
+    "services/hub/internal/modelselection/modelselection.go": {
+      "sha256": "725c0f43e86ca8e3721b06f14d6160f90e1081c362c7167622fe6bb1ad946b94",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      }
+    },
+    "services/hub/internal/modelselection/modelselection_test.go": {
+      "sha256": "da3a5b9063a7718bae6b4cbc94546b9b9c7be1e5336afb955f6154da7449e2e3",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      }
+    },
+    "services/hub/internal/modelselection/manager.go": {
+      "sha256": "8360b75c45346ca2e10d86de460c1a91e002446b3056553542495e9e772a7f11",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      }
+    },
+    "services/hub/internal/modelselection/manager_test.go": {
+      "sha256": "b95c93e6e944eb58201d155a7c3a950e59d16ca6b609d705d6e83fd9a9417335",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
+      }
+    }
+  }
+}

@@ -369,6 +369,14 @@ async fn passive_request_shapes_preserve_foreground_activity() {
         ),
         ("sessions.snapshots", None, true),
     ];
+    assert!(!passive_request(
+        "desktop.providerReadiness",
+        Some(&json!({"checK":true}))
+    ));
+    assert!(passive_request(
+        "desktop.managerReplacement",
+        Some(&json!({"requeſt":{"action":"list"}}))
+    ));
     let mut core = core();
     let mut mailbox = peer(&mut core, 1, Identity::host("fixture"), 64);
     core.peers.get_mut(&1).unwrap().reports_interaction = true;
@@ -392,4 +400,119 @@ async fn passive_request_shapes_preserve_foreground_activity() {
         let _ = mailbox.reliable.try_recv();
     }
     assert!(mailbox.events.try_recv().is_err());
+}
+
+#[test]
+fn every_registered_topic_has_the_reference_identity_policy() {
+    let vocabulary: Value =
+        serde_json::from_str(include_str!("../../assets/hub-vocabulary.json")).unwrap();
+    let rows = vocabulary["topics"].as_array().unwrap();
+    assert!(rows.len() >= 36);
+    let identities = [
+        ("host", Identity::host("fixture")),
+        ("view", scoped(Scope::View, vec![])),
+        ("triage", scoped(Scope::Triage, vec![])),
+        ("operator", scoped(Scope::Operator, vec![])),
+        ("provider", scoped(Scope::Provider, vec!["*".into()])),
+        (
+            "plugin",
+            Identity {
+                kind: Kind::Plugin {
+                    id: "fixtureplugin".into(),
+                    provides: vec!["fixtureplugin.*".into()],
+                },
+                token_id: "plugin-fingerprint".into(),
+                federated: false,
+            },
+        ),
+    ];
+    for row in rows {
+        let pattern = row["Pattern"].as_str().unwrap();
+        let topic = pattern
+            .strip_suffix('*')
+            .map(|prefix| format!("{prefix}fixture"))
+            .unwrap_or_else(|| pattern.into());
+        let disposition = row["Disposition"].as_str().unwrap();
+        let method = row["Method"].as_str().unwrap();
+        let publisher = row["Publisher"].as_str().unwrap();
+        let dispatch = topic.starts_with("agent.dispatch.");
+        for (name, identity) in &identities {
+            let private_dispatch = dispatch && topic != "agent.dispatch.update";
+            let consume = if private_dispatch {
+                *name == "host"
+            } else {
+                match *name {
+                    "host" | "operator" => true,
+                    "provider" => false,
+                    "plugin" => disposition != "host-only",
+                    _ => {
+                        disposition == "open-by-decision"
+                            || (disposition == "guarded-by-capability"
+                                && vocabulary["scopes"][*name].as_array().unwrap().iter().any(
+                                    |grant| {
+                                        let grant = grant.as_str().unwrap();
+                                        grant == method
+                                            || grant == "*"
+                                            || grant
+                                                .strip_suffix('*')
+                                                .is_some_and(|prefix| method.starts_with(prefix))
+                                    },
+                                ))
+                    }
+                }
+            };
+            let publish = if dispatch {
+                topic == "agent.dispatch.update" && matches!(*name, "host" | "provider")
+            } else {
+                matches!(*name, "host" | "operator")
+                    || (*name == "provider" && !publisher.is_empty())
+            };
+            assert_eq!(
+                identity.may_consume(&topic),
+                consume,
+                "consume {name}: {topic}"
+            );
+            assert_eq!(
+                identity.may_publish(&topic),
+                publish,
+                "publish {name}: {topic}"
+            );
+        }
+    }
+    for (name, identity) in identities {
+        let allowed = matches!(name, "host" | "operator" | "plugin");
+        assert_eq!(
+            identity.may_consume("unclassified.fixture"),
+            allowed,
+            "{name}"
+        );
+        assert_eq!(
+            identity.may_publish("unclassified.fixture"),
+            allowed,
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn closed_identity_is_inert_before_physical_peer_eviction() {
+    let mut core = core();
+    let mut closed = peer(&mut core, 1, Identity::host("fixture"), 8);
+    let mut provider = peer(&mut core, 2, Identity::host("fixture"), 8);
+    topics(&mut core, 1, "subscribe", &["*"]);
+    take(&mut closed);
+    register(&mut core, 2, "fixture.echo");
+    take(&mut provider);
+    let sequence = core.peers[&1].activity_seq;
+    core.peers[&1].closed.send_replace(true);
+    core.publish(Event::new(
+        "agent.snapshot",
+        "fixture",
+        json!({"private":true}),
+    ));
+    call(&mut core, 1, "revoked", "fixture.echo", Value::Null);
+    assert!(closed.events.try_recv().is_err());
+    empty(&mut provider);
+    assert!(core.pending.is_empty());
+    assert_eq!(core.peers[&1].activity_seq, sequence);
 }
