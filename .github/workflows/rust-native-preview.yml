@@ -59,13 +59,14 @@ jobs:
           cargo test --locked --no-fail-fast --manifest-path services/claudemon/Cargo.toml --lib pty_owned::macos_tests
       - name: Test shared Rust services and standalone lifecycle
         run: cargo test --locked --no-fail-fast --manifest-path services/hub-rs/Cargo.toml
-      - name: Repeat macOS bounded-output cleanup regression
+      - name: Repeat macOS owned-process cleanup regressions
         if: ${{ !cancelled() && runner.os == 'macOS' }}
         shell: bash
         run: |
           fleet_capture_failed=0
           for attempt in 1 2 3 4 5; do
             cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test fleet_review oversize_file_diff_and_record_retention_never_publish_partial_ranges -- --exact --nocapture || fleet_capture_failed=1
+            cargo test --locked --manifest-path services/hub-rs/Cargo.toml --lib services::owned_process::tests::json_exchange_owns_multi_step_dialogue_and_kills_after_final_answer -- --exact --nocapture || fleet_capture_failed=1
           done
           exit "$fleet_capture_failed"
 

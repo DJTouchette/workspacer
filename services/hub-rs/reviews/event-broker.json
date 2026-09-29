@@ -1,0 +1,68 @@
+{
+  "records": {
+    "services/hub/internal/event/event.go": {
+      "sha256": "5b0754bc4cab5d7a59dc2e13943fdb6d03e35442ebe3b84913253f08b488e5c0",
+      "replacement": [
+        "services/hub-rs/src/protocol.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/lifecycle.rs",
+        "services/hub-rs/src/runtime/broker_tests.rs"
+      ],
+      "review": "Envelope names, optional hub/data, timestamp normalization, opaque producer identity and JSON values are represented by typed Event; actor stamps missing ID/time once and preserves supplied values across fanout. Exact topic, dot-prefix wildcard and any-pattern semantics retained. Go event.New(any) marshal-failure logging is eliminated by the Rust Value input type; callers cannot supply an unserializable value. Rust preserves JSON meaning and integer precision rather than original RawMessage whitespace/key order. Tests pin field serialization,9007199254740993, supplied identity/time, missing stamp generation and empty subscriptions. Current checkpoint: parent full library278 plus lifecycle8 passed; /tmp/workspacer-broker-checkpoint.log.",
+      "status": "ported"
+    },
+    "services/hub/internal/event/event_test.go": {
+      "sha256": "02b10220a2cd52fa3bf3f911b7a58f6a264e37efbbc362bcb105435dea5a33e2",
+      "replacement": [
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/lifecycle.rs"
+      ],
+      "review": "Expanded wildcard table to cover all eight original cases plus rejection of agent*; added all three MatchesAny behaviors (matching namespace, unrelated event, empty pattern set). Actor queue test independently verifies actual empty/matching/nonmatching subscription delivery rather than relying only on a standalone predicate. Current checkpoint: parent full library278 plus lifecycle8 passed; /tmp/workspacer-broker-checkpoint.log.",
+      "status": "ported"
+    },
+    "services/hub/internal/broker/broker.go": {
+      "sha256": "fc71556e0de0c62c7beaf0523730b84c1b189265204e51769f316a71aca9a262",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/broker_tests.rs",
+        "services/hub-rs/tests/lifecycle.rs",
+        "services/hub-rs/tests/auth.rs"
+      ],
+      "review": "Mutex/goroutine broker becomes one owned actor with bounded per-peer event queues and a separate reliable reply queue. Fanout remains try_send/nonblocking; identity admission and marked-closed fence run before any event-slot use or named desync bookkeeping. Topic membership is capped512 and duplicates removed; frames above256 are rejected before membership work, replacing the old raw internal100k AddTopics primitive with bounded public actor commands. Subscription removal closes actual channels and releases peer state; health subscriber count reads that actor state. Stream loss retains at most64 unique repair topics with destructive take; discrete loss creates no repair. Conversation repair extends the PTY contract while existing lifecycle test preserves byte-before-desync ordering. Go Dropped/DroppedTotal atomic counters have no retained runtime consumer (only old tests); they are retired diagnostics, with negative admission assertions now inspecting actual queue capacity/desync state. No publisher blocking or admission-after-enqueue is introduced. Current checkpoint: parent full library278 plus lifecycle8 passed; /tmp/workspacer-broker-checkpoint.log.",
+      "status": "ported"
+    },
+    "services/hub/internal/broker/broker_test.go": {
+      "sha256": "7c27dbe75fb96bbcfed9ab2c49a7fa06f279c1a639cf58820e43b430559786e7",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/broker_tests.rs",
+        "services/hub-rs/tests/lifecycle.rs"
+      ],
+      "review": "Five new actor tests exercise matching/nonmatching/empty topics, identical fanout, dedup/unsubscribe/resubscribe, actual channel closure after disconnect, supplied/missing envelope stamps,512topic cap and100k frame rejection before work,1000 undrained publications while a second consumer receives every event,64desync cap/take clearing, delivered-stream and discrete-drop non-desync floors. Full lifecycle target additionally verifies an actual owned runtime can complete RPC while its stream consumer is full. Old raw AddTopics100k acceptance is deliberately replaced by strict256-per-frame rejection plus legal batches reaching512; exact 2-second nonblocking assertions remain. Internal drop-counter API is retired, not falsely asserted to exist. Current checkpoint: parent full library278 plus lifecycle8 passed; /tmp/workspacer-broker-checkpoint.log.",
+      "status": "ported"
+    },
+    "services/hub/internal/broker/admit_test.go": {
+      "sha256": "ee194fc0a4610318a6ff896da411949b90b16ea0ce33c419f33ae8834eab8a4a",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/broker_tests.rs",
+        "services/hub-rs/tests/auth.rs"
+      ],
+      "review": "New denied_and_closed_consumers_cost_no_event_slot_or_desync_bookkeeping sends200 secret PTY events into a capacity1 scoped-view subscriber and verifies capacity remains1 and repair map empty before a permitted event is delivered. It also pins the marked-closed-before-eviction fence for an otherwise authorized host. Unfiltered slow-consumer test supplies the positive floor: actual allowed stream losses populate repair state, capped64, while the first queued stream remains intact and another consumer continues. This replaces absent Go-only atomic drop diagnostics with stronger direct queue/repair-state observations; existing actual Hub auth integration verifies no denied payload/desync leaks on the client boundary. Current checkpoint: parent full library278 plus lifecycle8 passed; /tmp/workspacer-broker-checkpoint.log.",
+      "status": "ported"
+    }
+  }
+}

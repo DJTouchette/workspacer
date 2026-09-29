@@ -1707,13 +1707,16 @@ describe('providers discovery', () => {
   // canonicalizes through the filesystem, so '/proj' no longer resolves to
   // anything a root contains.
   let providerCwd: string;
+  let callerCwd: string;
   beforeEach(() => {
     providerCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-prov-')));
+    callerCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-prov-caller-')));
     getAllSnapshots.mockReturnValue([{ cwd: providerCwd }] as never);
   });
   afterEach(() => {
     getAllSnapshots.mockReturnValue([] as never);
     fs.rmSync(providerCwd, { recursive: true, force: true });
+    fs.rmSync(callerCwd, { recursive: true, force: true });
   });
 
   it('discovers models in a configured project before an agent runs there', async () => {
@@ -1741,8 +1744,8 @@ describe('providers discovery', () => {
   // to host code execution on the whole surface.
   it('providers.listModels accepts an authenticated caller-chosen cwd', async () => {
     clientMock.listProviderModels.mockClear();
-    await call('providers.listModels', { provider: 'opencode', cwd: '/etc' });
-    expect(clientMock.listProviderModels).toHaveBeenCalledWith('opencode', '/etc', '/bin/codex');
+    await call('providers.listModels', { provider: 'opencode', cwd: callerCwd });
+    expect(clientMock.listProviderModels).toHaveBeenCalledWith('opencode', callerCwd, '/bin/codex');
   });
 
   // An absent cwd is indistinguishable from '' on the Go side, and '' is the
@@ -2141,14 +2144,21 @@ describe('search.project cwd confinement', () => {
   // A real temp dir stands in for a live agent's cwd — the confinement helpers
   // canonicalize via the real filesystem, so the roots must exist.
   let agentCwd: string;
+  let callerCwd: string;
   beforeEach(() => {
     agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-agent-')));
+    callerCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-search-caller-')));
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
   });
 
+  afterEach(() => {
+    fs.rmSync(agentCwd, { recursive: true, force: true });
+    fs.rmSync(callerCwd, { recursive: true, force: true });
+  });
+
   it('search.project accepts an authenticated caller-chosen cwd', () => {
-    expect(() => call('search.project', { query: 'x', cwd: '/etc' })).not.toThrow();
-    expect(searchProject).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/etc' }));
+    expect(() => call('search.project', { query: 'x', cwd: callerCwd })).not.toThrow();
+    expect(searchProject).toHaveBeenCalledWith(expect.objectContaining({ cwd: callerCwd }));
   });
 
   it('search.project allows a cwd inside a live agent cwd', () => {
@@ -2214,11 +2224,15 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
   // now the remote-reachable entry point, so a caller-supplied cwd must be confined
   // to the live agent cwds (the same workspace roots as fs.*), not any host repo.
   let agentCwd: string;
+  let callerCwd: string;
   beforeEach(() => {
     agentCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-git-')));
+    callerCwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wks-git-caller-')));
     getAllSnapshots.mockReturnValue([{ cwd: agentCwd }] as never);
     workRootFor.mockImplementation(async (cwd: string) => cwd);
   });
+
+  afterEach(() => fs.rmSync(callerCwd, { recursive: true, force: true }));
 
   it('git.commit runs when cwd is a live agent cwd', async () => {
     await call('git.commit', { cwd: agentCwd, message: 'wip' });
@@ -2226,8 +2240,8 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
   });
 
   it('git.commit accepts a caller-chosen cwd outside live agent roots', async () => {
-    await call('git.commit', { cwd: '/tmp/some-other-repo', message: 'wip' });
-    expect(gitMock.commit).toHaveBeenCalledWith('/tmp/some-other-repo', 'wip');
+    await call('git.commit', { cwd: callerCwd, message: 'wip' });
+    expect(gitMock.commit).toHaveBeenCalledWith(callerCwd, 'wip');
   });
 
   it('git.push accepts a caller-chosen cwd outside live agent roots', async () => {
@@ -2236,8 +2250,8 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
   });
 
   it('git.status accepts a caller-chosen cwd outside live agent roots', async () => {
-    await call('git.status', { cwd: '/etc' });
-    expect(gitMock.status).toHaveBeenCalledWith('/etc');
+    await call('git.status', { cwd: callerCwd });
+    expect(gitMock.status).toHaveBeenCalledWith(callerCwd);
   });
 
   it('git.status runs for a live agent cwd', async () => {
@@ -2331,7 +2345,7 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
   // file on the host as an all-added diff until the path was confined too.
   it('git.diff denies an absolute path outside the repo (untracked --no-index operand)', async () => {
     await expect(
-      call('git.diff', { cwd: agentCwd, path: '/etc/shadow', untracked: true }),
+      call('git.diff', { cwd: agentCwd, path: path.join(callerCwd, 'shadow'), untracked: true }),
     ).rejects.toThrow(/outside the (?:allowed|selected)/);
     expect(gitMock.diff).not.toHaveBeenCalled();
   });
@@ -2345,7 +2359,12 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
 
   it('git.diff still allows a repo-relative path inside the agent cwd', async () => {
     await call('git.diff', { cwd: agentCwd, path: 'src/new.ts', untracked: true });
-    expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'src/new.ts', undefined, true);
+    expect(gitMock.diff).toHaveBeenCalledWith(
+      agentCwd,
+      path.join('src', 'new.ts'),
+      undefined,
+      true,
+    );
   });
 
   // The guard has to measure `path` the way git will: gitService anchors every
@@ -2397,7 +2416,12 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
     // fs.read and fs.watch refuse for the same caller.
     it('allows an untracked read within the caller-chosen repository', async () => {
       await call('git.diff', { cwd: agentCwd, path: 'services/hub/.env', untracked: true });
-      expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'services/hub/.env', undefined, true);
+      expect(gitMock.diff).toHaveBeenCalledWith(
+        agentCwd,
+        path.join('services', 'hub', '.env'),
+        undefined,
+        true,
+      );
     });
 
     it('still allows an untracked path INSIDE the agent cwd', async () => {
@@ -2419,13 +2443,13 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
     // git.commitDiff hands it back, git.push publishes it.
     it('git.stage allows a sibling-subtree pathspec within the selected repository', async () => {
       await call('git.stage', { cwd: agentCwd, path: 'services/hub/.env' });
-      expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, 'services/hub/.env');
+      expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, path.join('services', 'hub', '.env'));
     });
 
     it('git.stage refuses an absolute pathspec outside the repo', async () => {
-      await expect(call('git.stage', { cwd: agentCwd, path: '/etc/shadow' })).rejects.toThrow(
-        /outside the (?:allowed|selected)/,
-      );
+      await expect(
+        call('git.stage', { cwd: agentCwd, path: path.join(callerCwd, 'shadow') }),
+      ).rejects.toThrow(/outside the (?:allowed|selected)/);
       expect(gitMock.stage).not.toHaveBeenCalled();
     });
 
@@ -2433,17 +2457,17 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
     // from the root stages the sibling subtree without naming it.
     it('git.stage with no path stages the guarded cwd, not the whole repository', async () => {
       await call('git.stage', { cwd: agentCwd });
-      expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, 'apps/desktop');
+      expect(gitMock.stage).toHaveBeenCalledWith(agentCwd, path.join('apps', 'desktop'));
     });
 
     it('git.unstage with no path is bounded the same way', async () => {
       await call('git.unstage', { cwd: agentCwd });
-      expect(gitMock.unstage).toHaveBeenCalledWith(agentCwd, 'apps/desktop');
+      expect(gitMock.unstage).toHaveBeenCalledWith(agentCwd, path.join('apps', 'desktop'));
     });
 
     it('git.unstage allows a sibling-subtree pathspec within the selected repository', async () => {
       await call('git.unstage', { cwd: agentCwd, path: 'services/hub/.env' });
-      expect(gitMock.unstage).toHaveBeenCalledWith(agentCwd, 'services/hub/.env');
+      expect(gitMock.unstage).toHaveBeenCalledWith(agentCwd, path.join('services', 'hub', '.env'));
     });
 
     it('git.stage still stages a path inside the agent cwd, root-relative', async () => {
@@ -2468,9 +2492,9 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
     });
 
     it('a TRACKED diff refuses an absolute pathspec outside the work-tree root', async () => {
-      await expect(call('git.diff', { cwd: agentCwd, path: '/etc/shadow' })).rejects.toThrow(
-        /outside the (?:allowed|selected)/,
-      );
+      await expect(
+        call('git.diff', { cwd: agentCwd, path: path.join(callerCwd, 'shadow') }),
+      ).rejects.toThrow(/outside the (?:allowed|selected)/);
       expect(gitMock.diff).not.toHaveBeenCalled();
     });
 
@@ -2490,10 +2514,20 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
     // already the answer.
     it('hands git the pathspec derived from the canonical path, not the caller string', async () => {
       await call('git.diff', { cwd: agentCwd, path: path.join(repoRoot, 'services', 'a.go') });
-      expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'services/a.go', undefined, undefined);
+      expect(gitMock.diff).toHaveBeenCalledWith(
+        agentCwd,
+        path.join('services', 'a.go'),
+        undefined,
+        undefined,
+      );
       gitMock.diff.mockClear();
       await call('git.diff', { cwd: agentCwd, path: 'services/./hub/../a.go' });
-      expect(gitMock.diff).toHaveBeenCalledWith(agentCwd, 'services/a.go', undefined, undefined);
+      expect(gitMock.diff).toHaveBeenCalledWith(
+        agentCwd,
+        path.join('services', 'a.go'),
+        undefined,
+        undefined,
+      );
     });
 
     // cwdPathspec's own fail-closed precondition. Its comment says the assertion
@@ -2524,7 +2558,7 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
       await call('git.diff', { cwd: agentCwd, path: 'services/hub/main.go' });
       expect(gitMock.diff).toHaveBeenCalledWith(
         agentCwd,
-        'services/hub/main.go',
+        path.join('services', 'hub', 'main.go'),
         undefined,
         undefined,
       );

@@ -944,3 +944,6 @@ async fn editing_legacy_profile_metadata_neither_disconnects_nor_narrows_spawn_s
         assert_eq!(take(&mut caller).result, Some(json!({"ok":true})));
     }
 }
+
+#[path = "broker_tests.rs"]
+mod broker_tests;

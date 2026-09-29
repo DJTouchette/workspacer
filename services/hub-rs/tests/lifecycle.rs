@@ -184,6 +184,10 @@ async fn provider_timeout_is_bounded_and_late_reply_cannot_complete_another_call
 #[test]
 fn wildcard_matches_dot_namespace_only() {
     for (pattern, topic, expected) in [
+        ("agent.spawned", "agent.spawned", true),
+        ("agent.spawned", "agent.terminated", false),
+        ("agent.*", "agent.spawned", true),
+        ("git.changed", "agent.spawned", false),
         ("agent.*", "agent", false),
         ("agent.*", "agentx.one", false),
         ("agent.*", "agent.state.changed", true),
@@ -192,6 +196,22 @@ fn wildcard_matches_dot_namespace_only() {
     ] {
         assert_eq!(matches(pattern, topic), expected);
     }
+}
+
+#[test]
+fn matching_any_subscription_retains_the_reference_empty_set_behavior() {
+    let patterns = ["git.changed", "agent.*"];
+    assert!(
+        patterns
+            .iter()
+            .any(|pattern| matches(pattern, "agent.done"))
+    );
+    assert!(
+        !patterns
+            .iter()
+            .any(|pattern| matches(pattern, "session.usage"))
+    );
+    assert!(!std::iter::empty::<&str>().any(|pattern| matches(pattern, "agent.spawned")));
 }
 
 #[test]

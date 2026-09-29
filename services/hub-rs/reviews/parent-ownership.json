@@ -108,34 +108,36 @@
         "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending."
       },
       "reason": "The comment-only Go package and non-Windows Confine no-op have no executable responsibility after removing the Go process owner; real platform ownership lives in Rust per-child guards."
-    }
-  },
-  "pending_review": {
+    },
     "services/hub/internal/jobobject/jobobject_windows.go": {
       "sha256": "e42e644e88dc5ef1eb532238fd6772b684077c4a288f158a24fa57fe3d70feed",
-      "status": "pending",
+      "status": "ported",
       "replacement": [
         "services/claudemon/src/wrapper/pty_windows_job.rs",
         "services/hub-rs/src/services/owned_process.rs",
-        "services/hub-rs/src/backend.rs"
+        "services/hub-rs/src/backend.rs",
+        "vendor/portable-pty/src/win/psuedocon.rs"
       ],
       "tests": [
         "services/claudemon/src/wrapper/pty_windows_job.rs",
         "tools/windows-contract-check/src/lib.rs",
         "services/hub-rs/tests/pty_ownership.rs",
-        "services/hub-rs/tests/backend_owner.rs"
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/claudemon/src/wrapper/pty.rs",
+        "services/claudemon/src/daemon/spawn.rs"
       ],
       "review": {
         "behaviors": [
           "Compared CreateJob/extended KILL_ON_JOB_CLOSE/assignment/failure-close/lifetime semantics. Rust Job owns one spawned child and explicitly refuses the embedding process; closing the owned handle terminates assigned child and inherited descendants. This replaces the Go hub process-wide job, which would be unsafe to impose on an embedded GUI.",
-          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim."
+          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim.",
+          "All owned Windows launches now CREATE_SUSPENDED, assign the per-child kill-on-close job before user code, then resume the verified original initial thread. ConPTY uses the minimal portable-pty creation-flags patch. Actual std/Tokio/ConPTY immediate-fork regressions prove original descendant handles become signaled after cleanup without a stdin admission barrier. Failed assignment/resume fails closed; the host GUI is never assigned."
         ],
         "intentionalChanges": [
           "Job ownership errors are propagated by owned launch helpers rather than merely logged while continuing unconfined. Non-Windows uses existing owned process-group cleanup rather than a dummy Confine no-op. This does not promise cleanup of arbitrary deliberately escaped Unix descendants."
         ],
-        "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending.",
-        "followup": "Spawn-before-assignment race is under lifecycle-agent investigation; not recordable until a Windows job-at-creation or suspended-launch regression proves immediate descendants cannot escape."
+        "verifiedCheckpoint": "Actual Windows04322791 job/ConPTY tests passed, including immediate forks; e2d2ac40 actual retained-master and generation test passed; e1cb771e containment Rust tests passed before unrelated TS pathspec failures. The final whole-platform gate remains pending. No compile-only runtime claim."
       }
     }
-  }
+  },
+  "pending_review": {}
 }

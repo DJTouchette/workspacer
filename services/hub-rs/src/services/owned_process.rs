@@ -353,10 +353,18 @@ mod tests {
     async fn json_exchange_owns_multi_step_dialogue_and_kills_after_final_answer() {
         let mut command = Command::new("/bin/sh");
         command.args(["-c",r#"read first; printf '{"id":1,"result":"ready"}\n'; read second; printf '{"id":2,"result":"answer"}\n'; sleep 30"#]);
+        let mut received_ids = Vec::new();
+        let mut phase = "awaiting first fixture reply";
         let value = json_exchange(
             &mut command,
             &[serde_json::json!({"id":1})],
             |frame| {
+                received_ids.push(frame["id"].as_i64());
+                phase = if frame["id"] == 1 {
+                    "awaiting final fixture reply"
+                } else {
+                    "final answer callback completed; awaiting process and stderr cleanup"
+                };
                 Ok(if frame["id"] == 1 {
                     (vec![serde_json::json!({"id":2})], None)
                 } else {
@@ -367,7 +375,7 @@ mod tests {
             Duration::from_secs(2),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{error:#}; fixture IDs: {received_ids:?}; phase: {phase}"));
         assert_eq!(value, "answer");
     }
     #[cfg(target_os = "macos")]

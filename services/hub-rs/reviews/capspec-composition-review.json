@@ -1,0 +1,46 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "All 69 targeted registration/composition/vocabulary tests passed (14 registration/composition +55 vocabulary), /tmp/workspacer-composition-final.log. Final desktop main typecheck passed, /tmp/workspacer-composition-typecheck.log. Witness selected the test files but left three support files unmapped; those helpers were explicitly exercised by the source/mutation suites. No Rust production changes, new Cargo build, or platform/runtime coverage inferred from source scanners.",
+  "records": {
+    "services/hub/internal/capspec/composition.go": {
+      "status": "ported",
+      "sha256": "343d3b52342d1e158ae7e8047a90a1fd37dce81982855822b9bcdfac92f0d078",
+      "replacement": [
+        "apps/desktop/tests/support/compositionDecisions.ts",
+        "apps/desktop/tests/support/compositionSource.ts",
+        "apps/desktop/tests/support/compositionWitnesses.ts",
+        "apps/desktop/tests/support/capabilitySource.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "services/hub-rs/tests/auth_composition.rs",
+        "services/hub-rs/tests/fixtures/authorization-compositions.json"
+      ],
+      "note": "The former Go audit-only composition API is now a portable TypeScript authority/source registry, consumed by runnable guards and tied to the existing Rust authorization composition policy. All eight pair crossings, both shapes, exact closed-versus-accepted decisions, registered halves, 127 actual classified actors, 81 method-bound guard witnesses, four Rust Git canonicalization witnesses, non-inert per-parameter decisions, topic ownership, the exact seven prose-only exceptions, and all nine used inverse-verb pairs are retained. Real Rust registrations and retained Electron ASTs establish the guard entry rather than unrelated symbol presence: jobs owner gates, trusted layout and saved-document scrubs, endpoint validation at subscription/send, terminal topic-to-capability lookup and pre-enqueue/desync filtering, replay read-to-resolveInside-to-canonical worktree containment. The remaining inert guards map historical witness names explicitly to actual Rust ownership/service helpers or method-specific retained Electron calls. Selected-object containment remains active; obsolete workspace-root/profile-permission clamps are not resurrected, and stale old prose claiming those clamps was corrected. plugins.prepareLaunch is the exact already-recorded architectural retirement: its owned in-process preparation still verifies the actual actor permit before and after hook execution. Mutation suites remove individual hops, substitute sibling method names, turn proof text into comments or string literals, replace owner gates, invent actors/parameters/exemptions, erase populations, bind topic to a wrong half, and borrow a closure from another pair. This does not certify broader capspec.go/capspec_test.go dangerous-name heuristics, all parameter binding scanner completeness, or any platform/runtime test not run in this checkpoint; those remain separately reviewed responsibilities. Legacy closureMechanisms entries for dead path/secret-grant helpers no longer constitute current composition proofs; the seven actual closed-pair mechanisms are checked through their live paths instead."
+    },
+    "services/hub/internal/capspec/composition_test.go": {
+      "status": "ported",
+      "sha256": "367dba14b2fbc572342ff19f58f1a10717fb139f03493f80f73d4ee728d90cd6",
+      "replacement": [
+        "apps/desktop/tests/support/compositionDecisions.ts",
+        "apps/desktop/tests/support/compositionSource.ts",
+        "apps/desktop/tests/support/compositionWitnesses.ts",
+        "apps/desktop/tests/support/capabilitySource.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "services/hub-rs/tests/auth_composition.rs",
+        "services/hub-rs/tests/fixtures/authorization-compositions.json"
+      ],
+      "note": "The former Go audit-only composition API is now a portable TypeScript authority/source registry, consumed by runnable guards and tied to the existing Rust authorization composition policy. All eight pair crossings, both shapes, exact closed-versus-accepted decisions, registered halves, 127 actual classified actors, 81 method-bound guard witnesses, four Rust Git canonicalization witnesses, non-inert per-parameter decisions, topic ownership, the exact seven prose-only exceptions, and all nine used inverse-verb pairs are retained. Real Rust registrations and retained Electron ASTs establish the guard entry rather than unrelated symbol presence: jobs owner gates, trusted layout and saved-document scrubs, endpoint validation at subscription/send, terminal topic-to-capability lookup and pre-enqueue/desync filtering, replay read-to-resolveInside-to-canonical worktree containment. The remaining inert guards map historical witness names explicitly to actual Rust ownership/service helpers or method-specific retained Electron calls. Selected-object containment remains active; obsolete workspace-root/profile-permission clamps are not resurrected, and stale old prose claiming those clamps was corrected. plugins.prepareLaunch is the exact already-recorded architectural retirement: its owned in-process preparation still verifies the actual actor permit before and after hook execution. Mutation suites remove individual hops, substitute sibling method names, turn proof text into comments or string literals, replace owner gates, invent actors/parameters/exemptions, erase populations, bind topic to a wrong half, and borrow a closure from another pair. This does not certify broader capspec.go/capspec_test.go dangerous-name heuristics, all parameter binding scanner completeness, or any platform/runtime test not run in this checkpoint; those remain separately reviewed responsibilities. Legacy closureMechanisms entries for dead path/secret-grant helpers no longer constitute current composition proofs; the seven actual closed-pair mechanisms are checked through their live paths instead."
+    }
+  }
+}

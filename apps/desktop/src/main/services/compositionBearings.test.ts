@@ -1,3 +1,4 @@
+import { hasRustBearing } from '../../../tests/support/compositionSource';
 /** Concrete method-to-guard edges complement the tier vocabulary. A guard in
  * another dispatcher branch or a comment does not prove a composition closed. */
 import { describe, expect, it } from 'vitest';
@@ -27,7 +28,7 @@ function verify(files: Map<string, string>): void {
     return text;
   };
   const has = (text: string, edge: string): void => {
-    if (!compact(text).includes(edge)) throw Error(`missing bearing ${edge}`);
+    if (!hasRustBearing(text, edge)) throw Error(`missing bearing ${edge}`);
   };
   const registered = (method: string, file: string, edge: string): void => {
     const matches = rows.filter((row) => row.method === method && row.file === PREFIX + file);
