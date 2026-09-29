@@ -17,6 +17,10 @@ on:
         description: 'Publish to the rolling nightly prerelease'
         type: boolean
         default: false
+      migration_preview:
+        description: 'Explicit testing nightly during Rust migration (manual default branch, green CI required)'
+        type: boolean
+        default: false
   # Rolling nightly: rebuild main and republish the `nightly` prerelease
   # (skipped by the gate job when nothing changed since the last one).
   schedule:
@@ -45,15 +49,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     outputs:
       nightly: ${{ steps.decide.outputs.nightly }}
       build: ${{ steps.decide.outputs.build }}
       stamp: ${{ steps.decide.outputs.stamp }}
+      migration_preview: ${{ steps.decide.outputs.migration_preview }}
     steps:
       - uses: actions/checkout@v5
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REQUEST_MIGRATION_PREVIEW: ${{ inputs.migration_preview }}
         run: |
           set -euo pipefail
           nightly=false
@@ -61,10 +69,22 @@ jobs:
             nightly=true
           fi
           build=true
+          migration_preview=false
+          if [ "$REQUEST_MIGRATION_PREVIEW" = "true" ] && [ "$nightly" != "true" ]; then
+            echo "::error::migration_preview requires nightly=true"
+            exit 1
+          fi
           if [ "$nightly" = "true" ]; then
             if [ -f services/hub-rs/migration.json ] && ! python3 scripts/hub-migration.py ready; then
-              echo "::notice::Rust migration completion checks are pending; deferring the nightly."
-              build=false
+              if [ "$REQUEST_MIGRATION_PREVIEW" = "true" ]; then
+                python3 scripts/check-nightly-preview.py --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" \
+                  --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --default-branch "$RELEASE_DEFAULT_BRANCH"
+                migration_preview=true
+                echo "::notice::Publishing an explicitly requested Rust migration testing nightly; audit remains incomplete."
+              else
+                echo "::notice::Rust migration completion checks are pending; deferring the nightly."
+                build=false
+              fi
             fi
             last=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" -q .object.sha 2>/dev/null || echo none)
             if [ "$last" = "${{ github.sha }}" ]; then
@@ -75,6 +95,7 @@ jobs:
           echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
           echo "build=$build" >> "$GITHUB_OUTPUT"
           echo "stamp=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+          echo "migration_preview=$migration_preview" >> "$GITHUB_OUTPUT"
 
   build:
     needs: gate
@@ -453,12 +474,22 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
+      actions: read
     steps:
       # Only for CHANGELOG.md + scripts/changelog-section.mjs: the notes below
       # are cut from the same file the app's Settings → Updates and every tagged
       # release page read, so a nightly cannot describe itself differently from
       # the release it becomes.
       - uses: actions/checkout@v5
+
+      - name: Recheck testing-nightly CI before changing the live release
+        if: needs.gate.outputs.migration_preview == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          python3 scripts/check-nightly-preview.py --repo "$GITHUB_REPOSITORY" --sha "$GITHUB_SHA" \
+            --event "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --default-branch "$RELEASE_DEFAULT_BRANCH"
 
       - uses: actions/download-artifact@v4
         with:
@@ -471,6 +502,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          RUST_MIGRATION_PREVIEW: ${{ needs.gate.outputs.migration_preview }}
         run: |
           set -euo pipefail
           # Updater-critical assets, per platform — every glob the create below
@@ -512,6 +544,9 @@ jobs:
           notes_file="$RUNNER_TEMP/nightly-notes.md"
           {
             printf 'Rolling nightly build of main (%s). Unsigned.\n\n' "${{ github.sha }}"
+            if [ "$RUST_MIGRATION_PREVIEW" = "true" ]; then
+              printf '**Rust migration testing nightly.** Electron uses the Rust hub/MCP executable; native Windows embeds the shared Rust backend. The compatibility audit and legacy-code retirement are still in progress. This release is for testing and does not certify complete migration parity.\n\n'
+            fi
             printf 'Electron nightly installs auto-update onto the next nightly from this feed and never onto stable. Workspacer Native for Windows is experimental, unsigned, and updated manually using its separate installer. To return to stable, install a release build from the releases page.\n\n'
             printf -- '---\n\n'
             printf '## Unreleased — what has landed since the last stable release\n\n'

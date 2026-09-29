@@ -19,6 +19,8 @@ related_paths:
   - "apps/native/scripts/test-windows-installer.ps1"
   - "apps/native/src/bin/native-harness.rs"
   - "scripts/hub-migration.py"
+  - "scripts/check-nightly-preview.py"
+  - "scripts/test_nightly_preview.py"
   - "services/hub-rs/migration.json"
 owner: Damien Touchette
 last_reviewed: 2026-09-29
@@ -95,15 +97,26 @@ does not remove that runtime gate.
 and a daily 08:00 UTC schedule. Its gate chooses nightly mode for schedule or
 nightly input, skips an unchanged nightly SHA, and emits one numeric timestamp
 for all build legs. When `services/hub-rs/migration.json` exists, nightly mode
-also runs `python3 scripts/hub-migration.py ready`; failure sets `build=false`
-and defers the nightly. That command checks reviewed source hashes, replacement
-and test evidence files, and verified cutover gates. It does not execute tests
-or query CI results. Ordinary non-nightly manual/PR/tag builds do not take this
-migration-readiness gate, so they can produce validation artifacts mid-migration.
+also runs `python3 scripts/hub-migration.py ready`. Failure normally sets
+`build=false` and defers publication. That command checks source hashes,
+replacement/test evidence and cutover gates; it does not execute tests.
+Ordinary non-nightly manual/PR/tag builds can still produce validation artifacts.
 
-The release workflow **does not check the separate CI or Rust-preview workflow
-conclusion**. Its publish job depends on its own `gate` and `build` jobs. Do not
-describe the desired green-CI release policy as an enforced workflow dependency.
+An explicit manual dispatch with **both** `nightly=true` and
+`migration_preview=true` may publish a testing nightly before the audit is
+complete. `scripts/check-nightly-preview.py` requires the default branch and a
+completed successful push run of `ci.yml` for the exact candidate SHA. A newer
+failed or pending run cannot borrow an older success. The workflow checks this
+before building and again before changing the live release. This mode labels
+the release notes as a Rust migration testing nightly and does not change any
+migration evidence or cutover status. Scheduled runs and default manual nightly
+runs retain the completion gate. The testing nightly uses the existing rolling
+nightly feed; it is not a separate release channel.
+
+The normal release path does not enforce independent CI conclusions. The explicit
+migration-preview path enforces `ci.yml`, and all publication still waits for the
+release workflow's own build legs and installer smoke tests. Do not claim this
+checks every other workflow automatically.
 
 Builds use `--publish never`. `npm run package` builds the Electron frontend,
 Rust backend and standalone claudemon before electron-builder. Electron retains
