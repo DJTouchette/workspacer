@@ -1,5 +1,7 @@
 use serde_json::{Value, json};
 use workspacer_hub::services::stores::{Stores, slug};
+#[path = "support/sweepguard.rs"]
+mod sweepguard;
 
 #[test]
 fn store_writes_and_deletes_use_resolved_alias_targets() {
@@ -66,22 +68,41 @@ fn store_writes_and_deletes_use_resolved_alias_targets() {
 fn filename_slug_contract_matches_all_three_existing_variants() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../../contracts/filename-slug-cases.json")).unwrap();
+    assert_eq!(
+        fixture["owners"]["services/hub-rs/src/services/stores.rs"],
+        json!(["layout", "session"]),
+        "Rust's slug owner must retain every written filename variant"
+    );
+    assert_eq!(
+        fixture["owners"]["services/hub-rs/src/services/library.rs"],
+        json!(["library"])
+    );
     assert!(
         fixture["cases"].as_array().unwrap().len() >= 17,
         "slug corpus was reduced"
     );
+    let mut tally = sweepguard::Tally::default();
     for case in fixture["cases"].as_array().unwrap() {
         for variant in ["library", "layout", "session"] {
-            let actual = slug(case["input"].as_str().unwrap(), variant);
+            let implementation = |input: &str| {
+                if variant == "library" {
+                    workspacer_hub::services::library::slug(input)
+                } else {
+                    slug(input, variant)
+                }
+            };
+            let actual = implementation(case["input"].as_str().unwrap());
             assert_eq!(
                 json!(actual),
                 case["expect"][variant],
                 "{} ({variant})",
                 case["name"]
             );
-            assert_eq!(slug(&actual, variant), actual);
+            assert_eq!(implementation(&actual), actual);
         }
+        tally.ran("other");
     }
+    tally.require_every("filename slug variants", 17).unwrap();
 }
 
 #[test]
@@ -391,8 +412,6 @@ fn collision_at_a_symlink_slot_never_falls_back_to_overwriting_the_first_session
 
 #[test]
 fn selected_session_filename_shared_contract() {
-    #[path = "support/sweepguard.rs"]
-    mod sweepguard;
     use workspacer_hub::services::paths;
     let corpus: Value = serde_json::from_str(include_str!(
         "../../../contracts/path-containment-cases.json"
@@ -476,4 +495,133 @@ fn selected_session_filename_shared_contract() {
     tally
         .require_corpus("selected session filenames", 12, 3, 9)
         .unwrap();
+}
+
+#[test]
+fn saved_boot_documents_report_exact_removed_fields_and_keep_usable_records() {
+    let root = tempfile::tempdir().unwrap();
+    let stores = Stores::new(root.path().into());
+    let agents = json!([
+        {"id":"kept","cwd":"/project","provider":"claude","model":"opus","note":"permissionMode is ordinary prose","escalationScrubbed":["forged"],"skipPermissions":false,"permissionMode":null,"profileId":"profile","mcpItemIds":[],"launchIntegrationId":"plugin","tabs":[false,{"id":"tab","panes":[false,{"id":"pane","type":"terminal","title":"keep","shell":"fixture-shell","initialCommand":"fixture-command","pluginId":"fixture-plugin","url":"https://example.invalid/view"}]}]},
+        {"id":"clean","model":"sonnet","escalationScrubbed":["stale"]}, false, null
+    ]);
+    for kind in ["sessions", "layouts"] {
+        let saved = stores
+            .call(
+                &format!("{kind}.save"),
+                json!({"name":"scrub fixture","agents":agents}),
+            )
+            .unwrap();
+        let loaded = if kind == "sessions" {
+            stores
+                .call("sessions.load", json!({"filename":saved}))
+                .unwrap()
+        } else {
+            stores.call("layouts.list", json!({})).unwrap()[0].clone()
+        };
+        let row = &loaded["agents"][0];
+        assert_eq!(
+            row["escalationScrubbed"],
+            json!([
+                "skipPermissions",
+                "permissionMode",
+                "profileId",
+                "mcpItemIds",
+                "launchIntegrationId",
+                "pane.shell",
+                "pane.initialCommand",
+                "pane.pluginId"
+            ])
+        );
+        for key in [
+            "skipPermissions",
+            "permissionMode",
+            "profileId",
+            "mcpItemIds",
+            "launchIntegrationId",
+        ] {
+            assert!(row.get(key).is_none());
+        }
+        let pane = &row["tabs"][1]["panes"][1];
+        assert_eq!(
+            pane,
+            &json!({"id":"pane","type":"terminal","title":"keep","url":"https://example.invalid/view"})
+        );
+        assert_eq!(row["note"], "permissionMode is ordinary prose");
+        assert_eq!(row["model"], "opus");
+        assert_eq!(loaded["agents"][1], json!({"id":"clean","model":"sonnet"}));
+        assert_eq!(loaded["agents"][2], false);
+        assert!(loaded["agents"][3].is_null());
+    }
+}
+
+#[test]
+fn restore_field_lists_stay_in_agreement_with_desktop_and_drive_real_scrubbing() {
+    use workspacer_hub::services::layout::scrub_saved_document;
+    let desktop = include_str!("../../../apps/desktop/src/main/lib/bootDocumentScrub.ts");
+    let rust = include_str!("../src/services/layout.rs")
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap();
+    let arrays = regex::Regex::new(r"(?s)for key in \[(.*?)\]").unwrap();
+    let quoted = regex::Regex::new(r#"["']([A-Za-z][A-Za-z0-9]*)["']"#).unwrap();
+    let rust_lists: Vec<Vec<String>> = arrays
+        .captures_iter(rust)
+        .map(|capture| {
+            quoted
+                .captures_iter(&capture[1])
+                .map(|field| field[1].to_owned())
+                .collect()
+        })
+        .collect();
+    assert_eq!(
+        rust_lists.len(),
+        2,
+        "review structural scrub field declarations"
+    );
+    let mut lists = Vec::new();
+    for (index, name, minimum) in [
+        (0, "SPAWN_ESCALATION_KEYS", 5),
+        (1, "PANE_ESCALATION_KEYS", 3),
+    ] {
+        let fields = desktop
+            .split_once(&format!("export const {name} = ["))
+            .unwrap()
+            .1
+            .split_once(']')
+            .unwrap()
+            .0;
+        let fields: Vec<String> = quoted
+            .captures_iter(fields)
+            .map(|field| field[1].to_owned())
+            .collect();
+        assert!(fields.len() >= minimum);
+        assert_eq!(rust_lists[index], fields, "{name}");
+        lists.push(fields);
+    }
+    let mut agent = json!({"id":"kept","tabs":[{"panes":[{"id":"pane"}]}]});
+    for key in &lists[0] {
+        agent[key] = Value::Null;
+    }
+    for key in &lists[1] {
+        agent["tabs"][0]["panes"][0][key] = Value::Null;
+    }
+    let mut document = json!({"agents":[agent]});
+    scrub_saved_document(&mut document);
+    for key in &lists[0] {
+        assert!(document["agents"][0].get(key).is_none());
+    }
+    for key in &lists[1] {
+        assert!(
+            document["agents"][0]["tabs"][0]["panes"][0]
+                .get(key)
+                .is_none()
+        );
+    }
+    let expected: Vec<_> = lists[0]
+        .iter()
+        .cloned()
+        .chain(lists[1].iter().map(|key| format!("pane.{key}")))
+        .collect();
+    assert_eq!(document["agents"][0]["escalationScrubbed"], json!(expected));
 }

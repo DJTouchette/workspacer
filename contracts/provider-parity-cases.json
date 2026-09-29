@@ -57,8 +57,11 @@
           "why"
         ],
         "loaders": [
-          "services/hub/cmd/brain/parity_ordering_test.go::TestProviderParityFixtureCases(",
+          "services/hub-rs/tests/provider_parity.rs::shared_provider_order_scalar_and_suffix_contract",
           "apps/desktop/src/main/lib/providerParity.test.ts::contracts/provider-parity-cases.json"
+        ],
+        "referenceLoaders": [
+          "services/hub/cmd/brain/parity_ordering_test.go::TestProviderParityFixtureCases("
         ]
       },
       "scalar": {
@@ -69,8 +72,12 @@
           "expected"
         ],
         "loaders": [
-          "services/hub/cmd/brain/parity_ordering_test.go::TestStoreListersSurviveANonStringScalar(",
+          "services/hub-rs/tests/provider_parity.rs::shared_provider_order_scalar_and_suffix_contract",
+          "services/hub-rs/tests/provider_parity.rs::actual_store_listers_keep_non_timestamp_scalars_last_and_preserve_dates",
           "apps/desktop/src/main/services/storeListerParity.test.ts::provider-parity-cases.json"
+        ],
+        "referenceLoaders": [
+          "services/hub/cmd/brain/parity_ordering_test.go::TestStoreListersSurviveANonStringScalar("
         ]
       },
       "suffix": {
@@ -86,8 +93,11 @@
           "why"
         ],
         "loaders": [
-          "services/hub/cmd/brain/parity_ordering_test.go::TestProviderParityFixtureCases(",
+          "services/hub-rs/tests/provider_parity.rs::shared_provider_order_scalar_and_suffix_contract",
           "apps/desktop/src/main/lib/providerParity.test.ts::contracts/provider-parity-cases.json"
+        ],
+        "referenceLoaders": [
+          "services/hub/cmd/brain/parity_ordering_test.go::TestProviderParityFixtureCases("
         ]
       }
     }

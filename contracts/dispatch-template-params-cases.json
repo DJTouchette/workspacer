@@ -51,7 +51,8 @@
   },
   "owners": {
     "apps/desktop/src/main/lib/dispatchTemplate.ts": "dispatchTemplateParams (TS) — the copy the desktop provider's library.list publishes, and the copy whose sibling renderDispatchTemplate then ENFORCES on spawn. This side is normative: the Go twin is written to match it, whitespace class included.",
-    "services/hub/cmd/brain/dispatchparams.go": "dispatchTemplateParams (Go) — the copy cmd/brain's library.list publishes for every web/mobile/MCP caller under the default catalog delegation. It parses but never renders: agents.spawn's `template` param stays declined here (parity_test.go spawnParamsDeclined)."
+    "services/hub/cmd/brain/dispatchparams.go": "dispatchTemplateParams (Go) — the copy cmd/brain's library.list publishes for every web/mobile/MCP caller under the default catalog delegation. It parses but never renders: agents.spawn's `template` param stays declined here (parity_test.go spawnParamsDeclined).",
+    "services/hub-rs/src/services/dispatch_templates.rs": "parameters (Rust): shared parser used by the owned library service; render uses the same token names and host-owned automatic variables."
   },
   "cases": [
     {

@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
-import { asString, byteCompare } from '../lib/providerParity';
+import { byteCompare, timestampText } from '../lib/providerParity';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugLayout } from '../lib/fileUtils';
@@ -106,21 +106,20 @@ class LayoutService {
             const full = resolveStoreEntry(layoutsDir(), f);
             if (full === null) return null;
             try {
-              return yaml.load(fs.readFileSync(full, 'utf-8')) as Layout;
+              const layout = yaml.load(fs.readFileSync(full, 'utf-8')) as Layout;
+              const stamp: unknown = layout?.createdAt;
+              if (stamp instanceof Date && Number.isFinite(stamp.getTime())) {
+                return { ...layout, createdAt: timestampText(stamp) };
+              }
+              return layout;
             } catch {
               return null;
             }
           })
           .filter((l): l is Layout => !!l && Array.isArray(l.agents))
-          // Byte-wise over a COERCED scalar, matching the Go twin's
-          // `str(out[i]["createdAt"]) > str(out[j]["createdAt"])`. localeCompare is
-          // a method, so `createdAt: 5` — or an unquoted ISO date, which js-yaml 4
-          // parses to a Date — threw inside the comparator as soon as V8's sort put
-          // that row in the `b` position, and the catch below turned the throw into
-          // an EMPTY LIST: every well-formed layout vanished with it, while the
-          // brain listed them all. <configDir>/layouts is a configStoreRoot, so
-          // writing that file is an ordinary permitted fs.write.
-          .sort((a, b) => byteCompare(asString(b.createdAt), asString(a.createdAt)))
+          // Valid YAML dates retain the timestamps emitted by older Rust saves.
+          // Other non-string scalars still sort last without hiding good rows.
+          .sort((a, b) => byteCompare(timestampText(b.createdAt), timestampText(a.createdAt)))
       );
     } catch {
       return [];

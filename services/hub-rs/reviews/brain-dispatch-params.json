@@ -1,0 +1,54 @@
+{
+  "records": {
+    "services/hub/cmd/brain/dispatchparams.go": {
+      "status": "ported",
+      "sha256": "6925459db14c3e8664fa73956c6d063efd8807c7ea95f43d9476011e53b88e52",
+      "replacement": [
+        "services/hub-rs/src/services/dispatch_templates.rs",
+        "services/hub-rs/src/services/library.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/library.rs",
+        "contracts/dispatch-template-params-cases.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete parser and all four legacy test functions reviewed. ECMAScript whitespace, optional leading question mark, first colon split, first occurrence ordering, required/default flags and host-owned cwd/projectCwd exclusions use the existing shared Rust parser.",
+          "The canonical18-case corpus now explicitly names the Rust owner and enforces an executed-case floor through the shared nondiscardable Tally, in addition to enumeration and exact ordered outputs. No expected case value changed.",
+          "Actual Hub/Client library.save and library.list calls prove dispatch params are derived from the stored body on both responses, ordinary prompt rows omit params, caller-forged derived params are never persisted, and both host automatic variables are excluded.",
+          "Filters are proved against the real unfiltered listing: kind filtering preserves relative order; ID filtering selects one; kind and ID are ANDed; empty filters mean no filter; missing IDs return empty; unknown kinds fail. The persisted frontmatter is read and parsed to prove no params key was written."
+        ],
+        "intentionalChanges": [
+          "Rust keeps the explicit empty default property specified by the normative TypeScript/JSON corpus; Go struct omitempty omitted that property on wire while comparing it as the same empty string in its typed tests.",
+          "The shared Rust module also renders validated templates after host context is resolved. This record ports the former parser/discovery responsibility; full launch/worktree ownership retains its separate evidence."
+        ],
+        "validation": "2026-09-29 Linux: final owning library target11 passed, including the shared executed corpus and real save/list/filter regression, /tmp/workspacer-provider-final-library.log. The separate full library377 checkpoint and provider integration6 passed for the surrounding service changes. No test skip or source-list mention is treated as behavioral proof."
+      }
+    },
+    "services/hub/cmd/brain/dispatchparams_test.go": {
+      "status": "ported",
+      "sha256": "acc3f116f2a9cbcd9aae6f191557aec08ed1f25624a16a58a524151898cb7dcd",
+      "replacement": [
+        "services/hub-rs/src/services/dispatch_templates.rs",
+        "services/hub-rs/src/services/library.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/library.rs",
+        "contracts/dispatch-template-params-cases.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete parser and all four legacy test functions reviewed. ECMAScript whitespace, optional leading question mark, first colon split, first occurrence ordering, required/default flags and host-owned cwd/projectCwd exclusions use the existing shared Rust parser.",
+          "The canonical18-case corpus now explicitly names the Rust owner and enforces an executed-case floor through the shared nondiscardable Tally, in addition to enumeration and exact ordered outputs. No expected case value changed.",
+          "Actual Hub/Client library.save and library.list calls prove dispatch params are derived from the stored body on both responses, ordinary prompt rows omit params, caller-forged derived params are never persisted, and both host automatic variables are excluded.",
+          "Filters are proved against the real unfiltered listing: kind filtering preserves relative order; ID filtering selects one; kind and ID are ANDed; empty filters mean no filter; missing IDs return empty; unknown kinds fail. The persisted frontmatter is read and parsed to prove no params key was written."
+        ],
+        "intentionalChanges": [
+          "Rust keeps the explicit empty default property specified by the normative TypeScript/JSON corpus; Go struct omitempty omitted that property on wire while comparing it as the same empty string in its typed tests.",
+          "The shared Rust module also renders validated templates after host context is resolved. This record ports the former parser/discovery responsibility; full launch/worktree ownership retains its separate evidence."
+        ],
+        "validation": "2026-09-29 Linux: final owning library target11 passed, including the shared executed corpus and real save/list/filter regression, /tmp/workspacer-provider-final-library.log. The separate full library377 checkpoint and provider integration6 passed for the surrounding service changes. No test skip or source-list mention is treated as behavioral proof."
+      }
+    }
+  }
+}

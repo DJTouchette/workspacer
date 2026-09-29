@@ -154,6 +154,9 @@ jobs:
       - name: MCP to desktop dispatch provenance integration
         run: npm run test:dispatch-chain
 
+      - name: Rust saved YAML preserves desktop timestamp types
+        run: make -C ../.. check-store-yaml-parity
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 

@@ -5,7 +5,7 @@ import { claudemonSessionClient } from './claudemonSessionClient';
 import { getConfigDir } from './configService';
 import { atomicWriteFileSync } from '../lib/atomicWriteFile';
 import { slugSession } from '../lib/fileUtils';
-import { asString, byteCompare, trimSuffix } from '../lib/providerParity';
+import { asString, byteCompare, timestampText, trimSuffix } from '../lib/providerParity';
 import { canonicalizePath, isWithin, resolveStoreEntry } from '../lib/pathConfinement';
 import { SESSION_SCHEMA_VERSION } from '../shared/sessionSchema';
 
@@ -171,7 +171,7 @@ class SessionService {
             // removes the FIRST occurrence anywhere in the name.
             name: asString(session.name) || trimSuffix(file, '.yaml'),
             filename: file,
-            timestamp: asString(session.timestamp),
+            timestamp: timestampText(session.timestamp),
             paneCount,
             agentCount: agents.filter((a) => !a.global).length,
           });

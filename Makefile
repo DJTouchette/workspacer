@@ -143,6 +143,14 @@ check-hub-capability-parameters:
 check-hub-rust-windows-platform:
 	cargo check --manifest-path tools/windows-contract-check/Cargo.toml --target x86_64-pc-windows-gnu --tests
 
+.PHONY: check-store-yaml-parity
+check-store-yaml-parity:
+	@yaml_receipt=$$(mktemp); trap 'rm -f "$$yaml_receipt"' EXIT; \
+	if ! cargo test --locked --manifest-path $(HUB_RUST)/Cargo.toml --features test-support --test provider_parity actual_saved_timestamps_are_quoted_and_roundtrip -- --nocapture > "$$yaml_receipt"; then \
+	  cat "$$yaml_receipt"; exit 1; \
+	fi; \
+	node apps/desktop/scripts/check-store-yaml-parity.mjs "$$yaml_receipt"
+
 .PHONY: check-hub-rust-assets
 check-hub-rust-assets:
 	python3 scripts/mcp-catalog.py --check

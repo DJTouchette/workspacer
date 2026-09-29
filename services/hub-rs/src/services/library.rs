@@ -77,6 +77,16 @@ fn validate(input: &Value) -> Result<()> {
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or("")
 }
+fn nonblank_or<'a>(text: &'a str, fallback: &'a str) -> &'a str {
+    if text
+        .chars()
+        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\u{b}' | '\u{c}' | '\r'))
+    {
+        fallback
+    } else {
+        text
+    }
+}
 pub fn slug(text: &str) -> String {
     static BAD: OnceLock<regex::Regex> = OnceLock::new();
     let text = text.to_ascii_lowercase();
@@ -268,11 +278,7 @@ impl Library {
                 continue;
             };
             let id = slug(&name[..name.len() - 3]);
-            let title = if string(&data, "title").is_empty() {
-                &id
-            } else {
-                string(&data, "title")
-            };
+            let title = nonblank_or(string(&data, "title"), &id);
             let kind = kind(&data["kind"]);
             let mut item = json!({"id":id,"scope":scope,"title":title,"kind":kind,"editable":true,"body":body,"path":path});
             for key in ["description", "tags"] {
@@ -324,7 +330,7 @@ impl Library {
                     (entry.path(), name[..name.len() - 3].into())
                 };
                 if let Ok((path, data, body)) = self.read(&path, Some(cwd)) {
-                    result.push(json!({"id":id,"scope":"claude","kind":kind,"title":if string(&data,"name").is_empty(){&id}else{string(&data,"name")},"description":string(&data,"description"),"origin":"project","editable":true,"body":body,"path":path}));
+                    result.push(json!({"id":id,"scope":"claude","kind":kind,"title":nonblank_or(string(&data,"name"),&id),"description":string(&data,"description"),"origin":"project","editable":true,"body":body,"path":path}));
                 }
             }
         }

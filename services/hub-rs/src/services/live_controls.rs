@@ -390,6 +390,29 @@ fn model_payload(provider: &str, p: &Value) -> Result<Value> {
     Ok(result)
 }
 fn recent(raw: &Value, name: impl Fn(&str, &str) -> String) -> Value {
+    let Some(source) = raw.as_array() else {
+        return json!([]);
+    };
+    // The legacy typed daemon decoder rejects the whole malformed response;
+    // do not manufacture resumable rows by coercing known scalar fields.
+    if source.iter().any(|row| {
+        !row.is_null()
+            && (!row.is_object()
+                || [
+                    "session_id",
+                    "cwd",
+                    "mode",
+                    "provider",
+                    "transport",
+                    "updated_at",
+                    "started_at",
+                ]
+                .iter()
+                .any(|key| !row[*key].is_null() && !row[*key].is_string())
+                || (!row["archived"].is_null() && !row["archived"].is_boolean()))
+    }) {
+        return json!([]);
+    }
     let millis = |value: &Value| {
         value
             .as_str()
@@ -532,6 +555,60 @@ mod tests {
         assert!(rows[0].get("costUSD").is_none());
         assert_eq!(rows[0]["title"], "");
     }
+    #[test]
+    fn recent_response_types_defaults_and_stable_timestamp_order_match_daemon_contract() {
+        let raw = json!([
+            {"session_id":"first-tie","updated_at":"2026-09-29T00:00:00.123456789Z","started_at":"2026-09-28T00:00:00Z","cwd":"/work","provider":"codex","transport":"stream","mode":"stopped","archived":true},
+            {"session_id":"second-tie","updated_at":"2026-09-29T00:00:00.123999999Z"},
+            {"session_id":"invalid-time","updated_at":"bad"},
+            {"session_id":"missing-time"},
+            {"session_id":"agent-synthetic"}, null, {}
+        ]);
+        let rows = recent(&raw, |id, cwd| {
+            if id == "first-tie" {
+                format!("Label {cwd}")
+            } else {
+                String::new()
+            }
+        });
+        let ids: Vec<_> = rows
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["sessionId"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            ["first-tie", "second-tie", "invalid-time", "missing-time"]
+        );
+        assert_eq!(rows[0]["provider"], "codex");
+        assert_eq!(rows[0]["transport"], "stream");
+        assert_eq!(rows[0]["name"], "Label /work");
+        assert_eq!(rows[0]["updatedAt"], rows[1]["updatedAt"]);
+        assert_eq!(rows[1]["mode"], "unknown");
+        assert_eq!(rows[1]["transport"], "pty");
+        assert_eq!(rows[1]["startedAt"], 0);
+        for row in rows.as_array().unwrap() {
+            assert!(row.get("costUSD").is_none() && row.get("billedTokens").is_none());
+            assert_eq!(row["model"], "");
+            assert_eq!(row["title"], "");
+        }
+        for key in [
+            "session_id",
+            "cwd",
+            "mode",
+            "provider",
+            "transport",
+            "updated_at",
+            "started_at",
+            "archived",
+        ] {
+            let mut malformed = raw.clone();
+            malformed[1][key] = json!(42);
+            assert_eq!(recent(&malformed, |_, _| String::new()), json!([]), "{key}");
+        }
+        assert_eq!(recent(&json!({}), |_, _| String::new()), json!([]));
+    }
     #[tokio::test]
     async fn manual_hook_rows_keep_confirmed_controls_until_the_observed_life_ends() -> Result<()> {
         use claudemon::daemon::{
@@ -611,6 +688,35 @@ mod tests {
             }
         })
         .await?;
+        let history = controls
+            .call(
+                "sessions.recent",
+                json!({"limit":0,"cwd":"ignored-caller-path"}),
+            )
+            .await?;
+        let manual = history
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["sessionId"] == "manual")
+            .unwrap();
+        assert_eq!(manual["provider"], "claude");
+        assert!(manual.get("costUSD").is_none() && manual.get("billedTokens").is_none());
+        let cwd = manual["cwd"].as_str().unwrap();
+        std::fs::write(
+            dir.path().join("tui-names.json"),
+            serde_json::to_vec(&json!({cwd:"Renamed project"}))?,
+        )?;
+        let history = controls.call("sessions.recent", json!({})).await?;
+        assert_eq!(
+            history
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["sessionId"] == "manual")
+                .unwrap()["name"],
+            "Renamed project"
+        );
         // The engine has no paid provider. Exercise the exact bookkeeping seam
         // reached after an accepted control ACK against its real manual row.
         let stamp = controls.confirmed.observe(&rows.read().unwrap()["manual"]);

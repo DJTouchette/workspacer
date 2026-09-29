@@ -560,16 +560,25 @@ mod tests {
                 .is_empty()
         );
         for case in corpus["unsupportedProviders"].as_array().unwrap() {
+            let owner = case["provider"].as_str().unwrap();
+            assert!(!owner.trim().is_empty());
             rows.lock().unwrap().get_mut("worker").unwrap()["provider"] = case["provider"].clone();
-            assert!(
-                service
-                    .arm(&json!({"sessionId":"worker","contextUsedPct":80}), now())
-                    .is_err()
-            );
+            let error = service
+                .arm(&json!({"sessionId":"worker","contextUsedPct":80}), now())
+                .unwrap_err();
+            assert!(error.to_string().contains(&format!(
+                "contextUsedPct is unavailable for provider {owner}"
+            )));
             assert!(service.state.lock().unwrap().watches.is_empty());
         }
         assert_eq!(corpus["cumulativeCodex"].as_array().unwrap().len(), 1);
         let case = &corpus["cumulativeCodex"][0];
+        let percent =
+            case["inputTokens"].as_f64().unwrap() / case["windowTokens"].as_f64().unwrap() * 100.0;
+        assert!(
+            percent > case["thresholdPct"].as_f64().unwrap(),
+            "fixture no longer kills cumulative-token fallback"
+        );
         {
             let mut rows = rows.lock().unwrap();
             let worker = rows.get_mut("worker").unwrap();
@@ -588,8 +597,11 @@ mod tests {
         service.sweep(now()).await;
         assert!(sent.lock().unwrap().is_empty());
         assert_eq!(service.state.lock().unwrap().watches.len(), 1);
-        rows.lock().unwrap().get_mut("worker").unwrap()["status_line"] =
-            sample(json!("1788888888888888902"))["status_line"].clone();
+        let mut successor = sample(json!("1788888888888888902"))["status_line"].clone();
+        successor["context_health"]["used_tokens"] = case["inputTokens"].clone();
+        successor["context_health"]["window_tokens"] = case["windowTokens"].clone();
+        successor["context_health"]["used_pct"] = json!(percent);
+        rows.lock().unwrap().get_mut("worker").unwrap()["status_line"] = successor;
         service.sweep(now()).await;
         assert_eq!(sent.lock().unwrap().len(), 1);
         assert!(

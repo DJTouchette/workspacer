@@ -1,4 +1,6 @@
 use serde_json::{Value, json};
+#[path = "support/sweepguard.rs"]
+mod sweepguard;
 use workspacer_hub::services::{
     dispatch_templates,
     library::{Library, parse, slug},
@@ -113,7 +115,15 @@ fn template_parameter_shared_contract_and_strict_rendering() {
         "../../../contracts/dispatch-template-params-cases.json"
     ))
     .unwrap();
-    for case in corpus["cases"].as_array().unwrap() {
+    assert!(
+        corpus["owners"]["services/hub-rs/src/services/dispatch_templates.rs"]
+            .as_str()
+            .is_some_and(|owner| !owner.is_empty())
+    );
+    let cases = corpus["cases"].as_array().unwrap();
+    assert!(cases.len() >= 18, "dispatch parameter corpus shrank");
+    let mut executed = sweepguard::Tally::default();
+    for case in cases {
         assert_eq!(
             json!(dispatch_templates::parameters(
                 case["template"].as_str().unwrap()
@@ -122,7 +132,11 @@ fn template_parameter_shared_contract_and_strict_rendering() {
             "{}",
             case["name"]
         );
+        executed.ran("other");
     }
+    executed
+        .require_every("dispatch parameter cases", 18)
+        .unwrap();
     let text = "{{task}} in {{cwd}} from {{projectCwd}}; {{delivery:open a PR}}";
     assert_eq!(
         dispatch_templates::render(text, &json!({"task":"implement"}), "/worktree", "/source")
@@ -402,4 +416,87 @@ async fn owned_runtime_observes_external_library_edits_and_joins_polling() {
     .unwrap();
     // The runtime joined its watcher before releasing the owner.
     std::fs::remove_dir_all(config).unwrap();
+}
+
+#[tokio::test]
+async fn dispatch_parameters_are_derived_on_save_and_list_and_filters_only_narrow() {
+    use workspacer_hub::{Hub, Options, client::Client};
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    let mut options = Options::default();
+    options.config_dir = Some(config.clone());
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    let expected = json!([{"name":"task","required":true},{"name":"delivery","required":false,"default":"open a PR"}]);
+    for (id, kind, title) in [
+        ("parity-ship", "dispatch", "Ship"),
+        ("parity-scout", "dispatch", "Scout"),
+        ("parity-notes", "prompt", "Notes"),
+    ] {
+        let saved=client.call("library.save",json!({"scope":"global","id":id,"title":title,"kind":kind,"body":"SHIP: {{task}}\nDeliver: {{delivery:open a PR}} in {{cwd}} from {{projectCwd}}","params":[{"name":"forged"}]})).await.unwrap();
+        if kind == "dispatch" {
+            assert_eq!(saved["params"], expected);
+        } else {
+            assert!(saved.get("params").is_none());
+        }
+        let source =
+            std::fs::read_to_string(config.join("library").join(format!("{id}.md"))).unwrap();
+        let (metadata, _) = parse(&source);
+        assert!(
+            metadata.get("params").is_none(),
+            "derived parameters must not become authored frontmatter"
+        );
+    }
+    let all = client.call("library.list", json!({})).await.unwrap();
+    assert_eq!(
+        client
+            .call("library.list", json!({"kind":"","id":""}))
+            .await
+            .unwrap(),
+        all
+    );
+    let dispatched = client
+        .call("library.list", json!({"kind":"dispatch"}))
+        .await
+        .unwrap();
+    let expected_filtered: Vec<_> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "dispatch")
+        .cloned()
+        .collect();
+    assert_eq!(dispatched, json!(expected_filtered));
+    let ours: Vec<_> = dispatched
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["id"].as_str())
+        .filter(|id| id.starts_with("parity-"))
+        .collect();
+    assert_eq!(ours, ["parity-scout", "parity-ship"]);
+    let ship = client
+        .call("library.list", json!({"id":"parity-ship"}))
+        .await
+        .unwrap();
+    assert_eq!(ship.as_array().unwrap().len(), 1);
+    assert_eq!(ship[0]["params"], expected);
+    for filter in [
+        json!({"id":"parity-ship","kind":"prompt"}),
+        json!({"id":"does-not-exist"}),
+    ] {
+        assert_eq!(
+            client.call("library.list", filter).await.unwrap(),
+            json!([])
+        );
+    }
+    assert!(
+        client
+            .call("library.list", json!({"kind":"dispatchh"}))
+            .await
+            .is_err()
+    );
+    drop(client);
+    hub.shutdown().unwrap();
 }

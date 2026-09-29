@@ -6,7 +6,7 @@
  * comes back in, and how each side reads a scalar that is not the type it
  * expected. Both were live divergences — see the fixture's header.
  *
- * TWIN: services/hub/cmd/brain/parity_ordering_test.go.
+ * TWIN: services/hub-rs/tests/provider_parity.rs (original Go reference retained).
  */
 import * as fs from 'fs';
 import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
@@ -14,7 +14,16 @@ import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 
-import { asString, byteCompare, trimSuffix, trimSuffixFold } from './providerParity';
+import { asString, byteCompare, timestampText, trimSuffix, trimSuffixFold } from './providerParity';
+
+it('normalizes valid Date values only for timestamp fields and keeps ordinary scalars strict', () => {
+  const date = new Date('2026-03-01T02:00:00+02:00');
+  expect(timestampText(date)).toBe('2026-03-01T00:00:00.000Z');
+  expect(asString(date)).toBe('');
+  for (const value of [new Date(NaN), 5, true, null, {}, []]) expect(timestampText(value)).toBe('');
+  expect(timestampText('not-a-date')).toBe('not-a-date');
+  expect(timestampText('2026-03-01T02:00:00+02:00')).toBe('2026-03-01T02:00:00+02:00');
+});
 
 interface ParityFixture {
   order: { name: string; input: string[]; expected: string[]; why?: string }[];

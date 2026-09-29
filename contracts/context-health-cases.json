@@ -3,20 +3,29 @@
     "blocks": {
       "formatPctCases": {
         "why": "Desktop and Hub wake text must render the same bounded percentage.",
-        "required": ["input", "expected"],
+        "required": [
+          "input",
+          "expected"
+        ],
         "loaders": [
           "apps/desktop/src/main/services/thresholdWatch.test.ts::formatPctCases",
-          "services/hub/cmd/brain/contexthealth_contract_test.go::FormatPctCases",
           "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
+        ],
+        "referenceLoaders": [
+          "services/hub/cmd/brain/contexthealth_contract_test.go::FormatPctCases"
         ]
       },
       "unsupportedProviders": {
         "why": "Providers with no runtime context-window carrier must refuse context health watches without consuming slots.",
-        "required": ["provider"],
+        "required": [
+          "provider"
+        ],
         "loaders": [
           "apps/desktop/src/main/services/thresholdWatch.test.ts::unsupportedProviders",
-          "services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders",
           "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
+        ],
+        "referenceLoaders": [
+          "services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders"
         ]
       },
       "cumulativeCodex": {
@@ -30,8 +39,10 @@
         "loaders": [
           "services/claudemon/src/providers/codex.rs::cumulativeCodex",
           "apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
-          "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex",
           "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
+        ],
+        "referenceLoaders": [
+          "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex"
         ]
       }
     }

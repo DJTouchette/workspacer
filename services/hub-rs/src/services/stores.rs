@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
+mod yaml_strings;
 
 pub fn slug(input: &str, variant: &str) -> String {
     let mut output = String::new();
@@ -107,7 +108,7 @@ impl Stores {
                 let id = slug(&id, "layout");
                 let mut layout = json!({"id":id,"name":if name.is_empty(){id.as_str()}else{name},"createdAt":now_iso(),"agents":input.get("agents").filter(|v|!v.is_null()).cloned().unwrap_or(json!([]))});
                 scrub_saved_document(&mut layout);
-                atomic_bytes(&path, serde_yaml::to_string(&layout)?.as_bytes())?;
+                atomic_bytes(&path, &yaml_strings::encode(&layout, "createdAt")?)?;
                 Ok(layout)
             }
             "layouts.delete" => {
@@ -174,7 +175,7 @@ impl Stores {
                         data["activeTabId"] = params["activeTabId"].clone();
                     }
                 }
-                atomic_bytes(&path, serde_yaml::to_string(&data)?.as_bytes())?;
+                atomic_bytes(&path, &yaml_strings::encode(&data, "timestamp")?)?;
                 Ok(json!(filename))
             }
             _ => bail!("unknown saved-state method"),
@@ -201,15 +202,25 @@ impl Stores {
             let Ok(bytes) = std::fs::read(&path) else {
                 continue;
             };
-            let data = match serde_yaml::from_slice::<Value>(&bytes) {
+            let mut data = match serde_yaml::from_slice::<Value>(&bytes) {
                 Ok(v) if v.is_object() || v.is_null() => v,
                 _ => {
                     quarantine(&path, &bytes);
                     continue;
                 }
             };
+            let Some(timestamp_text) = yaml_strings::list_timestamp(
+                &bytes,
+                &data,
+                if layouts { "createdAt" } else { "timestamp" },
+            ) else {
+                continue;
+            };
             if layouts {
                 if data["agents"].is_array() {
+                    if data["createdAt"].is_string() {
+                        data["createdAt"] = json!(timestamp_text);
+                    }
                     result.push(data);
                 }
             } else {
@@ -237,7 +248,7 @@ impl Stores {
                 } else {
                     pane_count = data["panes"].as_array().map(Vec::len).unwrap_or(0);
                 }
-                result.push(json!({"name":display,"filename":name,"timestamp":data["timestamp"].as_str().unwrap_or(""),"paneCount":pane_count,"agentCount":agents.map(|a|a.iter().filter(|v|v["global"]!=true).count()).unwrap_or(0)}));
+                result.push(json!({"name":display,"filename":name,"timestamp":timestamp_text,"paneCount":pane_count,"agentCount":agents.map(|a|a.iter().filter(|v|v["global"]!=true).count()).unwrap_or(0)}));
             }
         }
         let timestamp = if layouts { "createdAt" } else { "timestamp" };

@@ -4116,10 +4116,9 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             json!([
                 "services/claudemon/src/providers/codex.rs::cumulativeCodex",
                 "apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
-                "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex",
                 "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
             ]),
-            "every Rust/TypeScript/Go cumulativeCodex consumer must stay declared"
+            "every active Rust/TypeScript cumulativeCodex consumer must stay declared"
         );
         let cases = fixture["cumulativeCodex"]
             .as_array()

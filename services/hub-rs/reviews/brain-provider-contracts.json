@@ -1,0 +1,127 @@
+{
+  "records": {
+    "services/hub/cmd/brain/contexthealth_contract_test.go": {
+      "status": "ported",
+      "sha256": "81a25ddd9d7847aff7913500d6538ba04d5a83c13560f5190d797b4e53fc8d2d",
+      "replacement": [
+        "services/hub-rs/src/services/thresholds.rs",
+        "contracts/context-health-cases.json"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/thresholds.rs",
+        "services/claudemon/src/providers/codex.rs",
+        "apps/desktop/src/main/services/thresholdWatch.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all legacy formatting, unsupported-provider, cumulative-only watch, successor sample, exact epoch and unsafe numeric epoch assertions. Rust replays all10 format cases, requires each unsupported provider to be nonblank, checks the exact provider-specific refusal and zero consumed slots, and preserves the one cumulative-only fixture.",
+          "Restored the cumulative-input/window ratio > threshold mutation precondition. Actual service arm/sweep leaves the watch waiting without a message when only billing totals exist; the coherent successor sample uses fixture token amounts and fires exactly one runtime-confirmed wake, then consumes the watch.",
+          "Adjacent large string epochs remain distinct. Unsafe numeric epochs above2^53, zero, leading-zero, signed and overflowing string epochs are refused by the pure health reader without mutating the session row. Existing freshness/provider/runtime-source/pair-consistency and epoch-crossing tests remain.",
+          "Active block-loader arrays now name executing Rust/TypeScript/Codex owners; original Go references remain in referenceLoaders metadata. Go source and every JSON case suffix byte are unchanged."
+        ],
+        "intentionalChanges": [
+          "Retiring Go is a preserved reference loader rather than an active file-existence requirement. No context-window policy or telemetry derivation changes were made."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/slug_test.go": {
+      "status": "ported",
+      "sha256": "bf13563c2655291a016dd7d3f3a194c83573f49ef87832b54f8b63c77b048450",
+      "replacement": [
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/stores.rs",
+        "contracts/filename-slug-cases.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "apps/desktop/src/main/lib/fileUtils.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the owner assertion, nonempty corpus/floor17, expectation presence for all three variants, and library/layout idempotence assertions. The Rust test now calls the real library::slug for library names and stores::slug for layout/session names, rather than exercising the unused library branch of the stores helper.",
+          "Explicit Rust ownership declares library.rs=[library], stores.rs=[layout,session]; retained original Go/TS ownership and all17 case expectations remain unchanged. Every case asserts all three actual helper outputs and idempotence; observed Tally requires17 executed cases, so merely enumerating the fixture is insufficient."
+        ],
+        "intentionalChanges": [
+          "Rust splits the old single Go slug owner across two real implementations. The session variant is also asserted idempotent, a stronger control than the original two-variant requirement."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/parity_ordering_test.go": {
+      "status": "ported",
+      "sha256": "e8e87065e092a69c36cc5a0cfc85c742965cc310985fab2eef6e9dbb98ca0659",
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/stores/yaml_strings.rs",
+        "services/hub-rs/src/services/library.rs",
+        "apps/desktop/src/main/lib/providerParity.ts",
+        "apps/desktop/src/main/services/layoutService.ts",
+        "apps/desktop/src/main/services/sessionService.ts",
+        "contracts/provider-parity-cases.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/provider_parity.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/library.rs",
+        "apps/desktop/src/main/lib/providerParity.test.ts",
+        "apps/desktop/src/main/services/storeListerParity.test.ts",
+        "apps/desktop/scripts/check-store-yaml-parity.mjs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every primitive and real-lister assertion. New Rust consumer executes the frozen4 order/7 scalar/10 suffix vectors with separate observed floors. Actual library.list and fs.listDir consume fixture inputs including the astral UTF8 ordering control; real saved-state rows cover descending timestamps and strict numeric/container fallback. Mixed .md casing derives the same IDs, and blank titles fall back to IDs.",
+          "Measured the original missing behaviors before fixing: whitespace-only library title stayed blank, and Rust/desktop disagreed on unquoted YAML timestamps. Title fallback now checks exactly space/tab/LF/VT/FF/CR, preserving padded nonblank text, NEL and BOM; actual markdown-file controls cover them.",
+          "Existing Rust saves used unquoted timestamps. New upgrade tests reproduce that writer form, preserve date visibility/order and unchanged sessions.load documents, and verify LIST does not rewrite source files. Valid implicit or explicitly tagged timestamp values normalize only in LIST; quoted/explicit-string values remain exact. Generic scalar/title coercion remains strict.",
+          "Safe yaml-rust parser events recover only root timestamp/createdAt style, aliases and tag directives. The exact installed js-yaml scalar grammar\u2014not broad chrono parsing\u2014drives normalization, including two-digit minute/second requirements, date-only width, Date.UTC year0..99 behavior, calendar overflow, offset subtraction, fractional millisecond truncation and extended-year ISO output. Invalid explicit timestamp tags are omitted from LIST without rewriting files.",
+          "New saves retain the human YAML emitter and quote only the generated root timestamp using parser-reported character-to-byte span plus exact-value verification. The actual Stores producer emits two real saved documents and68 actual LIST projections; the desktop CLI decodes those exact bytes with installed js-yaml and checks all type/projection results. Original Go yaml.v3 separately decoded both actual new saves with string timestamps and identical document contents.",
+          "Active fixture loaders now point at real Rust replay/public-lister tests while retaining original Go pointers as referenceLoaders. All frozen JSON case bytes and Go source files remain unchanged. Existing source guard remains122 methods/126 dangerous bindings/23 opaque with zero errors."
+        ],
+        "intentionalChanges": [
+          "Intentional correction to the old Go odd-date-last assertion: valid YAML Date values are retained and normalized at timestamp-specific desktop/Rust LIST readers. Treating them as empty would regress already-saved Rust sessions and boot-restore ordering. Numeric/container scalars remain non-timestamps; general asString and title rules are unchanged.",
+          "LOAD documents and existing file bytes are not globally rewritten. Quoted timestamp strings retain their exact spelling; only values that the desktop YAML resolver recognizes as dates normalize in LIST. New writes explicitly quote generated timestamps to prevent cross-provider type drift.",
+          "yaml-rust0.4.5 was already locked/cached transitively; only a direct dependency edge is added. No unsafe parser, regex-based YAML field extraction or general YAML emitter replacement is introduced."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "library": "377 passed /tmp/workspacer-provider-final-lib.log",
+    "provider_parity": "6 passed after final post-LIST byte preservation assertions /tmp/workspacer-provider-final-integration.log",
+    "stores": "11 passed /tmp/workspacer-provider-final-stores.log",
+    "desktop": "242 passed across7 owning/twin suites; main typecheck passed",
+    "interop": "2 actual saved documents +68 actual LIST projections passed node apps/desktop/scripts/check-store-yaml-parity.mjs /tmp/workspacer-store-yaml-receipt.log",
+    "go_reference": "Original Go yaml.v3 decoded both final actual saves as strings with identical document content: /tmp/workspacer-store-yaml-go-proof.log",
+    "note": "Earlier combined link failed under disk pressure and provides no test evidence. Sequential -j1 actual owning targets passed. New standard-tag/grammar matrix is exercised against installed js-yaml; no full local claudemon test rebuild was performed for its test-only loader-array edit, which remains covered by normal claudemon CI.",
+    "library_integration": "11 passed after root executed18-case tally /tmp/workspacer-provider-final-library.log",
+    "terminals": "1 passed /tmp/workspacer-provider-final-terminals.log",
+    "ci_seam": "Makefile check-store-yaml-parity + desktop CI after existing Rust fixture setup; root actionlint validated wiring. Exact actual producer binary and committed CLI were exercised locally.",
+    "source_guard": "122 methods /126 dangerous bindings /23 opaque /zero errors: /tmp/workspacer-provider-final-source-guard.json",
+    "format": "Rustfmt, Prettier and git diff --check passed",
+    "witness": "Rivet left the four Rust source files unmapped; explicit library and owning integration targets supplied the proof. Seven desktop owning/twin suites and main TypeScript typecheck passed.",
+    "frozen_cases": "Exact case suffix bytes verified against HEAD for context-health, provider-parity and filename-slug JSON; all three original Go source hashes verified unchanged."
+  },
+  "readyToStage": [
+    "services/hub-rs/Cargo.toml",
+    "services/hub-rs/Cargo.lock",
+    "services/hub-rs/src/services/stores.rs",
+    "services/hub-rs/src/services/stores/yaml_strings.rs",
+    "services/hub-rs/src/services/library.rs",
+    "services/hub-rs/src/services/thresholds.rs",
+    "services/hub-rs/tests/provider_parity.rs",
+    "services/hub-rs/tests/stores.rs",
+    "services/hub-rs/tests/library.rs",
+    "apps/desktop/src/main/lib/providerParity.ts",
+    "apps/desktop/src/main/lib/providerParity.test.ts",
+    "apps/desktop/src/main/services/layoutService.ts",
+    "apps/desktop/src/main/services/sessionService.ts",
+    "apps/desktop/src/main/services/storeListerParity.test.ts",
+    "apps/desktop/src/main/services/thresholdWatch.test.ts",
+    "apps/desktop/scripts/check-store-yaml-parity.mjs",
+    "services/claudemon/src/providers/codex.rs",
+    "contracts/context-health-cases.json",
+    "contracts/filename-slug-cases.json",
+    "contracts/provider-parity-cases.json",
+    "services/hub-rs/reviews/brain-provider-contracts.json",
+    ".rivet/learnings/2026-09-29-rust-saved-yaml-timestamps-lost-desktop-scalar-t-40228d.md",
+    ".rivet/learnings/2026-09-29-saved-timestamps-need-field-specific-date-normal-ba448b.md"
+  ]
+}

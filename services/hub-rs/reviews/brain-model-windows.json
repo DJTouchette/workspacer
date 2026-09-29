@@ -1,0 +1,58 @@
+{
+  "records": {
+    "services/hub/cmd/brain/windows.go": {
+      "sha256": "42a6fb749a314c912413e4a1a9a60a4ec7af32433d84dbedf8fb3a7fc51323d5",
+      "status": "ported",
+      "replacement": [
+        "services/claudemon/src/session/windows.rs",
+        "services/hub-rs/src/model_selection.rs",
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "tests": [
+        "services/claudemon/src/session/windows.rs",
+        "services/hub-rs/tests/models.rs",
+        "contracts/model-context-windows.json",
+        "contracts/claude-model-catalog-cases.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Hub re-exports the owned claudemon model/window implementation; no second Rust table or resolver. Shared table is checked row-for-row in exact order and kind (contains/prefix/suffix). All28 concrete lookup cases preserve first-match precedence and explicit unknown rather than guessed capacity.",
+          "All12 marker and24 resolution cases execute the real owner: reported positive window, positive user override, requested1M selection, concrete table, then unknown. Zero/absent claims are omitted; disqualified claims fall through rather than guessing a replacement. The directly asserted200000 and204000 peaks retain200000;204001 returns unknown.",
+          "Legacy badge assertions map to the actual catalog contract: opus/sonnet/haiku200K, opus[1m]/sonnet[1m]/fable1M, with numeric contextWindow values. Concrete claude-opus-4-8-20260101 and claude-fable-5 are explicit shared lookup rows200000 and1000000. The production catalog uses that same re-exported lookup and numeric K/M formatting; no independent guessed badge table.",
+          "Contract nonempty/corpus guards are retained by exact table length plus positive lookup/marker/resolution floors. Existing owner CI additionally exercises canonical selection, wire inputs, argv and provider context defaults. No fresh external model specification or inference from occupancy was introduced by this review."
+        ],
+        "intentionalChanges": [
+          "The active Rust resolver uses the established canonical model-selection boundary before requested markers, rejecting malformed identities that legacy substring helpers could accept. ASCII model matching and saturating arithmetic are the existing Rust owner behavior; this review certifies shared contract and exact legacy test assertions, not arbitrary malformed-Unicode or overflowing-u64 equivalence. Display helper internals are consolidated into the actual catalog instead of duplicating formatThousands."
+        ],
+        "validation": "Unchanged-source CI evidence: successful ci run36635304909, commit b80c9e14f81643072e5a280bda1ab1028e32a57b. Actual claudemon Test job https://github.com/DJTouchette/workspacer/actions/runs/36635304909/job/109634362736 logged all9 session::windows unit tests passing (local receipt /tmp/workspacer-window-owner-ci.log). Actual hub Test job https://github.com/DJTouchette/workspacer/actions/runs/36635304909/job/109634362782 logged claude_model_catalog_matches_shared_contract passing (/tmp/workspacer-window-picker-ci.log). Verified git diff against that exact commit is empty for windows.rs, model-context-windows.json, hub model_selection.rs/models.rs/tests/models.rs and claude-model-catalog-cases.json. No local dependency unit execution is claimed; the evidence is the actual unchanged-owner CI run. Ten relevant passing tests, no new implementation or redundant regression needed."
+      }
+    },
+    "services/hub/cmd/brain/windows_test.go": {
+      "sha256": "eac95f2873ecea2591a5eb1dacd7f7f5bb170a59c8f9268e4b08eedc38a27bcf",
+      "status": "ported",
+      "replacement": [
+        "services/claudemon/src/session/windows.rs",
+        "services/hub-rs/src/model_selection.rs",
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "tests": [
+        "services/claudemon/src/session/windows.rs",
+        "services/hub-rs/tests/models.rs",
+        "contracts/model-context-windows.json",
+        "contracts/claude-model-catalog-cases.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Hub re-exports the owned claudemon model/window implementation; no second Rust table or resolver. Shared table is checked row-for-row in exact order and kind (contains/prefix/suffix). All28 concrete lookup cases preserve first-match precedence and explicit unknown rather than guessed capacity.",
+          "All12 marker and24 resolution cases execute the real owner: reported positive window, positive user override, requested1M selection, concrete table, then unknown. Zero/absent claims are omitted; disqualified claims fall through rather than guessing a replacement. The directly asserted200000 and204000 peaks retain200000;204001 returns unknown.",
+          "Legacy badge assertions map to the actual catalog contract: opus/sonnet/haiku200K, opus[1m]/sonnet[1m]/fable1M, with numeric contextWindow values. Concrete claude-opus-4-8-20260101 and claude-fable-5 are explicit shared lookup rows200000 and1000000. The production catalog uses that same re-exported lookup and numeric K/M formatting; no independent guessed badge table.",
+          "Contract nonempty/corpus guards are retained by exact table length plus positive lookup/marker/resolution floors. Existing owner CI additionally exercises canonical selection, wire inputs, argv and provider context defaults. No fresh external model specification or inference from occupancy was introduced by this review."
+        ],
+        "intentionalChanges": [
+          "The active Rust resolver uses the established canonical model-selection boundary before requested markers, rejecting malformed identities that legacy substring helpers could accept. ASCII model matching and saturating arithmetic are the existing Rust owner behavior; this review certifies shared contract and exact legacy test assertions, not arbitrary malformed-Unicode or overflowing-u64 equivalence. Display helper internals are consolidated into the actual catalog instead of duplicating formatThousands."
+        ],
+        "validation": "Unchanged-source CI evidence: successful ci run36635304909, commit b80c9e14f81643072e5a280bda1ab1028e32a57b. Actual claudemon Test job https://github.com/DJTouchette/workspacer/actions/runs/36635304909/job/109634362736 logged all9 session::windows unit tests passing (local receipt /tmp/workspacer-window-owner-ci.log). Actual hub Test job https://github.com/DJTouchette/workspacer/actions/runs/36635304909/job/109634362782 logged claude_model_catalog_matches_shared_contract passing (/tmp/workspacer-window-picker-ci.log). Verified git diff against that exact commit is empty for windows.rs, model-context-windows.json, hub model_selection.rs/models.rs/tests/models.rs and claude-model-catalog-cases.json. No local dependency unit execution is claimed; the evidence is the actual unchanged-owner CI run. Ten relevant passing tests, no new implementation or redundant regression needed."
+      }
+    }
+  }
+}

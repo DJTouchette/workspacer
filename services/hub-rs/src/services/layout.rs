@@ -146,7 +146,16 @@ fn scrub_document(value: &mut Value, strict_shape: bool) {
                         if let Some(pane) = pane.as_object_mut() {
                             for key in ["shell", "initialCommand", "pluginId"] {
                                 if pane.remove(key).is_some() {
-                                    dropped.push("pane");
+                                    dropped.push(if strict_shape {
+                                        "pane"
+                                    } else {
+                                        match key {
+                                            "shell" => "pane.shell",
+                                            "initialCommand" => "pane.initialCommand",
+                                            "pluginId" => "pane.pluginId",
+                                            _ => unreachable!(),
+                                        }
+                                    });
                                 }
                             }
                         }

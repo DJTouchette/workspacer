@@ -33,6 +33,7 @@ rmcp = { version = "3.5.0", default-features = false, features = ["server", "tra
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 serde_yaml = "0.9"
+yaml-rust = "0.4.5"
 sha2 = "0.10"
 subtle = "2"
 tempfile = "3"

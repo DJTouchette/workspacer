@@ -1,0 +1,71 @@
+{
+  "records": {
+    "services/hub/cmd/brain/pathmatch_other.go": {
+      "status": "ported",
+      "sha256": "89f036761914213c1c63e03d90b1cf124f52d5c1912ada6f444e6135354d5d0e",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Both non-Windows helpers read: exact equality and byte-prefix comparison operate on already canonical paths. Rust Path component-prefix containment preserves equality and separator boundaries on that same canonical-input domain.",
+          "Linux shared path corpus, empty-root refusal, volume-root positive floor, sibling-prefix refusal and actual selected-store symlink boundaries are covered by files and Git tests."
+        ],
+        "intentionalChanges": [
+          "Equality and prefix primitives are consolidated into the semantic contained helper; an arbitrary uncanonicalized string-comparison API is not retained."
+        ],
+        "validation": "Actual unchanged-source Windows CI at e8afcb87, successful ci run36630425933/job109618975568: ambient_windows_project_spellings_and_ordinal_containment_match_reference, empty_containment_roots_refuse_and_directory_defaults_preserve_literal_paths, shared_active_path_contract, canonical_walk_accepts_exact_fixture_link_budget_and_refuses_one_more, and git_style_and_verbatim_paths_share_one_selected_root all logged PASS. Receipt /tmp/workspacer-pathmatch-windows-ci.log. Verified empty git diff against that commit for paths.rs and briefs.rs. Linux files target passed7 tests before later additive independent regressions; no new implementation needed for this review."
+      }
+    },
+    "services/hub/cmd/brain/pathmatch_windows.go": {
+      "status": "ported",
+      "sha256": "c1206b932923b54e9c8d78302fdfb53d912f5c80611d43e661e050032b22e8ac",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete native wrapper read: counted UTF16 identifiers, ignore-case TRUE, native ordinal equality and prefix slicing. Rust uses kernel32 CompareStringOrdinal over live UTF16 buffers with explicit lengths, then enforces the root separator boundary.",
+          "Actual native Windows test exercises all seven containment vectors plus Cyrillic, umlaut and Kelvin discrimination. Root equality and different-drive cases also cover the original comparator vectors. Actual mixed slash/drive/directory spellings run brief append/check/archive against real directories."
+        ],
+        "intentionalChanges": [
+          "Go dynamic syscall/uintptr/KeepAlive plumbing becomes a statically linked Rust FFI call with owned live buffers. Native comparison failure returns noncontainment rather than the Go panic diagnostic; ordinary canonical Windows path limits and the transport size bound remain far below the native signed-length ceiling.",
+          "Empty selected roots refuse explicitly. The standalone equality helper empty/empty result is not a separate public API; selected-object containment is the preserved consumer contract."
+        ],
+        "validation": "Actual unchanged-source Windows CI at e8afcb87, successful ci run36630425933/job109618975568: ambient_windows_project_spellings_and_ordinal_containment_match_reference, empty_containment_roots_refuse_and_directory_defaults_preserve_literal_paths, shared_active_path_contract, canonical_walk_accepts_exact_fixture_link_budget_and_refuses_one_more, and git_style_and_verbatim_paths_share_one_selected_root all logged PASS. Receipt /tmp/workspacer-pathmatch-windows-ci.log. Verified empty git diff against that commit for paths.rs and briefs.rs. Linux files target passed7 tests before later additive independent regressions; no new implementation needed for this review."
+      }
+    },
+    "services/hub/cmd/brain/pathmatch_windows_semantics_test.go": {
+      "status": "ported",
+      "sha256": "a03b37ff06fb5b092bb2f11b20959deea0de830f679230370cd4da00a83a8216",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Every original decision vector is present in the actual Windows ordinal-containment test: case-folded root and descendant allows, both sibling widenings, outside root, volume root, another drive, Cyrillic/umlaut allows and Kelvin refusal.",
+          "Those live kernel32 assertions reject the same ASCII-only, generic-Unicode-fold, byte-exact and dropped-separator mutants represented by the old Go host-independent algorithm copies. Mandatory native CI executes the actual implementation rather than assuming a cross-compile or a copied predicate is runtime evidence."
+        ],
+        "intentionalChanges": [
+          "The Go AST check for NewProc/Call and copied Windows decision helpers retire with that language boundary. They are replaced by actual Windows execution of the native API and all positive/negative vectors, with the named test retained under the existing native platform workflow. This is not a claim that Linux invoked kernel32."
+        ],
+        "validation": "Actual unchanged-source Windows CI at e8afcb87, successful ci run36630425933/job109618975568: ambient_windows_project_spellings_and_ordinal_containment_match_reference, empty_containment_roots_refuse_and_directory_defaults_preserve_literal_paths, shared_active_path_contract, canonical_walk_accepts_exact_fixture_link_budget_and_refuses_one_more, and git_style_and_verbatim_paths_share_one_selected_root all logged PASS. Receipt /tmp/workspacer-pathmatch-windows-ci.log. Verified empty git diff against that commit for paths.rs and briefs.rs. Linux files target passed7 tests before later additive independent regressions; no new implementation needed for this review."
+      }
+    }
+  }
+}

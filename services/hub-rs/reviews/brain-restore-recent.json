@@ -1,0 +1,70 @@
+{
+  "records": {
+    "services/hub/cmd/brain/recent.go": {
+      "status": "ported",
+      "sha256": "dbd1d48920d545564b851bcbb6ae4d90e62254ff81c7bb1a921360f1b66a5a35",
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete resumable-history projection and handler. Queries include archived rows, ignore caller parameters, retain newest-first stable millisecond ordering, drop empty/synthetic agent-prefixed IDs, and apply Claude/unknown/pty defaults.",
+          "Known malformed daemon scalar fields now cause the same empty response as the old typed decode, rather than manufacturing partially coerced history. Null rows remain harmless and unknown extra fields are ignored.",
+          "Name selection keeps launch label before persisted cwd rename. Actual embedded-engine hook fixture calls the production recent handler, observes its live row, writes a cwd rename and verifies the history label. Pure vectors pin equal millisecond timestamps, invalid/missing dates, archived rows and empty title/model with absent cost/tokens."
+        ],
+        "intentionalChanges": [
+          "Owned engine requests replace external daemon HTTP. Unknown history failures still yield an empty list; a measured zero cost is never fabricated. Canonical JSON spellings are supported; exhaustive Go case-fold aliases are not claimed."
+        ],
+        "validation": "2026-09-29 Linux: full library377 passed in /tmp/workspacer-provider-final-lib.log, including recent projection and actual embedded-engine naming controls. Owning stores target11 passed in /tmp/workspacer-provider-final-stores.log, including actual saved-mode receipts and independent TS/Rust field-list coherence. Separate unchanged strict layout target5 passed in /tmp/workspacer-bootdoc-provider-audit.log. The earlier provider-parity target exposed independent YAML/title gaps, now covered separately; no failure is counted as evidence."
+      }
+    },
+    "services/hub/cmd/brain/bootdoc.go": {
+      "status": "ported",
+      "sha256": "5be14c253f2565618cf812bd701960712039698c1600b1dde3461f79b2ae90c3",
+      "replacement": [
+        "services/hub-rs/src/services/layout.rs",
+        "services/hub-rs/src/services/stores.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/layout.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all structural scrub behavior and both store callers. Saved sessions/layouts always remove the five agent launch fields and three nested pane execution/identity fields; malformed entries are skipped without deleting the rest of the document.",
+          "Fixed an actual receipt difference: saved documents now name pane.shell/pane.initialCommand/pane.pluginId, as the Go brain did. Live layout.set retains its separate legacy generic pane receipts and identity-dependent strict-shape behavior.",
+          "Actual save/load and save/list tests preserve agents, pane identity/title/URL, unrelated prose/model and malformed sentinel entries; they remove forged/stale receipts, include false/null/empty sensitive values, and record exactly the fields removed.",
+          "An independent live TS/Rust field-list comparison includes minimum populations and drives the actual scrub with every declared field, retaining the old cross-copy drift assertion alongside real persistence tests."
+        ],
+        "intentionalChanges": [
+          "Per-agent persisted receipts are the user-visible downgrade evidence. The separate Go component stderr warning and aggregate helper return slice are not retained as a public API; callers read the durable per-record receipt. Current live-spawn permission authority is unchanged.",
+          "The same Rust routine serves saved and live layout documents through an explicit shape/receipt mode; the legacy Go implementations were separate."
+        ],
+        "validation": "2026-09-29 Linux: full library377 passed in /tmp/workspacer-provider-final-lib.log, including recent projection and actual embedded-engine naming controls. Owning stores target11 passed in /tmp/workspacer-provider-final-stores.log, including actual saved-mode receipts and independent TS/Rust field-list coherence. Separate unchanged strict layout target5 passed in /tmp/workspacer-bootdoc-provider-audit.log. The earlier provider-parity target exposed independent YAML/title gaps, now covered separately; no failure is counted as evidence."
+      }
+    },
+    "services/hub/cmd/brain/bootdoc_test.go": {
+      "status": "ported",
+      "sha256": "1bdd33a5a9e9c70f65c845c89ba97fe4ac2bd9eeec6c4149fee8102f564a16e6",
+      "replacement": [
+        "services/hub-rs/src/services/layout.rs",
+        "services/hub-rs/src/services/stores.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/layout.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped every original assertion: sessions.save and layouts.save remove launch fields; terminal argv/initial commands and plugin token-mint identity are removed; unrelated pane and agent data survive; a clean write removes a stale caller note; loss receipts describe only the affected agent.",
+          "Actual persistence paths are exercised instead of only calling the pure helper. Separate layout tests retain host versus non-host behavior, generic pane receipts and shape semantics. Live TS declaration comparison proves both agent and pane list populations, while behavioral construction proves every extracted key is removed."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library377 passed in /tmp/workspacer-provider-final-lib.log, including recent projection and actual embedded-engine naming controls. Owning stores target11 passed in /tmp/workspacer-provider-final-stores.log, including actual saved-mode receipts and independent TS/Rust field-list coherence. Separate unchanged strict layout target5 passed in /tmp/workspacer-bootdoc-provider-audit.log. The earlier provider-parity target exposed independent YAML/title gaps, now covered separately; no failure is counted as evidence."
+      }
+    }
+  }
+}

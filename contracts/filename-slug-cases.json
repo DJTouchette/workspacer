@@ -75,6 +75,13 @@
     }
   },
   "owners": {
+    "services/hub-rs/src/services/stores.rs": [
+      "layout",
+      "session"
+    ],
+    "services/hub-rs/src/services/library.rs": [
+      "library"
+    ],
     "apps/desktop/src/main/lib/fileUtils.ts": [
       "library",
       "layout",

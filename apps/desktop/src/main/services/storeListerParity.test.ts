@@ -1,6 +1,7 @@
 /**
  * layouts.list / sessions.list must survive a store row whose scalar is not a
- * string, and must order it the way the Go brain does.
+ * string. Valid YAML timestamps from older Rust saves retain their date/order;
+ * other non-string scalars retain the legacy empty-sort-key behavior.
  *
  * `(b.createdAt || '').localeCompare(...)` is a METHOD CALL on a value that came
  * out of YAML. `createdAt: 5` is a number and `createdAt: 2026-03-01T00:00:00.000Z`
@@ -16,7 +17,8 @@
  * It is readdir-order dependent, which is why it survived every existing test —
  * a poisoned row that sorts LAST is never the `b` argument.
  *
- * TWIN: TestStoreListersSurviveANonStringScalar in the Go brain.
+ * Historical Go control: TestStoreListersSurviveANonStringScalar. Valid dates now
+ * preserve existing Rust saved state instead of becoming undated entries.
  */
 import * as fs from 'fs';
 import * as os from 'os';
@@ -49,11 +51,17 @@ const REAL_STAMPS = [
   "'2026-01-01T00:00:00.000Z'",
 ];
 
-// Both poison shapes: a bare number, and an UNQUOTED ISO date (js-yaml 4 parses
-// that to a Date, so this needs no attacker at all — a hand edit produces it).
-const POISON = ['5', '2026-03-01T00:00:00.000Z'];
+// Numbers/containers are not timestamps. Valid implicit dates from older Rust
+// saves and explicit YAML timestamp values are supported upgrade inputs.
+const TIMESTAMP_INPUTS = [
+  { name: 'number', yaml: '5', date: false },
+  { name: 'mapping', yaml: '{ unexpected: true }', date: false },
+  { name: 'array', yaml: '[unexpected]', date: false },
+  { name: 'old Rust implicit date', yaml: '2026-03-01T00:00:00.000Z', date: true },
+  { name: 'explicit YAML date', yaml: "!!timestamp '2026-03-01T00:00:00.000Z'", date: true },
+];
 
-describe.each(POISON)('a store row whose scalar is %s', (scalar) => {
+describe.each(TIMESTAMP_INPUTS)('a store row with $name', ({ yaml: scalar, date }) => {
   it('does not empty layouts.list', () => {
     const dir = path.join(h.configDir, 'layouts');
     fs.mkdirSync(dir, { recursive: true });
@@ -72,7 +80,10 @@ describe.each(POISON)('a store row whose scalar is %s', (scalar) => {
     );
 
     const got = layoutService.list().map((l) => l.id);
-    expect(got).toEqual(['real1', 'real2', 'real3', 'aaa']);
+    expect(got).toEqual(
+      !date ? ['real1', 'real2', 'real3', 'aaa'] : ['aaa', 'real1', 'real2', 'real3'],
+    );
+    if (date) expect(layoutService.list()[0].createdAt).toBe('2026-03-01T00:00:00.000Z');
   });
 
   it('does not empty sessions.list', () => {
@@ -85,7 +96,10 @@ describe.each(POISON)('a store row whose scalar is %s', (scalar) => {
     fs.writeFileSync(path.join(dir, 'aaa.yaml'), `name: aaa\ntimestamp: ${scalar}\n`);
 
     const got = sessionService.listSessions().map((s) => s.name);
-    expect(got).toEqual(['real1', 'real2', 'real3', 'aaa']);
+    expect(got).toEqual(
+      !date ? ['real1', 'real2', 'real3', 'aaa'] : ['aaa', 'real1', 'real2', 'real3'],
+    );
+    if (date) expect(sessionService.listSessions()[0].timestamp).toBe('2026-03-01T00:00:00.000Z');
   });
 });
 

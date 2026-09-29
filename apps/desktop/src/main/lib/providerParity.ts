@@ -1,10 +1,9 @@
 /**
- * Small primitives that exist so a list this side comes back the same as the
- * same list from the Go brain.
+ * Small primitives that keep desktop list behavior aligned with the Rust backend.
  *
- * Both providers answer the same bus methods — the brain by default under
- * DELEGATE_CATALOG_TO_BRAIN, this process when delegation is off — and every one
- * of these replaced a JavaScript idiom whose Go twin behaves differently:
+ * The historical regressions below came from the original Go/desktop split.
+ * Ordinary scalar rules remain strict; timestampText separately preserves valid
+ * saved timestamps across the current Rust and desktop YAML readers:
  *
  *   `localeCompare`      → Go sorts strings by raw bytes, so layouts.list,
  *                          sessions.list, library.list, fs.listDir and
@@ -53,6 +52,14 @@ export function byteCompare(a: string, b: string): number {
  *  order an odd row identically instead of merely both surviving it. */
 export function asString(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+/** Saved-state timestamps may be plain YAML scalars from older Rust writers.
+ * js-yaml decodes those as Date. Preserve valid timestamps at these specific
+ * fields; ordinary scalar/title coercion remains strict through asString. */
+export function timestampText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : '';
 }
 
 /** Go's `strings.TrimSuffix`: removes `suffix` only when the string ENDS with it. */

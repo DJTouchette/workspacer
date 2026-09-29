@@ -447,16 +447,59 @@ mod failure_tests {
     fn lock_filename_preserves_non_unicode_host_path_bytes() {
         use std::os::unix::ffi::OsStringExt;
         let dir = tempfile::tempdir().unwrap();
+        let ordinary = dir.path().join("ordinary.yaml");
+        let ordinary_lock = dir.path().join("ordinary.yaml.lock");
+        let guard = ConfigLock::take(&ordinary).unwrap();
+        assert!(ordinary_lock.is_file());
+        drop(guard);
+        assert!(!ordinary_lock.exists());
         let path = dir
             .path()
             .join(std::ffi::OsString::from_vec(b"config-\xff.yaml".to_vec()));
         let expected = dir.path().join(std::ffi::OsString::from_vec(
             b"config-\xff.yaml.lock".to_vec(),
         ));
-        let lock = ConfigLock::take(&path).unwrap();
-        assert!(expected.is_file());
-        drop(lock);
+        // Some filesystems (including APFS) reject invalid UTF-8 names. Probe
+        // the exact OS bytes so refusal is verified, not treated as a skip or
+        // inferred from a platform name. No other I/O failure is acceptable.
+        let supported = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&expected)
+        {
+            Ok(file) => {
+                drop(file);
+                fs::remove_file(&expected).unwrap();
+                true
+            }
+            Err(error) => {
+                assert_eq!(error.raw_os_error(), Some(libc::EILSEQ), "{error}");
+                false
+            }
+        };
+        match ConfigLock::take(&path) {
+            Ok(lock) => {
+                assert!(
+                    supported,
+                    "a rejected raw filename must not become a lossy lock"
+                );
+                assert!(expected.is_file());
+                drop(lock);
+            }
+            Err(error) => {
+                assert!(!supported, "a supported raw filename failed: {error}");
+                assert_eq!(
+                    error
+                        .downcast_ref::<std::io::Error>()
+                        .and_then(std::io::Error::raw_os_error),
+                    Some(libc::EILSEQ),
+                    "{error}"
+                );
+            }
+        }
+        assert!(!dir.path().join("config-\u{fffd}.yaml.lock").exists());
         assert!(!expected.exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]
