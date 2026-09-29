@@ -189,18 +189,41 @@ struct State {
 struct Update {
     session_id: Option<String>,
     event: Option<String>,
-    state: Option<State>,
+    state: Option<Object<State>>,
+}
+// Serde-derived structs also accept positional JSON arrays; the daemon event
+// contract (and the Go decoder) requires JSON objects at both levels.
+struct Object<T>(T);
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        struct MapOnly<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for MapOnly<T> {
+            type Value = Object<T>;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a JSON object")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                map: M,
+            ) -> std::result::Result<Self::Value, M::Error> {
+                T::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(Object)
+            }
+        }
+        deserializer.deserialize_map(MapOnly(std::marker::PhantomData))
+    }
 }
 fn map_event(name: &str, data: &[u8]) -> Option<Event> {
     if !matches!(name, "" | "session.update") {
         return None;
     }
-    let update: Update = serde_json::from_slice(data).ok()?;
+    let Object(update): Object<Update> = serde_json::from_slice(data).ok()?;
     let session_id = update.session_id.unwrap_or_default();
     if session_id.is_empty() {
         return None;
     }
-    let state = update.state.unwrap_or_default();
+    let state = update.state.map(|state| state.0).unwrap_or_default();
     let cwd = state.cwd.unwrap_or_default();
     let mut data = json!({"sessionId":session_id,"hookEvent":update.event.unwrap_or_default(),"mode":state.mode.unwrap_or_default()});
     if !cwd.is_empty() {
@@ -212,6 +235,134 @@ fn map_event(name: &str, data: &[u8]) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn failed_streams_back_off_and_cancellation_does_not_stop_the_daemon() {
+        use axum::{Router, http::StatusCode, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let count = attempts.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/events",
+            get(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "event: session.update\ndata: {\"session_id\":\"must-not-publish\"}\n\n",
+                    )
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut options = crate::Options::default();
+        options.control_plane_only = true;
+        let hub = crate::Hub::start(options).unwrap();
+        hub.ready().await.unwrap();
+        let client = crate::client::Client::connect(&hub.handle()).await.unwrap();
+        let mut events = client.events();
+        client
+            .topics(["agent.state_changed".into()].into())
+            .await
+            .unwrap();
+        let daemon = ExternalDaemon::new(&url).unwrap();
+        let error = daemon.stream(&hub.handle()).await.unwrap_err();
+        assert!(error.to_string().contains("503"));
+        attempts.store(0, Ordering::SeqCst);
+        let running = tokio::spawn(daemon.clone().run(hub.handle()));
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        daemon.close();
+        tokio::time::timeout(Duration::from_secs(3), running)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let count = attempts.load(Ordering::SeqCst);
+        assert!(
+            (2..=12).contains(&count),
+            "retry loop spun or stopped retrying: {count}"
+        );
+        assert!(
+            events.try_recv().is_err(),
+            "error response was treated as an SSE stream"
+        );
+        assert_eq!(
+            reqwest::get(format!("{url}/events"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        drop(client);
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn cancellation_releases_a_live_body_that_never_sends_another_frame() {
+        use axum::{
+            Router,
+            body::{Body, Bytes},
+            response::Response,
+            routing::get,
+        };
+        use futures_util::StreamExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/events",
+            get(|| async {
+                Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from_stream(
+                        futures_util::stream::once(async {
+                            Ok::<_, std::io::Error>(Bytes::from_static(
+                                b"data: {\"session_id\":\"live-body\"}\n\n",
+                            ))
+                        })
+                        .chain(futures_util::stream::pending::<Result<Bytes, std::io::Error>>()),
+                    ))
+                    .unwrap()
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut options = crate::Options::default();
+        options.control_plane_only = true;
+        let hub = crate::Hub::start(options).unwrap();
+        hub.ready().await.unwrap();
+        let client = crate::client::Client::connect(&hub.handle()).await.unwrap();
+        let mut events = client.events();
+        client
+            .topics(["agent.state_changed".into()].into())
+            .await
+            .unwrap();
+        let daemon = ExternalDaemon::new(&url).unwrap();
+        let running = tokio::spawn(daemon.clone().run(hub.handle()));
+        let first = tokio::time::timeout(Duration::from_secs(3), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.data.unwrap()["sessionId"], "live-body");
+        daemon.close();
+        tokio::time::timeout(Duration::from_secs(3), running)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        drop(client);
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        server.abort();
+        let _ = server.await;
+    }
+
     #[tokio::test]
     async fn companion_reads_and_sse_shutdown_never_own_the_external_server() {
         use axum::{
@@ -355,6 +506,11 @@ mod tests {
             Some(json!({"sessionId":"t","hookEvent":"","mode":""}))
         );
         assert!(map_event("session.update", b"{\"session_id\":false}").is_none());
+        assert!(map_event("session.update", b"not json").is_none());
+        assert!(map_event("session.update", b"{\"event\":\"Stop\"}").is_none());
+        assert!(map_event("other", b"{\"session_id\":\"s\"}").is_none());
+        assert!(map_event("", br#"["s","Stop",{"mode":"input"}]"#).is_none());
+        assert!(map_event("", br#"{"session_id":"s","state":["input","/repo"]}"#).is_none());
         assert_eq!(
             map_event("", b"{\"session_id\":\"s\",\"event\":null,\"state\":null}")
                 .unwrap()

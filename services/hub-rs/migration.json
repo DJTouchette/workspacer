@@ -661,16 +661,55 @@
       "tests": []
     },
     "services/hub/cmd/brain/conversation.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read demand, ready, reset, forwarding, source loop and visibility branches. Exact topic demand drives one shared conversation receiver; last release closes it, a replacement gets a fresh generation, and unknown/hidden/remote rows fail closed. Only admitted visible local rows publish ready or conversation deltas.",
+          "Broker accepts private Delivery immediately before publication: ready activates only its own current generation; stale ready/delta cannot activate or disclose a replacement. Existing broker tests prove stale deltas/hidden or unknown rows are dropped; added stale-ready test proves the prior generation cannot open the new barrier.",
+          "Typed source preserves the ConversationDelta data model; real embedded-engine integration compares full serialized source delta and forwarded value. There is no mutation replay. Broadcast lag invalidates buffered fragments and requires a new ready before fresh data."
+        ],
+        "intentionalChanges": [
+          "Full standalone and native now own the embedded Rust engine, so a demand-owned typed broadcast receiver replaces the Go SSE client/reconnect/backoff loop. serve::plan_serve only allows a borrowed external daemon in explicit hub-only mode; its read-only event link is not represented as the full brain conversation producer.",
+          "Data is serialized from the canonical typed delta, not forwarded as byte-identical raw JSON. Unknown extra wire fields and original JSON whitespace are not claimed preserved. Ready is broker-committed instead of callback delivery under a Go pointer/channel barrier.",
+          "The in-process producer has no independent bus reconnection. Broker subscriber disconnects release demand; new subscriber demand recreates the receiver/ready contract. Producer closure is an owned runtime failure rather than an indefinitely retrying external HTTP connection."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      },
       "sha256": "c7be955be85a9872d5e491321f8ee00063752d4d3535d08dea5da97f249f72ab",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ]
     },
     "services/hub/cmd/brain/conversation_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestConversationForwardsDemandedSessionsOnly and TestConversationStreamRunsOnlyWhileDemanded map to demand_owns_one_receiver_and_ready_precedes_already_buffered_delta: no initial receiver, ready before buffered delta, one source for two sessions, release-one keeps source, undemanded delta suppressed, release-last drops source.",
+          "TestConversationDemandReplacementDuringReadyDeliveryIsRaceClean maps to stale_ready_cannot_activate_replacement_demand plus broker_rejects_stale_generation_and_hidden_or_unknown_payloads: generation off/on fences an already-prepared ready and already-queued delta without blocking replacement.",
+          "TestConversationResetForgetsDemand maps to disconnect_releases_demand_and_new_subscriber_gets_a_new_ready: actual broker disconnect releases final receiver, replacement subscription starts another receiver and receives a new ready. The embedded producer itself has no bus reconnect state to reset.",
+          "TestConversationHiddenSessionIsRefused maps to upstream_layout_curates_hidden_history_and_new_visibility_gets_ready and broker unknown-row checks. Existing real-engine integration exercises live transcript tail delta and status streams without provider CLI/API or model use."
+        ],
+        "intentionalChanges": [
+          "Injected typed FixtureSource replaces the legacy fake HTTP/SSE endpoint; real broker publication and one real local embedded-engine integration remain in the validation path."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      },
       "sha256": "bde7babeb10ebdd2c92d903bc1cb6c22ba2b995934a6154a499e00018c87acd8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ]
     },
     "services/hub/cmd/brain/corpusdupkey_test.go": {
       "replacement": [
@@ -765,16 +804,42 @@
       "tests": []
     },
     "services/hub/cmd/brain/discovery.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/discovery.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all discovery source branches. Rust derives a plain project component with the shared claudemon encoder, enumerates only jsonl candidates, excludes agent- subagent names, reads at most 8192 bytes, prefers a nonempty summary over the first user text, joins text blocks, flattens newlines only in user summaries, falls back to sessionId, clips to 100 Unicode scalars, emits millisecond UTC timestamps and caps the newest list at 20.",
+          "Fixed a real sorting difference: Go sorts millisecond timestamp strings stably after filename-ordered ReadDir; Rust previously compared nanosecond metadata. The comparator now uses timestamp_millis and filename ordering. The regression uses different submillisecond mtimes with equal wire timestamps and verifies lexical tie order.",
+          "Real filesystem tests prove project selection, newest 20, subagent and directory exclusion, head-read budget, multiline summary and fallback. The shared projectDirNames corpus preserves empty/dot/parent rejection."
+        ],
+        "intentionalChanges": [
+          "Configured host home replaces ambient os.UserHomeDir so embedded tests and installations remain isolated. Rust only enumerates regular directory entries and refuses symlink/special-file candidates; nonblocking open plus an opened-file regularity check avoids blocking on FIFO swaps. Go followed transcript symlinks. This narrower candidate policy is explicit, not an all-filesystem parity claim."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      },
       "sha256": "d1d4275ede795e75bd83aa20f07502a8dbf6871db69e92de4883c7ca8936d837",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/discovery.rs"
+      ]
     },
     "services/hub/cmd/brain/discovery_clip_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/discovery.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Both exact legacy assertions are exercised through actual summary processing for user and summary records: 99 ASCII plus e-acute remains 100 scalars, ASCII plus 150 astral characters yields ASCII plus 99 whole astral characters, and 150 astral characters yields 100 whole astral characters. Rust String validity and exact resulting strings rule out byte truncation and UTF16-unit counting."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      },
       "sha256": "0ca89e0c0f7d7bb6c6540442f2df62eeec7d4ca9458cc3ae907c38c3d6dc34d2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/discovery.rs"
+      ]
     },
     "services/hub/cmd/brain/dispatchlease.go": {
       "replacement": [],
@@ -963,16 +1028,50 @@
       "tests": []
     },
     "services/hub/cmd/brain/filewatch.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/src/services/filewatch/sample.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed watch/unwatch/poll/run branches: absolute canonical selection, watchId 128-byte cap, per-path 128-lease cap, 1024-path cap, three-minute lease renewal, explicit legacy references, independent expiry, missing-file retention, rename versus metadata-change distinction, 500ms production polling, and frozen canonical-path recheck are preserved.",
+          "New cap test proves a full lease/path map permits renewal or an existing-path reference but refuses a new lease/path; UTF8 watch IDs are limited by bytes as in Go. Existing tests use real files with equal size/mode/mtime and distinct identity, then verify unchanged samples emit nothing.",
+          "Go assertPathAllowed currently ignores its roots argument; its old watch comment does not create a workspace-root authorization gate. Rust shares the actual ambient absolute canonical-path policy and drops later retargeting symlinks."
+        ],
+        "intentionalChanges": [
+          "Owned embedded runtime lifecycle replaces the registry publisher field and background context. Publisher absence is not a selectable installed-service state. Invalid poll samples retain last good identity; Windows samples file identity immediately through an open handle. The current run is Linux and is not proof of Windows API runtime behavior.",
+          "Unwatch also applies the 128-byte watchId cap in Rust, while Go only caps registration. Anonymous references use checked/saturating arithmetic instead of potentially overflowing a Go integer."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      },
       "sha256": "9701d1e18c1e6d947f500b763990c555504ece7d443f294319cdf74f60fcd8da",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/tests/filewatch.rs"
+      ]
     },
     "services/hub/cmd/brain/filewatch_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/src/services/filewatch/sample.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestHeadlessFileWatchReplacementAndReferences and TestHeadlessFileWatchFreezesIdentityAfterMissingFileAppears map to references_atomic_replacement_and_missing_file_are_distinct_changes: two refs; absent->created rename; equal-size/mode/mtime replacement rename; no unchanged event; one-ref continued change; final unwatch suppresses delete.",
+          "TestHeadlessFileWatchLeaseRenewalExpiryAndMissingFile maps to leases_renew_without_reference_leaks_and_expire plus the live owned_polling integration: repeated named renewal stays one lease with zero refs, exact expiry boundary retains then drops, single unwatch removes renewed lease, actual fs.write creation publishes canonical fs.changed rename, and unwatch stops publication."
+        ],
+        "intentionalChanges": [
+          "Private now arguments replace wall-clock sleeps for lease boundaries; live integration still uses the real 500ms owned poller and broker."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      },
       "sha256": "a411db1b690adba4f05163ec2ec64305a205f402e0118d778b9abe5eab710c7c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/tests/filewatch.rs"
+      ]
     },
     "services/hub/cmd/brain/final_test.go": {
       "replacement": [],
@@ -1343,16 +1442,42 @@
       "tests": []
     },
     "services/hub/cmd/brain/models.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/model_selection.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared pure catalog construction rule-by-rule: normalized persisted+live model union, synthetic exclusion, sorting/deduplication, date-suffix concrete parsing, dotted numeric version comparison with zero padding, latest-version labels, removal of duplicate latest concrete entries, canonical default identity/window, six alias entries and contract-derived context badges.",
+          "Actual claude-model-catalog-cases loader compares complete result Values for every case with executed floor7. Live engine session usage-model reads remain best-effort; persisted choices survive engine failure. Existing Opus5.5 context contract changes were preserved untouched."
+        ],
+        "intentionalChanges": [
+          "Engine-owned session reads replace the Go HTTP client. Routing catalog refresh is additional Rust owner functionality, not a second model-identity table."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "3ec148fd723b859491026adfb9c08f427d00f7a3c49347111eac093dba817077",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/models.rs"
+      ]
     },
     "services/hub/cmd/brain/models_contract_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The same seven-or-more shared Claude catalog cases drive production catalog(), comparing the full expected object including aliases, labels, windows, permission defaults and seen ordering. Executed-case Tally replaces a fixture-length-only assertion; every block row must reach its assertion."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "9e3bdafdcfabef88527abc1440e00d918d2f97d00767c12f36ade698f256d60c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/models.rs"
+      ]
     },
     "services/hub/cmd/brain/ownerselection_test.go": {
       "replacement": [],
@@ -1445,40 +1570,158 @@
       "tests": []
     },
     "services/hub/cmd/brain/profiles.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/profiles.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/cli/identity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read materialization, normalization, CRUD, provider environment, binary/argv/model-pin, cwd, prompt-composition and identity helpers. Profiles uses the same claude-profiles.json, materialized Default, immutable UUIDv4 IDs, array-shaped extraArgs/mcpItemIds, preserved isDefault selection, trimmed config directory, protected default removal, first-survivor default repair and advisory file lock/atomic persistence.",
+          "Codex/Copilot metadata normalizes preset/tokenEnvVar/provider restrictions and provider-specific home variables; Copilot remains manual-weight-only. Spawn plans carry actual last executable profile model, model/effort/mode flag pins, bypass de-duplication, fresh/resume exclusivity and ASCII cwd trimming before canonical selection.",
+          "Restored missing WKS_CLAUDE_BIN spawn-only fallback with configured-binary precedence and isolated subprocess test. Fixed compose_instructions to omit malformed valueless/empty-inline append-prompt flags while preserving following host arguments and ordered additive text.",
+          "Configuration root selection is centralized in cli::identity: APPDATA or Windows home/Roaming, XDG_CONFIG_HOME or non-Windows home/.config, with OS user-directory fallback when home environment is absent. Tests exercise platform override/fallback in isolated child processes and existing launcher no-home behavior.",
+          "Fixed legacy JSON null scalar compatibility: id/name/configDir/isDefault/provider/preset/tokenEnvVar use Go zero defaults rather than rejecting the entire store. A real file/list/update regression preserves the nullable row, while wrong string/bool types still fail."
+        ],
+        "intentionalChanges": [
+          "scrubBypassProfile/scrubBypassArgs are obsolete Go helpers with no production callers: current handlers persist caller profile fields and remoteSpawnProfile ignores its old grant flag. Their allowlist tests retire with that inactive policy, not as missing live Rust protection; retained profile fixtures prove actual ambient fields survive.",
+          "Rust rejects unreadable/malformed profile stores on public mutation/list instead of overwriting damaged data with a default; fractional desktop weights survive, unlike Go integer decoding. Private convenience list still returns a fallback Default after logging. Writes use private atomic persistence instead of reproducing Go0644 exactly.",
+          "Provider and environment configuration use explicitly selected host home/config roots in embedded mode. Caller cwd normalization immediately canonicalizes; no relative/tilde caller path is granted by a host fallback. Literal profile home expansion and malformed helper-only inputs are not claimed byte-identical to all Go string concatenations."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "52641e61217e1e84d025df85793f312f9e211485d16f128b40ceb75a2418b1ad",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/profiles.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/brain/profiles_contract_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/profiles.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All three shared claude-profiles-cases blocks execute against real temp files: list/reply and exact persisted rows; add default and generated identity plus ordered stored IDs; listed-ID update applies the expected name; removal preserves exact expected IDs. Executed Tally floors enforce list4/add2/mutate2, replacing weak array-size-only coverage.",
+          "The mutation adapter now verifies returned name, not merely success; UUIDv4 version bits are checked. Existing harness normalization/fractional-weight/damaged-file regressions stay active."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "4e81a64f8204887312a3a4835d61e184204686e90900c204e0d0bf90a9b74dcc",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/profiles.rs"
+      ]
     },
     "services/hub/cmd/brain/profiles_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/profiles.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/cli/identity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped resume/fresh exclusivity, one pinned model, last executable inline/split model pin, bypass single-flag, permission/default/bypass modes, profile-mode override, base binary + extraArgs order, effort trim and pinned precedence to actual spawn_plan integration tests.",
+          "Raw profile JSON tests prove absent/null list fields remain [] on reply, add defaults configDir/extraArgs/mcpItemIds, and persisted UUID is version4. Provider environment tests pin Claude/Codex/Copilot account variables and empty environment with no configDir.",
+          "Isolated config-directory tests exercise actual platform-specific override and fallback; launcher_home_fallback_is_read_only_and_explicit_home_still_wins exercises omitted/empty home environment without changing the test parent.",
+          "Added nullable scalar persisted-store read and rewrite test, complementing the legacy null-array normalization assertions."
+        ],
+        "intentionalChanges": [
+          "Two legacy remote-scrub unit tests target helpers no longer called by Go production. They are explicitly retired, not replicated as active runtime authorization. Shared profile contract and existing launch authority tests retain current behavior.",
+          "Windows APPDATA branch runs on Windows CI; Linux results cannot establish Windows runtime success."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "559519ed3d28a443e352829262a62218635cb32b88e86c5508ee9d2248c5393e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/profiles.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/brain/providerparity_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/discovery.rs",
+        "services/hub-rs/src/services/library.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Gitignore test now includes ASCII, accented and Unix-newline filenames through actual git-backed fs.listEntries while preserving visible files. Windows keeps constructible ASCII/accent cases; git failures are hard test failures, not silent skips.",
+          "Project directory-name corpus runs every case with floor8 and both accept/refuse classes; real picker test seeds an outside history file and legitimate projects, refuses parent/empty selections and returns legitimate transcript content.",
+          "Added selected library directory-symlink test for another project and config sessions store; saves are refused and destination pwn.md remains absent, followed by successful ordinary save/remove. Existing actual library guard corpus retains all7 cases and fails unavailable symlink execution.",
+          "Strengthened Claude scope basename test with My.Skill and my-skill coexisting, both listed, removal of only the exact selected basename, in-place sibling save and traversal/basename refusals. Frontmatter preservation remains checked."
+        ],
+        "intentionalChanges": [
+          "Real directory symlink setup is required on Windows; platform CI must provide symlink privilege. Unix newline filenames are intentionally omitted only where the OS cannot represent them."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "21a5131acbf8f2cfb2e09335defdf2b702d0d31c462a9eb9c6996810e891146e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/discovery.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/src/services/library.rs"
+      ]
     },
     "services/hub/cmd/brain/providers.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Provider detection retains five-provider order, Windows cmd/exe/bare name priority, PATH directory ordering, directory rejection, trimmed config binary override, missing resolvedPath:null and fallback bare provider name. Deterministic path-injected tests and an isolated process exercise actual check_all and spawn override selection.",
+          "Provider model requests admit only codex/copilot/opencode/pi and mandatory canonical absolute cwd before the soft-failing engine leg. Actual query helper constructs the expected GET path with percent-encoded cwd/bin. Missing engine and invalid admission are tested through real hub RPC.",
+          "Fixed malformed response handling: the entire typed models response now fails to an empty list rather than silently replacing wrong id/label/default types with values. Missing/null fields and null model rows use the same zero defaults as Go; default:false is always emitted. Routing catalog gets unavailable on malformed/failed responses, not fabricated rows."
+        ],
+        "intentionalChanges": [
+          "Embedded Command request replaces loopback HTTP transport; query path and data projection stay explicit. Detection only accepts regular files rather than all non-directory special files. No external provider CLI or live account is executed in this audit."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "7536cb97ba1edfa17cdf4d7f0b4d01d0b9282cec6af81406b1b8c039e97b78b8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/cmd/brain/providers_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped PATH detection/all-five-presence, trimmed custom override, null missing paths and directory masquerade to isolated provider detection plus platform candidate-order tests. The fake files are never executed.",
+          "RelaysAndUnwraps maps to provider_query_encodes_canonical_cwd_and_custom_binary_after_admission and provider_relay_preserves_typed_response_defaults_and_rejects_invalid_shapes; actual handler uses those helpers. Bad provider/cwd and soft failure without engine are driven through real hub RPC. No fake upstream HTTP is represented as a real CLI/account success."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      },
       "sha256": "932f2e9501e1d04334a212467591e48edcc020d3ea4b3b50e549c48a9ca86de7",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/cmd/brain/readimage.go": {
       "replacement": [],
@@ -2736,10 +2979,28 @@
       ]
     },
     "services/hub/cmd/mcp/configsave_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/config_save.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "review": {
+        "behaviors": [
+          "All five original groups mapped: advertised open partial-patch schema with no required root keys; each shared wholesale contract path typed as object; malformed string/null/array/numeric wholesale values refused with zero provider calls; five legal/new-key patches preserved exactly; independent local guard tested directly, including non-object parents and same-name keys at unrelated depths.",
+          "wholesale_config_bad_types_never_reach_provider_but_open_patches_do exercises the actual HTTP facade and recording config.save handler. wholesale_guard_is_independent_of_schema_and_matches_shared_contract supplies the second load-bearing check that was missing from Rust.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "91e5e1462fe496c86ea09058ed7f0191d2be8f8518f4fd6b8227cc13445e7d15",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/config_save.rs"
+      ]
     },
     "services/hub/cmd/mcp/conversation.go": {
       "replacement": [
@@ -2768,10 +3029,27 @@
       ]
     },
     "services/hub/cmd/mcp/dispatch_chain_fixture_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/examples/hub_contract_fixture.rs",
+        "services/hub-rs/src/test_support.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original gated subprocess fixture is replaced by the test-support-only Rust hub_contract_fixture MCP mode. It requires explicit WKS_DISPATCH_CHAIN_FIXTURE=1, confines scratch state, mints manager-current/manager-other/pairing identities, installs the actual routing service with the original codex_only/frontier/view policy and exposes actual bus/MCP listeners. EOF/parent termination joins only scratch services.",
+          "The retained dispatchChain.integration.ts now launches this Rust fixture and registers real desktop handlers. It asserts unknown credential refusal, token-derived direct parent/task ownership, cross-owner rejection, optional/untracked history, pinned workflows/results/references, manager inbox transfer, explicit model selection, duplicate admission and paired replay. Primary CI36607276412 at9f786d734f996f487aa0894b8b5fae08aeba4ce3 passed this cross-language suite.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "A Rust test-support example replaces the ignored Go test executable; no Go runtime/build dependency remains in the dispatch-chain test path."
+        ]
+      },
       "sha256": "5d06e9e66df2cc539030faafaf7ff0e1409e39e572ac69b5bda99b454ff58667",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/examples/hub_contract_fixture.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts",
+        "apps/desktop/tests/e2e/fixtures/rustHub.ts"
+      ]
     },
     "services/hub/cmd/mcp/federated.go": {
       "replacement": [
@@ -2800,10 +3078,27 @@
       ]
     },
     "services/hub/cmd/mcp/fleet_workflows.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Each original workflow tool operation, allowed/required schema field, required local manager identity and literal op/callerSessionId projection maps to workflows::op/prepare. Select-default and select-project retain cwd boundaries; workflowId:null inherits; false run and zero CAS values remain present; empty omitempty values are dropped.",
+          "workflow_operation_schemas_and_compact_transport_preserve_evidence checks the real HTTP schemas, request projections, immutable revision/outcome evidence and compact pinned-template omission; workflow_facade_requires_session_identity_and_raw_scopes_cannot_assert_it checks the broker boundary.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "6e77f9bd04561367ee82c498fbe1af1893f2ffa398de83dc1c4f25176433281e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/gatetool_test.go": {
       "replacement": [
@@ -2817,16 +3112,56 @@
       ]
     },
     "services/hub/cmd/mcp/help.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/help.rs",
+        "services/hub-rs/src/mcp/presentation.rs",
+        "services/hub-rs/assets/mcp-help.json",
+        "services/hub-rs/assets/mcp-rust-presentation.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all original help rendering and group guidance. Rust renders only currently available tier tools, stable captured group ordering, descriptions, trimmed case-insensitive topics, sorted unknown-topic alternatives and the current-turn-only batch hint. Existing plugin catalog tests preserve live plugin help visibility.",
+          "routing_forecast_fields_reach_weighted_selection_and_help_tracks_live_tiers pins routing/spawn/task-reference doctrine and view-tier topic refusal. presentation_overlay_preserves_all_tool_names_and_schema_constraints verifies that authored Rust corrections alter descriptions only.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Frozen Go help/catalog inputs are unchanged. The authored Rust presentation overlay corrects obsolete desktop-only workflow/resultSchema/template claims; summary-provider and UI-only limits remain explicit. Tools without live handlers are omitted from current help instead of advertising unavailable methods."
+        ]
+      },
       "sha256": "e87c4f0e006da86ebf389936f861e94cd6c072d9236109e5a6355e70572ec126",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/presentation.rs"
+      ]
     },
     "services/hub/cmd/mcp/hostguard_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original foreign hostname, loopback IP range/case/IPv6/no-host, concrete bind and wildcard-normalization cases mapped to the shared socket-aware Policy and actual facade wrapper. actual_wildcard_facade_pins_health_and_mcp_hosts_to_the_accepting_socket rejects malicious/wildcard authorities on both /health and /mcp while legitimate loopback spellings succeed.",
+          "mcp_trusted_proxy_hosts_still_require_matching_browser_origin_and_credentials exercises actual HTTP trusted proxy composition; server policy unit corpus separately checks missing Host, wildcard bound with loopback socket, mapped IPv6, malformed origins and exact proxy authority.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "The Rust shared transport policy keys rebinding protection to the actual accepting socket, including wildcard listeners, and supports explicitly trusted proxy names. Authenticated public-interface deployments may use public hostnames rather than the old literal bind-only host rule; browser Origin remains pinned to the request authority."
+        ]
+      },
       "sha256": "98c0cd2f5a1bbe367330d5787e59773e80b47df6c6393c07c37223dc9a80b149",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ]
     },
     "services/hub/cmd/mcp/main.go": {
       "replacement": [],
@@ -2835,16 +3170,52 @@
       "tests": []
     },
     "services/hub/cmd/mcp/main_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The original MCP-to-broker-provider forwarding and missing-provider assertions are exercised by real authenticated HTTP/broker integration. Registered spawn providers record exact parameters/receipts, open config patches reach config.save unchanged, and missing list_agents yields a clean tool error without hanging.",
+          "forwarding_tools_keep_identity_click_targets_and_operator_boundaries checks mapping closure, schemas and forwarding across representative observe/config/control families. New parity tests cover explicit configured defaults, composed respawn and open config patches.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Catalog listings deliberately omit unavailable built-in handlers in Rust rather than advertising every source-defined tool unconditionally. Known calls to an absent provider still return an explicit no-provider tool error."
+        ]
+      },
       "sha256": "78abdff386630e4d8003b873722891dbe2098a7c9325e4de627bc0ffa55828b9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/manager_context.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original read-only composition maps to concurrent inbox plus at-most-four task reads, authenticated manager identity, unique nonblank task coordinates, requested ordering, partial per-task errors, exact task-id validation, full revision/outcome evidence and omission of pinned template/history bodies.",
+          "A three-party barrier in batch_preserves_partial_errors_verified_identity_and_requested_order proves requests overlap, with a bounded timeout. Unit evidence tests preserve uint64 values, newest four freeform attempts and attemptsRemaining, mismatched task refusal and explicit24KiB contentDeferred. HTTP composition tests refuse forged/oversized/duplicate batches before any provider call.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "11aec6d63319ff73b0a70e7ede649982aa0fc17833e6745fa854a6f99dc1b9f3",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/manager_context.rs"
+      ]
     },
     "services/hub/cmd/mcp/manager_requests.go": {
       "replacement": [
@@ -2890,10 +3261,25 @@
       ]
     },
     "services/hub/cmd/mcp/notifywhen_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "review": {
+        "behaviors": [
+          "The original schema phrases contextUsedPct, runtime-confirmed,(0,100],cache-inclusive and not active-context health are independently asserted against actual HTTP tools/list by forwarding_tools_keep_identity_click_targets_and_operator_boundaries. This records advertised watch semantics, not fabricated runtime telemetry evidence.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "06c66776050d37abbd5d0103f8760a77d57e658ade0c81e80a2d33737df11446",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/openterminal_test.go": {
       "replacement": [
@@ -2974,58 +3360,227 @@
       ]
     },
     "services/hub/cmd/mcp/profilegrant_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original selected profile and provider bypass choices remain ambient operator configuration. spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire mints otherwise identical identities with differing legacy profilesAllowed/yoloAllowed fields, checks equal tool catalogs and unchanged selected profile/skipPermissions values with no grant stamps.",
+          "spawn_first_message_receipts_preserve_legacy_fallback_without_replaying_uncertain_delivery rejects profileGranted,yoloGranted,skipPermissionsGranted and private retry/owner stamps before any provider call.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust caches immutable catalog data and carries identity per request rather than constructing separate grant-shaped SDK server instances; equal HTTP catalogs and provider wires preserve the old cache-isolation assertions without retaining obsolete policy objects."
+        ]
+      },
       "sha256": "717b23bcea9c95fcc0c9ea27c61f788533218da3756a4df82ee3eb129972f63a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/progress.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All original progress assertions retained: view/triage/operator availability agrees with the scope method patterns; schema exposes no session selector; callerSessionId comes only from verified session labels; note and needsDecision pass unchanged; static/non-session identities remain empty and provider refusal text reaches the model.",
+          "progress_schema_tiers_non_session_identity_and_provider_refusal_are_preserved and progress_identity_comes_from_the_verified_session_token exercise real credentials, actual HTTP and broker delegation, including caller spoof rejection and raw scoped bus refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "02247f86b0506afa7a79f5d6f528d3e3d86e650757198e1a5ae483d268401fbd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/progress_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All original progress assertions retained: view/triage/operator availability agrees with the scope method patterns; schema exposes no session selector; callerSessionId comes only from verified session labels; note and needsDecision pass unchanged; static/non-session identities remain empty and provider refusal text reaches the model.",
+          "progress_schema_tiers_non_session_identity_and_provider_refusal_are_preserved and progress_identity_comes_from_the_verified_session_token exercise real credentials, actual HTTP and broker delegation, including caller spoof rejection and raw scoped bus refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "26cbce934ed4c50c0e643af223f170b97e733f2f45b164d8d9cf4ce46cd2e4e3",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/projectstatus.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/project_status.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All six original test groups retained: configured project keys sorted with blank keys skipped; branch/upstream/ahead/behind/dirty/file-count projection; detached/no-upstream omissions; failed repository as one error row; explicit dirs skip config; empty/unreadable config refuses rather than inventing projects.",
+          "project_status_keeps_sorted_partial_rows_and_proves_concurrent_fanout uses a four-party barrier through actual HTTP/handler calls, making sequential fanout fail by client timeout. Unit rows reject unreadable provider shapes.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust bounds in-flight repository reads to8 while preserving requested order and partial-error behavior; the original Go implementation used unbounded goroutines."
+        ]
+      },
       "sha256": "34c7601a28b1dfb2b9dd439670f9eeb06b01767484d2c320d141299a707c5ec6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/project_status.rs"
+      ]
     },
     "services/hub/cmd/mcp/projectstatus_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/project_status.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All six original test groups retained: configured project keys sorted with blank keys skipped; branch/upstream/ahead/behind/dirty/file-count projection; detached/no-upstream omissions; failed repository as one error row; explicit dirs skip config; empty/unreadable config refuses rather than inventing projects.",
+          "project_status_keeps_sorted_partial_rows_and_proves_concurrent_fanout uses a four-party barrier through actual HTTP/handler calls, making sequential fanout fail by client timeout. Unit rows reject unreadable provider shapes.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust bounds in-flight repository reads to8 while preserving requested order and partial-error behavior; the original Go implementation used unbounded goroutines."
+        ]
+      },
       "sha256": "6697c1d84bc25a7b6c004ed9cfdf3b22362c84afb651189e439f50ee42b1dd8f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/project_status.rs"
+      ]
     },
     "services/hub/cmd/mcp/respawn.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original task recovery, explicit correction heading and byte preservation map to compose/original; blank or missing task/amendment refuses before spawn. Snapshot cwd/provider/transport/parent/effort/label/resultSchema/role/capability inherit while stale decisionId does not. Canonical requestedSelection supersedes stale legacy settings.model; explicit overrides and untracked retries remove stale capability/retry links.",
+          "respawn_clones_exact_task_and_canonical_selection_without_duplicate_delivery exercises real HTTP/broker provider calls for confirmed delivery, one legacy fallback including a bare JSON session ID, missing history IDs, failed spawn/send, unaddressable receipt and explicit bare-model/no-task overrides. Existing compose unit tests assert live permission priority and both bypass spellings; no independent legacy yolo grant changes the mode.",
+          "Public schema rejects forged retry/owner provenance; spawn preparation derives authenticated session parent, keeps explicit static-controller parent and enforces incompatible task-link refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Explicit messageQueued:false and lost acknowledgements are treated as uncertain and never trigger blind duplicate delivery. Error wording deliberately avoids asserting an unconfirmed worker is definitely idle. A successful legacy string-ID fallback returns an explicit object delivery receipt."
+        ]
+      },
       "sha256": "8a2ce5db4dda6a9b9718e4d7bc290afe5b442e831c64f45a2a49102ec3fcb0ad",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs"
+      ]
     },
     "services/hub/cmd/mcp/respawn_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original task recovery, explicit correction heading and byte preservation map to compose/original; blank or missing task/amendment refuses before spawn. Snapshot cwd/provider/transport/parent/effort/label/resultSchema/role/capability inherit while stale decisionId does not. Canonical requestedSelection supersedes stale legacy settings.model; explicit overrides and untracked retries remove stale capability/retry links.",
+          "respawn_clones_exact_task_and_canonical_selection_without_duplicate_delivery exercises real HTTP/broker provider calls for confirmed delivery, one legacy fallback including a bare JSON session ID, missing history IDs, failed spawn/send, unaddressable receipt and explicit bare-model/no-task overrides. Existing compose unit tests assert live permission priority and both bypass spellings; no independent legacy yolo grant changes the mode.",
+          "Public schema rejects forged retry/owner provenance; spawn preparation derives authenticated session parent, keeps explicit static-controller parent and enforces incompatible task-link refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Explicit messageQueued:false and lost acknowledgements are treated as uncertain and never trigger blind duplicate delivery. Error wording deliberately avoids asserting an unconfirmed worker is definitely idle. A successful legacy string-ID fallback returns an explicit object delivery receipt."
+        ]
+      },
       "sha256": "75b2607dd329bb380d75ffd7152a496dbd10b61c3d95bceda365f778234df86e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs"
+      ]
     },
     "services/hub/cmd/mcp/routingpreferences_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/raw_preferences.rs",
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "both_transports_preserve_routing_host_boundary_and_applied_select_model_policy exercises actual streamable HTTP and legacy SSE: scoped operator cannot manufacture host authority with the old internal header; configurable reflects actual authority; denied save leaves write count zero; owner save applies codex_only/scout-cheap and subsequent select_model consumes the changed policy.",
+          "Existing SSE tests bind sessions to exact credentials and reject duplicate raw preference keys before serde can collapse them.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "The authoritative owner credential is the Rust hub host identity. A separately configured static facade operator credential deliberately remains non-host; the old Go facade static-to-outbound-host shortcut is not restored."
+        ]
+      },
       "sha256": "1c7e212f983e38797643ec50f1bc00e29b1968cde478447e45ff8ec26beb024b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/routingselect_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/mcp/help.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original expectedWork schema and wire arithmetic assertions now exercise the real HTTP select_model endpoint and actual RoutingService. implementation2/review4 yield16 weighted units; unknown haruspicy remains reported and demand remains unknown, not an invented quota percentage.",
+          "The same test pins routing doctrine, explicit-model/default routing distinction, decisionId/capability/freshness/effort details, task-reference guidance and absent view-tier routing topic.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "0ebf4299af840fe80ae45744fa9b2546f4986d42b1cb56d9b3955e98046f7f7d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/sendmessage_test.go": {
       "replacement": [
@@ -3065,34 +3620,119 @@
       ]
     },
     "services/hub/cmd/mcp/spawndefaults_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/model_selection.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original16 default-selection assertions mapped to actual HTTP/provider wires: omitted skip uses configured boolean or either bypass mode; explicit false wins regardless of legacy grant metadata; absent defaults remain explicit approvals-on with no invented model.",
+          "Claude config models apply only to implicit/explicit Claude, including case/space-tolerant names. Managed providers never inherit Claude models; explicit managed models survive; fresh Codex context defaults to1M and an explicit400k wins. Canonical and legacy companions remain consistent; unsupported provider windows and conflicting identities are tool errors before launch.",
+          "New bare-model companion correction omits unknown contextWindow rather than emitting null. Defaults are resolved before provider dispatch and no obsolete full-access grant policy is consulted.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "e53309e99b32d7330275691e94873c66ee1514eb97aa3a812a1ffdde08522ae0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/spawn.rs"
+      ]
     },
     "services/hub/cmd/mcp/status_summary.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/status_summary.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original bounded14-field status envelope validation and exact unsupported-error compatibility are retained. Raw transcript/unknown provider fields fail closed, provider stderr is redacted to source-unavailable, and errors merely mentioning no-provider alongside permission denial stay errors.",
+          "status_summary_federation_never_substitutes_local_lookalikes_or_hides_denial uses two actual federated peers plus a local same-ID lookalike: view-tier remote call reaches the selected peer, old peer degrades, denial remains exactly permission denied, and hub is removed from provider params. All three tool tiers retain the summary tool.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "9aca610d34c1d172139713062a9bb50dca0b70257075e84780dd1a78db5dfe97",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/status_summary.rs"
+      ]
     },
     "services/hub/cmd/mcp/status_summary_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/status_summary.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original bounded14-field status envelope validation and exact unsupported-error compatibility are retained. Raw transcript/unknown provider fields fail closed, provider stderr is redacted to source-unavailable, and errors merely mentioning no-provider alongside permission denial stay errors.",
+          "status_summary_federation_never_substitutes_local_lookalikes_or_hides_denial uses two actual federated peers plus a local same-ID lookalike: view-tier remote call reaches the selected peer, old peer degrades, denial remains exactly permission denied, and hub is removed from provider params. All three tool tiers retain the summary tool.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "322222e2c617290ce9fcc37669b66445bae3a0acadc189d3c68d03feb79ccd1f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/status_summary.rs"
+      ]
     },
     "services/hub/cmd/mcp/task_references.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original read/upsert/remove operations retain caller identity, zero/positive CAS and exact entry payloads. Provider domain conflicts preserve currentRevision and existing human references as data, not transport errors.",
+          "Actual HTTP tests refuse absent manager identity, forged caller identity, empty taskId/cwd, missing CAS and empty edits with unchanged provider call count. View/triage lack both tools; operator retains decide_workflow_step and exposes no generic task/waiver verbs. Help retains additive/unverified references and multi-provider examples.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "8cd5788b82d088f224564eefe7dc416c52ae435428984b158da0a344e690b902",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/taskrefs_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original read/upsert/remove operations retain caller identity, zero/positive CAS and exact entry payloads. Provider domain conflicts preserve currentRevision and existing human references as data, not transport errors.",
+          "Actual HTTP tests refuse absent manager identity, forged caller identity, empty taskId/cwd, missing CAS and empty edits with unchanged provider call count. View/triage lack both tools; operator retains decide_workflow_step and exposes no generic task/waiver verbs. Help retains additive/unverified references and multi-provider examples.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "ac25a8267bfcbb24355cd92bccb4c1f32f21aa7522f3373f6d43adce5ececa90",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/mcp/tiers_test.go": {
       "note": "Scoped bearer, owner, explicit guest/static tiers, bad credential rejection, tool authorization and policy revocation covered. Authtoken package is not certified wholesale by this narrower review.",
@@ -3111,34 +3751,137 @@
       ]
     },
     "services/hub/cmd/mcp/ui.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/ui.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all seven literal UI tool/topic projections. focus_agent publishes command.focus_agent with sessionId; open_browser projects command.open_pane/browser/url; open_guide publishes its own empty envelope. Source is host-stamped mcp-facade, caller envelope/topic/hub fields do not propagate.",
+          "ui_events_require_triage_and_use_only_host_stamped_literal_envelopes uses a real broker subscriber and authenticated HTTP calls; view cannot steer UI while triage/operator can. Unit projection tests cover spoofed envelope fields, unknown names and empty guide data.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "UI success remains only fire-and-forget publication acknowledgement; no test claims a desktop window rendered."
+        ]
+      },
       "sha256": "f1f24b944f52dcbf2b37b8b26acb3cb01199600905436990c8423ad08e504e8b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/ui.rs"
+      ]
     },
     "services/hub/cmd/mcp/ui_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/ui.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all seven literal UI tool/topic projections. focus_agent publishes command.focus_agent with sessionId; open_browser projects command.open_pane/browser/url; open_guide publishes its own empty envelope. Source is host-stamped mcp-facade, caller envelope/topic/hub fields do not propagate.",
+          "ui_events_require_triage_and_use_only_host_stamped_literal_envelopes uses a real broker subscriber and authenticated HTTP calls; view cannot steer UI while triage/operator can. Unit projection tests cover spoofed envelope fields, unknown names and empty guide data.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "UI success remains only fire-and-forget publication acknowledgement; no test claims a desktop window rendered."
+        ]
+      },
       "sha256": "851701022a245921c94a40dafec99322e929f3afac7b277b296fde7c82dca644",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/ui.rs"
+      ]
     },
     "services/hub/cmd/mcp/workflow_dispatch.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original composition checks retain exact pinned task/step/revision ownership, host canonical cwd, inherited role/template/stage/after-dispatch metadata, automatic or explicit model selection, preserved warning/clamp/admission fields and omission only of rendered prompt. Explicit model choice bypasses routing without fabricating capability/decisionId.",
+          "Unit call/launch logs prove conditional skips, foreign/mismatched plans, missing/ineligible/incomplete routing decisions and unknown spawn acknowledgement stop at the proper phase. One optional watch failure retains exactly one launch and tells callers to retry only notify_when. Invalid/ambiguous model choices and forged public host fields fail before provider mutation.",
+          "Manager context original concurrency/budget/partial-error/freeform-attempt assertions map to dedicated helper unit tests and real HTTP invalid-input tests. The retained desktop dispatch-chain integration supplies end-to-end routed/explicit/paired workflow and duplicate-admission evidence.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust additionally verifies paired target/directory/authenticated-provider readiness before mutating the workflow; explicit run:false may record a skip without a reachable paired worker. This strengthens pre-admission refusal, with dedicated regression coverage."
+        ]
+      },
       "sha256": "e700b3381d789078a2c209b4b5af8d99aba7ff618a6cdc013988354f77773996",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ]
     },
     "services/hub/cmd/mcp/workflow_dispatch_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original composition checks retain exact pinned task/step/revision ownership, host canonical cwd, inherited role/template/stage/after-dispatch metadata, automatic or explicit model selection, preserved warning/clamp/admission fields and omission only of rendered prompt. Explicit model choice bypasses routing without fabricating capability/decisionId.",
+          "Unit call/launch logs prove conditional skips, foreign/mismatched plans, missing/ineligible/incomplete routing decisions and unknown spawn acknowledgement stop at the proper phase. One optional watch failure retains exactly one launch and tells callers to retry only notify_when. Invalid/ambiguous model choices and forged public host fields fail before provider mutation.",
+          "Manager context original concurrency/budget/partial-error/freeform-attempt assertions map to dedicated helper unit tests and real HTTP invalid-input tests. The retained desktop dispatch-chain integration supplies end-to-end routed/explicit/paired workflow and duplicate-admission evidence.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust additionally verifies paired target/directory/authenticated-provider readiness before mutating the workflow; explicit run:false may record a skip without a reachable paired worker. This strengthens pre-admission refusal, with dedicated regression coverage."
+        ]
+      },
       "sha256": "4c162f313593e71c153689a32d7beed3df59c317c51504b48c8cf155cec9023c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ]
     },
     "services/hub/cmd/mcp/yologrant_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original selected profile and provider bypass choices remain ambient operator configuration. spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire mints otherwise identical identities with differing legacy profilesAllowed/yoloAllowed fields, checks equal tool catalogs and unchanged selected profile/skipPermissions values with no grant stamps.",
+          "spawn_first_message_receipts_preserve_legacy_fallback_without_replaying_uncertain_delivery rejects profileGranted,yoloGranted,skipPermissionsGranted and private retry/owner stamps before any provider call.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust caches immutable catalog data and carries identity per request rather than constructing separate grant-shaped SDK server instances; equal HTTP catalogs and provider wires preserve the old cache-isolation assertions without retaining obsolete policy objects."
+        ]
+      },
       "sha256": "80463c8713022a38ef1398348173218bb346fa048b0b2ce921dcf282afac7485",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ]
     },
     "services/hub/cmd/workspacer/backoff.go": {
       "reason": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
@@ -3781,10 +4524,32 @@
       "tests": []
     },
     "services/hub/internal/bus/bus_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Real WebSocket local publication preserves envelope ID/time/payload; broker cases retain exact filtering and fanout. Authenticated HTTP exposes method inventory while anonymous probes expose liveness only. The obsolete tokenless network harness is intentionally replaced by the explicit token-required startup regression; embedded ownership remains credential-free."
+        ],
+        "originalTests": [
+          "TestEndToEndPublishSubscribe",
+          "TestSubscriptionFilters",
+          "TestHealth",
+          "TestHealthGating"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "3d31c0974fe6b5d6e1cb365eb583972ff55b4f98f3b8cb63133297cc68af41f8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/broker_tests.rs",
+        "services/hub-rs/tests/http.rs"
+      ]
     },
     "services/hub/internal/bus/clients.go": {
       "note": "Live sorted inventory retains verified connection IDs, nonsecret labels, monotonic activity sequence, conservative legacy call/publication clocks and reported-input clocks. Actual broker test distinguishes a registered provider, plugin, private service client and real user; caller params cannot forge its ID or infrastructure flag. Private connect_service replaces Go self-dial nonce/query serialization, so no wire URL can claim internal provenance. Subscription frames do not refresh activity. The old InternalDialURL string-builder responsibility is eliminated by this owned in-process connection seam; other inventory/activity behavior remains active.",
@@ -3815,10 +4580,33 @@
       ]
     },
     "services/hub/internal/bus/delivery_layers_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Closed identities cannot publish/consume before eviction; disallowed streams occupy neither queue slots nor desync metadata. Revocation suppresses already-enqueued PTY bytes and repair frames. Unlike Go independently-mutated conn grants, Rust keeps peer identities immutable and closes peers when authority changes; the actor serializes admission/revocation and receiver prioritizes closure. Positive allowed-event and desync repair floors remain."
+        ],
+        "originalTests": [
+          "TestARevokedConnectionMayNeitherPublishNorConsume",
+          "TestTheWriterLoopReChecksTheConsumeGrantAtDeliveryTime",
+          "TestADesyncReportIsRefusedToAConnectionThatMayNotConsumeTheStream"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "476597da40877f4a0caf5e63870ceac5c3d43fd697d60b91c2efdde674a3f664",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime/broker_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/lifecycle.rs"
+      ]
     },
     "services/hub/internal/bus/demand.go": {
       "note": "Actor-owned exact-topic demand counts, wildcard exclusion, duplicate subscription accounting, zero/one transitions, disconnect release, entitled watcher replay and replacement/empty-prefix clear. New direct actor tests preserve the seven old demand assertions; shared bus corpus provides wire replay coverage.",
@@ -3972,10 +4760,33 @@
       ]
     },
     "services/hub/internal/bus/hostpin_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Exact foreign-host refusals, loopback aliases/127/8/IPv6/missingHost allowances and non-loopback landed-socket semantics are preserved by policy matrix. Every registered hub HTTP route is actually probed. Plugin settings exposure accepts only owner/current own-plugin credentials across token/busToken/bearer forms, rejects foreign token and disappears immediately on revocation. Tokenless-network fixture mode is intentionally refused at startup."
+        ],
+        "originalTests": [
+          "TestHostPinRefusesAForeignHostOnALoopbackSocket",
+          "TestHostPinAllowsLoopbackAndTheAddressTheSocketLandedOn",
+          "TestHostPinCoversEveryRouteTheHubServes",
+          "TestAuthorizedForPluginAdmitsOnlyTheHostAndThatPluginsOwnToken"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "caee5fea0e31d0822786c61b14adb03852a13f3a034c852dd1bd0b732ddae77b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/bus_remaining.rs"
+      ]
     },
     "services/hub/internal/bus/launchintegration.go": {
       "note": "The former provider callback RPC becomes an in-process typed launch permit owned by the broker. It binds the exact pending local owner call, selected plugin, generated session and nonce, deadline and live connection, and is one-use. Provider/scoped/federated callers cannot manufacture the grant. Tests reject mismatched sessions/nonces/plugin selection, completed/cancelled calls, expired/disconnected callers and changed owner authority. Audit added explicit marked-closed refusal before physical peer eviction to both begin_launch and check_launch, preserving the original revoked-owner assertion. Accepted engine effects remain owned/tracked; this only revokes preparation before admission.",
@@ -4008,28 +4819,102 @@
       ]
     },
     "services/hub/internal/bus/local_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Real WebSocket callers observe local handler results and exact errors with original correlation. A local handler publishes through its live Handle and a second subscribed network client receives the correctly stamped payload."
+        ],
+        "originalTests": [
+          "TestLocalProviderCall",
+          "TestLocalProviderError",
+          "TestLocalProviderBroadcastReachesOtherClient"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "1fb68cd4a907e8ce196bef7384c9f0aa0063d4ba88bb1deea7514e3178b0debd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs"
+      ]
     },
     "services/hub/internal/bus/localident_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Local handler sees actual scope/trusted/owner and SHA256 token fingerprint, not forged parameters or raw bearer; same credential on independent connections yields identical identity, distinct credentials differ and empty identity stays empty. Unified identity-aware Options handler map replaces Go separate plain/identity registration maps; last configured handler wins and inventory counts once."
+        ],
+        "originalTests": [
+          "TestLocalIdentHandlerSeesTheCallersCredential",
+          "TestTokenFingerprint",
+          "TestLocalRegistrationsReplaceEachOther"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "cf637ee8d768ad67855165e0178d9279d943d684fb547e855902ab3f36ffd589",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/bus/machine_stop_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Actual WebSocket closes with code4001 and explicit machine-stopping reason; shutdown waits for interactive-client physical close acknowledgements. Registered provider and other infrastructure remain alive and can register afterward."
+        ],
+        "originalTests": [
+          "TestMachineStopClosesClientsWithExplicitPauseCode"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "1c3d5d9d23c3abbfef7db259025a8f89f59e075d82afa7aa39657f15498ccb7d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime.rs"
+      ]
     },
     "services/hub/internal/bus/migration_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Same retained contracts/hub-bus-cases.json is replayed against embedded and Rust WebSocket adapters with exact frame comparisons, captured provider correlations, scoped hello/registration, ownership, disconnect, subscriptions and demand. Retained Go oracle suite passed independently."
+        ],
+        "originalTests": [
+          "TestMigrationBusFixtures"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "66f480ad7e857a4cf5a840bef9e977edda078dee2e075a5fc6a9479068ff7e69",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/compatibility.rs",
+        "contracts/hub-bus-cases.json"
+      ]
     },
     "services/hub/internal/bus/origin_test.go": {
       "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted.",
@@ -4046,10 +4931,32 @@
       ]
     },
     "services/hub/internal/bus/pluginambient_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Plugin ordinary path calls are forwarded without legacy manifest-root confinement; opaque plugin metadata/toolScope remain inert on actual external-provider spawn path. Core host events/settings and foreign/core provider namespaces are refused, ordinary plugin events and allowed PTY consumption survive, and revocation removes all access."
+        ],
+        "originalTests": [
+          "TestEnabledPluginHasAmbientOrdinaryAccess",
+          "TestPluginIdentityStillProtectsHostStateAndProviderNamespace",
+          "TestRevokedPluginLosesAmbientAccess",
+          "TestLegacyChildScopeDoesNotClampPluginSpawn"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "8feb36bde1063bd8cfc47f28a5796ed5fb94855db7266c9bbcf93a768da50119",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
     },
     "services/hub/internal/bus/policy.go": {
       "note": "Active component-wise canonicalization and selected-object containment are retained: resolve links before parent components, refuse relative/empty paths, retain prospective tails, refuse traversal through regular files, distinguish sibling prefixes, normalize existing Windows ancestors without weakening confinement, and enforce exactly40 link hops. Real filesystem regression reads the shared fixture budget and proves40accept/41refuse on supported platforms without Windows skips. Go CanonicalizeRoot callers are routing preference/selection and plugin UI selected-root derivation. Legacy anonymous fsRoots/secret-path filtering and paramString harness responsibility is retired by the current trust model: every real connection bypasses it; PathIsSecret only feeds unused plugin resolveRoots/expandScope compatibility helpers. Retired path-parameter-shapes corpus remains explicitly accounted for by ownership guards. This does not retire active selected-object path checks.",
@@ -4099,16 +5006,65 @@
       ]
     },
     "services/hub/internal/bus/profilegrant_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Actual control-plane external provider receives raw non-object spawn arrays unchanged. Caller-supplied owner/retry lineage survives only local host among the retained original caller cases; ordinary taskId/stage/afterDispatchId/profile metadata survives. Separate admission regression preserves explicit provisioned-facade authority while refusing provider/peer origin forgery."
+        ],
+        "originalTests": [
+          "TestProfileGrantNonObjectParamsPassUntouched",
+          "TestDispatchProvenanceOnlySurvivesLocalHostConnection"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "9f91a01e02ebe7b1ca704a439e34d3b1322ac882e922b0859519889422793e81",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/admission.rs"
+      ]
     },
     "services/hub/internal/bus/providertier_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Provider hello scope/exact call surface does not inherit providesStar; broad provider token registers representative execution/session/terminal methods without gaining calls. Narrow grant refuses terminal registration/publication but can publish snapshots despite local registration shadowing. Every topic vocabulary classification is checked across identities. Provider consumes no protected stream/desync, guarded plugin HTTP remains refused, and live grant narrowing closes/reclaims registrations."
+        ],
+        "originalTests": [
+          "TestProviderScopeNameMatchesAuthtoken",
+          "TestProviderTokenProvidesStarIsNotOperatorStar",
+          "TestProviderTokenRegistersCapabilitiesWithoutHostAuthority",
+          "TestProviderTokenCallSurfaceIsOneMethod",
+          "TestProviderTokenPublishesOnlyTheOutputOfWhatItProvides",
+          "TestProviderPublishGrantFollowsProvidesNotTheTier",
+          "TestPluginNamespaceProvidesCannotPublishCoreTopics",
+          "TestProviderTokenReceivesNoEventsAtAll",
+          "TestProviderTokenIsNotAuthorizedForGuardedHTTPRoutes",
+          "TestNarrowingAProviderTokensRegisterGrantClosesItsLiveSocket",
+          "TestRevokedProviderCannotClaimACapabilitySlot"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "1ecf4c915e71923e83f2ea3a49d86d6ef64a6c9590b648907d8019b89305240d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/internal/bus/raceflag_norace_test.go": {
       "replacement": [],
@@ -4176,16 +5132,62 @@
       ]
     },
     "services/hub/internal/bus/reportprogress_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Actual dispatch strips callerSessionId from view/plugin including non-string claims, retains note/needsDecision, leaves absent-claim payload unchanged, and preserves host/operator control-plane claims. Shared admission handles case variants; real two-hub federation strips the forged identity before forwarding and still delivers the allowed progress call."
+        ],
+        "originalTests": [
+          "TestReportProgressCallerSessionIsStrippedFromUntrustedCallers",
+          "TestReportProgressCallerSessionSurvivesFromTheControlPlane",
+          "TestReportProgressUntouchedWhenNoSessionIsClaimed",
+          "TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "bfc63c1d4c5133d50ae9118c59a33334a1b01112c978aa7d5ad57dd5b3537ed4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/tests/federation.rs"
+      ]
     },
     "services/hub/internal/bus/revoke_e2e_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Live plugin path-call and subscription positive floors precede revocation. Every socket for the revoked token physically closes; reconnect fails and provider slot can be reclaimed. Both serialized admission-before-revoke and revoke-before-admission orderings are exercised deterministically, and buffered event/desync delivery is refused after revocation. Direct actor test covers closed-but-not-evicted frame rejection before trusted shortcuts."
+        ],
+        "originalTests": [
+          "TestRevokedPluginTokenLosesItsReachOnALiveConnection",
+          "TestRevokedPluginTokenCannotReconnect",
+          "TestRevocationCannotRaceAnInFlightHandshake",
+          "TestRevocationClosesTheConnectionAndStopsEventDelivery",
+          "TestUnregisterPluginTokenFlagsAndClosesEveryLiveConnection",
+          "TestARevokedConnectionMayCallNothing"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "f25d9fb0fbe57f811c6fc35ddffc9cb4917f5ca46805e5d4864ad3a16ec40163",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
     },
     "services/hub/internal/bus/revoke_scoped_test.go": {
       "note": "Real on-disk token rewrites drive actor revalidation: view/operator removal, operator tier downgrade, facade-grant revocation, provider-grant narrowing and corruption all close/remove peers, release provider slots and prevent further calls/events. Tests first prove live event delivery. The existing real Hub provider-narrowing integration additionally proves the owned periodic sweep runs. Legacy profilesAllowed/yoloAllowed/role metadata changes remain inert: a real-store rewrite preserves the live peer and identical profileId spawn forwarding before/after the edit. Actor tests advance the private sweep clock deterministically rather than sleeping through every five-second interval.",
@@ -4201,10 +5203,27 @@
       ]
     },
     "services/hub/internal/bus/routinghost_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Handler receives authenticated_host true only for local host credential, false for scoped operator and peer-marked host. The Go anonymous-network case is deliberately replaced by tested mandatory credential admission; Rust in-process owner retains authenticated host authority without creating a socket."
+        ],
+        "originalTests": [
+          "TestAuthenticatedRoutingHostIdentity"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "fa7e5ab11d6bef8373b0b4224eddc29d8e8c76f13a53c29882724a279f920288",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs"
+      ]
     },
     "services/hub/internal/bus/rpc.go": {
       "replacement": [],
@@ -4213,16 +5232,65 @@
       "tests": []
     },
     "services/hub/internal/bus/rpc_ownership_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Registered ACK withholds local-shadowed names; local handler still answers. Inventory is sorted unique union of local and provider names and reported count agrees. Missing-method diagnostics occur once per outage, separately per method, reset after provider registration/removal and never leak params."
+        ],
+        "originalTests": [
+          "TestRegisterAckWithholdsAMethodAHubLocalHandlerShadows",
+          "TestAHubLocalHandlerStillAnswersAShadowedMethod",
+          "TestACallWithNoProviderIsSaidOutLoudOncePerMethod",
+          "TestNoProviderIsSaidAgainAfterAProviderComesAndGoes",
+          "TestProvidedMethodsNamesEverythingTheBusCanAnswer",
+          "TestHealthNamesTheMethodsNotJustTheCount"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "0162f4055f23bcc236658dec5d0694d92f7767aad3b2415ad654f55dff237cf6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/http.rs"
+      ]
     },
     "services/hub/internal/bus/rpc_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Actual external-provider agents.spawn roundtrip admits ambient plugin and operator calls, preserves result/correlation, propagates exact provider error and fails pending calls after disconnect. Unknown handshake token is refused and generic absent methods return no-provider. Rust standalone execution admission intentionally requires its owned service; control-plane-only with registered provider is the compatible delegation path tested here."
+        ],
+        "originalTests": [
+          "TestPluginMayCallUndeclaredOrdinaryCapability",
+          "TestPluginMayCallDeclaredCapability",
+          "TestUnknownTokenRejected",
+          "TestCapabilityRoundTrip",
+          "TestCallNoProvider",
+          "TestProviderErrorPropagates",
+          "TestProviderDisconnectFailsPendingCall"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "657686f6e8f8723352d7d72e68149c133d1601a67ed1a8dd95d3464839b0b940",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
     },
     "services/hub/internal/bus/sanitizerdrift_test.go": {
       "replacement": [],
@@ -4231,10 +5299,38 @@
       "tests": []
     },
     "services/hub/internal/bus/scoped_token_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Exact view/triage/operator method matrix is tested over WebSockets against installed handlers including unknown methods and denied raw-PTY claude.answer. Denials name scope/method/correlation; view/triage cannot spawn/register, while operator registers and delegates spawn. Hello advertises correct scope/allowlist, plugins advertise neither, unknown tokens refuse handshake. Allowed view event and actual guarded browser/plugin HTTP remain covered independently."
+        ],
+        "originalTests": [
+          "TestScopedTokenAuthorizationMatrix",
+          "TestLegacyHostTokenImpliesOperator",
+          "TestOperatorScopedTokenIsTrusted",
+          "TestScopedTokenCannotProvideOrPublish",
+          "TestScopedTokenReceivesEvents",
+          "TestUnknownTokenStillRejectedWithLookupWired",
+          "TestAuthorizedHTTPWithScopedTokens",
+          "TestHelloAdvertisesScope",
+          "TestHelloScopeEmptyForPlugins"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "cb4f926d919d1c940d01ba96fde874dbbe9060d4b12aebac45e9f9a9fcd65a76",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/server/tests.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/bus/spawn_capabilities_test.go": {
       "note": "Actual hello frames preserve spawnFullAccess as agents.spawn call authority for host, scoped operator, triage, enabled plugin and federated host. Provider-tier register grants explicitly do not imply spawn call authority; the new matrix also verifies that negative case.",
@@ -4289,10 +5385,30 @@
       ]
     },
     "services/hub/internal/bus/topiccap_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Reject257-topic subscribe atomically, admit256 exactly and deliver allowed event, reject257-topic unsubscribe atomically then prove all existing topics retained. Existing actor test also checks bounded processing and aggregate cap."
+        ],
+        "originalTests": [
+          "TestOversizedSubscribeIsRejected",
+          "TestOversizedUnsubscribeIsRejected",
+          "TestSubscribeAtTheLimitStillDelivers"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "d0a25e459cee4e2818b17cfbd406b7226f1ffa6c4c07f6dbbc2b998fbcaa92a5",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/broker_tests.rs"
+      ]
     },
     "services/hub/internal/bus/trustedhost_test.go": {
       "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted.",
@@ -4309,10 +5425,29 @@
       ]
     },
     "services/hub/internal/bus/yologrant_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "behaviors": [
+          "Actual external spawn provider never receives caller-supplied yoloGranted from plugin or peer host-token links; skipPermissions and unrelated public fields remain. Retired profile/yolo grant metadata does not reintroduce authority or clamps; forged grant stamps are removed by shared admission."
+        ],
+        "originalTests": [
+          "TestYoloGrantSpoofedStampNeverReachesTheProvider"
+        ],
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      },
       "sha256": "0ff556fcf1452cb5911dffb68d3142490b2869e9e918aca292b174b638bef123",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/busclient/client.go": {
       "note": "Typed caller preserves correlation, concurrent/error/drop handling, bounded64MiB messages and immediate subscription changes. Architectural change: reconnect/backoff/subscription restoration belong to federation/native owners; Client never autonomously reconnects or replays accepted calls. Authorization header replaces token query mutation; Go accepts both. Federation test proves post-reconnect event delivery;4001 explicitly pauses rather than reconnecting.",
@@ -4653,16 +5788,52 @@
       ]
     },
     "services/hub/internal/claudemon/bridge.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete SSE parser, event mapper, retry loop and all7 reference tests. Explicit hub-only borrowed-daemon mode retains GET/events, Accept:text/event-stream, non2xx refusal,200ms doubling to5s cap and reset after5s productive stream, cancellable backoff and body reads, and agent.state_changed/source claudemon projection.",
+          "Actual fragmented3-byte CRLF/multiline/heartbeat/default-name/EOF corpus pins mapped IDs/hook/mode and optional cwd, ignores garbage/missing IDs/unknown events, preserves nullable zero defaults and bounds lines/frames. Fixed serde positional-array acceptance with an allocation-free object-only visitor at both update and state levels.",
+          "Actual503 server test proves error bodies are not republished and reconnect counts remain bounded while cancellation joins. A real stream publishes one frame and then remains open indefinitely; receiving its event before close proves cancellation releases an active body read. Separate integration checks prove borrowed daemon remains responsive after link/hub shutdown."
+        ],
+        "intentionalChanges": [
+          "Full standalone/native own the engine rather than the old Go HTTP child link; this SSE adapter is only for explicit borrowed daemon hub-only mode. It never registers brain conversation services or owns/stops the external process.",
+          "Rust rejects redirects and credential-bearing URLs, adds a cumulative1MiB frame bound beyond the per-line bound, and rejects invalid UTF8 JSON rather than lossy decoding. Tokio watch cancellation replaces context cancellation. No unbounded body or retry loop is retained."
+        ],
+        "validation": "Current integrated Linux library332 passed, including all5 borrowed-daemon bridge tests; /tmp/workspacer-parity-integrated-lib.log. Existing CLI borrowed-daemon fixtures passed in published9f786d73 platform CI; current new parser/body tests were run locally on Linux."
+      },
       "sha256": "cc1eae8c400f848eca2b8af97333c5525f8008864cc71d9f0369ede9639871e2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/internal/claudemon/bridge_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete SSE parser, event mapper, retry loop and all7 reference tests. Explicit hub-only borrowed-daemon mode retains GET/events, Accept:text/event-stream, non2xx refusal,200ms doubling to5s cap and reset after5s productive stream, cancellable backoff and body reads, and agent.state_changed/source claudemon projection.",
+          "Actual fragmented3-byte CRLF/multiline/heartbeat/default-name/EOF corpus pins mapped IDs/hook/mode and optional cwd, ignores garbage/missing IDs/unknown events, preserves nullable zero defaults and bounds lines/frames. Fixed serde positional-array acceptance with an allocation-free object-only visitor at both update and state levels.",
+          "Actual503 server test proves error bodies are not republished and reconnect counts remain bounded while cancellation joins. A real stream publishes one frame and then remains open indefinitely; receiving its event before close proves cancellation releases an active body read. Separate integration checks prove borrowed daemon remains responsive after link/hub shutdown."
+        ],
+        "intentionalChanges": [
+          "Full standalone/native own the engine rather than the old Go HTTP child link; this SSE adapter is only for explicit borrowed daemon hub-only mode. It never registers brain conversation services or owns/stops the external process.",
+          "Rust rejects redirects and credential-bearing URLs, adds a cumulative1MiB frame bound beyond the per-line bound, and rejects invalid UTF8 JSON rather than lossy decoding. Tokio watch cancellation replaces context cancellation. No unbounded body or retry loop is retained."
+        ],
+        "validation": "Current integrated Linux library332 passed, including all5 borrowed-daemon bridge tests; /tmp/workspacer-parity-integrated-lib.log. Existing CLI borrowed-daemon fixtures passed in published9f786d73 platform CI; current new parser/body tests were run locally on Linux."
+      },
       "sha256": "1fa5ca83cc6faa286ded35f4756ea56839a9aab596e6c31a014df35b9ff341dc",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/internal/event/event.go": {
       "replacement": [
@@ -4767,16 +5938,60 @@
       "tests": []
     },
     "services/hub/internal/flyapi/flyapi.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete client and all16 legacy tests. Four reversible operations map to the typed Cloud interface: start/stop POST, state/wait GET, escaped selected host app/machine IDs, bearer header only, JSON stop body with explicit nonzero drain grace, bounded state reads, per-machine/action rate lanes and bounded wait query.",
+          "Real loopback HTTP tests assert exact verbs/path/query/headers/body, zero stop refusal before a rate slot or request,45s/zero/over-ceiling wait handling, positive fractional grace preserved,404/429/502 categories, malformed/oversized state bodies, unknown state and transport failures without credential text.",
+          "Fixed as_secs truncation that changed1500ms grace to1s and500ms to0s, restored zero-wait60s default, and refused whitespace-only direct constructor coordinates. Cancellation of a queued start never issues the deferred request; another machine and stop/start lanes remain independent.",
+          "Actual supervisor tests retain one accepted start/stop, ambiguous failure state, no retry on404/429, bounded transient retry, shutdown cancellation and unknown-state refusal. Source-surface guard pins exactly start/state/stop/wait and no extra public HTTP mutation entrypoints; deployment test distinguishes TOML on-failure from API on-fail."
+        ],
+        "intentionalChanges": [
+          "Typed Failure categories intentionally replace arbitrary upstream APIError.Body and RetryAfter fields; no production Go supervisor consumer reads RetryAfter and both implementations stop automatic429 retries. Rust emits no attacker-controlled response text at all.",
+          "Unknown cloud state strings become State::Unknown and a generic unfamiliar-state detail instead of echoing the raw upstream string. The real unknown-state regression includes a credential-shaped value and proves it cannot escape through this typed projection.",
+          "The only active stop signal is fixed SIGTERM by the host policy, eliminating an arbitrary signal argument; grace remains explicitly required. Self-stop uses the fixed45s policy. No create/destroy/delete operation exists.",
+          "Rust refuses credential/query/fragment endpoints and redirects, rejects oversized/malformed state responses, and reserves up to65s HTTP budget for a60s wait; caller-owned outer cancellation still wins. The old Go default HTTP client timed out after30s."
+        ],
+        "validation": "Current integrated Linux library332 passed with no ignored tests, including all6 cloud-client tests and all5 external-bridge tests; /tmp/workspacer-parity-integrated-lib.log. No real provider/cloud actions. Windows execution remains a final platform gate."
+      },
       "sha256": "5b4a806567fb877734006e3f70bd867dd9e638e0b2ff9257bca0e05460a6b9cb",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/cloud_tests.rs",
+        "services/hub-rs/src/services/nodes/tests.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ]
     },
     "services/hub/internal/flyapi/flyapi_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete client and all16 legacy tests. Four reversible operations map to the typed Cloud interface: start/stop POST, state/wait GET, escaped selected host app/machine IDs, bearer header only, JSON stop body with explicit nonzero drain grace, bounded state reads, per-machine/action rate lanes and bounded wait query.",
+          "Real loopback HTTP tests assert exact verbs/path/query/headers/body, zero stop refusal before a rate slot or request,45s/zero/over-ceiling wait handling, positive fractional grace preserved,404/429/502 categories, malformed/oversized state bodies, unknown state and transport failures without credential text.",
+          "Fixed as_secs truncation that changed1500ms grace to1s and500ms to0s, restored zero-wait60s default, and refused whitespace-only direct constructor coordinates. Cancellation of a queued start never issues the deferred request; another machine and stop/start lanes remain independent.",
+          "Actual supervisor tests retain one accepted start/stop, ambiguous failure state, no retry on404/429, bounded transient retry, shutdown cancellation and unknown-state refusal. Source-surface guard pins exactly start/state/stop/wait and no extra public HTTP mutation entrypoints; deployment test distinguishes TOML on-failure from API on-fail."
+        ],
+        "intentionalChanges": [
+          "Typed Failure categories intentionally replace arbitrary upstream APIError.Body and RetryAfter fields; no production Go supervisor consumer reads RetryAfter and both implementations stop automatic429 retries. Rust emits no attacker-controlled response text at all.",
+          "Unknown cloud state strings become State::Unknown and a generic unfamiliar-state detail instead of echoing the raw upstream string. The real unknown-state regression includes a credential-shaped value and proves it cannot escape through this typed projection.",
+          "The only active stop signal is fixed SIGTERM by the host policy, eliminating an arbitrary signal argument; grace remains explicitly required. Self-stop uses the fixed45s policy. No create/destroy/delete operation exists.",
+          "Rust refuses credential/query/fragment endpoints and redirects, rejects oversized/malformed state responses, and reserves up to65s HTTP budget for a60s wait; caller-owned outer cancellation still wins. The old Go default HTTP client timed out after30s."
+        ],
+        "validation": "Current integrated Linux library332 passed with no ignored tests, including all6 cloud-client tests and all5 external-bridge tests; /tmp/workspacer-parity-integrated-lib.log. No real provider/cloud actions. Windows execution remains a final platform gate."
+      },
       "sha256": "f34aef777c45567deff26ad25ff4409a3909daf2e5c4619856698918d2c000d2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/cloud_tests.rs",
+        "services/hub-rs/src/services/nodes/tests.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ]
     },
     "services/hub/internal/integration/editor_sandbox_test.go": {
       "replacement": [],

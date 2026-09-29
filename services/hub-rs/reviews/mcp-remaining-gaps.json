@@ -1,0 +1,15 @@
+{
+  "reviewedFiles": 29,
+  "readyPlanFiles": 27,
+  "pending": {
+    "services/hub/cmd/mcp/main.go": {
+      "reason": "Most registration/auth/default/schema/composition behavior is covered by specific reviewed slices, but this1831-line source also owns standalone CLI flags/shutdown and generic typed-input omitempty forwarding across every tool. Complete cross-launcher mapping and explicit optional-zero/empty-field wire audit before blanket-certifying the whole file.",
+      "sha256": "871bc06f19aeffedadc6135a31c57bac4ddfbad747021bdecdffa8a4b82ec6ad"
+    },
+    "services/hub/cmd/mcp/migration_catalog_test.go": {
+      "reason": "Frozen Go schema/help captures remain unchanged and Rust presentation overlay proves non-description equality, but the optional make hub-mcp-catalog command still invokes the original Go SDK generator. Decide/document its final retirement or replacement at CI/generator cutover; schema input retention is not equivalent to a port of that generator test.",
+      "sha256": "c4472b3d5c1dc95491c968cec0d607823e4630cb1ac6840a15fdd8f0c5869831"
+    }
+  },
+  "validation": "Current-source MCP checks passed27 lib+23 HTTP+5 SSE tests. The27-row review plan is ready after manager integration checks. The2 listed files remain pending; no ledger was modified by this agent."
+}

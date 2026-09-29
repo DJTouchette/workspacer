@@ -335,3 +335,6 @@ async fn url_only_credentials_survive_endpoint_discovery() {
     drop(events);
     hub.shutdown().unwrap();
 }
+
+#[path = "mcp/sse_preferences.rs"]
+mod parity_preferences;

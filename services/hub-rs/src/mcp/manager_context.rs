@@ -118,8 +118,11 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn batch_preserves_partial_errors_verified_identity_and_requested_order() {
-        let call: Read = Arc::new(|params| {
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let call: Read = Arc::new(move |params| {
+            let barrier = barrier.clone();
             Box::pin(async move {
+                barrier.wait().await;
                 assert_eq!(params["callerSessionId"], "verified");
                 match params["op"].as_str().unwrap() {
                     "requestInbox" => {
@@ -138,7 +141,7 @@ mod tests {
                 }
             })
         });
-        let value=read(json!({"callerSessionId":"forged","tasks":[{"taskId":"owned","cwd":"/repo"},{"taskId":"denied","cwd":"/other"}]}),"verified",call).await.unwrap();
+        let value=tokio::time::timeout(std::time::Duration::from_secs(2),read(json!({"callerSessionId":"forged","tasks":[{"taskId":"owned","cwd":"/repo"},{"taskId":"denied","cwd":"/other"}]}),"verified",call)).await.expect("all independent reads must overlap").unwrap();
         assert_eq!(value["inbox"]["requests"][0]["id"], "request");
         assert_eq!(value["tasks"][0]["revision"], 7);
         assert_eq!(value["tasks"][0]["hash"], "h");

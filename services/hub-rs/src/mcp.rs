@@ -2,6 +2,7 @@
 //! The catalog is the Go reference's schema, filtered to migrated handlers.
 pub(crate) mod access;
 pub use access::UntokenedAccess;
+mod config_save;
 mod conversation;
 mod fleet;
 mod gate;
@@ -9,6 +10,7 @@ mod help;
 mod legacy_sse;
 mod manager_context;
 mod plugin_catalog;
+mod presentation;
 mod project_status;
 mod raw_preferences;
 mod respawn;
@@ -150,8 +152,11 @@ impl Gate {
 fn catalogs() -> &'static BTreeMap<String, Vec<Tool>> {
     static CATALOG: OnceLock<BTreeMap<String, Vec<Tool>>> = OnceLock::new();
     CATALOG.get_or_init(|| {
-        serde_json::from_str(include_str!("../assets/mcp-tools.json"))
-            .expect("reference MCP catalog")
+        serde_json::from_value(presentation::tools(
+            serde_json::from_str(include_str!("../assets/mcp-tools.json"))
+                .expect("reference MCP catalog"),
+        ))
+        .expect("effective Rust MCP catalog")
     })
 }
 fn method(name: &str) -> Option<&'static str> {
@@ -412,6 +417,13 @@ impl ServerHandler for Adapter {
                     "invalid tool arguments: {error}"
                 ))])
                 .into());
+            }
+        }
+        if request.name == "save_config" {
+            if let Some(path) = config_save::invalid_wholesale(&params) {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "save_config refused: {path} is REPLACED wholesale and must be a JSON object. Nothing was written. Send the full map to retain, or {{}} to empty it."
+                ))]).into());
             }
         }
         if request.name == "help" {

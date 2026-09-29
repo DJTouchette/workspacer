@@ -48,6 +48,13 @@ pub(super) fn prepare(name: &str, params: &mut Value, session: &str) -> Result<(
     {
         return Err("taskId, cwd, expectedTaskRevision and reason are required".into());
     }
+    if matches!(name, "get_task_references" | "update_task_references")
+        && ["taskId", "cwd"]
+            .iter()
+            .any(|key| params[*key].as_str().unwrap_or("").is_empty())
+    {
+        return Err("taskId and cwd are required and must name a task you own".into());
+    }
     if name == "update_task_references" {
         if params["expectedTaskRevision"].as_u64().is_none() {
             return Err("expectedTaskRevision is required; call get_task_references first".into());

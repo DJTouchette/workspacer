@@ -1,0 +1,666 @@
+{
+  "records": {
+    "services/hub/cmd/mcp/configsave_test.go": {
+      "sha256": "91e5e1462fe496c86ea09058ed7f0191d2be8f8518f4fd6b8227cc13445e7d15",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/config_save.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/config_save.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All five original groups mapped: advertised open partial-patch schema with no required root keys; each shared wholesale contract path typed as object; malformed string/null/array/numeric wholesale values refused with zero provider calls; five legal/new-key patches preserved exactly; independent local guard tested directly, including non-object parents and same-name keys at unrelated depths.",
+          "wholesale_config_bad_types_never_reach_provider_but_open_patches_do exercises the actual HTTP facade and recording config.save handler. wholesale_guard_is_independent_of_schema_and_matches_shared_contract supplies the second load-bearing check that was missing from Rust.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/dispatch_chain_fixture_test.go": {
+      "sha256": "5d06e9e66df2cc539030faafaf7ff0e1409e39e572ac69b5bda99b454ff58667",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/examples/hub_contract_fixture.rs",
+        "services/hub-rs/src/test_support.rs"
+      ],
+      "tests": [
+        "services/hub-rs/examples/hub_contract_fixture.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts",
+        "apps/desktop/tests/e2e/fixtures/rustHub.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Original gated subprocess fixture is replaced by the test-support-only Rust hub_contract_fixture MCP mode. It requires explicit WKS_DISPATCH_CHAIN_FIXTURE=1, confines scratch state, mints manager-current/manager-other/pairing identities, installs the actual routing service with the original codex_only/frontier/view policy and exposes actual bus/MCP listeners. EOF/parent termination joins only scratch services.",
+          "The retained dispatchChain.integration.ts now launches this Rust fixture and registers real desktop handlers. It asserts unknown credential refusal, token-derived direct parent/task ownership, cross-owner rejection, optional/untracked history, pinned workflows/results/references, manager inbox transfer, explicit model selection, duplicate admission and paired replay. Primary CI36607276412 at9f786d734f996f487aa0894b8b5fae08aeba4ce3 passed this cross-language suite.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "A Rust test-support example replaces the ignored Go test executable; no Go runtime/build dependency remains in the dispatch-chain test path."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/fleet_workflows.go": {
+      "sha256": "6e77f9bd04561367ee82c498fbe1af1893f2ffa398de83dc1c4f25176433281e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Each original workflow tool operation, allowed/required schema field, required local manager identity and literal op/callerSessionId projection maps to workflows::op/prepare. Select-default and select-project retain cwd boundaries; workflowId:null inherits; false run and zero CAS values remain present; empty omitempty values are dropped.",
+          "workflow_operation_schemas_and_compact_transport_preserve_evidence checks the real HTTP schemas, request projections, immutable revision/outcome evidence and compact pinned-template omission; workflow_facade_requires_session_identity_and_raw_scopes_cannot_assert_it checks the broker boundary.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/help.go": {
+      "sha256": "e87c4f0e006da86ebf389936f861e94cd6c072d9236109e5a6355e70572ec126",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/help.rs",
+        "services/hub-rs/src/mcp/presentation.rs",
+        "services/hub-rs/assets/mcp-help.json",
+        "services/hub-rs/assets/mcp-rust-presentation.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/presentation.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all original help rendering and group guidance. Rust renders only currently available tier tools, stable captured group ordering, descriptions, trimmed case-insensitive topics, sorted unknown-topic alternatives and the current-turn-only batch hint. Existing plugin catalog tests preserve live plugin help visibility.",
+          "routing_forecast_fields_reach_weighted_selection_and_help_tracks_live_tiers pins routing/spawn/task-reference doctrine and view-tier topic refusal. presentation_overlay_preserves_all_tool_names_and_schema_constraints verifies that authored Rust corrections alter descriptions only.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Frozen Go help/catalog inputs are unchanged. The authored Rust presentation overlay corrects obsolete desktop-only workflow/resultSchema/template claims; summary-provider and UI-only limits remain explicit. Tools without live handlers are omitted from current help instead of advertising unavailable methods."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/hostguard_test.go": {
+      "sha256": "98c0cd2f5a1bbe367330d5787e59773e80b47df6c6393c07c37223dc9a80b149",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original foreign hostname, loopback IP range/case/IPv6/no-host, concrete bind and wildcard-normalization cases mapped to the shared socket-aware Policy and actual facade wrapper. actual_wildcard_facade_pins_health_and_mcp_hosts_to_the_accepting_socket rejects malicious/wildcard authorities on both /health and /mcp while legitimate loopback spellings succeed.",
+          "mcp_trusted_proxy_hosts_still_require_matching_browser_origin_and_credentials exercises actual HTTP trusted proxy composition; server policy unit corpus separately checks missing Host, wildcard bound with loopback socket, mapped IPv6, malformed origins and exact proxy authority.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "The Rust shared transport policy keys rebinding protection to the actual accepting socket, including wildcard listeners, and supports explicitly trusted proxy names. Authenticated public-interface deployments may use public hostnames rather than the old literal bind-only host rule; browser Origin remains pinned to the request authority."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/main_test.go": {
+      "sha256": "78abdff386630e4d8003b873722891dbe2098a7c9325e4de627bc0ffa55828b9",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The original MCP-to-broker-provider forwarding and missing-provider assertions are exercised by real authenticated HTTP/broker integration. Registered spawn providers record exact parameters/receipts, open config patches reach config.save unchanged, and missing list_agents yields a clean tool error without hanging.",
+          "forwarding_tools_keep_identity_click_targets_and_operator_boundaries checks mapping closure, schemas and forwarding across representative observe/config/control families. New parity tests cover explicit configured defaults, composed respawn and open config patches.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Catalog listings deliberately omit unavailable built-in handlers in Rust rather than advertising every source-defined tool unconditionally. Known calls to an absent provider still return an explicit no-provider tool error."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/manager_context.go": {
+      "sha256": "11aec6d63319ff73b0a70e7ede649982aa0fc17833e6745fa854a6f99dc1b9f3",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/manager_context.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original read-only composition maps to concurrent inbox plus at-most-four task reads, authenticated manager identity, unique nonblank task coordinates, requested ordering, partial per-task errors, exact task-id validation, full revision/outcome evidence and omission of pinned template/history bodies.",
+          "A three-party barrier in batch_preserves_partial_errors_verified_identity_and_requested_order proves requests overlap, with a bounded timeout. Unit evidence tests preserve uint64 values, newest four freeform attempts and attemptsRemaining, mismatched task refusal and explicit24KiB contentDeferred. HTTP composition tests refuse forged/oversized/duplicate batches before any provider call.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/notifywhen_test.go": {
+      "sha256": "06c66776050d37abbd5d0103f8760a77d57e658ade0c81e80a2d33737df11446",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The original schema phrases contextUsedPct, runtime-confirmed,(0,100],cache-inclusive and not active-context health are independently asserted against actual HTTP tools/list by forwarding_tools_keep_identity_click_targets_and_operator_boundaries. This records advertised watch semantics, not fabricated runtime telemetry evidence.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/profilegrant_test.go": {
+      "sha256": "717b23bcea9c95fcc0c9ea27c61f788533218da3756a4df82ee3eb129972f63a",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original selected profile and provider bypass choices remain ambient operator configuration. spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire mints otherwise identical identities with differing legacy profilesAllowed/yoloAllowed fields, checks equal tool catalogs and unchanged selected profile/skipPermissions values with no grant stamps.",
+          "spawn_first_message_receipts_preserve_legacy_fallback_without_replaying_uncertain_delivery rejects profileGranted,yoloGranted,skipPermissionsGranted and private retry/owner stamps before any provider call.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust caches immutable catalog data and carries identity per request rather than constructing separate grant-shaped SDK server instances; equal HTTP catalogs and provider wires preserve the old cache-isolation assertions without retaining obsolete policy objects."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/yologrant_test.go": {
+      "sha256": "80463c8713022a38ef1398348173218bb346fa048b0b2ce921dcf282afac7485",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original selected profile and provider bypass choices remain ambient operator configuration. spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire mints otherwise identical identities with differing legacy profilesAllowed/yoloAllowed fields, checks equal tool catalogs and unchanged selected profile/skipPermissions values with no grant stamps.",
+          "spawn_first_message_receipts_preserve_legacy_fallback_without_replaying_uncertain_delivery rejects profileGranted,yoloGranted,skipPermissionsGranted and private retry/owner stamps before any provider call.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust caches immutable catalog data and carries identity per request rather than constructing separate grant-shaped SDK server instances; equal HTTP catalogs and provider wires preserve the old cache-isolation assertions without retaining obsolete policy objects."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/progress.go": {
+      "sha256": "02247f86b0506afa7a79f5d6f528d3e3d86e650757198e1a5ae483d268401fbd",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All original progress assertions retained: view/triage/operator availability agrees with the scope method patterns; schema exposes no session selector; callerSessionId comes only from verified session labels; note and needsDecision pass unchanged; static/non-session identities remain empty and provider refusal text reaches the model.",
+          "progress_schema_tiers_non_session_identity_and_provider_refusal_are_preserved and progress_identity_comes_from_the_verified_session_token exercise real credentials, actual HTTP and broker delegation, including caller spoof rejection and raw scoped bus refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/progress_test.go": {
+      "sha256": "26cbce934ed4c50c0e643af223f170b97e733f2f45b164d8d9cf4ce46cd2e4e3",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All original progress assertions retained: view/triage/operator availability agrees with the scope method patterns; schema exposes no session selector; callerSessionId comes only from verified session labels; note and needsDecision pass unchanged; static/non-session identities remain empty and provider refusal text reaches the model.",
+          "progress_schema_tiers_non_session_identity_and_provider_refusal_are_preserved and progress_identity_comes_from_the_verified_session_token exercise real credentials, actual HTTP and broker delegation, including caller spoof rejection and raw scoped bus refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/projectstatus.go": {
+      "sha256": "34c7601a28b1dfb2b9dd439670f9eeb06b01767484d2c320d141299a707c5ec6",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/project_status.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/project_status.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All six original test groups retained: configured project keys sorted with blank keys skipped; branch/upstream/ahead/behind/dirty/file-count projection; detached/no-upstream omissions; failed repository as one error row; explicit dirs skip config; empty/unreadable config refuses rather than inventing projects.",
+          "project_status_keeps_sorted_partial_rows_and_proves_concurrent_fanout uses a four-party barrier through actual HTTP/handler calls, making sequential fanout fail by client timeout. Unit rows reject unreadable provider shapes.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust bounds in-flight repository reads to8 while preserving requested order and partial-error behavior; the original Go implementation used unbounded goroutines."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/projectstatus_test.go": {
+      "sha256": "6697c1d84bc25a7b6c004ed9cfdf3b22362c84afb651189e439f50ee42b1dd8f",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/project_status.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/project_status.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All six original test groups retained: configured project keys sorted with blank keys skipped; branch/upstream/ahead/behind/dirty/file-count projection; detached/no-upstream omissions; failed repository as one error row; explicit dirs skip config; empty/unreadable config refuses rather than inventing projects.",
+          "project_status_keeps_sorted_partial_rows_and_proves_concurrent_fanout uses a four-party barrier through actual HTTP/handler calls, making sequential fanout fail by client timeout. Unit rows reject unreadable provider shapes.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust bounds in-flight repository reads to8 while preserving requested order and partial-error behavior; the original Go implementation used unbounded goroutines."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/respawn.go": {
+      "sha256": "8a2ce5db4dda6a9b9718e4d7bc290afe5b442e831c64f45a2a49102ec3fcb0ad",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original task recovery, explicit correction heading and byte preservation map to compose/original; blank or missing task/amendment refuses before spawn. Snapshot cwd/provider/transport/parent/effort/label/resultSchema/role/capability inherit while stale decisionId does not. Canonical requestedSelection supersedes stale legacy settings.model; explicit overrides and untracked retries remove stale capability/retry links.",
+          "respawn_clones_exact_task_and_canonical_selection_without_duplicate_delivery exercises real HTTP/broker provider calls for confirmed delivery, one legacy fallback including a bare JSON session ID, missing history IDs, failed spawn/send, unaddressable receipt and explicit bare-model/no-task overrides. Existing compose unit tests assert live permission priority and both bypass spellings; no independent legacy yolo grant changes the mode.",
+          "Public schema rejects forged retry/owner provenance; spawn preparation derives authenticated session parent, keeps explicit static-controller parent and enforces incompatible task-link refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Explicit messageQueued:false and lost acknowledgements are treated as uncertain and never trigger blind duplicate delivery. Error wording deliberately avoids asserting an unconfirmed worker is definitely idle. A successful legacy string-ID fallback returns an explicit object delivery receipt."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/respawn_test.go": {
+      "sha256": "75b2607dd329bb380d75ffd7152a496dbd10b61c3d95bceda365f778234df86e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/respawn.rs",
+        "services/hub-rs/src/mcp/spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original task recovery, explicit correction heading and byte preservation map to compose/original; blank or missing task/amendment refuses before spawn. Snapshot cwd/provider/transport/parent/effort/label/resultSchema/role/capability inherit while stale decisionId does not. Canonical requestedSelection supersedes stale legacy settings.model; explicit overrides and untracked retries remove stale capability/retry links.",
+          "respawn_clones_exact_task_and_canonical_selection_without_duplicate_delivery exercises real HTTP/broker provider calls for confirmed delivery, one legacy fallback including a bare JSON session ID, missing history IDs, failed spawn/send, unaddressable receipt and explicit bare-model/no-task overrides. Existing compose unit tests assert live permission priority and both bypass spellings; no independent legacy yolo grant changes the mode.",
+          "Public schema rejects forged retry/owner provenance; spawn preparation derives authenticated session parent, keeps explicit static-controller parent and enforces incompatible task-link refusal.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Explicit messageQueued:false and lost acknowledgements are treated as uncertain and never trigger blind duplicate delivery. Error wording deliberately avoids asserting an unconfirmed worker is definitely idle. A successful legacy string-ID fallback returns an explicit object delivery receipt."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/routingpreferences_test.go": {
+      "sha256": "1c7e212f983e38797643ec50f1bc00e29b1968cde478447e45ff8ec26beb024b",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/raw_preferences.rs",
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "both_transports_preserve_routing_host_boundary_and_applied_select_model_policy exercises actual streamable HTTP and legacy SSE: scoped operator cannot manufacture host authority with the old internal header; configurable reflects actual authority; denied save leaves write count zero; owner save applies codex_only/scout-cheap and subsequent select_model consumes the changed policy.",
+          "Existing SSE tests bind sessions to exact credentials and reject duplicate raw preference keys before serde can collapse them.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "The authoritative owner credential is the Rust hub host identity. A separately configured static facade operator credential deliberately remains non-host; the old Go facade static-to-outbound-host shortcut is not restored."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/routingselect_test.go": {
+      "sha256": "0ebf4299af840fe80ae45744fa9b2546f4986d42b1cb56d9b3955e98046f7f7d",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/mcp/help.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original expectedWork schema and wire arithmetic assertions now exercise the real HTTP select_model endpoint and actual RoutingService. implementation2/review4 yield16 weighted units; unknown haruspicy remains reported and demand remains unknown, not an invented quota percentage.",
+          "The same test pins routing doctrine, explicit-model/default routing distinction, decisionId/capability/freshness/effort details, task-reference guidance and absent view-tier routing topic.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/spawndefaults_test.go": {
+      "sha256": "e53309e99b32d7330275691e94873c66ee1514eb97aa3a812a1ffdde08522ae0",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/model_selection.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original16 default-selection assertions mapped to actual HTTP/provider wires: omitted skip uses configured boolean or either bypass mode; explicit false wins regardless of legacy grant metadata; absent defaults remain explicit approvals-on with no invented model.",
+          "Claude config models apply only to implicit/explicit Claude, including case/space-tolerant names. Managed providers never inherit Claude models; explicit managed models survive; fresh Codex context defaults to1M and an explicit400k wins. Canonical and legacy companions remain consistent; unsupported provider windows and conflicting identities are tool errors before launch.",
+          "New bare-model companion correction omits unknown contextWindow rather than emitting null. Defaults are resolved before provider dispatch and no obsolete full-access grant policy is consulted.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/status_summary.go": {
+      "sha256": "9aca610d34c1d172139713062a9bb50dca0b70257075e84780dd1a78db5dfe97",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/status_summary.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/status_summary.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original bounded14-field status envelope validation and exact unsupported-error compatibility are retained. Raw transcript/unknown provider fields fail closed, provider stderr is redacted to source-unavailable, and errors merely mentioning no-provider alongside permission denial stay errors.",
+          "status_summary_federation_never_substitutes_local_lookalikes_or_hides_denial uses two actual federated peers plus a local same-ID lookalike: view-tier remote call reaches the selected peer, old peer degrades, denial remains exactly permission denied, and hub is removed from provider params. All three tool tiers retain the summary tool.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/status_summary_test.go": {
+      "sha256": "322222e2c617290ce9fcc37669b66445bae3a0acadc189d3c68d03feb79ccd1f",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/status_summary.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/status_summary.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original bounded14-field status envelope validation and exact unsupported-error compatibility are retained. Raw transcript/unknown provider fields fail closed, provider stderr is redacted to source-unavailable, and errors merely mentioning no-provider alongside permission denial stay errors.",
+          "status_summary_federation_never_substitutes_local_lookalikes_or_hides_denial uses two actual federated peers plus a local same-ID lookalike: view-tier remote call reaches the selected peer, old peer degrades, denial remains exactly permission denied, and hub is removed from provider params. All three tool tiers retain the summary tool.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/task_references.go": {
+      "sha256": "8cd5788b82d088f224564eefe7dc416c52ae435428984b158da0a344e690b902",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original read/upsert/remove operations retain caller identity, zero/positive CAS and exact entry payloads. Provider domain conflicts preserve currentRevision and existing human references as data, not transport errors.",
+          "Actual HTTP tests refuse absent manager identity, forged caller identity, empty taskId/cwd, missing CAS and empty edits with unchanged provider call count. View/triage lack both tools; operator retains decide_workflow_step and exposes no generic task/waiver verbs. Help retains additive/unverified references and multi-provider examples.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/taskrefs_test.go": {
+      "sha256": "ac25a8267bfcbb24355cd92bccb4c1f32f21aa7522f3373f6d43adce5ececa90",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Original read/upsert/remove operations retain caller identity, zero/positive CAS and exact entry payloads. Provider domain conflicts preserve currentRevision and existing human references as data, not transport errors.",
+          "Actual HTTP tests refuse absent manager identity, forged caller identity, empty taskId/cwd, missing CAS and empty edits with unchanged provider call count. View/triage lack both tools; operator retains decide_workflow_step and exposes no generic task/waiver verbs. Help retains additive/unverified references and multi-provider examples.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/mcp/ui.go": {
+      "sha256": "f1f24b944f52dcbf2b37b8b26acb3cb01199600905436990c8423ad08e504e8b",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/ui.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/ui.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all seven literal UI tool/topic projections. focus_agent publishes command.focus_agent with sessionId; open_browser projects command.open_pane/browser/url; open_guide publishes its own empty envelope. Source is host-stamped mcp-facade, caller envelope/topic/hub fields do not propagate.",
+          "ui_events_require_triage_and_use_only_host_stamped_literal_envelopes uses a real broker subscriber and authenticated HTTP calls; view cannot steer UI while triage/operator can. Unit projection tests cover spoofed envelope fields, unknown names and empty guide data.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "UI success remains only fire-and-forget publication acknowledgement; no test claims a desktop window rendered."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/ui_test.go": {
+      "sha256": "851701022a245921c94a40dafec99322e929f3afac7b277b296fde7c82dca644",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/ui.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/ui.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all seven literal UI tool/topic projections. focus_agent publishes command.focus_agent with sessionId; open_browser projects command.open_pane/browser/url; open_guide publishes its own empty envelope. Source is host-stamped mcp-facade, caller envelope/topic/hub fields do not propagate.",
+          "ui_events_require_triage_and_use_only_host_stamped_literal_envelopes uses a real broker subscriber and authenticated HTTP calls; view cannot steer UI while triage/operator can. Unit projection tests cover spoofed envelope fields, unknown names and empty guide data.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "UI success remains only fire-and-forget publication acknowledgement; no test claims a desktop window rendered."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/workflow_dispatch.go": {
+      "sha256": "e700b3381d789078a2c209b4b5af8d99aba7ff618a6cdc013988354f77773996",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Original composition checks retain exact pinned task/step/revision ownership, host canonical cwd, inherited role/template/stage/after-dispatch metadata, automatic or explicit model selection, preserved warning/clamp/admission fields and omission only of rendered prompt. Explicit model choice bypasses routing without fabricating capability/decisionId.",
+          "Unit call/launch logs prove conditional skips, foreign/mismatched plans, missing/ineligible/incomplete routing decisions and unknown spawn acknowledgement stop at the proper phase. One optional watch failure retains exactly one launch and tells callers to retry only notify_when. Invalid/ambiguous model choices and forged public host fields fail before provider mutation.",
+          "Manager context original concurrency/budget/partial-error/freeform-attempt assertions map to dedicated helper unit tests and real HTTP invalid-input tests. The retained desktop dispatch-chain integration supplies end-to-end routed/explicit/paired workflow and duplicate-admission evidence.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust additionally verifies paired target/directory/authenticated-provider readiness before mutating the workflow; explicit run:false may record a skip without a reachable paired worker. This strengthens pre-admission refusal, with dedicated regression coverage."
+        ]
+      }
+    },
+    "services/hub/cmd/mcp/workflow_dispatch_test.go": {
+      "sha256": "4c162f313593e71c153689a32d7beed3df59c317c51504b48c8cf155cec9023c",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/src/mcp/workflow_dispatch.rs",
+        "services/hub-rs/src/mcp/manager_context.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Original composition checks retain exact pinned task/step/revision ownership, host canonical cwd, inherited role/template/stage/after-dispatch metadata, automatic or explicit model selection, preserved warning/clamp/admission fields and omission only of rendered prompt. Explicit model choice bypasses routing without fabricating capability/decisionId.",
+          "Unit call/launch logs prove conditional skips, foreign/mismatched plans, missing/ineligible/incomplete routing decisions and unknown spawn acknowledgement stop at the proper phase. One optional watch failure retains exactly one launch and tells callers to retry only notify_when. Invalid/ambiguous model choices and forged public host fields fail before provider mutation.",
+          "Manager context original concurrency/budget/partial-error/freeform-attempt assertions map to dedicated helper unit tests and real HTTP invalid-input tests. The retained desktop dispatch-chain integration supplies end-to-end routed/explicit/paired workflow and duplicate-admission evidence.",
+          "Validation on2026-09-29:27 MCP helper library tests,23 actual HTTP/broker integration tests and5 SSE tests passed (55 total). Logs:/tmp/workspacer-mcp-unit-final.log and /tmp/workspacer-mcp-parity-final.log. Format/diff checks and current-source capability parameter scan are reported separately by the manager before recording; no cloud/model actions ran."
+        ],
+        "intentionalChanges": [
+          "Rust additionally verifies paired target/directory/authenticated-provider readiness before mutating the workflow; explicit run:false may record a skip without a reachable paired worker. This strengthens pre-admission refusal, with dedicated regression coverage."
+        ]
+      }
+    }
+  }
+}

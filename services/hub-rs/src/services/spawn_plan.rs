@@ -2,7 +2,7 @@
 //! The runtime intentionally withholds agents.spawn until its admission,
 //! workflow, tool-facade and plugin preparation stages are connected.
 use super::{
-    models::resolve_binary,
+    models::resolve_spawn_binary,
     paths,
     profiles::{Profile, environment},
 };
@@ -284,7 +284,7 @@ pub fn resolve(
     if session_id.is_empty() {
         bail!("launch requires a session identity");
     }
-    let binary = resolve_binary(&provider, config);
+    let binary = resolve_spawn_binary(&provider, config);
     let env = profile.map(|p| environment(p, home)).unwrap_or_default();
     let managed = provider != "claude" || transport == "stream";
     let mut request = if managed {

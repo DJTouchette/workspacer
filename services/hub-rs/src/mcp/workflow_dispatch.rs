@@ -392,6 +392,7 @@ mod tests {
     async fn skip_and_mismatched_plan_never_route_or_spawn() {
         for response in [
             json!({"ok":true,"skipped":true}),
+            json!({"ok":false,"error":"foreign task"}),
             json!({"ok":true,"dispatch":{"taskId":"other"}}),
         ] {
             let call: Call = Arc::new(move |method, _| {
@@ -407,7 +408,11 @@ mod tests {
             )
             .await
             .unwrap();
-            assert!(result["skipped"] == true || result["phase"] == "prepare");
+            assert!(
+                result["skipped"] == true
+                    || result["phase"] == "prepare"
+                    || result["error"] == "foreign task"
+            );
         }
     }
     #[tokio::test]
@@ -443,6 +448,9 @@ mod tests {
             json!({"run":false}),
             json!({"watchContextUsedPct":0}),
             json!({"modelSelection":{"provider":"claude","model":"sonnet"},"routing":{}}),
+            json!({"modelSelection":{"provider":"","model":"sonnet"}}),
+            json!({"modelSelection":{"provider":"claude","model":""}}),
+            json!({"modelSelection":{"provider":"opencode","model":"fixture","contextWindow":1000000}}),
         ] {
             let mut params = input();
             params
@@ -499,5 +507,39 @@ mod tests {
             .unwrap()["skipped"],
             true
         );
+    }
+    #[tokio::test]
+    async fn missing_or_ineligible_route_cannot_reach_launch() {
+        for response in [
+            json!({"eligible":false,"reason":["capacity exhausted"]}),
+            json!({"error":"unavailable"}),
+            json!({"eligible":true,"provider":"codex","model":"gpt-fixture","role":"reviewer","capability":"reviewer"}),
+        ] {
+            let count = Arc::new(Mutex::new(0));
+            let seen = count.clone();
+            let call: Call = Arc::new(move |method, _| {
+                let seen = seen.clone();
+                let response = response.clone();
+                Box::pin(async move {
+                    *seen.lock().unwrap() += 1;
+                    match method.as_str() {
+                        "fleetWorkflows.request" => Ok(plan()),
+                        "routing.select" => Ok(response),
+                        _ => panic!("unexpected post-refusal call"),
+                    }
+                })
+            });
+            let result = dispatch(
+                input(),
+                "manager",
+                call,
+                Arc::new(|_| panic!("ineligible or malformed router reply launched a worker")),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["ok"], false);
+            assert_eq!(result["phase"], "routing");
+            assert_eq!(*count.lock().unwrap(), 2);
+        }
     }
 }

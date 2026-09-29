@@ -1,0 +1,108 @@
+{
+  "records": {
+    "services/hub/internal/flyapi/flyapi.go": {
+      "sha256": "5b4a806567fb877734006e3f70bd867dd9e638e0b2ff9257bca0e05460a6b9cb",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/nodes/cloud_tests.rs",
+        "services/hub-rs/src/services/nodes/tests.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete client and all16 legacy tests. Four reversible operations map to the typed Cloud interface: start/stop POST, state/wait GET, escaped selected host app/machine IDs, bearer header only, JSON stop body with explicit nonzero drain grace, bounded state reads, per-machine/action rate lanes and bounded wait query.",
+          "Real loopback HTTP tests assert exact verbs/path/query/headers/body, zero stop refusal before a rate slot or request,45s/zero/over-ceiling wait handling, positive fractional grace preserved,404/429/502 categories, malformed/oversized state bodies, unknown state and transport failures without credential text.",
+          "Fixed as_secs truncation that changed1500ms grace to1s and500ms to0s, restored zero-wait60s default, and refused whitespace-only direct constructor coordinates. Cancellation of a queued start never issues the deferred request; another machine and stop/start lanes remain independent.",
+          "Actual supervisor tests retain one accepted start/stop, ambiguous failure state, no retry on404/429, bounded transient retry, shutdown cancellation and unknown-state refusal. Source-surface guard pins exactly start/state/stop/wait and no extra public HTTP mutation entrypoints; deployment test distinguishes TOML on-failure from API on-fail."
+        ],
+        "intentionalChanges": [
+          "Typed Failure categories intentionally replace arbitrary upstream APIError.Body and RetryAfter fields; no production Go supervisor consumer reads RetryAfter and both implementations stop automatic429 retries. Rust emits no attacker-controlled response text at all.",
+          "Unknown cloud state strings become State::Unknown and a generic unfamiliar-state detail instead of echoing the raw upstream string. The real unknown-state regression includes a credential-shaped value and proves it cannot escape through this typed projection.",
+          "The only active stop signal is fixed SIGTERM by the host policy, eliminating an arbitrary signal argument; grace remains explicitly required. Self-stop uses the fixed45s policy. No create/destroy/delete operation exists.",
+          "Rust refuses credential/query/fragment endpoints and redirects, rejects oversized/malformed state responses, and reserves up to65s HTTP budget for a60s wait; caller-owned outer cancellation still wins. The old Go default HTTP client timed out after30s."
+        ],
+        "validation": "Current integrated Linux library332 passed with no ignored tests, including all6 cloud-client tests and all5 external-bridge tests; /tmp/workspacer-parity-integrated-lib.log. No real provider/cloud actions. Windows execution remains a final platform gate."
+      }
+    },
+    "services/hub/internal/flyapi/flyapi_test.go": {
+      "sha256": "f34aef777c45567deff26ad25ff4409a3909daf2e5c4619856698918d2c000d2",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/nodes/cloud_tests.rs",
+        "services/hub-rs/src/services/nodes/tests.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete client and all16 legacy tests. Four reversible operations map to the typed Cloud interface: start/stop POST, state/wait GET, escaped selected host app/machine IDs, bearer header only, JSON stop body with explicit nonzero drain grace, bounded state reads, per-machine/action rate lanes and bounded wait query.",
+          "Real loopback HTTP tests assert exact verbs/path/query/headers/body, zero stop refusal before a rate slot or request,45s/zero/over-ceiling wait handling, positive fractional grace preserved,404/429/502 categories, malformed/oversized state bodies, unknown state and transport failures without credential text.",
+          "Fixed as_secs truncation that changed1500ms grace to1s and500ms to0s, restored zero-wait60s default, and refused whitespace-only direct constructor coordinates. Cancellation of a queued start never issues the deferred request; another machine and stop/start lanes remain independent.",
+          "Actual supervisor tests retain one accepted start/stop, ambiguous failure state, no retry on404/429, bounded transient retry, shutdown cancellation and unknown-state refusal. Source-surface guard pins exactly start/state/stop/wait and no extra public HTTP mutation entrypoints; deployment test distinguishes TOML on-failure from API on-fail."
+        ],
+        "intentionalChanges": [
+          "Typed Failure categories intentionally replace arbitrary upstream APIError.Body and RetryAfter fields; no production Go supervisor consumer reads RetryAfter and both implementations stop automatic429 retries. Rust emits no attacker-controlled response text at all.",
+          "Unknown cloud state strings become State::Unknown and a generic unfamiliar-state detail instead of echoing the raw upstream string. The real unknown-state regression includes a credential-shaped value and proves it cannot escape through this typed projection.",
+          "The only active stop signal is fixed SIGTERM by the host policy, eliminating an arbitrary signal argument; grace remains explicitly required. Self-stop uses the fixed45s policy. No create/destroy/delete operation exists.",
+          "Rust refuses credential/query/fragment endpoints and redirects, rejects oversized/malformed state responses, and reserves up to65s HTTP budget for a60s wait; caller-owned outer cancellation still wins. The old Go default HTTP client timed out after30s."
+        ],
+        "validation": "Current integrated Linux library332 passed with no ignored tests, including all6 cloud-client tests and all5 external-bridge tests; /tmp/workspacer-parity-integrated-lib.log. No real provider/cloud actions. Windows execution remains a final platform gate."
+      }
+    },
+    "services/hub/internal/claudemon/bridge.go": {
+      "sha256": "cc1eae8c400f848eca2b8af97333c5525f8008864cc71d9f0369ede9639871e2",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete SSE parser, event mapper, retry loop and all7 reference tests. Explicit hub-only borrowed-daemon mode retains GET/events, Accept:text/event-stream, non2xx refusal,200ms doubling to5s cap and reset after5s productive stream, cancellable backoff and body reads, and agent.state_changed/source claudemon projection.",
+          "Actual fragmented3-byte CRLF/multiline/heartbeat/default-name/EOF corpus pins mapped IDs/hook/mode and optional cwd, ignores garbage/missing IDs/unknown events, preserves nullable zero defaults and bounds lines/frames. Fixed serde positional-array acceptance with an allocation-free object-only visitor at both update and state levels.",
+          "Actual503 server test proves error bodies are not republished and reconnect counts remain bounded while cancellation joins. A real stream publishes one frame and then remains open indefinitely; receiving its event before close proves cancellation releases an active body read. Separate integration checks prove borrowed daemon remains responsive after link/hub shutdown."
+        ],
+        "intentionalChanges": [
+          "Full standalone/native own the engine rather than the old Go HTTP child link; this SSE adapter is only for explicit borrowed daemon hub-only mode. It never registers brain conversation services or owns/stops the external process.",
+          "Rust rejects redirects and credential-bearing URLs, adds a cumulative1MiB frame bound beyond the per-line bound, and rejects invalid UTF8 JSON rather than lossy decoding. Tokio watch cancellation replaces context cancellation. No unbounded body or retry loop is retained."
+        ],
+        "validation": "Current integrated Linux library332 passed, including all5 borrowed-daemon bridge tests; /tmp/workspacer-parity-integrated-lib.log. Existing CLI borrowed-daemon fixtures passed in published9f786d73 platform CI; current new parser/body tests were run locally on Linux."
+      }
+    },
+    "services/hub/internal/claudemon/bridge_test.go": {
+      "sha256": "1fa5ca83cc6faa286ded35f4756ea56839a9aab596e6c31a014df35b9ff341dc",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete SSE parser, event mapper, retry loop and all7 reference tests. Explicit hub-only borrowed-daemon mode retains GET/events, Accept:text/event-stream, non2xx refusal,200ms doubling to5s cap and reset after5s productive stream, cancellable backoff and body reads, and agent.state_changed/source claudemon projection.",
+          "Actual fragmented3-byte CRLF/multiline/heartbeat/default-name/EOF corpus pins mapped IDs/hook/mode and optional cwd, ignores garbage/missing IDs/unknown events, preserves nullable zero defaults and bounds lines/frames. Fixed serde positional-array acceptance with an allocation-free object-only visitor at both update and state levels.",
+          "Actual503 server test proves error bodies are not republished and reconnect counts remain bounded while cancellation joins. A real stream publishes one frame and then remains open indefinitely; receiving its event before close proves cancellation releases an active body read. Separate integration checks prove borrowed daemon remains responsive after link/hub shutdown."
+        ],
+        "intentionalChanges": [
+          "Full standalone/native own the engine rather than the old Go HTTP child link; this SSE adapter is only for explicit borrowed daemon hub-only mode. It never registers brain conversation services or owns/stops the external process.",
+          "Rust rejects redirects and credential-bearing URLs, adds a cumulative1MiB frame bound beyond the per-line bound, and rejects invalid UTF8 JSON rather than lossy decoding. Tokio watch cancellation replaces context cancellation. No unbounded body or retry loop is retained."
+        ],
+        "validation": "Current integrated Linux library332 passed, including all5 borrowed-daemon bridge tests; /tmp/workspacer-parity-integrated-lib.log. Existing CLI borrowed-daemon fixtures passed in published9f786d73 platform CI; current new parser/body tests were run locally on Linux."
+      }
+    }
+  }
+}

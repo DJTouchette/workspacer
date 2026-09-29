@@ -18,8 +18,11 @@ struct Reference {
 pub(super) fn render(scope: &str, tools: &[Tool], topic: &str) -> String {
     static REFERENCE: OnceLock<Reference> = OnceLock::new();
     let reference = REFERENCE.get_or_init(|| {
-        serde_json::from_str(include_str!("../../assets/mcp-help.json"))
-            .expect("reference help catalog")
+        let mut reference: Reference =
+            serde_json::from_str(include_str!("../../assets/mcp-help.json"))
+                .expect("reference help catalog");
+        super::presentation::guidance(&mut reference.guidance);
+        reference
     });
     let available: BTreeMap<_, _> = tools
         .iter()

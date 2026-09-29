@@ -1622,3 +1622,6 @@ async fn workflow_operation_schemas_and_compact_transport_preserve_evidence() {
     hub.shutdown().unwrap();
     worker.await.unwrap();
 }
+
+#[path = "mcp/parity.rs"]
+mod parity;

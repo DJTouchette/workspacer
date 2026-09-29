@@ -1,0 +1,139 @@
+{
+  "records": {
+    "services/hub/cmd/brain/discovery.go": {
+      "sha256": "d1d4275ede795e75bd83aa20f07502a8dbf6871db69e92de4883c7ca8936d837",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/discovery.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/discovery.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all discovery source branches. Rust derives a plain project component with the shared claudemon encoder, enumerates only jsonl candidates, excludes agent- subagent names, reads at most 8192 bytes, prefers a nonempty summary over the first user text, joins text blocks, flattens newlines only in user summaries, falls back to sessionId, clips to 100 Unicode scalars, emits millisecond UTC timestamps and caps the newest list at 20.",
+          "Fixed a real sorting difference: Go sorts millisecond timestamp strings stably after filename-ordered ReadDir; Rust previously compared nanosecond metadata. The comparator now uses timestamp_millis and filename ordering. The regression uses different submillisecond mtimes with equal wire timestamps and verifies lexical tie order.",
+          "Real filesystem tests prove project selection, newest 20, subagent and directory exclusion, head-read budget, multiline summary and fallback. The shared projectDirNames corpus preserves empty/dot/parent rejection."
+        ],
+        "intentionalChanges": [
+          "Configured host home replaces ambient os.UserHomeDir so embedded tests and installations remain isolated. Rust only enumerates regular directory entries and refuses symlink/special-file candidates; nonblocking open plus an opened-file regularity check avoids blocking on FIFO swaps. Go followed transcript symlinks. This narrower candidate policy is explicit, not an all-filesystem parity claim."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/discovery_clip_test.go": {
+      "sha256": "0ca89e0c0f7d7bb6c6540442f2df62eeec7d4ca9458cc3ae907c38c3d6dc34d2",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/discovery.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/discovery.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Both exact legacy assertions are exercised through actual summary processing for user and summary records: 99 ASCII plus e-acute remains 100 scalars, ASCII plus 150 astral characters yields ASCII plus 99 whole astral characters, and 150 astral characters yields 100 whole astral characters. Rust String validity and exact resulting strings rule out byte truncation and UTF16-unit counting."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/filewatch.go": {
+      "sha256": "9701d1e18c1e6d947f500b763990c555504ece7d443f294319cdf74f60fcd8da",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/src/services/filewatch/sample.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/tests/filewatch.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed watch/unwatch/poll/run branches: absolute canonical selection, watchId 128-byte cap, per-path 128-lease cap, 1024-path cap, three-minute lease renewal, explicit legacy references, independent expiry, missing-file retention, rename versus metadata-change distinction, 500ms production polling, and frozen canonical-path recheck are preserved.",
+          "New cap test proves a full lease/path map permits renewal or an existing-path reference but refuses a new lease/path; UTF8 watch IDs are limited by bytes as in Go. Existing tests use real files with equal size/mode/mtime and distinct identity, then verify unchanged samples emit nothing.",
+          "Go assertPathAllowed currently ignores its roots argument; its old watch comment does not create a workspace-root authorization gate. Rust shares the actual ambient absolute canonical-path policy and drops later retargeting symlinks."
+        ],
+        "intentionalChanges": [
+          "Owned embedded runtime lifecycle replaces the registry publisher field and background context. Publisher absence is not a selectable installed-service state. Invalid poll samples retain last good identity; Windows samples file identity immediately through an open handle. The current run is Linux and is not proof of Windows API runtime behavior.",
+          "Unwatch also applies the 128-byte watchId cap in Rust, while Go only caps registration. Anonymous references use checked/saturating arithmetic instead of potentially overflowing a Go integer."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/filewatch_test.go": {
+      "sha256": "a411db1b690adba4f05163ec2ec64305a205f402e0118d778b9abe5eab710c7c",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/src/services/filewatch/sample.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/filewatch/mod.rs",
+        "services/hub-rs/tests/filewatch.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestHeadlessFileWatchReplacementAndReferences and TestHeadlessFileWatchFreezesIdentityAfterMissingFileAppears map to references_atomic_replacement_and_missing_file_are_distinct_changes: two refs; absent->created rename; equal-size/mode/mtime replacement rename; no unchanged event; one-ref continued change; final unwatch suppresses delete.",
+          "TestHeadlessFileWatchLeaseRenewalExpiryAndMissingFile maps to leases_renew_without_reference_leaks_and_expire plus the live owned_polling integration: repeated named renewal stays one lease with zero refs, exact expiry boundary retains then drops, single unwatch removes renewed lease, actual fs.write creation publishes canonical fs.changed rename, and unwatch stops publication."
+        ],
+        "intentionalChanges": [
+          "Private now arguments replace wall-clock sleeps for lease boundaries; live integration still uses the real 500ms owned poller and broker."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/conversation.go": {
+      "sha256": "c7be955be85a9872d5e491321f8ee00063752d4d3535d08dea5da97f249f72ab",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read demand, ready, reset, forwarding, source loop and visibility branches. Exact topic demand drives one shared conversation receiver; last release closes it, a replacement gets a fresh generation, and unknown/hidden/remote rows fail closed. Only admitted visible local rows publish ready or conversation deltas.",
+          "Broker accepts private Delivery immediately before publication: ready activates only its own current generation; stale ready/delta cannot activate or disclose a replacement. Existing broker tests prove stale deltas/hidden or unknown rows are dropped; added stale-ready test proves the prior generation cannot open the new barrier.",
+          "Typed source preserves the ConversationDelta data model; real embedded-engine integration compares full serialized source delta and forwarded value. There is no mutation replay. Broadcast lag invalidates buffered fragments and requires a new ready before fresh data."
+        ],
+        "intentionalChanges": [
+          "Full standalone and native now own the embedded Rust engine, so a demand-owned typed broadcast receiver replaces the Go SSE client/reconnect/backoff loop. serve::plan_serve only allows a borrowed external daemon in explicit hub-only mode; its read-only event link is not represented as the full brain conversation producer.",
+          "Data is serialized from the canonical typed delta, not forwarded as byte-identical raw JSON. Unknown extra wire fields and original JSON whitespace are not claimed preserved. Ready is broker-committed instead of callback delivery under a Go pointer/channel barrier.",
+          "The in-process producer has no independent bus reconnection. Broker subscriber disconnects release demand; new subscriber demand recreates the receiver/ready contract. Producer closure is an owned runtime failure rather than an indefinitely retrying external HTTP connection."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/conversation_test.go": {
+      "sha256": "bde7babeb10ebdd2c92d903bc1cb6c22ba2b995934a6154a499e00018c87acd8",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestConversationForwardsDemandedSessionsOnly and TestConversationStreamRunsOnlyWhileDemanded map to demand_owns_one_receiver_and_ready_precedes_already_buffered_delta: no initial receiver, ready before buffered delta, one source for two sessions, release-one keeps source, undemanded delta suppressed, release-last drops source.",
+          "TestConversationDemandReplacementDuringReadyDeliveryIsRaceClean maps to stale_ready_cannot_activate_replacement_demand plus broker_rejects_stale_generation_and_hidden_or_unknown_payloads: generation off/on fences an already-prepared ready and already-queued delta without blocking replacement.",
+          "TestConversationResetForgetsDemand maps to disconnect_releases_demand_and_new_subscriber_gets_a_new_ready: actual broker disconnect releases final receiver, replacement subscription starts another receiver and receives a new ready. The embedded producer itself has no bus reconnect state to reset.",
+          "TestConversationHiddenSessionIsRefused maps to upstream_layout_curates_hidden_history_and_new_visibility_gets_ready and broker unknown-row checks. Existing real-engine integration exercises live transcript tail delta and status streams without provider CLI/API or model use."
+        ],
+        "intentionalChanges": [
+          "Injected typed FixtureSource replaces the legacy fake HTTP/SSE endpoint; real broker publication and one real local embedded-engine integration remain in the validation path."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test filewatch --test live_streams passed library 318 plus filewatch 1 and live_streams 1 (320 tests, no ignored tests). Log: /tmp/workspacer-brain-services-audit.log. Witness left all three edited source files unmapped; these owning targets were selected explicitly. Windows runtime execution remains a platform gate."
+      }
+    }
+  }
+}

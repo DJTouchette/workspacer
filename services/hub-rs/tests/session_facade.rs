@@ -167,6 +167,55 @@ fn prompt_fragments_are_additive() {
     );
 }
 
+#[test]
+fn malformed_profile_prompt_pins_cannot_consume_host_flags() {
+    let mut args = vec![
+        json!("claude"),
+        json!("--append-system-prompt"),
+        json!("--model"),
+        json!("opus"),
+        json!("--append-system-prompt="),
+        json!("--append-system-prompt=profile"),
+        json!("--append-system-prompt"),
+        json!("host contract"),
+        json!("--session-id"),
+        json!("owned-id"),
+        json!("--append-system-prompt"),
+    ];
+    compose_instructions(&mut args).unwrap();
+    assert_eq!(
+        args,
+        vec![
+            json!("claude"),
+            json!("--model"),
+            json!("opus"),
+            json!("--session-id"),
+            json!("owned-id"),
+            json!("--append-system-prompt"),
+            json!("profile\n\nhost contract")
+        ]
+    );
+    // A split-form empty value is a supplied fragment in the legacy helper;
+    // only an empty inline spelling is omitted.
+    let mut args = vec![
+        json!("claude"),
+        json!("--append-system-prompt"),
+        json!(""),
+        json!("--append-system-prompt=host"),
+    ];
+    compose_instructions(&mut args).unwrap();
+    assert_eq!(
+        args,
+        vec![
+            json!("claude"),
+            json!("--append-system-prompt"),
+            json!("\n\nhost")
+        ]
+    );
+    let mut invalid = vec![json!("claude"), json!("--append-system-prompt"), json!(42)];
+    assert!(compose_instructions(&mut invalid).is_err());
+}
+
 #[tokio::test]
 async fn deliberately_disabled_facade_keeps_selected_servers_and_contracts_without_credentials() {
     use workspacer_hub::services::{library::Library, session_facade::Readiness};

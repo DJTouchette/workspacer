@@ -1,6 +1,97 @@
 use serde_json::json;
 use workspacer_hub::services::{config::defaults, profiles::Profile, spawn_plan::resolve};
 #[test]
+fn legacy_claude_argv_flags_keep_pins_order_and_resume_exclusivity() {
+    let root = tempfile::tempdir().unwrap();
+    let config = json!({"agents":{"binaries":{"claude":"fixture-claude"}}});
+    let base = json!({"provider":"claude","transport":"pty","cwd":root.path()});
+    let argv = |patch: serde_json::Value, extras: Vec<&str>| {
+        let mut params = base.clone();
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        let profile = Profile {
+            extra_args: extras.into_iter().map(str::to_owned).collect(),
+            ..Default::default()
+        };
+        resolve(
+            &params,
+            &config,
+            Some(&profile),
+            root.path(),
+            "new-id",
+            false,
+        )
+        .unwrap()
+        .request["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let pair = |args: &[String], flag: &str, value: &str| {
+        args.windows(2).any(|p| p[0] == flag && p[1] == value)
+    };
+    let fresh = argv(json!({}), vec!["--foo", "bar"]);
+    assert_eq!(&fresh[..3], ["fixture-claude", "--foo", "bar"]);
+    assert!(pair(&fresh, "--session-id", "new-id"));
+    assert!(!fresh.iter().any(|s| s == "--resume"));
+    let resumed = argv(json!({"resumeSessionId":"old-id"}), vec![]);
+    assert!(pair(&resumed, "--resume", "old-id"));
+    assert!(!resumed.iter().any(|s| s == "--session-id"));
+    let pinned = argv(
+        json!({"model":"sonnet","effort":"high","permissionMode":"plan"}),
+        vec![
+            "--model",
+            "opus",
+            "--effort",
+            "medium",
+            "--permission-mode",
+            "acceptEdits",
+        ],
+    );
+    for (flag, value) in [
+        ("--model", "opus"),
+        ("--effort", "medium"),
+        ("--permission-mode", "acceptEdits"),
+    ] {
+        assert!(pair(&pinned, flag, value));
+        assert_eq!(pinned.iter().filter(|s| s.as_str() == flag).count(), 1);
+    }
+    for patch in [
+        json!({"skipPermissions":true}),
+        json!({"permissionMode":"bypassPermissions"}),
+    ] {
+        let flags = argv(patch, vec!["--dangerously-skip-permissions"]);
+        assert_eq!(
+            flags
+                .iter()
+                .filter(|s| s.as_str() == "--dangerously-skip-permissions")
+                .count(),
+            1
+        );
+        assert!(!flags.iter().any(|s| s == "--permission-mode"));
+    }
+    assert!(pair(
+        &argv(json!({"permissionMode":"plan","effort":" high "}), vec![]),
+        "--effort",
+        "high"
+    ));
+    assert!(pair(
+        &argv(json!({"permissionMode":"plan"}), vec![]),
+        "--permission-mode",
+        "plan"
+    ));
+    let flags = argv(json!({"permissionMode":"default","effort":"  "}), vec![]);
+    assert!(
+        !flags
+            .iter()
+            .any(|s| s == "--permission-mode" || s == "--effort")
+    );
+}
+#[test]
 fn plan_preserves_first_message_ack_and_codex_context_omission_vs_null() {
     let dir = tempfile::tempdir().unwrap();
     let config = defaults();
@@ -60,6 +151,25 @@ fn profiles_and_manager_preferences_select_the_executed_model_not_a_shadowed_req
     let plan=resolve(&json!({"provider":"claude","cwd":dir.path(),"model":"opus","modelIdentity":"opus","contextWindow":200000}),&config,Some(&profile),dir.path(),"claude",false).unwrap();
     assert_eq!(plan.request["model_identity"], "sonnet");
     assert_eq!(plan.request["context_window"], 1000000);
+    for (extra, expected) in [
+        (vec!["--model=opus", "--model", "sonnet[1m]"], "sonnet"),
+        (vec!["--model=opus", "--model", "   "], "opus"),
+    ] {
+        let profile = Profile {
+            extra_args: extra.into_iter().map(str::to_owned).collect(),
+            ..Default::default()
+        };
+        let plan = resolve(
+            &json!({"provider":"claude","cwd":dir.path()}),
+            &config,
+            Some(&profile),
+            dir.path(),
+            "claude",
+            false,
+        )
+        .unwrap();
+        assert_eq!(plan.request["model_identity"], expected);
+    }
 }
 #[test]
 fn explicit_permission_false_wins_and_unsupported_provider_or_conflicting_exact_model_is_refused() {

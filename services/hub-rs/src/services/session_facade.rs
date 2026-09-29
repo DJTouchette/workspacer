@@ -296,15 +296,21 @@ pub fn compose_instructions(argv: &mut Vec<Value>) -> Result<()> {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("provider argument must be a string"))?;
         if arg == "--append-system-prompt" {
-            index += 1;
-            prompts.push(
-                argv.get(index)
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("append-system-prompt requires text"))?
-                    .to_owned(),
-            );
+            // A malformed profile pin must not consume a following host flag.
+            // Go drops only the valueless pin, preserving later arguments.
+            if let Some(next) = argv.get(index + 1) {
+                let next = next
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("provider argument must be a string"))?;
+                if !next.starts_with("--") {
+                    prompts.push(next.to_owned());
+                    index += 1;
+                }
+            }
         } else if let Some(value) = arg.strip_prefix("--append-system-prompt=") {
-            prompts.push(value.into());
+            if !value.is_empty() {
+                prompts.push(value.into());
+            }
         } else {
             output.push(argv[index].clone());
         }

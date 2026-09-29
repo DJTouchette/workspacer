@@ -11,22 +11,36 @@ use std::{
 #[derive(Clone, Default, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Profile {
+    #[serde(deserialize_with = "zero_on_null")]
     pub id: String,
+    #[serde(deserialize_with = "zero_on_null")]
     pub name: String,
+    #[serde(deserialize_with = "zero_on_null")]
     pub config_dir: String,
     #[serde(deserialize_with = "strings")]
     pub extra_args: Vec<String>,
     #[serde(deserialize_with = "strings")]
     pub mcp_item_ids: Vec<String>,
+    #[serde(deserialize_with = "zero_on_null")]
     pub is_default: bool,
     #[serde(deserialize_with = "weight", serialize_with = "serialize_weight")]
     pub weight: f64,
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "zero_on_null")]
     pub provider: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "zero_on_null")]
     pub preset: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "zero_on_null")]
     pub token_env_var: String,
+}
+fn zero_on_null<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 fn strings<'de, D: serde::Deserializer<'de>>(
     deserializer: D,

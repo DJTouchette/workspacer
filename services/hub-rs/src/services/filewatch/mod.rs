@@ -235,6 +235,50 @@ mod tests {
         watches.unwatch(&params).unwrap();
         assert!(watches.files.lock().unwrap().is_empty());
     }
+    #[test]
+    fn path_and_lease_caps_allow_renewal_but_refuse_new_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let watches = Watches::new();
+        let path = directory.path().join("watched");
+        for index in 0..128 {
+            watches
+                .watch(&json!({"path":path,"watchId":format!("lease-{index}")}), 0)
+                .unwrap();
+        }
+        watches
+            .watch(&json!({"path":path,"watchId":"lease-0"}), 1)
+            .unwrap();
+        assert!(
+            watches
+                .watch(&json!({"path":path,"watchId":"one-too-many"}), 1)
+                .unwrap_err()
+                .to_string()
+                .contains("too many file watchers")
+        );
+        for index in 1..1024 {
+            watches
+                .watch(
+                    &json!({"path":directory.path().join(format!("path-{index}"))}),
+                    0,
+                )
+                .unwrap();
+        }
+        watches.watch(&json!({"path":path}), 1).unwrap();
+        assert!(
+            watches
+                .watch(&json!({"path":directory.path().join("extra")}), 1)
+                .unwrap_err()
+                .to_string()
+                .contains("too many watched files")
+        );
+        assert!(
+            watches
+                .watch(&json!({"path":path,"watchId":"é".repeat(65)}), 1)
+                .unwrap_err()
+                .to_string()
+                .contains("too long")
+        );
+    }
     #[cfg(unix)]
     #[test]
     fn swapped_symlink_drops_observer_without_external_metadata_event() {

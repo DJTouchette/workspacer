@@ -114,7 +114,7 @@ fn file_tree_uses_git_ignore_rules_and_bytewise_directory_first_order() {
             .success()
     );
     std::fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
-    for name in ["z.txt", "a.txt", "ignored.log"] {
+    for name in ["z.txt", "a.txt", "ignored.log", "é.log"] {
         std::fs::write(dir.path().join(name), "test").unwrap();
     }
     #[cfg(unix)]

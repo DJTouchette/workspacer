@@ -1,0 +1,62 @@
+{
+  "tools": [
+    {
+      "tool": "get_task_references",
+      "pointer": "/description",
+      "before": "Desktop local only; headless returns unavailable.",
+      "after": "Requires an authenticated manager on the owning Rust host, including standalone and embedded deployments; older hosts may report unavailable."
+    },
+    {
+      "tool": "list_manager_requests",
+      "pointer": "/description",
+      "before": "authoritative local desktop request inbox",
+      "after": "authoritative local host request inbox"
+    },
+    {
+      "tool": "list_manager_requests",
+      "pointer": "/description",
+      "before": "Headless/remote unavailable.",
+      "after": "Available on the owning Rust host in standalone and embedded deployments; peer-qualified inbox access is unavailable."
+    },
+    {
+      "tool": "spawn_agent",
+      "pointer": "/inputSchema/properties/resultSchema/description",
+      "before": "Desktop-only (the headless brain declines arbitrary resultSchema, while still providing its fixed escalation contract)",
+      "after": "Validated by the shared Rust host in both standalone and embedded deployments; older peers may reject this field"
+    },
+    {
+      "tool": "spawn_agent",
+      "pointer": "/inputSchema/properties/template/description",
+      "before": "Desktop-only (the headless brain declines it)",
+      "after": "Supported by the shared Rust host in both standalone and embedded deployments; older peers may reject templates"
+    },
+    {
+      "tool": "spawn_agent",
+      "pointer": "/inputSchema/properties/workflowStepId/description",
+      "before": "desktop local only",
+      "after": "owned by the local Rust host in standalone or embedded mode"
+    }
+  ],
+  "guidance": [
+    {
+      "topic": "spawn",
+      "before": "Task loops (local desktop):",
+      "after": "Task loops (owning Rust host, standalone or embedded):"
+    },
+    {
+      "topic": "spawn",
+      "before": "Arbitrary result schemas are desktop-owned; the headless\n  brain declines resultSchema rather than accepting it without validation.",
+      "after": "The shared Rust host validates arbitrary result schemas in standalone and\n  embedded modes; older peers may refuse them."
+    },
+    {
+      "topic": "spawn",
+      "before": "host-authored contract is available on desktop and headless fleet dispatches\n  even though headless declines arbitrary resultSchema.",
+      "after": "host-authored contract is available on standalone and embedded Rust fleet\n  dispatches alongside validated arbitrary resultSchema."
+    },
+    {
+      "topic": "workflows",
+      "before": "Fleet workflows require a compatible LOCAL DESKTOP. A paired worker may execute\nremotely while that desktop owns the task. Headless/older hosts return unavailable;\nreport that plainly, never claim a workflow ran.",
+      "after": "Fleet workflows require a compatible owning Rust host, in standalone or\nembedded mode. A paired worker may execute remotely while that host owns the task.\nOlder hosts may return unavailable; report that plainly, never claim a workflow ran."
+    }
+  ]
+}

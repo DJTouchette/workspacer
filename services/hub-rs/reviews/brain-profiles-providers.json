@@ -1,0 +1,196 @@
+{
+  "records": {
+    "services/hub/cmd/brain/profiles.go": {
+      "sha256": "52641e61217e1e84d025df85793f312f9e211485d16f128b40ceb75a2418b1ad",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/profiles.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/cli/identity.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/profiles.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read materialization, normalization, CRUD, provider environment, binary/argv/model-pin, cwd, prompt-composition and identity helpers. Profiles uses the same claude-profiles.json, materialized Default, immutable UUIDv4 IDs, array-shaped extraArgs/mcpItemIds, preserved isDefault selection, trimmed config directory, protected default removal, first-survivor default repair and advisory file lock/atomic persistence.",
+          "Codex/Copilot metadata normalizes preset/tokenEnvVar/provider restrictions and provider-specific home variables; Copilot remains manual-weight-only. Spawn plans carry actual last executable profile model, model/effort/mode flag pins, bypass de-duplication, fresh/resume exclusivity and ASCII cwd trimming before canonical selection.",
+          "Restored missing WKS_CLAUDE_BIN spawn-only fallback with configured-binary precedence and isolated subprocess test. Fixed compose_instructions to omit malformed valueless/empty-inline append-prompt flags while preserving following host arguments and ordered additive text.",
+          "Configuration root selection is centralized in cli::identity: APPDATA or Windows home/Roaming, XDG_CONFIG_HOME or non-Windows home/.config, with OS user-directory fallback when home environment is absent. Tests exercise platform override/fallback in isolated child processes and existing launcher no-home behavior.",
+          "Fixed legacy JSON null scalar compatibility: id/name/configDir/isDefault/provider/preset/tokenEnvVar use Go zero defaults rather than rejecting the entire store. A real file/list/update regression preserves the nullable row, while wrong string/bool types still fail."
+        ],
+        "intentionalChanges": [
+          "scrubBypassProfile/scrubBypassArgs are obsolete Go helpers with no production callers: current handlers persist caller profile fields and remoteSpawnProfile ignores its old grant flag. Their allowlist tests retire with that inactive policy, not as missing live Rust protection; retained profile fixtures prove actual ambient fields survive.",
+          "Rust rejects unreadable/malformed profile stores on public mutation/list instead of overwriting damaged data with a default; fractional desktop weights survive, unlike Go integer decoding. Private convenience list still returns a fallback Default after logging. Writes use private atomic persistence instead of reproducing Go0644 exactly.",
+          "Provider and environment configuration use explicitly selected host home/config roots in embedded mode. Caller cwd normalization immediately canonicalizes; no relative/tilde caller path is granted by a host fallback. Literal profile home expansion and malformed helper-only inputs are not claimed byte-identical to all Go string concatenations."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    },
+    "services/hub/cmd/brain/profiles_test.go": {
+      "sha256": "559519ed3d28a443e352829262a62218635cb32b88e86c5508ee9d2248c5393e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/profiles.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/cli/identity.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/profiles.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped resume/fresh exclusivity, one pinned model, last executable inline/split model pin, bypass single-flag, permission/default/bypass modes, profile-mode override, base binary + extraArgs order, effort trim and pinned precedence to actual spawn_plan integration tests.",
+          "Raw profile JSON tests prove absent/null list fields remain [] on reply, add defaults configDir/extraArgs/mcpItemIds, and persisted UUID is version4. Provider environment tests pin Claude/Codex/Copilot account variables and empty environment with no configDir.",
+          "Isolated config-directory tests exercise actual platform-specific override and fallback; launcher_home_fallback_is_read_only_and_explicit_home_still_wins exercises omitted/empty home environment without changing the test parent.",
+          "Added nullable scalar persisted-store read and rewrite test, complementing the legacy null-array normalization assertions."
+        ],
+        "intentionalChanges": [
+          "Two legacy remote-scrub unit tests target helpers no longer called by Go production. They are explicitly retired, not replicated as active runtime authorization. Shared profile contract and existing launch authority tests retain current behavior.",
+          "Windows APPDATA branch runs on Windows CI; Linux results cannot establish Windows runtime success."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    },
+    "services/hub/cmd/brain/profiles_contract_test.go": {
+      "sha256": "4e81a64f8204887312a3a4835d61e184204686e90900c204e0d0bf90a9b74dcc",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/profiles.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/profiles.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All three shared claude-profiles-cases blocks execute against real temp files: list/reply and exact persisted rows; add default and generated identity plus ordered stored IDs; listed-ID update applies the expected name; removal preserves exact expected IDs. Executed Tally floors enforce list4/add2/mutate2, replacing weak array-size-only coverage.",
+          "The mutation adapter now verifies returned name, not merely success; UUIDv4 version bits are checked. Existing harness normalization/fractional-weight/damaged-file regressions stay active."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    },
+    "services/hub/cmd/brain/providers.go": {
+      "sha256": "7536cb97ba1edfa17cdf4d7f0b4d01d0b9282cec6af81406b1b8c039e97b78b8",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Provider detection retains five-provider order, Windows cmd/exe/bare name priority, PATH directory ordering, directory rejection, trimmed config binary override, missing resolvedPath:null and fallback bare provider name. Deterministic path-injected tests and an isolated process exercise actual check_all and spawn override selection.",
+          "Provider model requests admit only codex/copilot/opencode/pi and mandatory canonical absolute cwd before the soft-failing engine leg. Actual query helper constructs the expected GET path with percent-encoded cwd/bin. Missing engine and invalid admission are tested through real hub RPC.",
+          "Fixed malformed response handling: the entire typed models response now fails to an empty list rather than silently replacing wrong id/label/default types with values. Missing/null fields and null model rows use the same zero defaults as Go; default:false is always emitted. Routing catalog gets unavailable on malformed/failed responses, not fabricated rows."
+        ],
+        "intentionalChanges": [
+          "Embedded Command request replaces loopback HTTP transport; query path and data projection stay explicit. Detection only accepts regular files rather than all non-directory special files. No external provider CLI or live account is executed in this audit."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    },
+    "services/hub/cmd/brain/providers_test.go": {
+      "sha256": "932f2e9501e1d04334a212467591e48edcc020d3ea4b3b50e549c48a9ca86de7",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped PATH detection/all-five-presence, trimmed custom override, null missing paths and directory masquerade to isolated provider detection plus platform candidate-order tests. The fake files are never executed.",
+          "RelaysAndUnwraps maps to provider_query_encodes_canonical_cwd_and_custom_binary_after_admission and provider_relay_preserves_typed_response_defaults_and_rejects_invalid_shapes; actual handler uses those helpers. Bad provider/cwd and soft failure without engine are driven through real hub RPC. No fake upstream HTTP is represented as a real CLI/account success."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    },
+    "services/hub/cmd/brain/models.go": {
+      "sha256": "3ec148fd723b859491026adfb9c08f427d00f7a3c49347111eac093dba817077",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/models.rs",
+        "services/hub-rs/src/model_selection.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/models.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared pure catalog construction rule-by-rule: normalized persisted+live model union, synthetic exclusion, sorting/deduplication, date-suffix concrete parsing, dotted numeric version comparison with zero padding, latest-version labels, removal of duplicate latest concrete entries, canonical default identity/window, six alias entries and contract-derived context badges.",
+          "Actual claude-model-catalog-cases loader compares complete result Values for every case with executed floor7. Live engine session usage-model reads remain best-effort; persisted choices survive engine failure. Existing Opus5.5 context contract changes were preserved untouched."
+        ],
+        "intentionalChanges": [
+          "Engine-owned session reads replace the Go HTTP client. Routing catalog refresh is additional Rust owner functionality, not a second model-identity table."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    },
+    "services/hub/cmd/brain/models_contract_test.go": {
+      "sha256": "9e3bdafdcfabef88527abc1440e00d918d2f97d00767c12f36ade698f256d60c",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/models.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/models.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The same seven-or-more shared Claude catalog cases drive production catalog(), comparing the full expected object including aliases, labels, windows, permission defaults and seen ordering. Executed-case Tally replaces a fixture-length-only assertion; every block row must reach its assertion."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    },
+    "services/hub/cmd/brain/providerparity_test.go": {
+      "sha256": "21a5131acbf8f2cfb2e09335defdf2b702d0d31c462a9eb9c6996810e891146e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/discovery.rs",
+        "services/hub-rs/src/services/library.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/discovery.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/src/services/library.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Gitignore test now includes ASCII, accented and Unix-newline filenames through actual git-backed fs.listEntries while preserving visible files. Windows keeps constructible ASCII/accent cases; git failures are hard test failures, not silent skips.",
+          "Project directory-name corpus runs every case with floor8 and both accept/refuse classes; real picker test seeds an outside history file and legitimate projects, refuses parent/empty selections and returns legitimate transcript content.",
+          "Added selected library directory-symlink test for another project and config sessions store; saves are refused and destination pwn.md remains absent, followed by successful ordinary save/remove. Existing actual library guard corpus retains all7 cases and fails unavailable symlink execution.",
+          "Strengthened Claude scope basename test with My.Skill and my-skill coexisting, both listed, removal of only the exact selected basename, in-place sibling save and traversal/basename refusals. Frontmatter preservation remains checked."
+        ],
+        "intentionalChanges": [
+          "Real directory symlink setup is required on Windows; platform CI must provide symlink privilege. Unix newline filenames are intentionally omitted only where the OS cannot represent them."
+        ],
+        "validation": "2026-09-29 Linux: full library 330; files 5, library 6, models 6, profiles 6, session_facade 8, spawn_plan 9 all passed (370 tests, no ignored tests; child processes not double-counted). Command: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test models --test profiles --test spawn_plan --test files --test library --test session_facade. Log /tmp/workspacer-profiles-provider-audit.log. Separate --test cli launcher_home_fallback_is_read_only_and_explicit_home_still_wins passed 1 with20 filtered, log /tmp/workspacer-profiles-cli-fallback.log. Witness left edited sources/tests unmapped; actual owning targets were run. This fixes the earlier full-library provider sequence-shape failure; Windows runtime remains unverified here."
+      }
+    }
+  }
+}

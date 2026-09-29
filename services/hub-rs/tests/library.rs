@@ -84,7 +84,23 @@ fn claude_basename_and_unknown_frontmatter_survive_edit() {
         "---\nname: Name\nallowed-tools: Read\nmodel: opus\n---\n\n  indentation\n",
     )
     .unwrap();
+    let sibling = cwd.join(".claude/skills/my-skill");
+    std::fs::create_dir_all(&sibling).unwrap();
+    std::fs::write(
+        sibling.join("SKILL.md"),
+        "---\nname: Other\n---\n\nuntouched\n",
+    )
+    .unwrap();
     let service = Library::new(dir.path().join("config"));
+    let all = service.list(&json!({"cwd":cwd,"kind":"skill"})).unwrap();
+    let ids: std::collections::BTreeSet<_> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["scope"] == "claude")
+        .map(|row| row["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains("My.Skill") && ids.contains("my-skill"));
     let listed = service
         .list(&json!({"cwd":cwd,"kind":"skill","id":"My.Skill"}))
         .unwrap();
@@ -110,7 +126,52 @@ fn claude_basename_and_unknown_frontmatter_survive_edit() {
         .remove(&json!({"scope":"claude","cwd":cwd,"id":"My.Skill"}))
         .unwrap();
     assert!(!skill.exists());
+    assert_eq!(
+        std::fs::read_to_string(sibling.join("SKILL.md")).unwrap(),
+        "---\nname: Other\n---\n\nuntouched\n"
+    );
+    let saved = service.save(&json!({"scope":"claude","kind":"skill","cwd":cwd,"id":"my-skill","title":"Edited","body":"new"})).unwrap();
+    assert_eq!(
+        saved["path"],
+        json!(workspacer_hub::services::paths::canonicalize(&sibling.join("SKILL.md")).unwrap())
+    );
+    for id in ["..", "a/b", "../../.."] {
+        assert!(service.save(&json!({"scope":"claude","kind":"skill","cwd":cwd,"id":id,"title":"Refused","body":"new"})).is_err());
+    }
     assert_eq!(slug("Hello.World"), "hello-world");
+}
+
+#[test]
+#[cfg(any(unix, windows))]
+fn selected_library_directory_cannot_redirect_into_another_project_or_config_store() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("project");
+    let library = cwd.join(".workspacer/library");
+    std::fs::create_dir_all(library.parent().unwrap()).unwrap();
+    let service = Library::new(root.path().join("config"));
+    for target in [
+        root.path().join("other-project"),
+        root.path().join("config/sessions"),
+    ] {
+        std::fs::create_dir_all(&target).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &library).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&target, &library)
+            .expect("Windows contract CI must provide symlink privilege");
+        assert!(service.save(&json!({"scope":"project","cwd":cwd,"id":"pwn","title":"T","kind":"prompt","body":"OWNED"})).is_err());
+        assert!(!target.join("pwn.md").exists());
+        #[cfg(unix)]
+        std::fs::remove_file(&library).unwrap();
+        #[cfg(windows)]
+        std::fs::remove_dir(&library).unwrap();
+    }
+    service.save(&json!({"scope":"project","cwd":cwd,"id":"notes","title":"T","kind":"prompt","body":"ok"})).unwrap();
+    assert!(library.join("notes.md").is_file());
+    service
+        .remove(&json!({"scope":"project","cwd":cwd,"id":"notes"}))
+        .unwrap();
+    assert!(!library.join("notes.md").exists());
 }
 #[cfg(unix)]
 #[test]

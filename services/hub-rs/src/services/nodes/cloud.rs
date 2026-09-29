@@ -62,7 +62,9 @@ pub struct Http {
 impl Http {
     pub fn new(config: &CloudConfig, token: String) -> anyhow::Result<Arc<Self>> {
         anyhow::ensure!(
-            !config.app.is_empty() && !config.machine_id.is_empty() && !token.is_empty(),
+            !config.app.trim().is_empty()
+                && !config.machine_id.trim().is_empty()
+                && !token.trim().is_empty(),
             "node cloud configuration is incomplete"
         );
         anyhow::ensure!(
@@ -209,7 +211,7 @@ impl Cloud for Http {
                 "stop",
                 None,
                 Duration::ZERO,
-                Some(json!({"signal":"SIGTERM","timeout":format!("{}s",grace.as_secs())})),
+                Some(json!({"signal":"SIGTERM","timeout":drain_timeout(grace)})),
             )
             .await
             .map(|_| ())
@@ -237,9 +239,34 @@ impl Cloud for Http {
         timeout: Duration,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Outcome<()>> + Send + '_>> {
         Box::pin(async move {
+            // The reference treats an omitted/zero wait as the API's full
+            // sixty-second wait, not a one-second query with a five-second budget.
+            let timeout = if timeout.is_zero() {
+                Duration::from_secs(60)
+            } else {
+                timeout
+            };
             self.request("wait", Some(state), timeout, None)
                 .await
                 .map(|_| ())
         })
     }
 }
+
+fn drain_timeout(duration: Duration) -> String {
+    let nanos = duration.subsec_nanos();
+    if nanos == 0 {
+        format!("{}s", duration.as_secs())
+    } else {
+        // Duration::as_secs truncates positive subsecond grace to zero. Keep
+        // the complete explicitly configured drain window on the wire.
+        format!("{}.{:09}", duration.as_secs(), nanos)
+            .trim_end_matches('0')
+            .to_owned()
+            + "s"
+    }
+}
+
+#[cfg(test)]
+#[path = "cloud_tests.rs"]
+mod tests;

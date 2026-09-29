@@ -470,6 +470,61 @@ mod tests {
             ("s2".into(), json!({"session_id":"s2","mode":"input"})),
         ])
     }
+    #[test]
+    fn stale_ready_cannot_activate_replacement_demand() {
+        let source = FixtureSource::new(8, vec![]);
+        let service = LiveStreams::from_source(source, Arc::new(RwLock::new(shown())), None, None);
+        service.set_demand("agent.conversation.s1", true);
+        service.state.lock().unwrap().subscribed = true;
+        let old = service.state.lock().unwrap().wanted["s1"].generation;
+        let old_ready = service.pending_ready("s1", old).unwrap();
+        service.set_demand("agent.conversation.s1", false);
+        service.set_demand("agent.conversation.s1", true);
+        service.state.lock().unwrap().subscribed = true;
+        let replacement = service.state.lock().unwrap().wanted["s1"].generation;
+        assert_ne!(old, replacement);
+        assert!(service.accept_delivery(old_ready).is_none());
+        assert!(!service.state.lock().unwrap().wanted["s1"].active);
+        let current = service.pending_ready("s1", replacement).unwrap();
+        assert_eq!(
+            service.accept_delivery(current).unwrap().data.unwrap()["ready"],
+            true
+        );
+        assert!(service.state.lock().unwrap().wanted["s1"].active);
+        service.close();
+        assert!(service.state.lock().unwrap().wanted.is_empty());
+        service.set_demand("agent.conversation.s1", true);
+        assert!(service.state.lock().unwrap().wanted.is_empty());
+    }
+    #[tokio::test]
+    async fn disconnect_releases_demand_and_new_subscriber_gets_a_new_ready() {
+        let source = FixtureSource::new(8, vec![]);
+        let (hub, _, client, mut events) = rig(source.clone(), shown(), None).await;
+        client
+            .topics(["agent.conversation.s1".into()].into())
+            .await
+            .unwrap();
+        assert_eq!(next(&mut events).await.data.unwrap()["ready"], true);
+        client.close();
+        until(|| source.delta.receiver_count() == 0).await;
+        let replacement = crate::client::Client::connect(&hub.handle()).await.unwrap();
+        let mut events = replacement.events();
+        replacement
+            .topics(["agent.conversation.s1".into()].into())
+            .await
+            .unwrap();
+        assert_eq!(
+            next(&mut events).await.data.unwrap(),
+            json!({"session_id":"s1","ready":true})
+        );
+        assert_eq!(source.starts.load(Ordering::SeqCst), 2);
+        replacement.close();
+        until(|| source.delta.receiver_count() == 0).await;
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+    }
     #[tokio::test]
     async fn demand_owns_one_receiver_and_ready_precedes_already_buffered_delta() {
         let initial = delta("s1", 1, "first");

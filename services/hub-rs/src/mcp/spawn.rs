@@ -100,7 +100,12 @@ fn resolve_defaults(params: &mut Value, config: &Value) -> Result<()> {
     if let Some(selection) = selection {
         params["model"] = selection.legacy_model.into();
         params["modelIdentity"] = selection.selection.model.into();
-        params["contextWindow"] = json!(selection.selection.context_window);
+        if let Some(window) = selection.selection.context_window {
+            params["contextWindow"] = json!(window);
+        } else {
+            // Match the original facade's omitempty canonical companion.
+            params.as_object_mut().unwrap().remove("contextWindow");
+        }
     }
     if params["skipPermissions"].is_null() {
         params["skipPermissions"] = json!(
@@ -160,7 +165,11 @@ pub(super) async fn call(client: &Client, method: &str, mut params: Value) -> Re
                 "Spawn was accepted but its first message was not confirmed; do not repeat the spawn or blindly retry delivery. Receipt: {receipt}"
             );
         }
-        let Some(id) = receipt["sessionId"].as_str().filter(|id| !id.is_empty()) else {
+        let Some(id) = receipt["sessionId"]
+            .as_str()
+            .or_else(|| receipt.as_str())
+            .filter(|id| !id.is_empty())
+        else {
             bail!(
                 "Spawn may have started but no session identity was returned; do not repeat it. Receipt: {receipt}"
             );
@@ -180,6 +189,11 @@ pub(super) async fn call(client: &Client, method: &str, mut params: Value) -> Re
             bail!(
                 "Spawned session:{id}, but first-message delivery was not confirmed ({error}); do not repeat the spawn. Receipt: {receipt}"
             );
+        }
+        // Old providers can return the session ID as a JSON string. Preserve
+        // that accepted identity while giving callers the delivery receipt.
+        if !receipt.is_object() {
+            receipt = json!({"sessionId":id});
         }
         receipt["messageQueued"] = true.into();
     }

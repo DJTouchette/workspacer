@@ -62,7 +62,10 @@ pub fn list(home: &Path, cwd: &str) -> Value {
         };
         candidates.push((modified, id.to_owned(), entry.path()));
     }
-    candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    // Go sorts the millisecond wire timestamps after os.ReadDir's filename
+    // ordering. Sub-millisecond differences must not reorder equal wire dates.
+    let millis = |time| chrono::DateTime::<chrono::Utc>::from(time).timestamp_millis();
+    candidates.sort_by(|a, b| millis(b.0).cmp(&millis(a.0)).then_with(|| a.1.cmp(&b.1)));
     candidates.truncate(20);
     let rows:Vec<_>=candidates.into_iter().map(|(modified,id,path)|{
         let read=||->std::io::Result<Vec<u8>>{
@@ -101,8 +104,15 @@ mod tests {
         ))
         .unwrap();
         let cases = corpus["projectDirNames"]["cases"].as_array().unwrap();
-        assert!(!cases.is_empty());
+        assert!(cases.len() >= 8);
+        let mut accepted = 0;
+        let mut refused = 0;
         for case in cases {
+            if case["expect"].is_null() {
+                refused += 1;
+            } else {
+                accepted += 1;
+            }
             assert_eq!(
                 directory_name(case["cwd"].as_str().unwrap())
                     .map(Value::String)
@@ -111,6 +121,10 @@ mod tests {
                 "{case}"
             );
         }
+        assert!(
+            accepted > 0 && refused > 0,
+            "projectDirNames lost a verdict class"
+        );
     }
     #[test]
     fn summary_names_win_and_unicode_clipping_preserves_scalar_boundaries() {
@@ -125,6 +139,75 @@ mod tests {
             ),
             "Actual title"
         );
+    }
+    #[test]
+    fn legacy_clip_vectors_count_scalars_for_both_user_text_and_summary() {
+        for (text, expected) in [
+            (
+                format!("{}é", "a".repeat(99)),
+                format!("{}é", "a".repeat(99)),
+            ),
+            (
+                format!("a{}", "😀".repeat(150)),
+                format!("a{}", "😀".repeat(99)),
+            ),
+            ("😀".repeat(150), "😀".repeat(100)),
+        ] {
+            for entry in [
+                json!({"type":"summary","summary":text}),
+                json!({"type":"user","message":{"content":text}}),
+            ] {
+                let actual = summary(entry.to_string().as_bytes());
+                assert_eq!(actual, expected);
+                assert_eq!(actual.chars().count(), 100);
+            }
+        }
+    }
+    #[test]
+    fn equal_wire_timestamps_keep_filename_order_and_head_reads_are_bounded() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join(".claude/projects/-repo");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, nanos, body) in [
+            (
+                "a",
+                1000,
+                json!({"type":"user","message":{"content":"first\nline"}}).to_string(),
+            ),
+            (
+                "z",
+                9000,
+                format!(
+                    "{}\n{}",
+                    " ".repeat(8192),
+                    json!({"type":"summary","summary":"past peek budget"})
+                ),
+            ),
+        ] {
+            let path = dir.join(format!("{name}.jsonl"));
+            std::fs::write(&path, body).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(
+                    std::fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::new(100, nanos)),
+                )
+                .unwrap();
+        }
+        std::fs::create_dir(dir.join("directory.jsonl")).unwrap();
+        std::fs::write(dir.join("agent-hidden.jsonl"), "{}").unwrap();
+        std::fs::write(dir.join("ignored.txt"), "{}").unwrap();
+        let rows = list(home.path(), "/repo");
+        assert_eq!(rows.as_array().unwrap().len(), 2);
+        assert_eq!(
+            rows[0],
+            json!({"sessionId":"a","timestamp":"1970-01-01T00:01:40.000Z","summary":"first line"})
+        );
+        assert_eq!(rows[1]["sessionId"], "z");
+        assert_eq!(rows[1]["summary"], "z");
+        assert_eq!(rows[1]["timestamp"], rows[0]["timestamp"]);
     }
     #[test]
     fn real_picker_reads_only_selected_directory_and_newest_twenty() {

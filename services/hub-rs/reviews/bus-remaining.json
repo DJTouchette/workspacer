@@ -1,0 +1,504 @@
+{
+  "records": {
+    "services/hub/internal/bus/bus_test.go": {
+      "status": "ported",
+      "sha256": "3d31c0974fe6b5d6e1cb365eb583972ff55b4f98f3b8cb63133297cc68af41f8",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/broker_tests.rs",
+        "services/hub-rs/tests/http.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestEndToEndPublishSubscribe",
+          "TestSubscriptionFilters",
+          "TestHealth",
+          "TestHealthGating"
+        ],
+        "behaviors": [
+          "Real WebSocket local publication preserves envelope ID/time/payload; broker cases retain exact filtering and fanout. Authenticated HTTP exposes method inventory while anonymous probes expose liveness only. The obsolete tokenless network harness is intentionally replaced by the explicit token-required startup regression; embedded ownership remains credential-free."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/delivery_layers_test.go": {
+      "status": "ported",
+      "sha256": "476597da40877f4a0caf5e63870ceac5c3d43fd697d60b91c2efdde674a3f664",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime/broker_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/lifecycle.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestARevokedConnectionMayNeitherPublishNorConsume",
+          "TestTheWriterLoopReChecksTheConsumeGrantAtDeliveryTime",
+          "TestADesyncReportIsRefusedToAConnectionThatMayNotConsumeTheStream"
+        ],
+        "behaviors": [
+          "Closed identities cannot publish/consume before eviction; disallowed streams occupy neither queue slots nor desync metadata. Revocation suppresses already-enqueued PTY bytes and repair frames. Unlike Go independently-mutated conn grants, Rust keeps peer identities immutable and closes peers when authority changes; the actor serializes admission/revocation and receiver prioritizes closure. Positive allowed-event and desync repair floors remain."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/hostpin_test.go": {
+      "status": "ported",
+      "sha256": "caee5fea0e31d0822786c61b14adb03852a13f3a034c852dd1bd0b732ddae77b",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/bus_remaining.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestHostPinRefusesAForeignHostOnALoopbackSocket",
+          "TestHostPinAllowsLoopbackAndTheAddressTheSocketLandedOn",
+          "TestHostPinCoversEveryRouteTheHubServes",
+          "TestAuthorizedForPluginAdmitsOnlyTheHostAndThatPluginsOwnToken"
+        ],
+        "behaviors": [
+          "Exact foreign-host refusals, loopback aliases/127/8/IPv6/missingHost allowances and non-loopback landed-socket semantics are preserved by policy matrix. Every registered hub HTTP route is actually probed. Plugin settings exposure accepts only owner/current own-plugin credentials across token/busToken/bearer forms, rejects foreign token and disappears immediately on revocation. Tokenless-network fixture mode is intentionally refused at startup."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/local_test.go": {
+      "status": "ported",
+      "sha256": "1fb68cd4a907e8ce196bef7384c9f0aa0063d4ba88bb1deea7514e3178b0debd",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestLocalProviderCall",
+          "TestLocalProviderError",
+          "TestLocalProviderBroadcastReachesOtherClient"
+        ],
+        "behaviors": [
+          "Real WebSocket callers observe local handler results and exact errors with original correlation. A local handler publishes through its live Handle and a second subscribed network client receives the correctly stamped payload."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/localident_test.go": {
+      "status": "ported",
+      "sha256": "cf637ee8d768ad67855165e0178d9279d943d684fb547e855902ab3f36ffd589",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/tests/auth.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestLocalIdentHandlerSeesTheCallersCredential",
+          "TestTokenFingerprint",
+          "TestLocalRegistrationsReplaceEachOther"
+        ],
+        "behaviors": [
+          "Local handler sees actual scope/trusted/owner and SHA256 token fingerprint, not forged parameters or raw bearer; same credential on independent connections yields identical identity, distinct credentials differ and empty identity stays empty. Unified identity-aware Options handler map replaces Go separate plain/identity registration maps; last configured handler wins and inventory counts once."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/machine_stop_test.go": {
+      "status": "ported",
+      "sha256": "1c3d5d9d23c3abbfef7db259025a8f89f59e075d82afa7aa39657f15498ccb7d",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestMachineStopClosesClientsWithExplicitPauseCode"
+        ],
+        "behaviors": [
+          "Actual WebSocket closes with code4001 and explicit machine-stopping reason; shutdown waits for interactive-client physical close acknowledgements. Registered provider and other infrastructure remain alive and can register afterward."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/migration_test.go": {
+      "status": "ported",
+      "sha256": "66f480ad7e857a4cf5a840bef9e977edda078dee2e075a5fc6a9479068ff7e69",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/compatibility.rs",
+        "contracts/hub-bus-cases.json"
+      ],
+      "review": {
+        "originalTests": [
+          "TestMigrationBusFixtures"
+        ],
+        "behaviors": [
+          "Same retained contracts/hub-bus-cases.json is replayed against embedded and Rust WebSocket adapters with exact frame comparisons, captured provider correlations, scoped hello/registration, ownership, disconnect, subscriptions and demand. Retained Go oracle suite passed independently."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/pluginambient_test.go": {
+      "status": "ported",
+      "sha256": "8feb36bde1063bd8cfc47f28a5796ed5fb94855db7266c9bbcf93a768da50119",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestEnabledPluginHasAmbientOrdinaryAccess",
+          "TestPluginIdentityStillProtectsHostStateAndProviderNamespace",
+          "TestRevokedPluginLosesAmbientAccess",
+          "TestLegacyChildScopeDoesNotClampPluginSpawn"
+        ],
+        "behaviors": [
+          "Plugin ordinary path calls are forwarded without legacy manifest-root confinement; opaque plugin metadata/toolScope remain inert on actual external-provider spawn path. Core host events/settings and foreign/core provider namespaces are refused, ordinary plugin events and allowed PTY consumption survive, and revocation removes all access."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/profilegrant_test.go": {
+      "status": "ported",
+      "sha256": "9f91a01e02ebe7b1ca704a439e34d3b1322ac882e922b0859519889422793e81",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestProfileGrantNonObjectParamsPassUntouched",
+          "TestDispatchProvenanceOnlySurvivesLocalHostConnection"
+        ],
+        "behaviors": [
+          "Actual control-plane external provider receives raw non-object spawn arrays unchanged. Caller-supplied owner/retry lineage survives only local host among the retained original caller cases; ordinary taskId/stage/afterDispatchId/profile metadata survives. Separate admission regression preserves explicit provisioned-facade authority while refusing provider/peer origin forgery."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/providertier_test.go": {
+      "status": "ported",
+      "sha256": "1ecf4c915e71923e83f2ea3a49d86d6ef64a6c9590b648907d8019b89305240d",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/plugin_manager.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestProviderScopeNameMatchesAuthtoken",
+          "TestProviderTokenProvidesStarIsNotOperatorStar",
+          "TestProviderTokenRegistersCapabilitiesWithoutHostAuthority",
+          "TestProviderTokenCallSurfaceIsOneMethod",
+          "TestProviderTokenPublishesOnlyTheOutputOfWhatItProvides",
+          "TestProviderPublishGrantFollowsProvidesNotTheTier",
+          "TestPluginNamespaceProvidesCannotPublishCoreTopics",
+          "TestProviderTokenReceivesNoEventsAtAll",
+          "TestProviderTokenIsNotAuthorizedForGuardedHTTPRoutes",
+          "TestNarrowingAProviderTokensRegisterGrantClosesItsLiveSocket",
+          "TestRevokedProviderCannotClaimACapabilitySlot"
+        ],
+        "behaviors": [
+          "Provider hello scope/exact call surface does not inherit providesStar; broad provider token registers representative execution/session/terminal methods without gaining calls. Narrow grant refuses terminal registration/publication but can publish snapshots despite local registration shadowing. Every topic vocabulary classification is checked across identities. Provider consumes no protected stream/desync, guarded plugin HTTP remains refused, and live grant narrowing closes/reclaims registrations."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/reportprogress_test.go": {
+      "status": "ported",
+      "sha256": "bfc63c1d4c5133d50ae9118c59a33334a1b01112c978aa7d5ad57dd5b3537ed4",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/tests/federation.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestReportProgressCallerSessionIsStrippedFromUntrustedCallers",
+          "TestReportProgressCallerSessionSurvivesFromTheControlPlane",
+          "TestReportProgressUntouchedWhenNoSessionIsClaimed",
+          "TestReportProgressCallerSessionIsStrippedBeforeTheFederatedHop"
+        ],
+        "behaviors": [
+          "Actual dispatch strips callerSessionId from view/plugin including non-string claims, retains note/needsDecision, leaves absent-claim payload unchanged, and preserves host/operator control-plane claims. Shared admission handles case variants; real two-hub federation strips the forged identity before forwarding and still delivers the allowed progress call."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/revoke_e2e_test.go": {
+      "status": "ported",
+      "sha256": "f25d9fb0fbe57f811c6fc35ddffc9cb4917f5ca46805e5d4864ad3a16ec40163",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestRevokedPluginTokenLosesItsReachOnALiveConnection",
+          "TestRevokedPluginTokenCannotReconnect",
+          "TestRevocationCannotRaceAnInFlightHandshake",
+          "TestRevocationClosesTheConnectionAndStopsEventDelivery",
+          "TestUnregisterPluginTokenFlagsAndClosesEveryLiveConnection",
+          "TestARevokedConnectionMayCallNothing"
+        ],
+        "behaviors": [
+          "Live plugin path-call and subscription positive floors precede revocation. Every socket for the revoked token physically closes; reconnect fails and provider slot can be reclaimed. Both serialized admission-before-revoke and revoke-before-admission orderings are exercised deterministically, and buffered event/desync delivery is refused after revocation. Direct actor test covers closed-but-not-evicted frame rejection before trusted shortcuts."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/routinghost_test.go": {
+      "status": "ported",
+      "sha256": "fa7e5ab11d6bef8373b0b4224eddc29d8e8c76f13a53c29882724a279f920288",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestAuthenticatedRoutingHostIdentity"
+        ],
+        "behaviors": [
+          "Handler receives authenticated_host true only for local host credential, false for scoped operator and peer-marked host. The Go anonymous-network case is deliberately replaced by tested mandatory credential admission; Rust in-process owner retains authenticated host authority without creating a socket."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/rpc_test.go": {
+      "status": "ported",
+      "sha256": "657686f6e8f8723352d7d72e68149c133d1601a67ed1a8dd95d3464839b0b940",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestPluginMayCallUndeclaredOrdinaryCapability",
+          "TestPluginMayCallDeclaredCapability",
+          "TestUnknownTokenRejected",
+          "TestCapabilityRoundTrip",
+          "TestCallNoProvider",
+          "TestProviderErrorPropagates",
+          "TestProviderDisconnectFailsPendingCall"
+        ],
+        "behaviors": [
+          "Actual external-provider agents.spawn roundtrip admits ambient plugin and operator calls, preserves result/correlation, propagates exact provider error and fails pending calls after disconnect. Unknown handshake token is refused and generic absent methods return no-provider. Rust standalone execution admission intentionally requires its owned service; control-plane-only with registered provider is the compatible delegation path tested here."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/rpc_ownership_test.go": {
+      "status": "ported",
+      "sha256": "0162f4055f23bcc236658dec5d0694d92f7767aad3b2415ad654f55dff237cf6",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/http.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestRegisterAckWithholdsAMethodAHubLocalHandlerShadows",
+          "TestAHubLocalHandlerStillAnswersAShadowedMethod",
+          "TestACallWithNoProviderIsSaidOutLoudOncePerMethod",
+          "TestNoProviderIsSaidAgainAfterAProviderComesAndGoes",
+          "TestProvidedMethodsNamesEverythingTheBusCanAnswer",
+          "TestHealthNamesTheMethodsNotJustTheCount"
+        ],
+        "behaviors": [
+          "Registered ACK withholds local-shadowed names; local handler still answers. Inventory is sorted unique union of local and provider names and reported count agrees. Missing-method diagnostics occur once per outage, separately per method, reset after provider registration/removal and never leak params."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/scoped_token_test.go": {
+      "status": "ported",
+      "sha256": "cb4f926d919d1c940d01ba96fde874dbbe9060d4b12aebac45e9f9a9fcd65a76",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/server/tests.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/auth.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestScopedTokenAuthorizationMatrix",
+          "TestLegacyHostTokenImpliesOperator",
+          "TestOperatorScopedTokenIsTrusted",
+          "TestScopedTokenCannotProvideOrPublish",
+          "TestScopedTokenReceivesEvents",
+          "TestUnknownTokenStillRejectedWithLookupWired",
+          "TestAuthorizedHTTPWithScopedTokens",
+          "TestHelloAdvertisesScope",
+          "TestHelloScopeEmptyForPlugins"
+        ],
+        "behaviors": [
+          "Exact view/triage/operator method matrix is tested over WebSockets against installed handlers including unknown methods and denied raw-PTY claude.answer. Denials name scope/method/correlation; view/triage cannot spawn/register, while operator registers and delegates spawn. Hello advertises correct scope/allowlist, plugins advertise neither, unknown tokens refuse handshake. Allowed view event and actual guarded browser/plugin HTTP remain covered independently."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/topiccap_test.go": {
+      "status": "ported",
+      "sha256": "d0a25e459cee4e2818b17cfbd406b7226f1ffa6c4c07f6dbbc2b998fbcaa92a5",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/broker_tests.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestOversizedSubscribeIsRejected",
+          "TestOversizedUnsubscribeIsRejected",
+          "TestSubscribeAtTheLimitStillDelivers"
+        ],
+        "behaviors": [
+          "Reject257-topic subscribe atomically, admit256 exactly and deliver allowed event, reject257-topic unsubscribe atomically then prove all existing topics retained. Existing actor test also checks bounded processing and aggregate cap."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    },
+    "services/hub/internal/bus/yologrant_test.go": {
+      "status": "ported",
+      "sha256": "0ff556fcf1452cb5911dffb68d3142490b2869e9e918aca292b174b638bef123",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestYoloGrantSpoofedStampNeverReachesTheProvider"
+        ],
+        "behaviors": [
+          "Actual external spawn provider never receives caller-supplied yoloGranted from plugin or peer host-token links; skipPermissions and unrelated public fields remain. Retired profile/yolo grant metadata does not reintroduce authority or clamps; forged grant stamps are removed by shared admission."
+        ],
+        "audit": "services/hub-rs/BUS_MIGRATION.md",
+        "validation": "Verified 2026-09-29: bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integration tests). compatibility Go-reference test remains explicitly ignored in Rust invocation; Go internal/bus -short suite including the shared migration fixture passed separately. All named runtime/admission/server unit tests passed in a330-test library checkpoint (329 passed; one unrelated in-progress models decoder test failed and is owned by the services agent). Initial SIGBUS link failures were resource failures, not test passes; successful executable/test runs followed narrowly scoped generated-artifact cleanup. No full-library green claim is made by this plan."
+      }
+    }
+  }
+}
