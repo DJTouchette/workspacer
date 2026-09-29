@@ -18,7 +18,7 @@ fn shared_fleet_message_contracts() {
             case["name"]
         );
     }
-    assert!(corpus["excerpts"].as_array().unwrap().len()>=3);
+    assert!(corpus["excerpts"].as_array().unwrap().len() >= 3);
     for case in corpus["excerpts"].as_array().unwrap() {
         assert_eq!(
             fleet_messages::excerpt(case["input"].as_str().unwrap()),

@@ -47,7 +47,9 @@ fn exited(pid: u32) -> Result<bool> {
 impl Owner {
     fn new(child: &Child) -> Result<Self> {
         let pid = child.id().context("new command lacks process identity")?;
-        #[cfg(unix)]
+        #[cfg(target_os = "macos")]
+        claudemon::child_group::verify_anchor(pid)?;
+        #[cfg(all(unix, not(target_os = "macos")))]
         if pid == 0
             || pid > i32::MAX as u32
             || unsafe { libc::getpgid(pid as i32) } != pid as i32
@@ -76,11 +78,7 @@ impl Owner {
         {
             exited(self.pid)
                 .context("command anchor was reaped; refusing a numeric group signal")?;
-            if unsafe { libc::kill(-(self.pid as i32), libc::SIGKILL) } != 0
-                && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-            {
-                return Err(std::io::Error::last_os_error().into());
-            }
+            claudemon::child_group::signal(self.pid as i32, libc::SIGKILL)?;
         }
         #[cfg(windows)]
         self.job.terminate()?;
@@ -331,6 +329,23 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(value, "answer");
+    }
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn owner_can_be_created_after_fast_child_exits_before_verification() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exit 0"]).process_group(0);
+        let mut child = command.spawn().unwrap();
+        let pid = child.id().unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !exited(pid).unwrap() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut owner = Owner::new(&child).unwrap();
+        assert!(owner.wait(&mut child).await.unwrap().success());
     }
     #[tokio::test]
     async fn stdin_is_delivered_without_arguments_and_closed_before_exit() {

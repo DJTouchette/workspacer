@@ -21,7 +21,7 @@
           "expected"
         ],
         "loaders": [
-          "services/hub/cmd/brain/config_test.go::TestDeepMergeContractCases(",
+          "services/hub-rs/tests/config.rs::shared_deep_merge_and_host_trusted_contracts",
           "apps/desktop/src/main/services/deepMergeContract.test.ts::deepMerge contract (shared with Go config.go)"
         ]
       }

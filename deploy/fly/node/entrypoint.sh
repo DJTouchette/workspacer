@@ -1,40 +1,16 @@
 #!/usr/bin/env bash
+# Fly worker entrypoint. Boot logging, volume guards, wake doorbell and
+# Tailscale stay owned here; one workspacer-rust process owns hook setup,
+# the engine, loopback MCP facade and outbound capability-provider relay.
 #
-# entrypoint.sh — PID 1 on the Fly worker node.
+# The private local bus is not an additional control-plane owner: jobs,
+# plugin autoload and ordinary peers remain central. The worker supplies a
+# distinct provider credential and scoped facade-caller credential upstream.
+# From the central hub, its sessions retain the provider-attach topology.
 #
-# Topology is PROVIDER-ATTACH, not federation. This machine runs three
-# workspacer processes:
-#
-#   claudemon serve --host 127.0.0.1        the session daemon, loopback only
-#   mcp --addr 127.0.0.1:7897               the agent-facing MCP facade
-#   brain --hub <wss://…/bus> --token <tok> dials the always-on hub and
-#                                           registers ~60 capabilities
-#
-# There is no hub on this machine, no peers.json, no federation link. From the
-# always-on hub's point of view this node's sessions are ordinary local
-# sessions, served by a provider that happens to be a thousand miles away.
-#
-# Boot order and why:
-#   1. boot log on the volume        Fly keeps logs 7 days; this machine may
-#                                    sleep for weeks. A boot failure from three
-#                                    weeks ago has to be recoverable, and the
-#                                    PREVIOUS boot's log is replayed to stdout
-#                                    first, because a machine that failed to boot
-#                                    cannot be shelled into to read its volume.
-#   2. bootstrap the volume          refuses to run if /data is not mounted
-#   3. doorbell                      binds early so a Fly-proxy autostart request
-#                                    is answered instead of timing out
-#   4. tailscaled + tailscale up     started before claudemon so its reconnect
-#                                    overlaps the rest of the boot
-#   5. wait for the tailnet          the brain must not dial the hub before the
-#                                    tailnet is up, or it burns its first dial
-#   6. claudemon init                installs the hook + statusLine forwarder
-#                                    into ~/.claude/settings.json. NOTHING in
-#                                    the serve path ever runs this; without it
-#                                    PTY sessions emit no hook events and read
-#                                    as permanently idle. Idempotent.
-#   7. claudemon serve, mcp facade, then brain
-#
+# Order: replay boot log -> bootstrap mounted state -> wake doorbell ->
+# Tailscale readiness -> owned Rust backend. INT/TERM drains that backend
+# and records this boot's exit without silently rotating persisted identity.
 set -euo pipefail
 
 # --------------------------------------------------------------------------
@@ -489,147 +465,8 @@ log "TAILNET UP after $(($(date +%s) - ts_wait_start))s — ipv4=${ts_ip}"
 log "  (this address must be IDENTICAL across a stop/start cycle. If it changed, the state file was not persisted.)"
 tailscale --socket="$TS_SOCKET" status --peers=false 2>/dev/null | sed 's/^/    /' || true
 
-# Explicit Rust image opt-in. Keep the same mounted HOME, bootstrap guards,
-# Tailscale identity and doorbell; replace all three backend child processes.
-if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
-  source /usr/local/lib/wks-rust/launch.sh
-  run_rust_worker
-  exit $?
-fi
-
-# --------------------------------------------------------------------------
-# 6. claudemon init — this entrypoint drives claudemon directly, not `serve`.
-# --------------------------------------------------------------------------
-# As of 9b061244, `workspacer serve` runs `claudemon init` itself (and pins
-# --db-path). This entrypoint does NOT go through `serve` — it drives
-# `claudemon` and `brain` directly (step 7 below) — so it still needs this
-# explicit call, and it stays correct as written. It would only become
-# redundant if this entrypoint switched to shelling out to `workspacer serve`
-# instead.
-# On a fresh volume ~/.claude/settings.json does not exist, so without this the
-# hook forwarder and statusLine forwarder are absent. The symptom is NOT idle
-# sessions — the opposite: internal/quiescence treats mode: "unknown" as a
-# blocker, so a hookless session fails safe and pins the machine awake. A PTY
-# session never leaves SessionMode::Unknown, and a spawn's first_message is
-# held until the Input transition, so a dispatched PTY worker never receives
-# its prompt — it just sits there looking alive and doing nothing. Idempotent:
-# prints "already up to date" and writes nothing when the merge is a no-op.
-log "running claudemon init (hook port ${CLAUDEMON_HOOK_PORT})"
-as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
-  claudemon init --hook-port "$CLAUDEMON_HOOK_PORT" ||
-  log "WARNING: claudemon init failed — PTY sessions on this node may pin the machine awake without ever receiving a prompt"
-
-# --------------------------------------------------------------------------
-# 7. claudemon, mcp facade, then brain.
-# --------------------------------------------------------------------------
-log "starting claudemon (api=${CLAUDEMON_API_PORT} hook=${CLAUDEMON_HOOK_PORT} db=${WKS_STATE_DB})"
-as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
-  XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" PATH="$PATH" \
-  GOPATH="$GOPATH" GOMODCACHE="$GOMODCACHE" GOCACHE="$GOCACHE" BUNDLE_PATH="$BUNDLE_PATH" \
-  BUN_INSTALL_CACHE_DIR="$BUN_INSTALL_CACHE_DIR" npm_config_cache="$npm_config_cache" \
-  claudemon serve \
-  --host 127.0.0.1 \
-  --api-port "$CLAUDEMON_API_PORT" \
-  --hook-port "$CLAUDEMON_HOOK_PORT" \
-  --db-path "$WKS_STATE_DB" &
-CLAUDEMON_PID=$!
-
-for _ in $(seq 1 100); do
-  curl -sf "${CLAUDEMON_URL}/sessions" >/dev/null 2>&1 && break
-  kill -0 "$CLAUDEMON_PID" 2>/dev/null || die "claudemon exited during startup — see above"
-  sleep 0.2
-done
-curl -sf "${CLAUDEMON_URL}/sessions" >/dev/null 2>&1 || die "claudemon did not answer on ${CLAUDEMON_URL} within 20s"
-log "claudemon ready (pid $CLAUDEMON_PID)"
-
-[ -n "${HUB_BUS_URL:-}" ] || die "HUB_BUS_URL is unset — the node has nothing to attach to. fly secrets set HUB_BUS_URL=wss://<hub>/bus"
-[ -n "${HUB_TOKEN:-}" ] || log "WARNING: HUB_TOKEN is unset — the brain will attach with no auth, which the hub will refuse if it requires a token"
-
-MCP_FACADE_FOR_BRAIN=""
-if [ "$MCP_FACADE_ENABLED" = "1" ]; then
-  MCP_HUB_TOKEN="${WKS_MCP_HUB_TOKEN:-${HUB_TOKEN:-}}"
-  if [ -z "$MCP_HUB_TOKEN" ]; then
-    log "WARNING: MCP facade disabled because neither WKS_MCP_HUB_TOKEN nor HUB_TOKEN is set"
-  else
-    if [ -z "${WKS_MCP_HUB_TOKEN:-}" ]; then
-      log "WARNING: WKS_MCP_HUB_TOKEN is unset; MCP facade will use HUB_TOKEN. If HUB_TOKEN is provider-scoped, agent MCP tools will connect but hub calls will be denied."
-    fi
-    log "starting mcp facade (addr=${MCP_FACADE_ADDR} hub=${HUB_BUS_URL} untokened=${WKS_MCP_UNTOKENED})"
-    as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
-      XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" PATH="$PATH" \
-      HUB_TOKEN="$MCP_HUB_TOKEN" WKS_MCP_UNTOKENED="$WKS_MCP_UNTOKENED" \
-      mcp \
-      --addr "$MCP_FACADE_ADDR" \
-      --hub "$HUB_BUS_URL" \
-      --token "$MCP_HUB_TOKEN" \
-      --tokens "$XDG_CONFIG_HOME/workspacer/tokens.json" \
-      --untokened "$WKS_MCP_UNTOKENED" &
-    MCP_PID=$!
-    for _ in $(seq 1 50); do
-      curl -sf "$MCP_FACADE_HEALTH" >/dev/null 2>&1 && break
-      kill -0 "$MCP_PID" 2>/dev/null || die "mcp facade exited during startup — see above"
-      sleep 0.2
-    done
-    curl -sf "$MCP_FACADE_HEALTH" >/dev/null 2>&1 || die "mcp facade did not answer on ${MCP_FACADE_HEALTH} within 10s"
-    MCP_FACADE_FOR_BRAIN="$MCP_FACADE_URL"
-    log "mcp facade ready (pid $MCP_PID)"
-  fi
-else
-  log "mcp facade disabled by WKS_MCP_FACADE_ENABLED=0"
-fi
-
-brain_args=(
-  --hub "$HUB_BUS_URL"
-  --token "${HUB_TOKEN:-}"
-  --claudemon "$CLAUDEMON_URL"
-  --scope "${WKS_BRAIN_SCOPE:-full}"
-)
-if [ -n "$MCP_FACADE_FOR_BRAIN" ]; then
-  brain_args+=(--mcp-facade "$MCP_FACADE_FOR_BRAIN")
-fi
-
-log "starting brain, attaching to ${HUB_BUS_URL} as a capability provider"
-as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
-  XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" PATH="$PATH" \
-  GOPATH="$GOPATH" GOMODCACHE="$GOMODCACHE" GOCACHE="$GOCACHE" BUNDLE_PATH="$BUNDLE_PATH" \
-  BUN_INSTALL_CACHE_DIR="$BUN_INSTALL_CACHE_DIR" npm_config_cache="$npm_config_cache" \
-  brain "${brain_args[@]}" &
-BRAIN_PID=$!
-log "brain started (pid $BRAIN_PID). The node is READY once the hub logs the provider registration."
-log "BOOT COMPLETE $BOOT_ID"
-
-# --------------------------------------------------------------------------
-# Supervise. Either child dying is fatal: Fly's restart policy is on-failure
-# with a small retry count, so a genuine crash restarts once or twice and then
-# stops rather than thrashing. The reason is on the volume either way.
-# --------------------------------------------------------------------------
-while true; do
-  if ! kill -0 "$CLAUDEMON_PID" 2>/dev/null; then
-    wait "$CLAUDEMON_PID" 2>/dev/null || true
-    EXIT_REASON="claudemon-died"
-    log "claudemon exited unexpectedly — bringing the node down so the hub sees a clean disconnect"
-    kill -TERM "$MCP_PID" 2>/dev/null || true
-    kill -TERM "$BRAIN_PID" 2>/dev/null || true
-    record_exit 1
-    exit 1
-  fi
-  if [ -n "$MCP_PID" ] && ! kill -0 "$MCP_PID" 2>/dev/null; then
-    wait "$MCP_PID" 2>/dev/null || true
-    EXIT_REASON="mcp-died"
-    log "mcp facade exited unexpectedly — agent MCP tools are gone, bringing the node down"
-    kill -TERM "$BRAIN_PID" 2>/dev/null || true
-    kill -TERM "$CLAUDEMON_PID" 2>/dev/null || true
-    record_exit 1
-    exit 1
-  fi
-  if ! kill -0 "$BRAIN_PID" 2>/dev/null; then
-    wait "$BRAIN_PID" 2>/dev/null || true
-    EXIT_REASON="brain-died"
-    log "brain exited unexpectedly — the node has no provider, bringing it down"
-    kill -TERM "$MCP_PID" 2>/dev/null || true
-    kill -TERM "$CLAUDEMON_PID" 2>/dev/null || true
-    record_exit 1
-    exit 1
-  fi
-  sleep 5
-done
+# The volume, Tailscale identity and doorbell stay owned by this entrypoint.
+# One Rust process owns the engine, MCP facade and outbound provider relay.
+source /usr/local/lib/wks-rust/launch.sh
+run_rust_worker
+exit $?

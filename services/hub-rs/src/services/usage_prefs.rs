@@ -74,7 +74,7 @@ mod tests {
             .with_routing(routing.clone());
         let mut caller = Caller {
             call_id: 0,
-            activity_seq:0,
+            activity_seq: 0,
             federated: false,
             connection_id: 1,
             authenticated_host: false,

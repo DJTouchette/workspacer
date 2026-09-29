@@ -1,8 +1,8 @@
 {
   "version":1,
   "vocabulary":{"blocks":{
-    "cases":{"why":"Fleet rest is derived from authoritative session, client, job and peer evidence; unknown is never an empty fleet.","required":["name","sessions","expect"],"optional":["sessionsError","clients","jobs","peers","keepJobsAwake"],"loaders":["services/hub/internal/quiescence/rust_contract_test.go::TestPortableFleetQuiescenceContract","services/hub-rs/tests/quiescence.rs::portable_fleet_quiescence_contract"]},
-    "monitorCases":{"why":"Quiet requires continuous observation through dwell, and sampling gaps or stale reads cannot count as calm.","required":["name","dwellMs","maxGapMs","samples","expect"],"optional":["latestAt"],"loaders":["services/hub/internal/quiescence/rust_contract_test.go::TestPortableFleetQuiescenceContract","services/hub-rs/tests/quiescence.rs::portable_fleet_quiescence_contract"]}
+    "cases":{"why":"Fleet rest is derived from authoritative session, client, job and peer evidence; unknown is never an empty fleet.","required":["name","sessions","expect"],"optional":["sessionsError","clients","jobs","peers","keepJobsAwake"],"loaders":["services/hub-rs/tests/quiescence.rs::portable_fleet_quiescence_contract"]},
+    "monitorCases":{"why":"Quiet requires continuous observation through dwell, and sampling gaps or stale reads cannot count as calm.","required":["name","dwellMs","maxGapMs","samples","expect"],"optional":["latestAt"],"loaders":["services/hub-rs/tests/quiescence.rs::portable_fleet_quiescence_contract"]}
   }},
   "cases":[
     {"name":"authoritative empty fleet is calm now","sessions":[],"expect":[]},

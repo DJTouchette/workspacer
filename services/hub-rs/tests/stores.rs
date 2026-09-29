@@ -97,3 +97,56 @@ fn collision_at_a_symlink_slot_never_falls_back_to_overwriting_the_first_session
     assert_eq!(std::fs::read(path).unwrap(), before);
     assert_eq!(std::fs::read(outside).unwrap(), b"untouched");
 }
+
+#[test]
+fn selected_session_filename_shared_contract() {
+    use workspacer_hub::services::paths;
+    let corpus: Value = serde_json::from_str(include_str!(
+        "../../../contracts/path-containment-cases.json"
+    ))
+    .unwrap();
+    let rows = corpus["sessionFilenames"]["cases"].as_array().unwrap();
+    assert!(rows.len() >= 12);
+    for row in rows {
+        #[cfg(windows)]
+        if row["needsSymlinks"] == true {
+            continue;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let sessions = root.join("config/workspacer/sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        std::fs::create_dir_all(root.join("outside")).unwrap();
+        for sub in row["tree"]["dirs"].as_array().into_iter().flatten() {
+            std::fs::create_dir_all(root.join(sub.as_str().unwrap())).unwrap();
+        }
+        for (name, text) in row["tree"]["files"].as_object().into_iter().flatten() {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text.as_str().unwrap()).unwrap();
+        }
+        #[cfg(unix)]
+        for (name, target) in row["tree"]["symlinks"].as_object().into_iter().flatten() {
+            let link = root.join(name);
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(root.join(target.as_str().unwrap()), link).unwrap();
+        }
+        let result = paths::selected_path(&sessions, row["filename"].as_str().unwrap());
+        if row["expect"] == "accept" {
+            assert_eq!(
+                result.unwrap(),
+                root.join(row["resolvesTo"].as_str().unwrap()),
+                "{}",
+                row["name"]
+            );
+        } else {
+            let error = result.unwrap_err().to_string();
+            let expected = match row["refusedBy"].as_str().unwrap() {
+                "not-a-basename" => "basename",
+                "escapes-sessions-dir" => "escapes selected object",
+                other => panic!("unknown refusal {other}"),
+            };
+            assert!(error.contains(expected), "{}: {error}", row["name"]);
+        }
+    }
+}

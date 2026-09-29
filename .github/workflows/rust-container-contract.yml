@@ -1,0 +1,48 @@
+name: Rust container contract
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "deploy/fly/**"
+      - "services/hub-rs/**"
+      - "services/claudemon/**"
+      - "contracts/**"
+      - "apps/desktop/src/renderer/**"
+      - ".github/workflows/rust-container-contract.yml"
+permissions:
+  contents: read
+concurrency:
+  group: rust-containers-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  images-and-owned-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Generated deployment definitions are current
+        run: python3 deploy/fly/rust/render-dockerfiles.py --check
+      - name: Build the default Rust role images
+        env:
+          WKS_SOURCE_SHA: ${{ github.sha }}
+          DOCKER_BUILDKIT: "1"
+        run: bash deploy/fly/preflight.sh build
+      - name: Persistence, artifact and protected-supervisor contracts
+        run: |
+          python3 deploy/fly/rust/test-supervisor.py
+          bash deploy/fly/node/test-bootstrap.sh
+          bash deploy/fly/hub/test-bootstrap.sh
+          bash deploy/fly/test-fetch-release.sh
+          bash deploy/fly/rust/test-artifact.sh
+      - name: Container CLI arguments and explicit credential migration
+        run: |
+          docker run --rm --entrypoint /bin/bash \
+            -v "$PWD:/src:ro" -w /src \
+            -e WORKSPACER_RUST_BIN=/usr/local/bin/workspacer-rust \
+            workspacer-rust-node:preview -c '
+              bash deploy/fly/rust/test-launch.sh &&
+              bash deploy/fly/rust/test-provision.sh /usr/local/bin/workspacer-rust
+            '
+
+      - name: Boot real Rust hub, worker and combined images with fresh volumes
+        run: bash deploy/fly/preflight.sh boot

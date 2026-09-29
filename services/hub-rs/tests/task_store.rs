@@ -460,20 +460,48 @@ fn host_capture_during_transfer_intent_cannot_be_stranded_after_task_adoption() 
 }
 
 #[test]
-fn paired_receipt_updates_only_admitted_remote_attempts_without_result_authority(){
- let dir=tempfile::tempdir().unwrap();let path=dir.path().join("history.json");
- let store=TaskStore::open(path.clone()).unwrap();
- store.transaction(|h|{let mut t=task("remote");t["attempts"]=json!([
+fn paired_receipt_updates_only_admitted_remote_attempts_without_result_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.json");
+    let store = TaskStore::open(path.clone()).unwrap();
+    store.transaction(|h|{let mut t=task("remote");t["attempts"]=json!([
  {"sessionId":"paired-session","executionTarget":"paired","dispatchId":"remote-dispatch","metrics":{},"resultContract":"absent"},
  {"sessionId":"local-session","executionTarget":"local","dispatchId":"local-dispatch","metrics":{},"resultContract":"absent"}]);h.tasks.push(t);Ok(())}).unwrap();
- let before=std::fs::read(&path).unwrap();
- assert!(store.observe_remote("unknown","running",false).is_err());assert!(store.observe_remote("local-session","ended",true).is_err());
- assert_eq!(std::fs::read(&path).unwrap(),before);
- store.observe_remote("paired-session","running",false).unwrap();
- let running=store.task("remote").unwrap().unwrap();assert_eq!(running["attempts"][0]["live"],true);assert_eq!(running["attempts"][0]["stale"],false);
- let same=std::fs::read(&path).unwrap();store.observe_remote("paired-session","running",false).unwrap();assert_eq!(std::fs::read(&path).unwrap(),same);
- store.observe_remote("paired-session","idle",true).unwrap();
- let ended=store.task("remote").unwrap().unwrap();assert_eq!(ended["attempts"][0]["lifecycle"],"idle");assert_eq!(ended["attempts"][0]["live"],true);assert_eq!(ended["attempts"][0]["resultContract"],"absent");
- assert!(store.observe_remote("paired-session","validated",false).is_err());
- drop(store);let reopened=TaskStore::open(path).unwrap();assert_eq!(reopened.task("remote").unwrap().unwrap()["attempts"][0]["stale"],true);
+    let before = std::fs::read(&path).unwrap();
+    assert!(store.observe_remote("unknown", "running", false).is_err());
+    assert!(
+        store
+            .observe_remote("local-session", "ended", true)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    store
+        .observe_remote("paired-session", "running", false)
+        .unwrap();
+    let running = store.task("remote").unwrap().unwrap();
+    assert_eq!(running["attempts"][0]["live"], true);
+    assert_eq!(running["attempts"][0]["stale"], false);
+    let same = std::fs::read(&path).unwrap();
+    store
+        .observe_remote("paired-session", "running", false)
+        .unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), same);
+    store
+        .observe_remote("paired-session", "idle", true)
+        .unwrap();
+    let ended = store.task("remote").unwrap().unwrap();
+    assert_eq!(ended["attempts"][0]["lifecycle"], "idle");
+    assert_eq!(ended["attempts"][0]["live"], true);
+    assert_eq!(ended["attempts"][0]["resultContract"], "absent");
+    assert!(
+        store
+            .observe_remote("paired-session", "validated", false)
+            .is_err()
+    );
+    drop(store);
+    let reopened = TaskStore::open(path).unwrap();
+    assert_eq!(
+        reopened.task("remote").unwrap().unwrap()["attempts"][0]["stale"],
+        true
+    );
 }

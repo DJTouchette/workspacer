@@ -55,30 +55,30 @@ pub struct Options {
     pub listen: Option<SocketAddr>,
     pub mcp_listen: Option<SocketAddr>,
     pub token: String,
-    pub(crate) live_streams:Option<Arc<crate::services::live_streams::LiveStreams>>,
-    pub external_claudemon_url:Option<String>,
-    pub mcp_untokened:Option<crate::mcp::UntokenedAccess>,
-    pub mcp_static_token:Option<String>,
-    mcp_access:Option<Arc<crate::mcp::access::Policy>>,
-    pub(crate) external_claudemon:Option<Arc<crate::services::external_claudemon::ExternalDaemon>>,
-    pub(crate) provider_utilities:Option<Arc<crate::services::provider_utilities::Service>>,
-    pub(crate) workflow_artifacts:Option<Arc<crate::services::workflow_artifacts::Service>>,
-    pub claude_hook_settings:Option<std::path::PathBuf>,
-    pub network_admin_socket:Option<std::path::PathBuf>,
-    pub network_admin_token_file:Option<std::path::PathBuf>,
-    pub uploads_to_worker:bool,
-    pub control_plane_only:bool,
-    pub provider_relay:Option<crate::provider_relay::Config>,
-    pub(crate) upstream_caller:Option<Arc<crate::provider_relay::UpstreamCaller>>,
-    pub(crate) upstream_layout:Option<Arc<std::sync::RwLock<Value>>>,
+    pub(crate) live_streams: Option<Arc<crate::services::live_streams::LiveStreams>>,
+    pub external_claudemon_url: Option<String>,
+    pub mcp_untokened: Option<crate::mcp::UntokenedAccess>,
+    pub mcp_static_token: Option<String>,
+    mcp_access: Option<Arc<crate::mcp::access::Policy>>,
+    pub(crate) external_claudemon: Option<Arc<crate::services::external_claudemon::ExternalDaemon>>,
+    pub(crate) provider_utilities: Option<Arc<crate::services::provider_utilities::Service>>,
+    pub(crate) workflow_artifacts: Option<Arc<crate::services::workflow_artifacts::Service>>,
+    pub claude_hook_settings: Option<std::path::PathBuf>,
+    pub network_admin_socket: Option<std::path::PathBuf>,
+    pub network_admin_token_file: Option<std::path::PathBuf>,
+    pub uploads_to_worker: bool,
+    pub control_plane_only: bool,
+    pub provider_relay: Option<crate::provider_relay::Config>,
+    pub(crate) upstream_caller: Option<Arc<crate::provider_relay::UpstreamCaller>>,
+    pub(crate) upstream_layout: Option<Arc<std::sync::RwLock<Value>>>,
     pub scoped_tokens: Option<std::path::PathBuf>,
     pub data_dir: Option<std::path::PathBuf>,
     pub config_dir: Option<std::path::PathBuf>,
     pub home_dir: Option<std::path::PathBuf>,
     pub jobs_file: Option<std::path::PathBuf>,
     pub(crate) jobs_service: Option<Arc<crate::services::jobs::Service>>,
-    pub(crate) terminals:Option<Arc<crate::services::terminals::Terminals>>,
-    pub machine_power_provider:Option<Arc<dyn crate::services::machine_power::PowerProvider>>,
+    pub(crate) terminals: Option<Arc<crate::services::terminals::Terminals>>,
+    pub machine_power_provider: Option<Arc<dyn crate::services::machine_power::PowerProvider>>,
     pub(crate) analytics_watcher: Option<Arc<crate::services::analytics::Watcher>>,
     pub federation_peers: Vec<crate::federation::Peer>,
     pub peers_file: Option<std::path::PathBuf>,
@@ -98,13 +98,15 @@ pub struct Options {
     pub(crate) workflow_runtime: Option<Arc<crate::services::workflow_runtime::WorkflowRuntime>>,
     pub(crate) replacements: Option<Arc<crate::services::manager_replacements::ReplacementState>>,
     pub(crate) worktrees: Option<Arc<crate::services::worktrees::Worktrees>>,
-    pub(crate) review_store:Option<Arc<crate::services::fleet_review::ReviewStore>>,
+    pub(crate) review_store: Option<Arc<crate::services::fleet_review::ReviewStore>>,
     pub(crate) paired_target: Option<crate::services::remote_dispatch::paired::Target>,
     pub(crate) paired_dispatch: Option<Arc<crate::services::remote_dispatch::paired::Paired>>,
-    pub(crate) remote_proxy_snapshots: Arc<std::sync::RwLock<BTreeMap<String,Value>>>,
-    pub(crate) remote_dispatch_delivery: Option<Arc<dyn crate::services::remote_dispatch::Delivery>>,
+    pub(crate) remote_proxy_snapshots: Arc<std::sync::RwLock<BTreeMap<String, Value>>>,
+    pub(crate) remote_dispatch_delivery:
+        Option<Arc<dyn crate::services::remote_dispatch::Delivery>>,
     pub(crate) remote_origin: Option<Arc<crate::services::remote_dispatch::Origin>>,
-    pub(crate) remote_dispatch_execution: Option<Arc<dyn crate::services::remote_dispatch::Execution>>,
+    pub(crate) remote_dispatch_execution:
+        Option<Arc<dyn crate::services::remote_dispatch::Execution>>,
     pub(crate) remote_receiver: Option<Arc<crate::services::remote_dispatch::Receiver>>,
     pub(crate) spawn_coordinator: Option<Arc<crate::services::agent_spawn::SpawnCoordinator>>,
     pub(crate) launch_preparation: Option<Arc<crate::plugins::launch::Preparation>>,
@@ -129,31 +131,31 @@ impl Default for Options {
             listen: None,
             mcp_listen: None,
             token: String::new(),
-            live_streams:None,
-            external_claudemon_url:None,
-            mcp_untokened:None,
-            mcp_static_token:None,
-            mcp_access:None,
-            external_claudemon:None,
-            provider_utilities:None,
-            workflow_artifacts:None,
-            claude_hook_settings:None,
-            network_admin_socket:None,
-            network_admin_token_file:None,
-            uploads_to_worker:false,
-            control_plane_only:false,
-            provider_relay:None,
-            upstream_caller:None,
-            upstream_layout:None,
+            live_streams: None,
+            external_claudemon_url: None,
+            mcp_untokened: None,
+            mcp_static_token: None,
+            mcp_access: None,
+            external_claudemon: None,
+            provider_utilities: None,
+            workflow_artifacts: None,
+            claude_hook_settings: None,
+            network_admin_socket: None,
+            network_admin_token_file: None,
+            uploads_to_worker: false,
+            control_plane_only: false,
+            provider_relay: None,
+            upstream_caller: None,
+            upstream_layout: None,
             scoped_tokens: None,
             data_dir: None,
             config_dir: None,
             home_dir: None,
             jobs_file: None,
             jobs_service: None,
-            analytics_watcher:None,
-            terminals:None,
-            machine_power_provider:None,
+            analytics_watcher: None,
+            terminals: None,
+            machine_power_provider: None,
             federation_peers: Vec::new(),
             peers_file: None,
             plugins_dir: None,
@@ -172,7 +174,7 @@ impl Default for Options {
             workflow_runtime: None,
             replacements: None,
             worktrees: None,
-            review_store:None,
+            review_store: None,
             paired_target: None,
             paired_dispatch: None,
             remote_proxy_snapshots: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
@@ -197,7 +199,9 @@ impl Default for Options {
 }
 
 impl Options {
-    pub(crate) fn has_handler(&self,method:&str)->bool { self.handlers.contains_key(method) }
+    pub(crate) fn has_handler(&self, method: &str) -> bool {
+        self.handlers.contains_key(method)
+    }
     pub fn plugin_token(
         mut self,
         token: impl Into<String>,
@@ -258,18 +262,41 @@ pub struct Handle {
 
 impl Hub {
     pub fn start(mut options: Options) -> Result<Self> {
-        if options.provider_relay.as_ref().is_some_and(|relay|relay.scope==crate::provider_relay::Scope::Full)&&options.upstream_layout.is_none(){options.upstream_layout=Some(Arc::new(std::sync::RwLock::new(Value::Null)));}
+        if options
+            .provider_relay
+            .as_ref()
+            .is_some_and(|relay| relay.scope == crate::provider_relay::Scope::Full)
+            && options.upstream_layout.is_none()
+        {
+            options.upstream_layout = Some(Arc::new(std::sync::RwLock::new(Value::Null)));
+        }
         anyhow::ensure!(
             !SHUTDOWN_UNCERTAIN.load(Ordering::Acquire),
             "a previous hub shutdown left blocking work unconfirmed; restart the application before starting another hub"
         );
-        anyhow::ensure!(!options.control_plane_only||options.engine.is_none(),"control-plane-only cannot own an execution engine");
-        if let Some(url)=&options.external_claudemon_url{
-            anyhow::ensure!(options.control_plane_only&&options.engine.is_none(),"external claudemon observation requires the control-plane-only role");
-            options.external_claudemon=Some(crate::services::external_claudemon::ExternalDaemon::new(url)?);
+        anyhow::ensure!(
+            !options.control_plane_only || options.engine.is_none(),
+            "control-plane-only cannot own an execution engine"
+        );
+        if let Some(url) = &options.external_claudemon_url {
+            anyhow::ensure!(
+                options.control_plane_only && options.engine.is_none(),
+                "external claudemon observation requires the control-plane-only role"
+            );
+            options.external_claudemon = Some(
+                crate::services::external_claudemon::ExternalDaemon::new(url)?,
+            );
         }
-        if let Some(address)=options.mcp_listen {
-            options.mcp_access=Some(crate::mcp::access::Policy::new(options.config_dir.as_ref().map(|path|path.join("config.yaml")),options.mcp_untokened,options.mcp_static_token.clone().unwrap_or_default(),address.ip())?);
+        if let Some(address) = options.mcp_listen {
+            options.mcp_access = Some(crate::mcp::access::Policy::new(
+                options
+                    .config_dir
+                    .as_ref()
+                    .map(|path| path.join("config.yaml")),
+                options.mcp_untokened,
+                options.mcp_static_token.clone().unwrap_or_default(),
+                address.ip(),
+            )?);
         }
         if options.event_buffer == 0 || options.event_buffer > 65536 {
             bail!("invalid event buffer");
@@ -280,7 +307,10 @@ impl Hub {
         if (options.listen.is_some() || options.mcp_listen.is_some()) && options.token.is_empty() {
             bail!("a listener requires an explicit host token");
         }
-        crate::server::policy::Policy::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),&options.trusted_hosts)?;
+        crate::server::policy::Policy::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            &options.trusted_hosts,
+        )?;
         // Listener selection is host-owned. Every network adapter requires the
         // explicit credential above and pins browser policy to its actual socket.
         let (tx, rx) = mpsc::channel(COMMAND_QUEUE);
@@ -349,59 +379,118 @@ impl Drop for Hub {
 }
 
 impl Handle {
-    pub(crate) async fn publish_live_stream(&self, delivery:crate::services::live_streams::Delivery)->Result<()> {
-        self.tx.send(Command::LiveStream(delivery)).await.map_err(|_|anyhow!("hub stopped"))
+    pub(crate) async fn publish_live_stream(
+        &self,
+        delivery: crate::services::live_streams::Delivery,
+    ) -> Result<()> {
+        self.tx
+            .send(Command::LiveStream(delivery))
+            .await
+            .map_err(|_| anyhow!("hub stopped"))
     }
-    pub(crate) async fn connect_provider_caller(&self,proof:crate::protocol::ProviderCaller)->Result<Connection>{
-        let identity=Identity::from_provider_caller(proof)?;
-        let (reply,result)=oneshot::channel();self.submit(Command::Connect(None,ConnectMode::Delegated(identity),reply))?;
-        result.await.map_err(|_|anyhow!("hub stopped while connecting provider caller"))?
+    pub(crate) async fn connect_provider_caller(
+        &self,
+        proof: crate::protocol::ProviderCaller,
+    ) -> Result<Connection> {
+        let identity = Identity::from_provider_caller(proof)?;
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::Connect(
+            None,
+            ConnectMode::Delegated(identity),
+            reply,
+        ))?;
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped while connecting provider caller"))?
     }
 
-    pub(crate) async fn provider_connection(&self,method:&str)->Result<Option<u64>>{
-        let (reply,result)=oneshot::channel();self.submit(Command::ProviderConnection(method.into(),reply))?;
-        result.await.map_err(|_|anyhow!("hub stopped during provider observation"))
+    pub(crate) async fn provider_connection(&self, method: &str) -> Result<Option<u64>> {
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::ProviderConnection(method.into(), reply))?;
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped during provider observation"))
     }
-    pub(crate) async fn evict_provider(&self,method:&str,expected_connection:u64)->Result<bool>{
-        let (reply,result)=oneshot::channel();self.submit(Command::EvictProvider(method.into(),expected_connection,reply))?;
-        result.await.map_err(|_|anyhow!("hub stopped during provider eviction"))
+    pub(crate) async fn evict_provider(
+        &self,
+        method: &str,
+        expected_connection: u64,
+    ) -> Result<bool> {
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::EvictProvider(
+            method.into(),
+            expected_connection,
+            reply,
+        ))?;
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped during provider eviction"))
     }
 
-    pub(crate) async fn disconnect_for_machine_stop(&self)->Result<()> {
-        let (reply,result)=oneshot::channel();self.submit(Command::MachineStop(reply))?;
-        let clients=result.await.map_err(|_|anyhow!("hub stopped before client drain"))?;
-        tokio::time::timeout(Duration::from_secs(5),async move{
-            futures_util::future::join_all(clients.into_iter().map(|mut done|async move{
-                while !*done.borrow(){if done.changed().await.is_err(){break;}}
-            })).await;
-        }).await.map_err(|_|anyhow!("interactive client close acknowledgement timed out"))?;
+    pub(crate) async fn disconnect_for_machine_stop(&self) -> Result<()> {
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::MachineStop(reply))?;
+        let clients = result
+            .await
+            .map_err(|_| anyhow!("hub stopped before client drain"))?;
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            futures_util::future::join_all(clients.into_iter().map(|mut done| async move {
+                while !*done.borrow() {
+                    if done.changed().await.is_err() {
+                        break;
+                    }
+                }
+            }))
+            .await;
+        })
+        .await
+        .map_err(|_| anyhow!("interactive client close acknowledgement timed out"))?;
         Ok(())
     }
 
     pub(crate) async fn connect_service(&self) -> Result<Connection> {
-        let (reply,result)=oneshot::channel();
-        self.submit(Command::Connect(None,ConnectMode::Service,reply))?;
-        result.await.map_err(|_|anyhow!("hub stopped while connecting service"))?
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::Connect(None, ConnectMode::Service, reply))?;
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped while connecting service"))?
     }
-    pub(crate) async fn quiescence_clients(&self) -> Result<Vec<crate::services::quiescence::ClientInfo>> {
-        let (reply,result)=oneshot::channel();
+    pub(crate) async fn quiescence_clients(
+        &self,
+    ) -> Result<Vec<crate::services::quiescence::ClientInfo>> {
+        let (reply, result) = oneshot::channel();
         self.submit(Command::QuiescenceClients(reply))?;
-        result.await.map_err(|_|anyhow!("hub stopped while reading client activity"))
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped while reading client activity"))
     }
 
     /// Facade delegation preserves the inbound operator tier without granting
     /// authenticated-host administration. This never accepts wire metadata.
     pub(crate) async fn connect_facade(&self, token: String) -> Result<Connection> {
         let (reply, result) = oneshot::channel();
-        self.submit(Command::Connect(Some((token, false)), ConnectMode::Facade, reply))?;
+        self.submit(Command::Connect(
+            Some((token, false)),
+            ConnectMode::Facade,
+            reply,
+        ))?;
         result
             .await
             .map_err(|_| anyhow!("hub stopped while connecting facade"))?
     }
-    pub(crate) async fn connect_ephemeral_facade(&self,lease:crate::mcp::access::Lease)->Result<Connection>{
-        let(reply,result)=oneshot::channel();
-        self.submit(Command::Connect(None,ConnectMode::EphemeralFacade(lease),reply))?;
-        result.await.map_err(|_|anyhow!("hub stopped while connecting facade"))?
+    pub(crate) async fn connect_ephemeral_facade(
+        &self,
+        lease: crate::mcp::access::Lease,
+    ) -> Result<Connection> {
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::Connect(
+            None,
+            ConnectMode::EphemeralFacade(lease),
+            reply,
+        ))?;
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped while connecting facade"))?
     }
     pub(crate) async fn begin_launch_preparation(
         &self,
@@ -469,18 +558,39 @@ impl Handle {
         &self,
         token: String,
         federated: bool,
-    ) -> Result<Connection> {self.connect_authenticated_context(token,federated,false).await}
-    pub(crate) async fn connect_authenticated_context(&self,token:String,federated:bool,identity:bool)->Result<Connection>{
+    ) -> Result<Connection> {
+        self.connect_authenticated_context(token, federated, false)
+            .await
+    }
+    pub(crate) async fn connect_authenticated_context(
+        &self,
+        token: String,
+        federated: bool,
+        identity: bool,
+    ) -> Result<Connection> {
         let (reply, result) = oneshot::channel();
-        self.submit(Command::Connect(Some((token, federated)), if identity{ConnectMode::UserIdentity}else{ConnectMode::User}, reply))?;
+        self.submit(Command::Connect(
+            Some((token, federated)),
+            if identity {
+                ConnectMode::UserIdentity
+            } else {
+                ConnectMode::User
+            },
+            reply,
+        ))?;
         result
             .await
             .map_err(|_| anyhow!("hub stopped while connecting"))?
     }
     #[cfg(feature = "test-support")]
-    pub(crate) async fn test_receiver(&self) -> Result<Option<Arc<crate::services::remote_dispatch::Receiver>>> {
-        let (reply,result)=oneshot::channel();self.submit(Command::TestReceiver(reply))?;
-        result.await.map_err(|_|anyhow!("hub stopped before fixture inspection"))
+    pub(crate) async fn test_receiver(
+        &self,
+    ) -> Result<Option<Arc<crate::services::remote_dispatch::Receiver>>> {
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::TestReceiver(reply))?;
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped before fixture inspection"))
     }
     pub async fn health(&self) -> Result<Value> {
         let (reply, result) = oneshot::channel();
@@ -543,9 +653,9 @@ impl Handle {
 }
 
 pub struct Connection {
-    close_code:Arc<AtomicU16>,
-    network:Arc<AtomicBool>,
-    close_done:watch::Sender<bool>,
+    close_code: Arc<AtomicU16>,
+    network: Arc<AtomicBool>,
+    close_done: watch::Sender<bool>,
     id: u64,
     handle: Handle,
     reliable: mpsc::Receiver<Frame>,
@@ -557,8 +667,13 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub(crate) fn mark_network_transport(&self){self.network.store(true,Ordering::Release);}
-    pub fn close_code(&self)->Option<u16>{let code=self.close_code.load(Ordering::Acquire);(code!=0).then_some(code)}
+    pub(crate) fn mark_network_transport(&self) {
+        self.network.store(true, Ordering::Release);
+    }
+    pub fn close_code(&self) -> Option<u16> {
+        let code = self.close_code.load(Ordering::Acquire);
+        (code != 0).then_some(code)
+    }
 
     pub fn send(&self, frame: Frame) -> Result<()> {
         if *self.closed.borrow() {
@@ -626,22 +741,72 @@ mod machine_stop_tests {
     use super::*;
     use futures_util::StreamExt;
     #[tokio::test]
-    async fn stop_drains_interactive_sockets_with_4001_but_keeps_infrastructure(){
-        let mut options=Options::default();options.listen=Some("127.0.0.1:0".parse().unwrap());options.token="fixture".into();
-        let hub=Hub::start(options).unwrap();let address=hub.ready().await.unwrap().unwrap();let handle=hub.handle();
-        let mut internal=handle.connect_service().await.unwrap();internal.recv().await.unwrap();
-        let mut provider=handle.connect().await.unwrap();provider.recv().await.unwrap();provider.send(Frame{methods:vec!["fixture.provider".into()],..Frame::op("register")}).unwrap();assert_eq!(provider.recv().await.unwrap().op,"registered");
-        handle.register_plugin("plugin-secret".into(),"fixture".into(),vec!["fixture.*".into()]).await.unwrap();let mut plugin=handle.connect_authenticated("plugin-secret".into(),false).await.unwrap();plugin.recv().await.unwrap();
-        let mut ordinary=handle.connect().await.unwrap();ordinary.recv().await.unwrap();
-        let (mut socket,_)=tokio_tungstenite::connect_async(format!("ws://{address}/bus?token=fixture")).await.unwrap();socket.next().await.unwrap().unwrap();
+    async fn stop_drains_interactive_sockets_with_4001_but_keeps_infrastructure() {
+        let mut options = Options::default();
+        options.listen = Some("127.0.0.1:0".parse().unwrap());
+        options.token = "fixture".into();
+        let hub = Hub::start(options).unwrap();
+        let address = hub.ready().await.unwrap().unwrap();
+        let handle = hub.handle();
+        let mut internal = handle.connect_service().await.unwrap();
+        internal.recv().await.unwrap();
+        let mut provider = handle.connect().await.unwrap();
+        provider.recv().await.unwrap();
+        provider
+            .send(Frame {
+                methods: vec!["fixture.provider".into()],
+                ..Frame::op("register")
+            })
+            .unwrap();
+        assert_eq!(provider.recv().await.unwrap().op, "registered");
+        handle
+            .register_plugin(
+                "plugin-secret".into(),
+                "fixture".into(),
+                vec!["fixture.*".into()],
+            )
+            .await
+            .unwrap();
+        let mut plugin = handle
+            .connect_authenticated("plugin-secret".into(), false)
+            .await
+            .unwrap();
+        plugin.recv().await.unwrap();
+        let mut ordinary = handle.connect().await.unwrap();
+        ordinary.recv().await.unwrap();
+        let (mut socket, _) =
+            tokio_tungstenite::connect_async(format!("ws://{address}/bus?token=fixture"))
+                .await
+                .unwrap();
+        socket.next().await.unwrap().unwrap();
         handle.disconnect_for_machine_stop().await.unwrap();
-        let close=tokio::time::timeout(Duration::from_secs(2),socket.next()).await.unwrap().unwrap().unwrap();
-        let tokio_tungstenite::tungstenite::Message::Close(Some(close))=close else{panic!("expected close frame")};assert_eq!(u16::from(close.code),4001);assert_eq!(close.reason,"machine stopping; reconnect only to wake");
-        assert!(ordinary.recv().await.is_none());assert_eq!(ordinary.close_code(),Some(4001));
-        for (index,connection) in [&mut internal,&mut provider,&mut plugin].into_iter().enumerate(){
-            let method=format!("fixture.alive{index}");
-            connection.send(Frame{methods:vec![method.clone()],..Frame::op("register")}).unwrap();
-            let response=connection.recv().await.unwrap();assert_eq!(response.op,"registered");assert_eq!(response.methods,vec![method]);assert_eq!(connection.close_code(),None);
+        let close = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let tokio_tungstenite::tungstenite::Message::Close(Some(close)) = close else {
+            panic!("expected close frame")
+        };
+        assert_eq!(u16::from(close.code), 4001);
+        assert_eq!(close.reason, "machine stopping; reconnect only to wake");
+        assert!(ordinary.recv().await.is_none());
+        assert_eq!(ordinary.close_code(), Some(4001));
+        for (index, connection) in [&mut internal, &mut provider, &mut plugin]
+            .into_iter()
+            .enumerate()
+        {
+            let method = format!("fixture.alive{index}");
+            connection
+                .send(Frame {
+                    methods: vec![method.clone()],
+                    ..Frame::op("register")
+                })
+                .unwrap();
+            let response = connection.recv().await.unwrap();
+            assert_eq!(response.op, "registered");
+            assert_eq!(response.methods, vec![method]);
+            assert_eq!(connection.close_code(), None);
         }
         hub.shutdown().unwrap();
     }
@@ -651,14 +816,69 @@ mod machine_stop_tests {
 mod provider_eviction_tests {
     use super::*;
     #[tokio::test]
-    async fn stale_probe_cannot_evict_replacement_or_builtin_handler(){
-        let hub=Hub::start(Options::default().handler("fixture.builtin",|_,_|async{Ok(Value::Null)})).unwrap();hub.ready().await.unwrap();let handle=hub.handle();
-        assert_eq!(handle.provider_connection("fixture.builtin").await.unwrap(),None);
-        let mut old=handle.connect().await.unwrap();old.recv().await.unwrap();old.send(Frame{methods:vec!["brain.info".into()],..Frame::op("register")}).unwrap();old.recv().await.unwrap();
-        let generation=handle.provider_connection("brain.info").await.unwrap().unwrap();assert!(handle.evict_provider("brain.info",generation).await.unwrap());assert!(old.recv().await.is_none());
-        let mut new=handle.connect().await.unwrap();new.recv().await.unwrap();new.send(Frame{methods:vec!["brain.info".into()],..Frame::op("register")}).unwrap();assert_eq!(new.recv().await.unwrap().methods,vec!["brain.info"]);
-        let replacement=handle.provider_connection("brain.info").await.unwrap().unwrap();assert_ne!(generation,replacement);assert!(!handle.evict_provider("brain.info",generation).await.unwrap());assert_eq!(handle.provider_connection("brain.info").await.unwrap(),Some(replacement));
-        assert!(!handle.evict_provider("fixture.builtin",replacement).await.unwrap());assert_eq!(new.close_code(),None);hub.shutdown().unwrap();
+    async fn stale_probe_cannot_evict_replacement_or_builtin_handler() {
+        let hub = Hub::start(
+            Options::default().handler("fixture.builtin", |_, _| async { Ok(Value::Null) }),
+        )
+        .unwrap();
+        hub.ready().await.unwrap();
+        let handle = hub.handle();
+        assert_eq!(
+            handle.provider_connection("fixture.builtin").await.unwrap(),
+            None
+        );
+        let mut old = handle.connect().await.unwrap();
+        old.recv().await.unwrap();
+        old.send(Frame {
+            methods: vec!["brain.info".into()],
+            ..Frame::op("register")
+        })
+        .unwrap();
+        old.recv().await.unwrap();
+        let generation = handle
+            .provider_connection("brain.info")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            handle
+                .evict_provider("brain.info", generation)
+                .await
+                .unwrap()
+        );
+        assert!(old.recv().await.is_none());
+        let mut new = handle.connect().await.unwrap();
+        new.recv().await.unwrap();
+        new.send(Frame {
+            methods: vec!["brain.info".into()],
+            ..Frame::op("register")
+        })
+        .unwrap();
+        assert_eq!(new.recv().await.unwrap().methods, vec!["brain.info"]);
+        let replacement = handle
+            .provider_connection("brain.info")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(generation, replacement);
+        assert!(
+            !handle
+                .evict_provider("brain.info", generation)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            handle.provider_connection("brain.info").await.unwrap(),
+            Some(replacement)
+        );
+        assert!(
+            !handle
+                .evict_provider("fixture.builtin", replacement)
+                .await
+                .unwrap()
+        );
+        assert_eq!(new.close_code(), None);
+        hub.shutdown().unwrap();
     }
 }
 
@@ -666,62 +886,254 @@ mod provider_eviction_tests {
 mod provider_context_tests {
     use super::*;
     #[tokio::test]
-    async fn cancellation_is_caller_owned_and_broker_deadline_notifies_only_negotiated_provider(){
-        for negotiated in [false,true] {
-            let mut options=Options::default();options.call_timeout=Duration::from_millis(300);
-            let hub=Hub::start(options).unwrap();hub.ready().await.unwrap();let handle=hub.handle();
-            let mut provider=handle.connect().await.unwrap();provider.recv().await.unwrap();provider.send(Frame{methods:vec!["fixture.wait".into()],wants_caller_context:negotiated,..Frame::op("register")}).unwrap();provider.recv().await.unwrap();
-            let mut caller=handle.connect().await.unwrap();caller.recv().await.unwrap();
-            let mut stranger=handle.connect().await.unwrap();stranger.recv().await.unwrap();
-            caller.send(Frame{id:"owned".into(),method:"fixture.wait".into(),..Frame::op("call")}).unwrap();let first=provider.recv().await.unwrap();
-            stranger.send(Frame{id:"owned".into(),provider_caller:Some(Identity::host("forgery").provider_caller(caller.id)),..Frame::op("cancel")}).unwrap();
+    async fn cancellation_is_caller_owned_and_broker_deadline_notifies_only_negotiated_provider() {
+        for negotiated in [false, true] {
+            let mut options = Options::default();
+            options.call_timeout = Duration::from_millis(300);
+            let hub = Hub::start(options).unwrap();
+            hub.ready().await.unwrap();
+            let handle = hub.handle();
+            let mut provider = handle.connect().await.unwrap();
+            provider.recv().await.unwrap();
+            provider
+                .send(Frame {
+                    methods: vec!["fixture.wait".into()],
+                    wants_caller_context: negotiated,
+                    ..Frame::op("register")
+                })
+                .unwrap();
+            provider.recv().await.unwrap();
+            let mut caller = handle.connect().await.unwrap();
+            caller.recv().await.unwrap();
+            let mut stranger = handle.connect().await.unwrap();
+            stranger.recv().await.unwrap();
+            caller
+                .send(Frame {
+                    id: "owned".into(),
+                    method: "fixture.wait".into(),
+                    ..Frame::op("call")
+                })
+                .unwrap();
+            let first = provider.recv().await.unwrap();
+            stranger
+                .send(Frame {
+                    id: "owned".into(),
+                    provider_caller: Some(Identity::host("forgery").provider_caller(caller.id)),
+                    ..Frame::op("cancel")
+                })
+                .unwrap();
             // FIFO command admission guarantees the forgery is processed first.
-            provider.send(Frame{id:first.id,result:Some(json!({"retained":true})),..Frame::op("result")}).unwrap();
-            assert_eq!(caller.recv().await.unwrap().result,Some(json!({"retained":true})));
-            caller.send(Frame{id:"expires".into(),method:"fixture.wait".into(),..Frame::op("call")}).unwrap();let second=provider.recv().await.unwrap();
-            let expired=tokio::time::timeout(Duration::from_secs(2),caller.recv()).await.unwrap().unwrap();assert!(expired.error.contains("timed out"));
-            if negotiated {let canceled=provider.recv().await.unwrap();assert_eq!(canceled.op,"cancel");assert_eq!(canceled.id,second.id);assert_eq!(canceled.caller_context_version,1);}
-            else {assert!(tokio::time::timeout(Duration::from_millis(40),provider.recv()).await.is_err());}
+            provider
+                .send(Frame {
+                    id: first.id,
+                    result: Some(json!({"retained":true})),
+                    ..Frame::op("result")
+                })
+                .unwrap();
+            assert_eq!(
+                caller.recv().await.unwrap().result,
+                Some(json!({"retained":true}))
+            );
+            caller
+                .send(Frame {
+                    id: "expires".into(),
+                    method: "fixture.wait".into(),
+                    ..Frame::op("call")
+                })
+                .unwrap();
+            let second = provider.recv().await.unwrap();
+            let expired = tokio::time::timeout(Duration::from_secs(2), caller.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(expired.error.contains("timed out"));
+            if negotiated {
+                let canceled = provider.recv().await.unwrap();
+                assert_eq!(canceled.op, "cancel");
+                assert_eq!(canceled.id, second.id);
+                assert_eq!(canceled.caller_context_version, 1);
+            } else {
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(40), provider.recv())
+                        .await
+                        .is_err()
+                );
+            }
             hub.shutdown().unwrap();
         }
     }
     #[tokio::test]
-    async fn negotiated_provider_observes_idle_caller_release(){
-        let hub=Hub::start(Options::default()).unwrap();hub.ready().await.unwrap();let handle=hub.handle();
-        let mut provider=handle.connect().await.unwrap();provider.recv().await.unwrap();provider.send(Frame{methods:vec!["fixture.echo".into()],wants_caller_context:true,..Frame::op("register")}).unwrap();provider.recv().await.unwrap();
-        let mut caller=handle.connect().await.unwrap();caller.recv().await.unwrap();let id=caller.id;drop(caller);
-        let closed=tokio::time::timeout(Duration::from_secs(2),provider.recv()).await.unwrap().unwrap();assert_eq!(closed.op,"callerClosed");assert_eq!(closed.id,id.to_string());assert_eq!(closed.caller_context_version,1);assert!(closed.provider_caller.is_none());hub.shutdown().unwrap();
+    async fn negotiated_provider_observes_idle_caller_release() {
+        let hub = Hub::start(Options::default()).unwrap();
+        hub.ready().await.unwrap();
+        let handle = hub.handle();
+        let mut provider = handle.connect().await.unwrap();
+        provider.recv().await.unwrap();
+        provider
+            .send(Frame {
+                methods: vec!["fixture.echo".into()],
+                wants_caller_context: true,
+                ..Frame::op("register")
+            })
+            .unwrap();
+        provider.recv().await.unwrap();
+        let mut caller = handle.connect().await.unwrap();
+        caller.recv().await.unwrap();
+        let id = caller.id;
+        drop(caller);
+        let closed = tokio::time::timeout(Duration::from_secs(2), provider.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(closed.op, "callerClosed");
+        assert_eq!(closed.id, id.to_string());
+        assert_eq!(closed.caller_context_version, 1);
+        assert!(closed.provider_caller.is_none());
+        hub.shutdown().unwrap();
     }
     #[tokio::test]
-    async fn negotiated_context_replaces_forgery_and_preserves_scope_and_lease_identity(){
-        let directory=tempfile::tempdir().unwrap();let tokens=directory.path().join("tokens.json");let view=crate::auth::mint(&tokens,crate::auth::Scope::View,"viewer").unwrap();let operator=crate::auth::mint(&tokens,crate::auth::Scope::Operator,"session:manager").unwrap();
-        let mut options=Options::default();options.token="central-owner".into();options.scoped_tokens=Some(tokens);options.control_plane_only=true;
-        let central=Hub::start(options).unwrap();central.ready().await.unwrap();let handle=central.handle();let mut provider=handle.connect().await.unwrap();provider.recv().await.unwrap();provider.send(Frame{methods:vec!["config.get".into()],wants_caller_context:true,..Frame::op("register")}).unwrap();assert_eq!(provider.recv().await.unwrap().caller_context_version,1);
-        let mut viewer=handle.connect_authenticated(view.token.clone(),false).await.unwrap();viewer.recv().await.unwrap();
-        let fake=Identity::host("forged-owner").provider_caller(999);
-        viewer.send(Frame{id:"view-call".into(),method:"config.get".into(),provider_caller:Some(fake),..Frame::op("call")}).unwrap();let forwarded=provider.recv().await.unwrap();let proof=forwarded.provider_caller.unwrap();assert_eq!(proof.connection_id,viewer.id);assert_eq!(proof.scope,"view");assert!(!proof.authenticated_host);assert!(!proof.may_assert_session);assert_eq!(proof.token_id,crate::auth::fingerprint(&view.token));
-        let downstream=Hub::start(Options::default().handler("config.get",|caller,_|async move{Ok(json!({"scope":caller.scope,"owner":caller.authenticated_host,"fingerprint":caller.token_id}))}).handler("desktop.fixture",|_,_|async{Ok(Value::Null)})).unwrap();downstream.ready().await.unwrap();
-        let local=crate::client::Client::from_connection(downstream.handle().connect_provider_caller(proof.clone()).await.unwrap());assert_eq!(local.call("config.get",Value::Null).await.unwrap(),json!({"scope":"view","owner":false,"fingerprint":proof.token_id}));assert!(local.call("desktop.fixture",Value::Null).await.is_err());
-        provider.send(Frame{id:forwarded.id,result:Some(json!({"ok":true})),..Frame::op("result")}).unwrap();assert_eq!(viewer.recv().await.unwrap().id,"view-call");
-        let mut facade=handle.connect_facade(operator.token.clone()).await.unwrap();facade.recv().await.unwrap();facade.send(Frame{id:"facade-call".into(),method:"config.get".into(),..Frame::op("call")}).unwrap();let proof=provider.recv().await.unwrap().provider_caller.unwrap();assert_eq!(proof.scope,"operator");assert!(!proof.authenticated_host);assert!(proof.may_assert_session);
-        let identity=Identity::from_provider_caller(proof.clone()).unwrap();assert!(identity.may_assert_session());assert!(!identity.authenticated_host());let sanitized=crate::admission::sanitize(&identity,"agents.dispatchReplay",json!({"dispatchId":"d","originKey":"forged"})).unwrap();assert_eq!(sanitized["originKey"],crate::auth::fingerprint(&operator.token));
-        local.close();downstream.shutdown().unwrap();central.shutdown().unwrap();
+    async fn negotiated_context_replaces_forgery_and_preserves_scope_and_lease_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let tokens = directory.path().join("tokens.json");
+        let view = crate::auth::mint(&tokens, crate::auth::Scope::View, "viewer").unwrap();
+        let operator =
+            crate::auth::mint(&tokens, crate::auth::Scope::Operator, "session:manager").unwrap();
+        let mut options = Options::default();
+        options.token = "central-owner".into();
+        options.scoped_tokens = Some(tokens);
+        options.control_plane_only = true;
+        let central = Hub::start(options).unwrap();
+        central.ready().await.unwrap();
+        let handle = central.handle();
+        let mut provider = handle.connect().await.unwrap();
+        provider.recv().await.unwrap();
+        provider
+            .send(Frame {
+                methods: vec!["config.get".into()],
+                wants_caller_context: true,
+                ..Frame::op("register")
+            })
+            .unwrap();
+        assert_eq!(provider.recv().await.unwrap().caller_context_version, 1);
+        let mut viewer = handle
+            .connect_authenticated(view.token.clone(), false)
+            .await
+            .unwrap();
+        viewer.recv().await.unwrap();
+        let fake = Identity::host("forged-owner").provider_caller(999);
+        viewer
+            .send(Frame {
+                id: "view-call".into(),
+                method: "config.get".into(),
+                provider_caller: Some(fake),
+                ..Frame::op("call")
+            })
+            .unwrap();
+        let forwarded = provider.recv().await.unwrap();
+        let proof = forwarded.provider_caller.unwrap();
+        assert_eq!(proof.connection_id, viewer.id);
+        assert_eq!(proof.scope, "view");
+        assert!(!proof.authenticated_host);
+        assert!(!proof.may_assert_session);
+        assert_eq!(proof.token_id, crate::auth::fingerprint(&view.token));
+        let downstream=Hub::start(Options::default().handler("config.get",|caller,_|async move{Ok(json!({"scope":caller.scope,"owner":caller.authenticated_host,"fingerprint":caller.token_id}))}).handler("desktop.fixture",|_,_|async{Ok(Value::Null)})).unwrap();
+        downstream.ready().await.unwrap();
+        let local = crate::client::Client::from_connection(
+            downstream
+                .handle()
+                .connect_provider_caller(proof.clone())
+                .await
+                .unwrap(),
+        );
+        assert_eq!(
+            local.call("config.get", Value::Null).await.unwrap(),
+            json!({"scope":"view","owner":false,"fingerprint":proof.token_id})
+        );
+        assert!(local.call("desktop.fixture", Value::Null).await.is_err());
+        provider
+            .send(Frame {
+                id: forwarded.id,
+                result: Some(json!({"ok":true})),
+                ..Frame::op("result")
+            })
+            .unwrap();
+        assert_eq!(viewer.recv().await.unwrap().id, "view-call");
+        let mut facade = handle.connect_facade(operator.token.clone()).await.unwrap();
+        facade.recv().await.unwrap();
+        facade
+            .send(Frame {
+                id: "facade-call".into(),
+                method: "config.get".into(),
+                ..Frame::op("call")
+            })
+            .unwrap();
+        let proof = provider.recv().await.unwrap().provider_caller.unwrap();
+        assert_eq!(proof.scope, "operator");
+        assert!(!proof.authenticated_host);
+        assert!(proof.may_assert_session);
+        let identity = Identity::from_provider_caller(proof.clone()).unwrap();
+        assert!(identity.may_assert_session());
+        assert!(!identity.authenticated_host());
+        let sanitized = crate::admission::sanitize(
+            &identity,
+            "agents.dispatchReplay",
+            json!({"dispatchId":"d","originKey":"forged"}),
+        )
+        .unwrap();
+        assert_eq!(
+            sanitized["originKey"],
+            crate::auth::fingerprint(&operator.token)
+        );
+        local.close();
+        downstream.shutdown().unwrap();
+        central.shutdown().unwrap();
     }
     #[tokio::test]
-    async fn legacy_provider_frames_stay_unchanged_until_explicit_negotiation(){
-        let hub=Hub::start(Options::default()).unwrap();hub.ready().await.unwrap();let handle=hub.handle();let mut provider=handle.connect().await.unwrap();provider.recv().await.unwrap();provider.send(Frame{methods:vec!["fixture.echo".into()],..Frame::op("register")}).unwrap();assert_eq!(provider.recv().await.unwrap().caller_context_version,0);
-        let mut caller=handle.connect().await.unwrap();caller.recv().await.unwrap();caller.send(Frame{id:"request".into(),method:"fixture.echo".into(),..Frame::op("call")}).unwrap();let wire=serde_json::to_value(provider.recv().await.unwrap()).unwrap();assert!(wire.get("providerCaller").is_none());assert!(wire.get("callerContextVersion").is_none());assert!(wire.get("wantsCallerContext").is_none());hub.shutdown().unwrap();
+    async fn legacy_provider_frames_stay_unchanged_until_explicit_negotiation() {
+        let hub = Hub::start(Options::default()).unwrap();
+        hub.ready().await.unwrap();
+        let handle = hub.handle();
+        let mut provider = handle.connect().await.unwrap();
+        provider.recv().await.unwrap();
+        provider
+            .send(Frame {
+                methods: vec!["fixture.echo".into()],
+                ..Frame::op("register")
+            })
+            .unwrap();
+        assert_eq!(provider.recv().await.unwrap().caller_context_version, 0);
+        let mut caller = handle.connect().await.unwrap();
+        caller.recv().await.unwrap();
+        caller
+            .send(Frame {
+                id: "request".into(),
+                method: "fixture.echo".into(),
+                ..Frame::op("call")
+            })
+            .unwrap();
+        let wire = serde_json::to_value(provider.recv().await.unwrap()).unwrap();
+        assert!(wire.get("providerCaller").is_none());
+        assert!(wire.get("callerContextVersion").is_none());
+        assert!(wire.get("wantsCallerContext").is_none());
+        hub.shutdown().unwrap();
     }
 }
 
 #[derive(Clone)]
-enum ConnectMode{User,UserIdentity,Service,Facade,Delegated(Identity),EphemeralFacade(crate::mcp::access::Lease)}
+enum ConnectMode {
+    User,
+    UserIdentity,
+    Service,
+    Facade,
+    Delegated(Identity),
+    EphemeralFacade(crate::mcp::access::Lease),
+}
 enum Command {
     #[cfg(feature = "test-support")]
     TestReceiver(oneshot::Sender<Option<Arc<crate::services::remote_dispatch::Receiver>>>),
     LiveStream(crate::services::live_streams::Delivery),
-    ProviderConnection(String,oneshot::Sender<Option<u64>>),
-    EvictProvider(String,u64,oneshot::Sender<bool>),
+    ProviderConnection(String, oneshot::Sender<Option<u64>>),
+    EvictProvider(String, u64, oneshot::Sender<bool>),
     MachineStop(oneshot::Sender<Vec<watch::Receiver<bool>>>),
     QuiescenceClients(oneshot::Sender<Vec<crate::services::quiescence::ClientInfo>>),
     BeginLaunch(
@@ -747,18 +1159,18 @@ enum Command {
     Frame(u64, Box<Frame>),
 }
 struct Peer {
-    facade_access:Option<crate::mcp::access::Lease>,
-    delegated:bool,
-    wants_caller_context:bool,
-    close_code:Arc<AtomicU16>,
-    network:Arc<AtomicBool>,
-    close_done:watch::Receiver<bool>,
+    facade_access: Option<crate::mcp::access::Lease>,
+    delegated: bool,
+    wants_caller_context: bool,
+    close_code: Arc<AtomicU16>,
+    network: Arc<AtomicBool>,
+    close_done: watch::Receiver<bool>,
     local_facade: bool,
-    internal:bool,
-    activity_seq:u64,
-    last_active_ms:i64,
-    last_interaction_ms:i64,
-    reports_interaction:bool,
+    internal: bool,
+    activity_seq: u64,
+    last_active_ms: i64,
+    last_interaction_ms: i64,
+    reports_interaction: bool,
     identity: Identity,
     credential: Option<String>,
     reliable: mpsc::Sender<Frame>,
@@ -931,7 +1343,9 @@ impl Core {
         }
     }
     fn demand_change(&mut self, topic: &str, wanted: bool) {
-        if let Some(streams)=&self.options.live_streams{streams.set_demand(topic,wanted);}
+        if let Some(streams) = &self.options.live_streams {
+            streams.set_demand(topic, wanted);
+        }
         let ids: Vec<_> = self
             .peers
             .iter()
@@ -961,8 +1375,25 @@ impl Core {
         peer.closed.send_replace(true);
         // Negotiated relays retain per-caller local connections for terminal
         // leases. Release that identity even when no RPC is currently pending.
-        let relays:Vec<_>=self.peers.iter().filter(|(owner,peer)|peer.wants_caller_context && self.providers.values().any(|provider|provider==*owner)).map(|(owner,_)|*owner).collect();
-        for relay in relays{self.send(relay,Frame{id:id.to_string(),caller_context_version:1,..Frame::op("callerClosed")});}
+        let relays: Vec<_> = self
+            .peers
+            .iter()
+            .filter(|(owner, peer)| {
+                peer.wants_caller_context
+                    && self.providers.values().any(|provider| provider == *owner)
+            })
+            .map(|(owner, _)| *owner)
+            .collect();
+        for relay in relays {
+            self.send(
+                relay,
+                Frame {
+                    id: id.to_string(),
+                    caller_context_version: 1,
+                    ..Frame::op("callerClosed")
+                },
+            );
+        }
         self.providers.retain(|_, owner| *owner != id);
         let lost: Vec<_> = self
             .pending
@@ -971,9 +1402,12 @@ impl Core {
             .map(|(key, _)| *key)
             .collect();
         for key in lost {
-            if let Some(p)=self.pending.get(&key) {
-                if p.caller==id {self.cancel_pending(key,None);}
-                else {self.finish(key,Err(anyhow!("provider for {} disconnected",p.method)));}
+            if let Some(p) = self.pending.get(&key) {
+                if p.caller == id {
+                    self.cancel_pending(key, None);
+                } else {
+                    self.finish(key, Err(anyhow!("provider for {} disconnected", p.method)));
+                }
             }
         }
         for topic in peer.held_demand {
@@ -1000,7 +1434,15 @@ impl Core {
                     }
                 }
             }
-            for peer in self.peers.values(){if peer.facade_access.as_ref().is_some_and(|lease|!lease.valid()){peer.closed.send_replace(true);}}
+            for peer in self.peers.values() {
+                if peer
+                    .facade_access
+                    .as_ref()
+                    .is_some_and(|lease| !lease.valid())
+                {
+                    peer.closed.send_replace(true);
+                }
+            }
         }
         let closed: Vec<_> = self
             .peers
@@ -1018,26 +1460,49 @@ impl Core {
             .map(|(id, _)| *id)
             .collect();
         for id in expired {
-            self.cancel_pending(id,Some("call timed out; outcome is unknown, do not automatically retry"));
+            self.cancel_pending(
+                id,
+                Some("call timed out; outcome is unknown, do not automatically retry"),
+            );
         }
     }
     // Cancellation revokes pending admission/proofs, not an already accepted
     // engine effect. Local owned handlers finish their bookkeeping normally.
-    fn cancel_pending(&mut self, id:u64, error:Option<&str>) {
-        if let Some(p)=self.pending.remove(&id) {
-            if let Some(provider)=p.provider {
-                if self.peers.get(&provider).is_some_and(|peer|peer.wants_caller_context) {
-                    self.send(provider,Frame{id:id.to_string(),caller_context_version:1,..Frame::op("cancel")});
+    fn cancel_pending(&mut self, id: u64, error: Option<&str>) {
+        if let Some(p) = self.pending.remove(&id) {
+            if let Some(provider) = p.provider {
+                if self
+                    .peers
+                    .get(&provider)
+                    .is_some_and(|peer| peer.wants_caller_context)
+                {
+                    self.send(
+                        provider,
+                        Frame {
+                            id: id.to_string(),
+                            caller_context_version: 1,
+                            ..Frame::op("cancel")
+                        },
+                    );
                 }
             }
-            if let Some(error)=error {self.send(p.caller,Frame::error(p.correlation,error));}
+            if let Some(error) = error {
+                self.send(p.caller, Frame::error(p.correlation, error));
+            }
         }
     }
-    fn cancel_call(&mut self, caller:u64, correlation:&str) {
+    fn cancel_call(&mut self, caller: u64, correlation: &str) {
         // The numeric broker ID and any supplied providerCaller are irrelevant
         // on caller ingress: only this connection's own original ID can cancel.
-        let matching:Vec<_>=self.pending.iter().filter(|(_,p)|p.caller==caller && p.correlation==correlation).map(|(id,_)|*id).collect();
-        for id in matching {self.cancel_pending(id,None);}
+        let matching: Vec<_> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| p.caller == caller && p.correlation == correlation)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in matching {
+            self.cancel_pending(id, None);
+        }
     }
     fn finish(&mut self, id: u64, result: Result<Value>) {
         if let Some(p) = self.pending.remove(&id) {
@@ -1056,14 +1521,30 @@ impl Core {
         if !self.peers.contains_key(&id) || *self.peers[&id].closed.borrow() {
             return;
         }
-        if self.peers[&id].facade_access.as_ref().is_some_and(|lease|!lease.valid()){self.disconnect(id);return;}
-        if matches!(frame.op.as_str(),"call"|"publish"|"activity") {
-            let peer=self.peers.get_mut(&id).unwrap();
-            let now=chrono::Utc::now().timestamp_millis();
-            peer.activity_seq=peer.activity_seq.saturating_add(1);
-            peer.last_active_ms=now;
-            if frame.op=="activity" {peer.reports_interaction=true;}
-            if frame.op!="call" || !crate::services::quiescence::passive_call(&frame.method,frame.params.as_ref().unwrap_or(&Value::Null)) {peer.last_interaction_ms=now;}
+        if self.peers[&id]
+            .facade_access
+            .as_ref()
+            .is_some_and(|lease| !lease.valid())
+        {
+            self.disconnect(id);
+            return;
+        }
+        if matches!(frame.op.as_str(), "call" | "publish" | "activity") {
+            let peer = self.peers.get_mut(&id).unwrap();
+            let now = chrono::Utc::now().timestamp_millis();
+            peer.activity_seq = peer.activity_seq.saturating_add(1);
+            peer.last_active_ms = now;
+            if frame.op == "activity" {
+                peer.reports_interaction = true;
+            }
+            if frame.op != "call"
+                || !crate::services::quiescence::passive_call(
+                    &frame.method,
+                    frame.params.as_ref().unwrap_or(&Value::Null),
+                )
+            {
+                peer.last_interaction_ms = now;
+            }
         }
         match frame.op.as_str() {
             "subscribe" | "unsubscribe" | "demand" => self.topics(id, frame),
@@ -1087,18 +1568,24 @@ impl Core {
                     self.providers.insert(method.clone(), id);
                     accepted.push(method);
                 }
-                if frame.wants_caller_context{self.peers.get_mut(&id).unwrap().wants_caller_context=true;}
+                if frame.wants_caller_context {
+                    self.peers.get_mut(&id).unwrap().wants_caller_context = true;
+                }
                 self.send(
                     id,
                     Frame {
-                        caller_context_version:if self.peers[&id].wants_caller_context{1}else{0},
+                        caller_context_version: if self.peers[&id].wants_caller_context {
+                            1
+                        } else {
+                            0
+                        },
                         methods: accepted,
                         ..Frame::op("registered")
                     },
                 );
             }
             "call" => self.call(id, frame),
-            "cancel" => self.cancel_call(id,&frame.id),
+            "cancel" => self.cancel_call(id, &frame.id),
             "result" | "error" => {
                 if let Ok(key) = frame.id.parse::<u64>()
                     && self
@@ -1118,7 +1605,13 @@ impl Core {
                 if let Some(mut event) = frame.event {
                     // Only the trusted federation adapter can establish the
                     // owning peer; a wire publisher cannot stamp its own hub.
-                    if event.topic.starts_with("agent.dispatch.")&&!event.hub.is_empty(){self.send(id,Frame::error("","dispatch events cannot assert a hub identity"));return;}
+                    if event.topic.starts_with("agent.dispatch.") && !event.hub.is_empty() {
+                        self.send(
+                            id,
+                            Frame::error("", "dispatch events cannot assert a hub identity"),
+                        );
+                        return;
+                    }
                     event.hub.clear();
                     if !self.peers[&id].identity.may_publish(&event.topic) {
                         self.send(id, Frame::error("", format!("not authorized: publishing events is outside this token's {:?} scope", self.peers[&id].identity.scope())));
@@ -1126,8 +1619,18 @@ impl Core {
                     }
                     // Receipt observations require the opted-in current execution
                     // provider, in addition to the credential's publish grant.
-                    if event.topic.starts_with("agent.dispatch.")&&!(event.topic=="agent.dispatch.update"&&self.peers[&id].wants_caller_context&&self.providers.get("agents.spawn")==Some(&id)) {
-                        self.send(id, Frame::error("", "dispatch updates require the current negotiated spawn provider"));
+                    if event.topic.starts_with("agent.dispatch.")
+                        && !(event.topic == "agent.dispatch.update"
+                            && self.peers[&id].wants_caller_context
+                            && self.providers.get("agents.spawn") == Some(&id))
+                    {
+                        self.send(
+                            id,
+                            Frame::error(
+                                "",
+                                "dispatch updates require the current negotiated spawn provider",
+                            ),
+                        );
                         return;
                     }
                     self.publish(event);
@@ -1260,7 +1763,13 @@ impl Core {
             );
             return;
         }
-        if !self.peers[&caller].identity.may_call(bare) && !(qualified.is_none() && self.peers[&caller].facade_access.as_ref().is_some_and(|lease|lease.allows_plugin(bare))) {
+        if !self.peers[&caller].identity.may_call(bare)
+            && !(qualified.is_none()
+                && self.peers[&caller]
+                    .facade_access
+                    .as_ref()
+                    .is_some_and(|lease| lease.allows_plugin(bare)))
+        {
             let error = if frame.method.starts_with("desktop.") {
                 "desktop services require the authenticated server owner's connection".into()
             } else {
@@ -1273,8 +1782,27 @@ impl Core {
             self.send(caller, Frame::error(frame.id, error));
             return;
         }
-        let external_provider=qualified.is_none()&&self.options.control_plane_only&&self.providers.contains_key(bare)&&!self.options.handlers.contains_key(bare);
-        let upstream_scrubbed=if self.peers[&caller].delegated&&bare=="agents.spawn" {frame.params.as_ref().and_then(|params|params.get("escalationScrubbed")).filter(|value|value.as_array().is_some_and(|fields|fields.len()<=64&&fields.iter().all(|field|field.as_str().is_some_and(|field|field.len()<=256)))).cloned()}else{None};
+        let external_provider = qualified.is_none()
+            && self.options.control_plane_only
+            && self.providers.contains_key(bare)
+            && !self.options.handlers.contains_key(bare);
+        let upstream_scrubbed = if self.peers[&caller].delegated && bare == "agents.spawn" {
+            frame
+                .params
+                .as_ref()
+                .and_then(|params| params.get("escalationScrubbed"))
+                .filter(|value| {
+                    value.as_array().is_some_and(|fields| {
+                        fields.len() <= 64
+                            && fields
+                                .iter()
+                                .all(|field| field.as_str().is_some_and(|field| field.len() <= 256))
+                    })
+                })
+                .cloned()
+        } else {
+            None
+        };
         let had_params = frame.params.is_some();
         let mut admission_identity = self.peers[&caller].identity.clone();
         if self.peers[&caller].local_facade {
@@ -1287,47 +1815,107 @@ impl Core {
             bare,
             frame.params.take().unwrap_or(Value::Null),
         ) {
-            Ok(mut params) => {if let Some(scrubbed)=upstream_scrubbed{if params.is_object(){params["escalationScrubbed"]=scrubbed;}}frame.params = (had_params || !params.is_null()).then_some(params);},
+            Ok(mut params) => {
+                if let Some(scrubbed) = upstream_scrubbed {
+                    if params.is_object() {
+                        params["escalationScrubbed"] = scrubbed;
+                    }
+                }
+                frame.params = (had_params || !params.is_null()).then_some(params);
+            }
             Err(error) => {
                 self.send(caller, Frame::error(frame.id, error.to_string()));
                 return;
             }
         }
-        if external_provider&&bare=="agents.spawn"&&let Some(routing)=&self.options.routing {
-            let params=frame.params.get_or_insert(Value::Null);
-            match routing.sanitize_spawn(params){
-                Ok(mut scrubbed)=>{if scrubbed.iter().any(|key|matches!(key.as_str(),"model"|"provider")){if let Some(params)=params.as_object_mut(){for key in ["modelIdentity","contextWindow"]{if params.remove(key).is_some(){scrubbed.push(key.into());}}}}if !scrubbed.is_empty(){params["escalationScrubbed"]=json!(scrubbed);}},
-                Err(error)=>{self.send(caller,Frame::error(frame.id,error.to_string()));return;}
+        if external_provider
+            && bare == "agents.spawn"
+            && let Some(routing) = &self.options.routing
+        {
+            let params = frame.params.get_or_insert(Value::Null);
+            match routing.sanitize_spawn(params) {
+                Ok(mut scrubbed) => {
+                    if scrubbed
+                        .iter()
+                        .any(|key| matches!(key.as_str(), "model" | "provider"))
+                    {
+                        if let Some(params) = params.as_object_mut() {
+                            for key in ["modelIdentity", "contextWindow"] {
+                                if params.remove(key).is_some() {
+                                    scrubbed.push(key.into());
+                                }
+                            }
+                        }
+                    }
+                    if !scrubbed.is_empty() {
+                        params["escalationScrubbed"] = json!(scrubbed);
+                    }
+                }
+                Err(error) => {
+                    self.send(caller, Frame::error(frame.id, error.to_string()));
+                    return;
+                }
             }
         }
         // These operations require the remaining admission and routing stages. Do
         // not expose an unsafe transparent substitute during the migration.
-        let paired_spawn = qualified.is_none() && bare == "agents.spawn" && self.options.paired_dispatch.is_some()
-            && frame.params.as_ref().is_some_and(|params|params["executionTarget"]=="paired");
-        let remote_forward = qualified.is_some() && bare == "agents.spawn" && self.options.remote_origin.is_some();
-        let remote_spawn = qualified.is_none() && bare == "agents.spawn"
-            && admission_identity.federated && self.options.remote_receiver.is_some()
-            && frame.params.as_ref().is_some_and(|params| params.get("remoteOrigin").is_some());
-        if ((remote_spawn || paired_spawn || (qualified.is_none() && bare=="agents.dispatchPrepare")) && self.options.spawn_coordinator.is_some() && !self.launch_ready())
+        let paired_spawn = qualified.is_none()
+            && bare == "agents.spawn"
+            && self.options.paired_dispatch.is_some()
+            && frame
+                .params
+                .as_ref()
+                .is_some_and(|params| params["executionTarget"] == "paired");
+        let remote_forward =
+            qualified.is_some() && bare == "agents.spawn" && self.options.remote_origin.is_some();
+        let remote_spawn = qualified.is_none()
+            && bare == "agents.spawn"
+            && admission_identity.federated
+            && self.options.remote_receiver.is_some()
+            && frame
+                .params
+                .as_ref()
+                .is_some_and(|params| params.get("remoteOrigin").is_some());
+        if ((remote_spawn
+            || paired_spawn
+            || (qualified.is_none() && bare == "agents.dispatchPrepare"))
+            && self.options.spawn_coordinator.is_some()
+            && !self.launch_ready())
             || (matches!(bare, "agents.dispatchPrepare" | "agents.dispatchReplay")
-            && if qualified.is_some(){bare != "agents.dispatchReplay"}else{self.options.remote_receiver.is_none()&&!external_provider})
+                && if qualified.is_some() {
+                    bare != "agents.dispatchReplay"
+                } else {
+                    self.options.remote_receiver.is_none() && !external_provider
+                })
             || (bare == "fleetWorkflows.request"
-                && (qualified.is_some() || (self.options.workflow_runtime.is_none()&&!external_provider)))
-            || (bare == "agents.spawn" && !remote_spawn && !remote_forward && !paired_spawn && !external_provider && (qualified.is_some() || !self.launch_ready()))
+                && (qualified.is_some()
+                    || (self.options.workflow_runtime.is_none() && !external_provider)))
+            || (bare == "agents.spawn"
+                && !remote_spawn
+                && !remote_forward
+                && !paired_spawn
+                && !external_provider
+                && (qualified.is_some() || !self.launch_ready()))
         {
             self.send(
                 caller,
-                Frame::error(frame.id, if bare == "fleetWorkflows.request" {
-                    "fleet workflows require the local desktop service"
-                } else {
-                    "operation requires a configured execution service"
-                }),
+                Frame::error(
+                    frame.id,
+                    if bare == "fleetWorkflows.request" {
+                        "fleet workflows require the local desktop service"
+                    } else {
+                        "operation requires a configured execution service"
+                    },
+                ),
             );
             return;
         }
         let handler: Option<Handler> = if paired_spawn {
-            let paired=self.options.paired_dispatch.clone().unwrap();
-            Some(Arc::new(move|caller,params|{let paired=paired.clone();Box::pin(async move{paired.spawn(caller,params).await})}))
+            let paired = self.options.paired_dispatch.clone().unwrap();
+            Some(Arc::new(move |caller, params| {
+                let paired = paired.clone();
+                Box::pin(async move { paired.spawn(caller, params).await })
+            }))
         } else if remote_spawn {
             let receiver = self.options.remote_receiver.clone().unwrap();
             Some(Arc::new(move |caller, params| {
@@ -1394,7 +1982,7 @@ impl Core {
             let identity = &self.peers[&caller].identity;
             let caller = Caller {
                 call_id: key,
-                activity_seq:self.peers[&caller].activity_seq,
+                activity_seq: self.peers[&caller].activity_seq,
                 federated: identity.federated,
                 connection_id: caller,
                 authenticated_host: identity.authenticated_host(),
@@ -1419,7 +2007,9 @@ impl Core {
                     id: key.to_string(),
                     method: frame.method,
                     params: frame.params,
-                    provider_caller:self.peers[&provider.unwrap()].wants_caller_context.then(||admission_identity.provider_caller(caller)),
+                    provider_caller: self.peers[&provider.unwrap()]
+                        .wants_caller_context
+                        .then(|| admission_identity.provider_caller(caller)),
                     ..Frame::op("call")
                 },
             );
@@ -1456,8 +2046,16 @@ async fn run(
             options.scoped_tokens.as_ref(),
         ) {
             let facade = crate::services::session_facade::SessionFacade {
-                readiness: if mcp_address.is_some(){crate::services::session_facade::Readiness::OwnedRust(handle.clone())}else{crate::services::session_facade::Readiness::Disabled},
-                endpoint: mcp_address.map(|address|format!("http://{}/mcp",crate::net_address::dial_addr(address)).parse()).transpose()?,
+                readiness: if mcp_address.is_some() {
+                    crate::services::session_facade::Readiness::OwnedRust(handle.clone())
+                } else {
+                    crate::services::session_facade::Readiness::Disabled
+                },
+                endpoint: mcp_address
+                    .map(|address| {
+                        format!("http://{}/mcp", crate::net_address::dial_addr(address)).parse()
+                    })
+                    .transpose()?,
                 expected_hub: "in-process".into(),
                 tokens: tokens.clone(),
                 directory: config.join("session-mcp"),
@@ -1485,28 +2083,40 @@ async fn run(
         let engine = options.engine.clone();
         options = crate::services::routing::install(options, routing, engine, handle.clone());
     }
-    options=crate::services::remote_admin::install(options,address.map(|address|address.port()));
-    options=crate::services::uploads::install_front(options,handle.clone());
+    options =
+        crate::services::remote_admin::install(options, address.map(|address| address.port()));
+    options = crate::services::uploads::install_front(options, handle.clone());
     if let Some(directory) = options.data_dir.clone() {
         options = crate::services::install(options, handle.clone(), directory)?;
     }
     if let Some(directory) = options.config_dir.clone() {
-        if !options.control_plane_only{options = crate::services::install_config(options, directory, handle.clone())?;}
+        if !options.control_plane_only {
+            options = crate::services::install_config(options, directory, handle.clone())?;
+        }
     }
-    if let Some(home) = options.home_dir.clone().filter(|_|!options.control_plane_only) {
+    if let Some(home) = options
+        .home_dir
+        .clone()
+        .filter(|_| !options.control_plane_only)
+    {
         options = crate::services::files::install(options, home);
         options = crate::services::git::install(options);
         options = crate::services::search::install(options);
     }
     if let Some(execution) = options.remote_dispatch_execution.clone() {
-        let directory = options.config_dir.clone().ok_or_else(|| anyhow!("remote execution requires a config directory"))?;
-        let receiver = crate::services::remote_dispatch::Receiver::open(directory, handle.clone(), execution)?;
+        let directory = options
+            .config_dir
+            .clone()
+            .ok_or_else(|| anyhow!("remote execution requires a config directory"))?;
+        let receiver =
+            crate::services::remote_dispatch::Receiver::open(directory, handle.clone(), execution)?;
         options = receiver.handlers(options);
         options.remote_receiver = Some(receiver);
     }
-    let (configured,file_watches,mut filewatch_task)=crate::services::filewatch::install(options,handle.clone());
-    options=configured;
-    options=crate::services::terminals::install(options,handle.clone());
+    let (configured, file_watches, mut filewatch_task) =
+        crate::services::filewatch::install(options, handle.clone());
+    options = configured;
+    options = crate::services::terminals::install(options, handle.clone());
     options = crate::services::wakes::install(options);
     if options.spawn_coordinator.is_some() && options.scoped_tokens.is_some() {
         if let Some(wakes) = options.wakes.clone() {
@@ -1519,18 +2129,30 @@ async fn run(
             options.replacement_service = Some(service);
         }
     }
-    if options.engine.is_some(){options=crate::services::workflow_artifacts::prepare(options,handle.clone());}
+    if options.engine.is_some() {
+        options = crate::services::workflow_artifacts::prepare(options, handle.clone());
+    }
     let (configured, mut session_task) =
         crate::services::sessions::install(options, handle.clone()).await?;
-    if let Some(service)=&configured.workflow_artifacts{service.start();}
+    if let Some(service) = &configured.workflow_artifacts {
+        service.start();
+    }
     options = crate::services::desktop_workflows::install(configured);
     options = crate::services::html_card::install(options);
-    options = crate::services::live_controls::install(options,handle.clone());
+    options = crate::services::live_controls::install(options, handle.clone());
     options = crate::services::live_streams::install(options);
-    let live_streams=options.live_streams.clone();
-    let mut live_stream_task=live_streams.clone().map(|streams|{let handle=handle.clone();tokio::spawn(async move{handle.ready().await?;streams.run(handle).await})});
+    let live_streams = options.live_streams.clone();
+    let mut live_stream_task = live_streams.clone().map(|streams| {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle.ready().await?;
+            streams.run(handle).await
+        })
+    });
     if let Some(service) = &options.replacement_service {
-        if let Err(error)=service.initialize().await {eprintln!("manager handoff recovery remains fenced for inspection: {error}");}
+        if let Err(error) = service.initialize().await {
+            eprintln!("manager handoff recovery remains fenced for inspection: {error}");
+        }
     }
     let mut wake_task = options.wakes.clone().map(|wakes| {
         let handle = handle.clone();
@@ -1545,48 +2167,71 @@ async fn run(
         }
     }
     let remote_receiver = options.remote_receiver.clone();
-    let remote_sweeper = remote_receiver.clone().map(|receiver| tokio::spawn(receiver.run()));
-    let analytics_watcher=options.analytics_watcher.clone();
-    let mut analytics_task=analytics_watcher.clone().map(|watcher|{let hub=handle.clone();tokio::spawn(async move{watcher.run(hub).await})});
+    let remote_sweeper = remote_receiver
+        .clone()
+        .map(|receiver| tokio::spawn(receiver.run()));
+    let analytics_watcher = options.analytics_watcher.clone();
+    let mut analytics_task = analytics_watcher.clone().map(|watcher| {
+        let hub = handle.clone();
+        tokio::spawn(async move { watcher.run(hub).await })
+    });
     options = crate::services::progress::install(options);
-    let (configured,thresholds,mut threshold_task)=crate::services::thresholds::install(options,handle.clone());
-    options=configured;
+    let (configured, thresholds, mut threshold_task) =
+        crate::services::thresholds::install(options, handle.clone());
+    options = configured;
     let (configured, mut jobs_task) = crate::services::jobs::install(options, handle.clone());
     options = configured;
-    let (configured,mut nodes_owner)=crate::services::nodes::install(options,handle.clone()).await?;
-    options=configured;
-    let (configured,mut push_observer)=crate::services::push::install(options,handle.clone());
-    options=configured;
+    let (configured, mut nodes_owner) =
+        crate::services::nodes::install(options, handle.clone()).await?;
+    options = configured;
+    let (configured, mut push_observer) = crate::services::push::install(options, handle.clone());
+    options = configured;
     let (release, mut releases) = mpsc::unbounded_channel();
     let mut federation_peers = match &options.peers_file {
         Some(path) => crate::federation::load_peers(path)?,
         None => Vec::new(),
     };
-    if options.paired_target.is_none(){if let Some(directory)=&options.config_dir{options.paired_target=crate::services::remote_dispatch::paired::target(directory)?;}}
-    if let Some(target)=&options.paired_target{options.federation_peers.push(target.peer.clone());}
+    if options.paired_target.is_none() {
+        if let Some(directory) = &options.config_dir {
+            options.paired_target = crate::services::remote_dispatch::paired::target(directory)?;
+        }
+    }
+    if let Some(target) = &options.paired_target {
+        options.federation_peers.push(target.peer.clone());
+    }
     let fixed_peers = std::mem::take(&mut options.federation_peers);
     federation_peers.extend(fixed_peers.clone());
     let mut federation = crate::federation::Manager::start(handle.clone(), federation_peers)?;
-    let (configured, mut remote_observer) = crate::services::remote_dispatch::runtime::install(options, handle.clone(), federation.routes())?;
+    let (configured, mut remote_observer) = crate::services::remote_dispatch::runtime::install(
+        options,
+        handle.clone(),
+        federation.routes(),
+    )?;
     options = configured;
     let peers_file = options.peers_file.clone();
     options = crate::federation::config::install(options, handle.clone(), peers_file, fixed_peers);
-    options=crate::federation::install_resume(options,federation.routes());
+    options = crate::federation::install_resume(options, federation.routes());
     let routes = federation.routes();
     options = options.handler("federation.peers", move |_, _| {
         let peers = routes.peers();
         async move { Ok(serde_json::to_value(peers)?) }
     });
-    let (configured, quiescence, sampler_task) = crate::services::quiescence::install(options, handle.clone(), federation.routes());
+    let (configured, quiescence, sampler_task) =
+        crate::services::quiescence::install(options, handle.clone(), federation.routes());
     options = configured;
     let mut quiescence_task = Some(sampler_task);
     #[cfg(feature = "test-support")]
-    if let Some(configure)=options.test_after_services.take(){ options=configure(options); }
+    if let Some(configure) = options.test_after_services.take() {
+        options = configure(options);
+    }
     let plugin_manager = options.plugins_dir.clone().map(|directory| {
         let mut manager = crate::plugins::Manager::new(
             directory,
             handle.clone(),
-            format!("ws://{}/bus", crate::net_address::dial_addr(address.unwrap())),
+            format!(
+                "ws://{}/bus",
+                crate::net_address::dial_addr(address.unwrap())
+            ),
         );
         manager.set_stream_logs(options.plugins_stream_logs);
         manager.set_sidecar_node(options.sidecar_node.clone());
@@ -1603,7 +2248,7 @@ async fn run(
                     plugin_origin: options.plugin_origin.clone(),
                     examples_dir: options.plugin_examples_dir.clone(),
                 },
-                crate::server::policy::Policy::new(address.unwrap().ip(),&options.trusted_hosts)?,
+                crate::server::policy::Policy::new(address.unwrap().ip(), &options.trusted_hosts)?,
             )
         })
         .transpose()?;
@@ -1641,33 +2286,66 @@ async fn run(
             anyhow::Ok(())
         })
     });
-    let (configured,mut relay_owner)=crate::provider_relay::install(options,handle.clone())?;
-    options=configured;
+    let (configured, mut relay_owner) = crate::provider_relay::install(options, handle.clone())?;
+    options = configured;
     let mut mcp_task = mcp_listener.map(|listener| {
         let hub = handle.clone();
         let token = options.token.clone();
         let store = options.scoped_tokens.clone();
         let ready = options.mcp_ready.clone();
-        let trusted_hosts=options.trusted_hosts.clone();
-        let upstream=options.upstream_caller.clone();
-        let access=options.mcp_access.clone().expect("MCP policy initialized before runtime");
-        tokio::spawn(async move { crate::mcp::serve(listener, hub, token, store, ready,trusted_hosts,upstream,access).await })
+        let trusted_hosts = options.trusted_hosts.clone();
+        let upstream = options.upstream_caller.clone();
+        let access = options
+            .mcp_access
+            .clone()
+            .expect("MCP policy initialized before runtime");
+        tokio::spawn(async move {
+            crate::mcp::serve(
+                listener,
+                hub,
+                token,
+                store,
+                ready,
+                trusted_hosts,
+                upstream,
+                access,
+            )
+            .await
+        })
     });
-    let webapp_dir=options.webapp_dir.clone();
-    let trusted_hosts=options.trusted_hosts.clone();
+    let webapp_dir = options.webapp_dir.clone();
+    let trusted_hosts = options.trusted_hosts.clone();
     let mut server = listener.map(|listener| {
         let token = options.token.clone();
         let handle = handle.clone();
         let scoped_tokens = options.scoped_tokens.clone();
         let plugins = plugin_routes;
         tokio::spawn(async move {
-            crate::server::serve(listener, handle, token, scoped_tokens, plugins, webapp_dir, trusted_hosts).await
+            crate::server::serve(
+                listener,
+                handle,
+                token,
+                scoped_tokens,
+                plugins,
+                webapp_dir,
+                trusted_hosts,
+            )
+            .await
         })
     });
-    let provider_utilities=options.provider_utilities.clone();
-    let mut provider_utilities_task=provider_utilities.clone().map(|service|{let handle=handle.clone();tokio::spawn(async move{handle.ready().await?;service.run().await})});
-    let external_claudemon=options.external_claudemon.clone();
-    let mut external_task=external_claudemon.clone().map(|daemon|{let handle=handle.clone();tokio::spawn(async move{daemon.run(handle).await})});
+    let provider_utilities = options.provider_utilities.clone();
+    let mut provider_utilities_task = provider_utilities.clone().map(|service| {
+        let handle = handle.clone();
+        tokio::spawn(async move {
+            handle.ready().await?;
+            service.run().await
+        })
+    });
+    let external_claudemon = options.external_claudemon.clone();
+    let mut external_task = external_claudemon.clone().map(|daemon| {
+        let handle = handle.clone();
+        tokio::spawn(async move { daemon.run(handle).await })
+    });
     let mut core = Core {
         federation: federation.routes(),
         peers: HashMap::new(),
@@ -1870,28 +2548,78 @@ async fn run(
             }
         }
     }
-    if let Some(service)=&core.options.workflow_artifacts{service.close().await;}
-    if let Some(service)=provider_utilities{service.close();}
-    if let Some(task)=provider_utilities_task{let _=task.await;}
-    if let Some(daemon)=external_claudemon{daemon.close();}
-    if let Some(task)=external_task{let _=task.await;}
-    if let Some(streams)=live_streams{streams.close();}
-    if let Some(task)=live_stream_task{let _=task.await;}
-    if let Some(terminals)=&core.options.terminals{terminals.close().await;}
-    if let Some(watcher)=analytics_watcher{watcher.close();}
-    if let Some(task)=analytics_task{let _=task.await;}
-    if let Some(watches)=file_watches{watches.close();}
-    if let Some(task)=filewatch_task{let _=task.await;}
-    if let Some(thresholds)=thresholds{thresholds.close();}
-    if let Some(task)=threshold_task{let _=task.await;}
+    if let Some(service) = &core.options.workflow_artifacts {
+        service.close().await;
+    }
+    if let Some(service) = provider_utilities {
+        service.close();
+    }
+    if let Some(task) = provider_utilities_task {
+        let _ = task.await;
+    }
+    if let Some(daemon) = external_claudemon {
+        daemon.close();
+    }
+    if let Some(task) = external_task {
+        let _ = task.await;
+    }
+    if let Some(streams) = live_streams {
+        streams.close();
+    }
+    if let Some(task) = live_stream_task {
+        let _ = task.await;
+    }
+    if let Some(terminals) = &core.options.terminals {
+        terminals.close().await;
+    }
+    if let Some(watcher) = analytics_watcher {
+        watcher.close();
+    }
+    if let Some(task) = analytics_task {
+        let _ = task.await;
+    }
+    if let Some(watches) = file_watches {
+        watches.close();
+    }
+    if let Some(task) = filewatch_task {
+        let _ = task.await;
+    }
+    if let Some(thresholds) = thresholds {
+        thresholds.close();
+    }
+    if let Some(task) = threshold_task {
+        let _ = task.await;
+    }
     quiescence.close();
-    if let Some(task)=quiescence_task { let _=task.await; }
-    if let Some(owner)=relay_owner {owner.stop();let _=owner.task.await;if let Some(task)=owner.caller_task{let _=task.await;}}
-    if let Some(owner)=nodes_owner {owner.stop();let _=owner.task.await;}
-    if let Some(observer)=push_observer {observer.stop();let _=observer.task.await;}
-    if let Some(observer) = remote_observer { observer.stop(); observer.task.abort(); let _ = observer.task.await; }
-    if let Some(receiver) = remote_receiver { receiver.begin_close(); }
-    if let Some(task) = remote_sweeper { let _ = task.await; }
+    if let Some(task) = quiescence_task {
+        let _ = task.await;
+    }
+    if let Some(owner) = relay_owner {
+        owner.stop();
+        let _ = owner.task.await;
+        if let Some(task) = owner.caller_task {
+            let _ = task.await;
+        }
+    }
+    if let Some(owner) = nodes_owner {
+        owner.stop();
+        let _ = owner.task.await;
+    }
+    if let Some(observer) = push_observer {
+        observer.stop();
+        let _ = observer.task.await;
+    }
+    if let Some(observer) = remote_observer {
+        observer.stop();
+        observer.task.abort();
+        let _ = observer.task.await;
+    }
+    if let Some(receiver) = remote_receiver {
+        receiver.begin_close();
+    }
+    if let Some(task) = remote_sweeper {
+        let _ = task.await;
+    }
     commands.close();
     if let Some(task) = plugin_boot {
         task.abort();
@@ -1953,11 +2681,18 @@ mod launch_proof_tests {
         let (events, _) = mpsc::channel(4);
         let (closed, _) = watch::channel(false);
         let peer = Peer {
-            facade_access:None,
-            delegated:false,
-            wants_caller_context:false,
-            close_code:Arc::new(AtomicU16::new(0)),network:Arc::new(AtomicBool::new(false)),close_done:watch::channel(false).1,
-            local_facade: false, internal:false, activity_seq:1, last_active_ms:0, last_interaction_ms:0, reports_interaction:false,
+            facade_access: None,
+            delegated: false,
+            wants_caller_context: false,
+            close_code: Arc::new(AtomicU16::new(0)),
+            network: Arc::new(AtomicBool::new(false)),
+            close_done: watch::channel(false).1,
+            local_facade: false,
+            internal: false,
+            activity_seq: 1,
+            last_active_ms: 0,
+            last_interaction_ms: 0,
+            reports_interaction: false,
             identity: Identity::host("fixture"),
             credential: None,
             reliable,
@@ -1992,7 +2727,7 @@ mod launch_proof_tests {
         };
         let caller = Caller {
             call_id: 7,
-            activity_seq:0,
+            activity_seq: 0,
             federated: false,
             connection_id: 1,
             authenticated_host: true,
@@ -2063,15 +2798,30 @@ mod launch_proof_tests {
     }
     #[test]
     fn cancellation_uses_original_caller_correlation_and_revokes_launch_proof() {
-        let (mut core,caller)=fixture();
-        let permit=core.begin_launch(&caller,"session".into(),"fixture".into()).unwrap();
-        core.pending.insert(8,Pending{caller:1,provider:None,correlation:"sibling".into(),method:"config.get".into(),deadline:Instant::now()+Duration::from_secs(30),selected_integration:None,launch_permit:None,launch_prepared:false});
-        core.cancel_call(2,"caller-request");
-        core.cancel_call(1,"7");
-        assert!(core.check_launch(&permit,false).is_ok());
-        core.cancel_call(1,"caller-request");
-        assert!(core.check_launch(&permit,false).is_err());
-        assert!(!core.pending.contains_key(&7));assert!(core.pending.contains_key(&8));
+        let (mut core, caller) = fixture();
+        let permit = core
+            .begin_launch(&caller, "session".into(), "fixture".into())
+            .unwrap();
+        core.pending.insert(
+            8,
+            Pending {
+                caller: 1,
+                provider: None,
+                correlation: "sibling".into(),
+                method: "config.get".into(),
+                deadline: Instant::now() + Duration::from_secs(30),
+                selected_integration: None,
+                launch_permit: None,
+                launch_prepared: false,
+            },
+        );
+        core.cancel_call(2, "caller-request");
+        core.cancel_call(1, "7");
+        assert!(core.check_launch(&permit, false).is_ok());
+        core.cancel_call(1, "caller-request");
+        assert!(core.check_launch(&permit, false).is_err());
+        assert!(!core.pending.contains_key(&7));
+        assert!(core.pending.contains_key(&8));
     }
 }
 
@@ -2080,53 +2830,152 @@ mod quiescence_activity_tests {
     use super::*;
     #[tokio::test]
     async fn passive_polling_preserves_interaction_and_internal_identity_is_host_owned() {
-        let options=Options::default()
-            .handler("sessions.snapshots",|_,_|async {Ok(Value::Array(vec![]))})
-            .handler("fleet.quiescence",|caller,_|async move {Ok(serde_json::json!({"sequence":caller.activity_seq}))});
-        let hub=Hub::start(options).unwrap();
+        let options = Options::default()
+            .handler("sessions.snapshots", |_, _| async {
+                Ok(Value::Array(vec![]))
+            })
+            .handler("fleet.quiescence", |caller, _| async move {
+                Ok(serde_json::json!({"sequence":caller.activity_seq}))
+            });
+        let hub = Hub::start(options).unwrap();
         hub.ready().await.unwrap();
-        let handle=hub.handle();
-        let mut native=handle.connect().await.unwrap();
-        let internal=handle.connect_service().await.unwrap();
-        native.send(Frame{op:"activity".into(),..Default::default()}).unwrap();
-        let before=handle.quiescence_clients().await.unwrap().into_iter().find(|c|c.connection_id==native.id).unwrap();
+        let handle = hub.handle();
+        let mut native = handle.connect().await.unwrap();
+        let internal = handle.connect_service().await.unwrap();
+        native
+            .send(Frame {
+                op: "activity".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let before = handle
+            .quiescence_clients()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.connection_id == native.id)
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(3)).await;
-        native.send(Frame{op:"call".into(),id:"q1".into(),method:"sessions.snapshots".into(),..Default::default()}).unwrap();
-        while native.recv().await.unwrap().id!="q1" {}
-        let rows=handle.quiescence_clients().await.unwrap();
-        let after=rows.iter().find(|c|c.connection_id==native.id).unwrap();
-        assert_eq!(before.idle_active_ms,after.idle_active_ms);
-        assert!(after.activity_seq>before.activity_seq);
+        native
+            .send(Frame {
+                op: "call".into(),
+                id: "q1".into(),
+                method: "sessions.snapshots".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        while native.recv().await.unwrap().id != "q1" {}
+        let rows = handle.quiescence_clients().await.unwrap();
+        let after = rows.iter().find(|c| c.connection_id == native.id).unwrap();
+        assert_eq!(before.idle_active_ms, after.idle_active_ms);
+        assert!(after.activity_seq > before.activity_seq);
         assert!(!after.internal);
-        assert!(rows.iter().find(|c|c.connection_id==internal.id).unwrap().internal);
-        native.send(Frame{op:"call".into(),id:"q2".into(),method:"fleet.quiescence".into(),..Default::default()}).unwrap();
-        let sequence=loop {let reply=native.recv().await.unwrap();if reply.id=="q2"{break reply.result.unwrap()["sequence"].as_u64().unwrap();}};
-        native.send(Frame{op:"activity".into(),..Default::default()}).unwrap();
-        let later=handle.quiescence_clients().await.unwrap().into_iter().find(|c|c.connection_id==native.id).unwrap();
-        assert!(later.activity_seq>sequence,"later input invalidates query self-exclusion even within one clock tick");
-        drop(native);drop(internal);
-        tokio::task::spawn_blocking(move||hub.shutdown()).await.unwrap().unwrap();
+        assert!(
+            rows.iter()
+                .find(|c| c.connection_id == internal.id)
+                .unwrap()
+                .internal
+        );
+        native
+            .send(Frame {
+                op: "call".into(),
+                id: "q2".into(),
+                method: "fleet.quiescence".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let sequence = loop {
+            let reply = native.recv().await.unwrap();
+            if reply.id == "q2" {
+                break reply.result.unwrap()["sequence"].as_u64().unwrap();
+            }
+        };
+        native
+            .send(Frame {
+                op: "activity".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let later = handle
+            .quiescence_clients()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.connection_id == native.id)
+            .unwrap();
+        assert!(
+            later.activity_seq > sequence,
+            "later input invalidates query self-exclusion even within one clock tick"
+        );
+        drop(native);
+        drop(internal);
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
 
 #[cfg(test)]
 mod conversation_overflow_tests {
- use super::*;
- #[tokio::test]
- async fn slow_peer_gets_ready_after_old_fragments_are_discarded_and_other_events_retained(){
-  let mut options=Options::default();options.event_buffer=3;
-  let hub=Hub::start(options).unwrap();hub.ready().await.unwrap();let handle=hub.handle();let mut peer=handle.connect().await.unwrap();
-  assert_eq!(peer.recv().await.unwrap().op,"hello");
-  peer.send(Frame{op:"subscribe".into(),topics:vec!["agent.conversation.one".into(),"fixture.other".into()],..Default::default()}).unwrap();
-  handle.health().await.unwrap();peer.recv().await.unwrap();
-  handle.publish_wait(Event::new("fixture.other","fixture",json!({"keep":true}))).await.unwrap();
-  for seq in 1..=3{handle.publish_wait(Event::new("agent.conversation.one","fixture",json!({"session_id":"one","seq":seq,"reset":false,"items":[{"kind":"assistant_text","text":format!("old-{seq}")}]}))).await.unwrap();}
-  handle.health().await.unwrap();
-  let other=peer.recv().await.unwrap().event.unwrap();assert_eq!(other.topic,"fixture.other");assert_eq!(other.data.unwrap()["keep"],true);
-  let ready=peer.recv().await.unwrap().event.unwrap();assert_eq!(ready.topic,"agent.conversation.one");assert_eq!(ready.data.unwrap(),json!({"session_id":"one","ready":true}));
-  assert!(tokio::time::timeout(Duration::from_millis(40),peer.recv()).await.is_err(),"an older queued fragment followed ready");
-  let next=json!({"session_id":"one","seq":4,"reset":false,"items":[{"kind":"assistant_text","text":"new"}]});handle.publish_wait(Event::new("agent.conversation.one","fixture",next.clone())).await.unwrap();
-  assert_eq!(peer.recv().await.unwrap().event.unwrap().data.unwrap(),next);
-  drop(peer);tokio::task::spawn_blocking(move||hub.shutdown()).await.unwrap().unwrap();
- }
+    use super::*;
+    #[tokio::test]
+    async fn slow_peer_gets_ready_after_old_fragments_are_discarded_and_other_events_retained() {
+        let mut options = Options::default();
+        options.event_buffer = 3;
+        let hub = Hub::start(options).unwrap();
+        hub.ready().await.unwrap();
+        let handle = hub.handle();
+        let mut peer = handle.connect().await.unwrap();
+        assert_eq!(peer.recv().await.unwrap().op, "hello");
+        peer.send(Frame {
+            op: "subscribe".into(),
+            topics: vec!["agent.conversation.one".into(), "fixture.other".into()],
+            ..Default::default()
+        })
+        .unwrap();
+        handle.health().await.unwrap();
+        peer.recv().await.unwrap();
+        handle
+            .publish_wait(Event::new("fixture.other", "fixture", json!({"keep":true})))
+            .await
+            .unwrap();
+        for seq in 1..=3 {
+            handle.publish_wait(Event::new("agent.conversation.one","fixture",json!({"session_id":"one","seq":seq,"reset":false,"items":[{"kind":"assistant_text","text":format!("old-{seq}")}]}))).await.unwrap();
+        }
+        handle.health().await.unwrap();
+        let other = peer.recv().await.unwrap().event.unwrap();
+        assert_eq!(other.topic, "fixture.other");
+        assert_eq!(other.data.unwrap()["keep"], true);
+        let ready = peer.recv().await.unwrap().event.unwrap();
+        assert_eq!(ready.topic, "agent.conversation.one");
+        assert_eq!(
+            ready.data.unwrap(),
+            json!({"session_id":"one","ready":true})
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), peer.recv())
+                .await
+                .is_err(),
+            "an older queued fragment followed ready"
+        );
+        let next = json!({"session_id":"one","seq":4,"reset":false,"items":[{"kind":"assistant_text","text":"new"}]});
+        handle
+            .publish_wait(Event::new(
+                "agent.conversation.one",
+                "fixture",
+                next.clone(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            peer.recv().await.unwrap().event.unwrap().data.unwrap(),
+            next
+        );
+        drop(peer);
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+    }
 }

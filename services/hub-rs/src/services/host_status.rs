@@ -17,7 +17,9 @@ fn heartbeat_limit(params: &Value) -> Result<i64> {
 pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
     // Kept as the legacy compatibility shim: ambient session capabilities no
     // longer read or rewrite per-manager grant fields.
-    options=options.handler("desktop.sessionGrantReconcile",|_,_|async{Ok(json!(false))});
+    options = options.handler("desktop.sessionGrantReconcile", |_, _| async {
+        Ok(json!(false))
+    });
     let engine = options.engine.clone();
     let ready = options.mcp_ready.clone();
     let mcp = options.mcp_listen.is_some();

@@ -17,10 +17,21 @@ pub fn configure_local_integrations(options: &mut Options) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("local integrations require a config directory"))?;
     std::fs::create_dir_all(directory)?;
-    let historical=crate::cli::config_directory().ok().and_then(|standard|crate::services::state_paths::historical_directory(directory,&standard));
-    if options.push_dir.is_none(){options.push_dir=historical.clone();}
-    if options.data_dir.is_none(){options.data_dir=Some(historical.unwrap_or_else(||directory.clone()));}
-    if options.jobs_file.is_none(){options.jobs_file=options.data_dir.as_ref().map(|directory|directory.join("jobs.json"));}
+    let historical = crate::cli::config_directory().ok().and_then(|standard| {
+        crate::services::state_paths::historical_directory(directory, &standard)
+    });
+    if options.push_dir.is_none() {
+        options.push_dir = historical.clone();
+    }
+    if options.data_dir.is_none() {
+        options.data_dir = Some(historical.unwrap_or_else(|| directory.clone()));
+    }
+    if options.jobs_file.is_none() {
+        options.jobs_file = options
+            .data_dir
+            .as_ref()
+            .map(|directory| directory.join("jobs.json"));
+    }
     if options.token.is_empty() {
         let path = directory.join("remote-token");
         match std::fs::read_to_string(&path) {
@@ -31,7 +42,7 @@ pub fn configure_local_integrations(options: &mut Options) -> Result<()> {
                 let token = match std::fs::read_to_string(directory.join("hub.token")) {
                     Ok(token) => token.trim().to_owned(),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        crate::cli::load_or_create_host_token(directory,false)?
+                        crate::cli::load_or_create_host_token(directory, false)?
                     }
                     Err(error) => return Err(error.into()),
                 };
@@ -76,11 +87,15 @@ pub fn configure_local_integrations(options: &mut Options) -> Result<()> {
 
 /// Match native/launcher precedence without changing process-global env.
 pub fn configured_usage_polling(config_dir: Option<&std::path::Path>) -> Option<bool> {
-    let explicit_environment=std::env::var_os("WORKSPACER_USAGE_POLL_ON_BOOT").is_some();
-    let raw=if explicit_environment {String::new()}else{std::fs::read_to_string(config_dir?.join("config.yaml")).ok()?};
-    usage_poll_setting(&raw,explicit_environment)
+    let explicit_environment = std::env::var_os("WORKSPACER_USAGE_POLL_ON_BOOT").is_some();
+    let raw = if explicit_environment {
+        String::new()
+    } else {
+        std::fs::read_to_string(config_dir?.join("config.yaml")).ok()?
+    };
+    usage_poll_setting(&raw, explicit_environment)
 }
-fn usage_poll_setting(raw:&str,explicit_environment:bool)->Option<bool>{
+fn usage_poll_setting(raw: &str, explicit_environment: bool) -> Option<bool> {
     if explicit_environment {
         return None;
     }
@@ -91,7 +106,7 @@ fn usage_poll_setting(raw:&str,explicit_environment:bool)->Option<bool>{
 pub struct Backend {
     hub: Option<Hub>,
     engine: Option<EmbeddedDaemon>,
-    database_lease:Option<ownership::DatabaseLease>,
+    database_lease: Option<ownership::DatabaseLease>,
 }
 impl Backend {
     pub async fn start(
@@ -113,8 +128,10 @@ impl Backend {
     /// Keep ownership outside a cancellable readiness future. A host that
     /// cancels initialize can still explicitly join every resource it started.
     pub fn prepare(mut config: ServeConfig, engine_options: EngineOptions) -> Result<Self> {
-        let database_lease=ownership::DatabaseLease::take(&config.db_path)?;
-        if let Some(lease)=&database_lease {config.db_path=lease.database.clone();}
+        let database_lease = ownership::DatabaseLease::take(&config.db_path)?;
+        if let Some(lease) = &database_lease {
+            config.db_path = lease.database.clone();
+        }
         Ok(Self {
             hub: None,
             engine: Some(EmbeddedDaemon::start_with_options(config, engine_options)?),
@@ -124,24 +141,31 @@ impl Backend {
     pub async fn initialize(&mut self, mut options: Options) -> Result<()> {
         anyhow::ensure!(self.hub.is_none(), "backend is already initialized");
         let engine = self.engine.as_mut().expect("engine owner present");
-        let endpoints=engine.ready().await?;
-        if let Some(path)=options.claude_hook_settings.clone(){
-            if let Err(error)=claudemon::daemon::init::run_at_with_port_quiet(path,endpoints.hook_addr.port()).await {
+        let endpoints = engine.ready().await?;
+        if let Some(path) = options.claude_hook_settings.clone() {
+            if let Err(error) =
+                claudemon::daemon::init::run_at_with_port_quiet(path, endpoints.hook_addr.port())
+                    .await
+            {
                 eprintln!("hook initialization failed: {error:#}; continuing");
             }
         }
         options.engine = Some(engine.client());
-        let wait_for_facade=options.mcp_listen.is_some();
+        let wait_for_facade = options.mcp_listen.is_some();
         self.hub = Some(Hub::start(options)?);
         self.hub.as_ref().unwrap().ready().await?;
         if wait_for_facade {
-            let handle=self.hub.as_ref().unwrap().handle();
-            tokio::time::timeout(std::time::Duration::from_secs(60),async {
+            let handle = self.hub.as_ref().unwrap().handle();
+            tokio::time::timeout(std::time::Duration::from_secs(60), async {
                 loop {
-                    if handle.health().await?["mcpReady"]==true{return anyhow::Ok(());}
+                    if handle.health().await?["mcpReady"] == true {
+                        return anyhow::Ok(());
+                    }
                     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                 }
-            }).await.map_err(|_|anyhow::anyhow!("owned MCP facade catalog readiness timed out"))??;
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("owned MCP facade catalog readiness timed out"))??;
         }
         Ok(())
     }
@@ -150,9 +174,12 @@ impl Backend {
     }
     /// Actual bound engine endpoints after readiness; no listener is inferred
     /// from configured ports or exposed as a caller-controlled capability.
-    pub fn engine_endpoints(&self)->Option<claudemon::daemon::embedded::ReadyInfo>{
-        let status=self.engine.as_ref()?.client().status().borrow().clone();
-        match status{claudemon::daemon::embedded::Status::Ready(ready)=>Some(ready),_=>None}
+    pub fn engine_endpoints(&self) -> Option<claudemon::daemon::embedded::ReadyInfo> {
+        let status = self.engine.as_ref()?.client().status().borrow().clone();
+        match status {
+            claudemon::daemon::embedded::Status::Ready(ready) => Some(ready),
+            _ => None,
+        }
     }
     pub async fn shutdown(mut self) -> Result<()> {
         let hub_result = if let Some(hub) = self.hub.take() {
@@ -168,7 +195,9 @@ impl Backend {
         } else {
             Ok(())
         };
-        if hub_result.is_ok() && engine_result.is_ok(){drop(self.database_lease.take());}
+        if hub_result.is_ok() && engine_result.is_ok() {
+            drop(self.database_lease.take());
+        }
         // Drop deliberately retains the OS lock on an error/cancelled join.
         hub_result?;
         engine_result
@@ -182,7 +211,7 @@ impl Drop for Backend {
         if let Some(engine) = self.engine.as_mut() {
             engine.request_shutdown();
         }
-        if let Some(lease)=self.database_lease.take(){
+        if let Some(lease) = self.database_lease.take() {
             // A requested shutdown is not evidence that late engine/host work
             // finished. The OS releases this reservation when the process exits.
             std::mem::forget(lease);
@@ -198,9 +227,18 @@ pub(crate) static ENGINE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex:
 mod usage_tests {
     use super::usage_poll_setting;
     #[test]
-    fn idle_usage_polling_honors_config_without_overriding_explicit_environment(){
-        for (raw,expected) in [("usage:\n  pollOnBoot: false\n",Some(false)),("usage:\n  pollOnBoot: true\n",Some(true)),("",None),("{",None),("usage: false",None),("usage:\n  pollOnBoot: 'false'\n",None),("usage: {}",None)]{
-            assert_eq!(usage_poll_setting(raw,false),expected);assert_eq!(usage_poll_setting(raw,true),None);
+    fn idle_usage_polling_honors_config_without_overriding_explicit_environment() {
+        for (raw, expected) in [
+            ("usage:\n  pollOnBoot: false\n", Some(false)),
+            ("usage:\n  pollOnBoot: true\n", Some(true)),
+            ("", None),
+            ("{", None),
+            ("usage: false", None),
+            ("usage:\n  pollOnBoot: 'false'\n", None),
+            ("usage: {}", None),
+        ] {
+            assert_eq!(usage_poll_setting(raw, false), expected);
+            assert_eq!(usage_poll_setting(raw, true), None);
         }
     }
 }

@@ -12,7 +12,7 @@ use workspacer_hub::{
 fn caller(trusted: bool) -> Caller {
     Caller {
         call_id: 0,
-        activity_seq:0,
+        activity_seq: 0,
         federated: false,
         connection_id: 1,
         authenticated_host: trusted,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sourced by the existing network/volume entrypoints only with WKS_RUST_BACKEND=1.
+# Shared Rust argument construction for the default network/volume entrypoints.
 # Functions build argv without expanding secrets into logs or process arguments.
 rust_hub_arguments() {
   hub_args=(serve --hub-only --quiet --no-mcp --no-jobs --uploads-to-worker

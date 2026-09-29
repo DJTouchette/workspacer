@@ -29,3 +29,8 @@
 **/.git
 **/*.log
 **/dist
+**/.env
+**/.env.*
+**/.claude
+**/.codex
+**/.workspacer

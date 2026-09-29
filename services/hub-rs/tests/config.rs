@@ -248,7 +248,9 @@ fn save_merges_external_bytes_even_with_identical_timestamp_and_length() {
     assert_eq!(config.get()["ui"]["theme"], "old-one");
     let original = std::fs::metadata(&path).unwrap();
     std::fs::write(&path, "ui:\n  theme: new-one\n").unwrap();
-    std::fs::File::open(&path)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
         .unwrap()
         .set_times(std::fs::FileTimes::new().set_modified(original.modified().unwrap()))
         .unwrap();
@@ -288,7 +290,9 @@ fn lock_timeout_keeps_prior_value_and_recovers_after_release_or_stale_holder() {
     assert_eq!(contract["lockFileSuffix"], ".lock");
     let stale_ms = contract["staleMs"].as_u64().unwrap();
     std::fs::write(&lock, "crashed writer\n").unwrap();
-    std::fs::File::open(&lock)
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lock)
         .unwrap()
         .set_times(std::fs::FileTimes::new().set_modified(
             std::time::SystemTime::now() - std::time::Duration::from_millis(stale_ms + 1000),

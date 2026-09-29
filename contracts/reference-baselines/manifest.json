@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "fixtures": {
+    "hub-bus-cases.json": {
+      "referenceCommit": "d771012c29228e0af7eae64371585928ebf9880d",
+      "captureKind": "retained Go/Rust fixture contract at migration checkpoint; not a new reference execution",
+      "referenceSources": {
+        "services/hub/internal/bus/activity.go": "312109ac7af1413452d18ef132c9b7738b4f4b4f0ff55783f673b8d77a4cc484",
+        "services/hub/internal/bus/bus.go": "d88bc1ee2c81d5245e987770d65dd2001e01f6dea38d7fe3227577453b48c6a4",
+        "services/hub/internal/bus/clients.go": "c2e2bbc5bf76a41a24d686048a41acb8a0d988b75eebc3cb1fac7d36ac7dd3e7",
+        "services/hub/internal/bus/demand.go": "ebcb086565dceefa42f77da310babaa53c62f8a87fcc0e3c7eb0947e2421761a",
+        "services/hub/internal/bus/desktop.go": "56bfaa28cac3ff51e2ed6787705dc51bf498845b435e3429bec41d886eb83a97",
+        "services/hub/internal/bus/facadeauthority.go": "11ee0250d3a0738baf36f73cfe8c88e1fcc20ee3dd340f5e7a6e095c8041b45f",
+        "services/hub/internal/bus/launchintegration.go": "f99a18e6bfd25e770f55995e333d93ac46ba304c014b443236d5ef6c61c6f1f7",
+        "services/hub/internal/bus/migration_test.go": "66f480ad7e857a4cf5a840bef9e977edda078dee2e075a5fc6a9479068ff7e69",
+        "services/hub/internal/bus/policy.go": "c4fc7d39a0a34e7b5a0e99c49e0b385d55b3658a58ac2b2263f8da5425ae00e9",
+        "services/hub/internal/bus/remotedispatch.go": "d8752036ecd86d98476734c07f223d3b56915de950b55a6cd7dd8c813c90f08c",
+        "services/hub/internal/bus/rpc.go": "1daac8ee740e6a1ee7da7160bc97c1bbb737c67e6c3003d15f1da1e799ac0bce",
+        "services/hub/internal/bus/spawnkeys.go": "22c7b834054c821d137dbafca9ca8cf585fe6040468cbbf7d581f77958c268cd"
+      },
+      "fixtureSha256": "62f8944b93d1f574e72422aa610e6ff4b9e87d3458856085c5b52641531bf2c5",
+      "caseFloors": {
+        "cases": 11
+      },
+      "rustLoaders": [
+        "services/hub-rs/tests/compatibility.rs::shared_contracts_embedded"
+      ]
+    },
+    "hub-job-cases.json": {
+      "referenceCommit": "d771012c29228e0af7eae64371585928ebf9880d",
+      "captureKind": "retained Go/Rust fixture contract at migration checkpoint; not a new reference execution",
+      "referenceSources": {
+        "services/hub/internal/jobs/jobs.go": "e05b6a9d0c119ff1fedd5718ba2d82a332c711b122e5467055f623df975b4546",
+        "services/hub/internal/jobs/migration_test.go": "79f53912df2464a816c57e8e5d6c3312b194b07d8d7b8e6d841a0f76897c9ece",
+        "services/hub/internal/jobs/scheduler.go": "8f9dee061afa51b23423fed3aaf4545b8a66d45a9bdc794bb8cba830dbe1e2c7"
+      },
+      "fixtureSha256": "b77d0e635106a6d91c676cdaa29f9d21b0d8cdffecd2b6ac9496d5ce5b111c86",
+      "caseFloors": {
+        "scheduleCases": 5,
+        "promptCases": 4
+      },
+      "rustLoaders": [
+        "services/hub-rs/tests/jobs.rs::shared_job_contract"
+      ]
+    },
+    "hub-snapshot-cases.json": {
+      "referenceCommit": "d771012c29228e0af7eae64371585928ebf9880d",
+      "captureKind": "retained Go/Rust fixture contract at migration checkpoint; not a new reference execution",
+      "referenceSources": {
+        "services/hub/cmd/brain/enrich.go": "cf06c74f88c670eba8418c5ecb891344fb7491463023a9119436ee1533e83c11",
+        "services/hub/cmd/brain/migration_snapshots_test.go": "42521389d96eda7cb231d0a214b00e18dd8a609e4dec76f8aa1819b0ed709ddf"
+      },
+      "fixtureSha256": "814e8ce69a10626bccf5cdb3487f869c8f68f3693de898b77445e71db9a746b3",
+      "caseFloors": {
+        "cases": 4
+      },
+      "rustLoaders": [
+        "services/hub-rs/tests/snapshots.rs::shared_snapshot_projection_matches_go_reference"
+      ]
+    },
+    "routing-policy-cases.json": {
+      "referenceCommit": "d771012c29228e0af7eae64371585928ebf9880d",
+      "captureKind": "retained Go/Rust fixture contract at migration checkpoint; not a new reference execution",
+      "referenceSources": {
+        "services/hub/internal/routing/alternatives.go": "4b4880ed59229521728a17745de436acadbadc15ac3bd4b283bf5bb536ce5ac4",
+        "services/hub/internal/routing/availability.go": "2f51fdf7030457d87def183ba83346cf5fc58cc6a56eb88c44b769d0d896f995",
+        "services/hub/internal/routing/ceiling.go": "a885251b0e88ade0012aab169f95d8479b968dd6afd79e7f7b23a16e1a50e3e4",
+        "services/hub/internal/routing/decisionlog.go": "924f21c3c774451e6166e7d87ee12a7232f59278fd0d3faa7b6146ed6302d19d",
+        "services/hub/internal/routing/decisionlog_private_unix.go": "ff5c3ebb6d512f996b307fbd657416593c5a9fe302b8be1bff828a61c4e0d301",
+        "services/hub/internal/routing/decisionlog_private_windows.go": "84d0ced5390c7816a1040f13e5c972fc40ae756552e94befd1d8e6ba9a3c5dd0",
+        "services/hub/internal/routing/effort.go": "d2f4e4cb7c347e4415ae58c1798b28bfbde0fc62e2240ebf8bd60a8d167f2f5d",
+        "services/hub/internal/routing/fresh.go": "96804a2e9e1dbf0e31be5398d8f811466517484d741a11d598d4adaebb6621c0",
+        "services/hub/internal/routing/load.go": "dd48c43e6dbed004ae0339888092e506a669150ff86518cc5f7875daf669cf1a",
+        "services/hub/internal/routing/matrix.go": "2f201b86e89d21033ec9ee0936097f3c7ed1b2a0c480f8f503fc100750c22080",
+        "services/hub/internal/routing/modelid.go": "d8430494a47a16f98818764d3a0b3bf5002a89281e385ed501d638857d61781b",
+        "services/hub/internal/routing/pacing.go": "93518eb0c3605a6064a532747102a49159f51a5bacee4853eb7a1c8ed4582077",
+        "services/hub/internal/routing/pathmatch_unix.go": "84531abb59cbb1e192257db88eeca17507ca27d19090d9ff6816b544c4f28398",
+        "services/hub/internal/routing/pathmatch_windows.go": "be255626c652a3ab9d85e8d8a7dcf8d015f239f84e5abb298d449eeded41393e",
+        "services/hub/internal/routing/policy.go": "61fe10f7ab4638e87d482cfb509a39b0860f505d3a7c38a46344df9017ec6e3b",
+        "services/hub/internal/routing/preferences.go": "905f3e18ed7cd32356d3d805b103b803dfeff5bc07c99a29d43d127fcae00133",
+        "services/hub/internal/routing/preferences_private_unix.go": "2b7c766a70bd948b4f29b1089a052398e0c992827811f343cace5e6f8d09bf80",
+        "services/hub/internal/routing/preferences_private_windows.go": "084581eaa4a6525e5b6013b8aef9818a049a94f26e11f9dc1744f71082ca5778",
+        "services/hub/internal/routing/rust_contract_test.go": "1e83c92a2bd95fe576f1b5816d6919d04a9b6c7ed7c94281aca990f09e27e732",
+        "services/hub/internal/routing/service.go": "66eb4976028c6f72d09af16d48b5581a20b55b16d621664c7154169232a8e7b9",
+        "services/hub/internal/limits/bucket.go": "42771ee3d4bc22be347817450cd325484dc3f0350b36bb22863d2ba4c9a32c50",
+        "services/hub/internal/limits/forecast.go": "6bb8eb94a3911e3210db4a8c3189577b38f12f05bcb397225c4c4e4bc9fed330",
+        "services/hub/internal/limits/health.go": "2ebb4a5d77cfdf633dc7e417db532ab84b2bee91f75c1aaf42bb3d3fa9fec8c0",
+        "services/hub/internal/limits/pace.go": "7c7afcebe2706132dbdbb81cb0e867e4308525d011acc06f96fbbd4f1908b498",
+        "services/hub/internal/limits/report.go": "b54a9abd321d145e608ba3334f92ad8ea545a1f5ecc56a7adfe14d82d0846fc7",
+        "services/hub/internal/limits/rust_contract_test.go": "c1de99ef34e0231ebf9186b05fe7217ce7ff86e284cc2a93a7933eacaf584b26",
+        "services/hub/internal/limits/window.go": "cea8791656213cfdf086a74fdb8bcd7ba158e84ead80fae715b95d7a5fb72aba"
+      },
+      "fixtureSha256": "b55b822025cc3f0b272cc84242a547d5e05924963547ee4330e7469ceedc00b0",
+      "caseFloors": {
+        "cases": 31
+      },
+      "rustLoaders": [
+        "services/hub-rs/src/services/routing.rs::portable_routing_contract"
+      ]
+    },
+    "usage-pacing-cases.json": {
+      "referenceCommit": "d771012c29228e0af7eae64371585928ebf9880d",
+      "captureKind": "retained Go/Rust fixture contract at migration checkpoint; not a new reference execution",
+      "referenceSources": {
+        "services/hub/internal/limits/bucket.go": "42771ee3d4bc22be347817450cd325484dc3f0350b36bb22863d2ba4c9a32c50",
+        "services/hub/internal/limits/forecast.go": "6bb8eb94a3911e3210db4a8c3189577b38f12f05bcb397225c4c4e4bc9fed330",
+        "services/hub/internal/limits/health.go": "2ebb4a5d77cfdf633dc7e417db532ab84b2bee91f75c1aaf42bb3d3fa9fec8c0",
+        "services/hub/internal/limits/pace.go": "7c7afcebe2706132dbdbb81cb0e867e4308525d011acc06f96fbbd4f1908b498",
+        "services/hub/internal/limits/report.go": "b54a9abd321d145e608ba3334f92ad8ea545a1f5ecc56a7adfe14d82d0846fc7",
+        "services/hub/internal/limits/rust_contract_test.go": "c1de99ef34e0231ebf9186b05fe7217ce7ff86e284cc2a93a7933eacaf584b26",
+        "services/hub/internal/limits/window.go": "cea8791656213cfdf086a74fdb8bcd7ba158e84ead80fae715b95d7a5fb72aba"
+      },
+      "fixtureSha256": "501ddd93dfc7e03185ddea0c9c1beb12df393c86b8014aa2f2556a74c5e1d0d7",
+      "caseFloors": {
+        "cases": 30
+      },
+      "rustLoaders": [
+        "services/hub-rs/src/services/limits.rs::portable_pacing_contract"
+      ]
+    },
+    "fleet-quiescence-cases.json": {
+      "referenceCommit": "d771012c29228e0af7eae64371585928ebf9880d",
+      "captureKind": "retained Go/Rust fixture contract at migration checkpoint; not a new reference execution",
+      "referenceSources": {
+        "services/hub/internal/quiescence/parse.go": "98dc02f074e1db75b89fccbed7b15f4295d117e13f54a2b8e6d9e3a39a5ff9d0",
+        "services/hub/internal/quiescence/quiescence.go": "cf0d1961c16450b48a5592491ecfaa8e2b8c94ca2c33aaab0151794888399ad2",
+        "services/hub/internal/quiescence/rust_contract_test.go": "fcd9a829ff589b5c7bc36e31e3dc83a27529b0e642813b54cadd0f8a1c73c695"
+      },
+      "fixtureSha256": "a7779d136fbd3a23b46103af1548cd0335207af94a86be5ce0231fc4db23f136",
+      "caseFloors": {
+        "cases": 33,
+        "monitorCases": 6
+      },
+      "rustLoaders": [
+        "services/hub-rs/tests/quiescence.rs::portable_fleet_quiescence_contract"
+      ]
+    }
+  }
+}

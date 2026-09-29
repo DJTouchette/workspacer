@@ -644,3 +644,65 @@ pub(crate) fn install(
     }
     options
 }
+
+#[cfg(test)]
+mod selected_directory_contract {
+    use super::*;
+    #[test]
+    fn selected_library_item_directories_match_corpus() {
+        let corpus: Value = serde_json::from_str(include_str!(
+            "../../../../contracts/path-containment-cases.json"
+        ))
+        .unwrap();
+        let rows = corpus["libraryItemDirs"]["cases"].as_array().unwrap();
+        assert!(rows.len() >= 7);
+        for row in rows {
+            #[cfg(windows)]
+            if row["needsSymlinks"] == true {
+                continue;
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let root = std::fs::canonicalize(dir.path()).unwrap();
+            for sub in ["home", "config/workspacer/library", "outside"] {
+                std::fs::create_dir_all(root.join(sub)).unwrap();
+            }
+            for sub in row["tree"]["dirs"].as_array().into_iter().flatten() {
+                std::fs::create_dir_all(root.join(sub.as_str().unwrap())).unwrap();
+            }
+            for (name, text) in row["tree"]["files"].as_object().into_iter().flatten() {
+                let path = root.join(name);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, text.as_str().unwrap()).unwrap();
+            }
+            #[cfg(unix)]
+            for (name, target) in row["tree"]["symlinks"].as_object().into_iter().flatten() {
+                let link = root.join(name);
+                std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+                std::os::unix::fs::symlink(root.join(target.as_str().unwrap()), link).unwrap();
+            }
+            let service = Library::new(root.join("config/workspacer"));
+            let cwd = root.join(row["cwd"].as_str().unwrap());
+            // The current implementation combines the historical root/dir gates;
+            // assert the real semantic refusal, never manufacture old layer names.
+            let result =
+                service.guard(&root.join(row["item"].as_str().unwrap()), Some(&cwd), false);
+            if row["expect"] == "accept" {
+                assert_eq!(
+                    result.unwrap(),
+                    root.join(row["resolvesTo"].as_str().unwrap()),
+                    "{}",
+                    row["name"]
+                );
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("outside the selected library directories"),
+                    "{}",
+                    row["name"]
+                );
+            }
+        }
+    }
+}

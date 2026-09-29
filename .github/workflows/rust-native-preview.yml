@@ -39,6 +39,11 @@ jobs:
       - name: Install search engine (macOS)
         if: runner.os == 'macOS'
         run: command -v rg || brew install ripgrep
+      - name: Verify macOS unreaped process-group cleanup
+        if: runner.os == 'macOS'
+        run: |
+          cargo test --locked --manifest-path services/claudemon/Cargo.toml --lib child_group::tests
+          cargo test --locked --manifest-path services/claudemon/Cargo.toml --lib pty_owned::macos_tests
       - name: Test shared Rust services and standalone lifecycle
         run: cargo test --locked --manifest-path services/hub-rs/Cargo.toml
 

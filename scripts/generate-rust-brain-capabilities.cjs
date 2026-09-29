@@ -13,10 +13,18 @@ for (const scope of ['full', 'catalog', 'hub']) {
 }
 const spec = {
   source: `${source} + contracts/desktop-service-methods.json`,
+  architecturalRetirements: reference.architecturalRetirements || {},
   hub: sorted(reference.hub),
   full: sorted([...reference.full, ...desktop.ownerMethods, ...desktop.assetMethods]),
   catalog: sorted(reference.catalog),
 };
+for (const [method, evidence] of Object.entries(spec.architecturalRetirements)) {
+  if (!spec.hub.includes(method) || !evidence.reason?.trim()) throw Error(`Invalid retirement: ${method}`);
+  for (const file of [evidence.replacement, evidence.tests]) {
+    if (!file?.startsWith('services/hub-rs/') || !fs.statSync(path.join(root, file)).isFile())
+      throw Error(`Missing replacement evidence: ${method}`);
+  }
+}
 if (spec.full.length < 100 || spec.catalog.length < 20 || spec.hub.length < 35)
   throw Error('Reference registry unexpectedly incomplete');
 const output = JSON.stringify(spec, null, 2) + '\n';

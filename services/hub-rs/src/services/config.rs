@@ -313,6 +313,14 @@ impl Config {
         bail!("Configuration changed during workflow selection")
     }
     pub fn save(&self, partial: Value, owner: bool) -> Result<Value> {
+        self.save_using(partial, owner, write_config)
+    }
+    fn save_using(
+        &self,
+        partial: Value,
+        owner: bool,
+        write: impl Fn(&Path, &Value) -> Result<()>,
+    ) -> Result<Value> {
         let mut state = self.state.lock().unwrap();
         let _guard = match ConfigLock::take(&self.path) {
             Ok(lock) => lock,
@@ -331,7 +339,7 @@ impl Config {
             if stamp(&self.path) != state.stamp {
                 continue;
             }
-            if let Err(e) = write_config(&self.path, &merged) {
+            if let Err(e) = write(&self.path, &merged) {
                 eprintln!("config write failed: {e}");
                 return Ok(state.current.clone());
             }
@@ -344,6 +352,42 @@ impl Config {
     }
 }
 
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+
+    #[test]
+    fn failed_write_never_reports_or_caches_unpersisted_settings_and_releases_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "ui:\n  theme: before\n").unwrap();
+        let config = Config::open(path.clone());
+        let prior = fs::read(&path).unwrap();
+        let called = std::cell::Cell::new(false);
+        let result = config
+            .save_using(
+                serde_json::json!({"ui":{"theme":"after"}}),
+                false,
+                |_, _| {
+                    called.set(true);
+                    bail!("fixture atomic write failure")
+                },
+            )
+            .unwrap();
+        assert!(called.get());
+        assert_eq!(result["ui"]["theme"], "before");
+        assert_eq!(config.get()["ui"]["theme"], "before");
+        assert_eq!(fs::read(&path).unwrap(), prior);
+        assert!(!dir.path().join("config.yaml.lock").exists());
+        assert_eq!(
+            config
+                .save(serde_json::json!({"ui":{"theme":"recovered"}}), false)
+                .unwrap()["ui"]["theme"],
+            "recovered"
+        );
+    }
+}
+
 fn refresh(path: &Path, state: &mut State) {
     state.blocked = false;
     let bytes = match fs::read(path) {
@@ -352,6 +396,15 @@ fn refresh(path: &Path, state: &mut State) {
             if state.loaded {
                 state.blocked = true;
             } else {
+                if let (Some(directory), Some(name)) = (path.parent(), path.file_name())
+                    && crate::state_loss::suspected(directory, name)
+                {
+                    eprintln!(
+                        "STATE LOSS: {} is missing, but {} still holds the rest of this install. Reseeding factory defaults — projects, agents.binaries, transport, budgets and keybindings are all back to their shipped values, and this process will run on them. If the file is recoverable (a backup, or a volume that failed to mount), restore it and restart before anything writes over the seed.",
+                        path.display(),
+                        directory.display()
+                    );
+                }
                 state.current = defaults();
                 if let Err(e) = write_config(path, &state.current) {
                     eprintln!("config default seed failed: {e}");

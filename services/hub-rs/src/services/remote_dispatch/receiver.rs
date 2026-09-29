@@ -201,7 +201,9 @@ impl Receiver {
             bail!("remote cwd must be canonical")
         }
         if p.worktree && !directory.git {
-            bail!("worktree allocation failed: isolated worktree requires an actual repository root; no worker started")
+            bail!(
+                "worktree allocation failed: isolated worktree requires an actual repository root; no worker started"
+            )
         }
         let id = &p.remote_origin.dispatch_id;
         if let Some(prior) = self.journal.get(id) {

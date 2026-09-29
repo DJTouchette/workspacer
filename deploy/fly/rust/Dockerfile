@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
-# Opt-in Rust backend image; existing Fly Dockerfiles remain unchanged.
-# Repo-root context: --build-arg WKS_ROLE=hub (or node).
+# Canonical Rust backend image for all default Fly deployment roles.
+# Regenerate role defaults with: python3 deploy/fly/rust/render-dockerfiles.py
 ARG WKS_ROLE=node
 ARG WKS_INSTALL=source
+ARG WKS_BASE=
 ARG WKS_WITH_WEBAPP=1
 ARG RUST_IMAGE=rust:1-trixie
 FROM ${RUST_IMAGE} AS rustbuild
@@ -62,11 +63,15 @@ FROM webfiles-${WKS_INSTALL} AS webfiles
 
 # Node/npm remain third-party provider/plugin runtimes, never our backend.
 FROM node:22-trixie-slim AS common
+ARG WKS_BASE
+ARG WKS_UID=10001
+ARG WKS_GID=10001
+RUN test -z "$WKS_BASE" || { echo 'WKS_BASE layering requires deploy/fly/rust/build-upgrade.sh so existing users, tools and supervisor authority are preserved' >&2; exit 1; }
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git gh openssh-client iptables nftables iproute2 \
     busybox-static util-linux tini procps psmisc ripgrep jq less unzip rsync libstdc++6 libatomic1 && \
     rm -rf /var/lib/apt/lists/* && \
-    groupadd -g 10001 wks && useradd -u 10001 -g 10001 --no-create-home --home-dir /data/home --shell /bin/bash wks
+    groupadd -g "$WKS_GID" wks && useradd -u "$WKS_UID" -g "$WKS_GID" --no-create-home --no-log-init --home-dir /data/home --shell /bin/bash wks
 COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscaled /usr/local/bin/tailscaled
 COPY --from=docker.io/tailscale/tailscale:stable /usr/local/bin/tailscale /usr/local/bin/tailscale
 COPY --from=binaries /out/workspacer-rust /usr/local/bin/workspacer-rust
@@ -76,6 +81,7 @@ COPY deploy/fly/rust/launch.sh deploy/fly/rust/provision-worker-caller.sh deploy
 COPY --chmod=0755 deploy/fly/rust/image-contract.sh /usr/local/lib/wks/verify-image.sh
 LABEL dev.workspacer.node.contract="/usr/local/lib/wks/verify-image.sh"
 RUN chmod 0755 /usr/local/lib/wks-rust/*.sh
+ENV PATH="/usr/local/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV WKS_RUST_BACKEND=1
 
 FROM common AS runtime-node
@@ -90,6 +96,7 @@ COPY --from=binaries /out/claudemon /usr/local/bin/claudemon
 COPY deploy/fly/node/entrypoint.sh deploy/fly/node/bootstrap.sh deploy/fly/node/test-bootstrap.sh /usr/local/lib/wks/
 RUN chmod 0755 /usr/local/lib/wks/*.sh
 RUN /usr/local/lib/wks-rust/verify-image.sh node
+EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/lib/wks/entrypoint.sh"]
 
 FROM common AS runtime-hub
@@ -100,6 +107,7 @@ COPY services/hub/examples/ /usr/local/share/workspacer/examples/
 COPY deploy/fly/hub/entrypoint.sh deploy/fly/hub/bootstrap.sh deploy/fly/hub/test-bootstrap.sh /usr/local/lib/wks-hub/
 RUN chmod 0755 /usr/local/lib/wks-hub/*.sh
 RUN /usr/local/lib/wks-rust/verify-image.sh hub
+EXPOSE 7895
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/lib/wks-hub/entrypoint.sh"]
 
 # Generic single-user combined template. The protected existing deployment uses
@@ -112,6 +120,7 @@ COPY services/hub/examples/ /usr/local/share/workspacer/examples/
 COPY deploy/fly/combined/entrypoint.sh /usr/local/lib/wks-combined/entrypoint.sh
 RUN chmod 0755 /usr/local/lib/wks-combined/entrypoint.sh
 RUN /usr/local/lib/wks-rust/verify-image.sh combined
+EXPOSE 7895
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/lib/wks-combined/entrypoint.sh"]
 
 FROM runtime-${WKS_ROLE} AS runtime

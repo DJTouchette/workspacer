@@ -548,7 +548,6 @@
           "capacity"
         ],
         "loaders": [
-          "services/hub/internal/routing/rust_contract_test.go::TestPortableRustRoutingContract",
           "services/hub-rs/src/services/routing.rs::portable_routing_contract"
         ]
       }

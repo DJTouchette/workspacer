@@ -292,8 +292,10 @@ pub fn persist_brief(session_id: &str, markdown: &str) -> std::io::Result<PathBu
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home directory"))?;
     let ts = OffsetDateTime::now_utc()
         .format(
-            &time::format_description::parse("[year][month][day]-[hour][minute][second]")
-                .expect("static format"),
+            &time::format_description::parse_borrowed::<2>(
+                "[year][month][day]-[hour][minute][second]",
+            )
+            .expect("static format"),
         )
         .unwrap_or_default();
     let sid: String = session_id.chars().take(8).collect();

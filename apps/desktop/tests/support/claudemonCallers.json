@@ -1,0 +1,570 @@
+{
+  "callers": [
+    {
+      "file": "apps/desktop/src/main/services/worktreeArtifactCleanup.ts",
+      "server": "claudemon-api",
+      "what": "artifact cleanup negotiates maintenance support and reads authoritative session liveness",
+      "patterns": [
+        "tsCleanupBaseRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/tui/src/claudemon.rs",
+      "server": "claudemon-api",
+      "what": "wks-tui's whole claudemon client: list, conversation, spawn, approve/answer/message/signal, the live-control switches and the SSE feeds",
+      "patterns": [
+        "rustPathLiteralRe"
+      ],
+      "floor": 16,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/tui/app.rs",
+      "server": "claudemon-api",
+      "what": "`claudemon watch` \u2014 the daemon's own attached TUI, which talks to the API over loopback like any other client",
+      "patterns": [
+        "rustFormatBaseRe"
+      ],
+      "floor": 6,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/cli.rs",
+      "server": "claudemon-api",
+      "what": "the `claudemon wrap` default daemon URL. wrapper/mod.rs appends `/{session_id}` to it, which is why this row carries a suffix",
+      "patterns": [
+        "rustWrapperBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "/:id",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/daemon/init.rs",
+      "server": "claudemon-hook",
+      "what": "the curl command lines written into ~/.claude/settings.json. CLAUDE CODE is the caller here, not us \u2014 a renamed hook route leaves a shipped settings file POSTing into a 404 with no error path at all",
+      "patterns": [
+        "rustHookCurlRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/providers/codex.rs",
+      "server": "claudemon-api",
+      "what": "the AskUserQuestion callback URL handed to the codex CLI as an MCP server",
+      "patterns": [
+        "rustApiBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/providers/copilot.rs",
+      "server": "claudemon-api",
+      "what": "the AskUserQuestion callback URL handed to the copilot CLI",
+      "patterns": [
+        "rustApiBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/providers/opencode.rs",
+      "server": "claudemon-api",
+      "what": "the AskUserQuestion callback URL handed to opencode",
+      "patterns": [
+        "rustApiBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/providers/pi.rs",
+      "server": "claudemon-api",
+      "what": "the AskUserQuestion callback URL baked into the pi extension source",
+      "patterns": [
+        "rustApiBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "apps/desktop/src/main/services/agentStatusSummaryRuntime.ts",
+      "server": "claudemon-api",
+      "what": "visibility metadata and the bounded status summary projection",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/claudemonSessionClient.ts",
+      "server": "claudemon-api",
+      "what": "the desktop's session client \u2014 spawn, snapshot, PTY stream, message, live model/permission-mode switch, transcript, conversation, handoff",
+      "patterns": [
+        "tsClaudemonBaseRe",
+        "tsPostJSONRe"
+      ],
+      "floor": 14,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/claudemonEventBridge.ts",
+      "server": "claudemon-api",
+      "what": "the /events SSE bridge onto the desktop session store",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/claudemonHookBridge.ts",
+      "server": "claudemon-api",
+      "what": "the /hooks/stream SSE bridge",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/claudemonStatusLineBridge.ts",
+      "server": "claudemon-api",
+      "what": "the /statusline/stream SSE bridge (cost, context and rate-limit frames)",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/claudemonConversationBridge.ts",
+      "server": "claudemon-api",
+      "what": "the /conversation/stream delta feed",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/agentRuntimeStatus.ts",
+      "server": "claudemon-api",
+      "what": "first-task readiness probes claudemon /health through the shared probeHealth helper",
+      "patterns": [
+        "tsRuntimePortRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/claudemonDaemon.ts",
+      "server": "claudemon-api",
+      "what": "the daemon supervisor's own adopt/health probe",
+      "patterns": [
+        "tsApiPortRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/recentSessions.ts",
+      "server": "claudemon-api",
+      "what": "the RECENT / History listing",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/keepWarmService.ts",
+      "server": "claudemon-api",
+      "what": "the 5h-window warmer: reads /usage for Claude's default login, /usage/report for Codex's on-disk window, and posts /heartbeat",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 3,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/nativeDesktopServices.ts",
+      "server": "claudemon-api",
+      "what": "native-hosted browser heartbeat history",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/directCompletion.ts",
+      "server": "claudemon-api",
+      "what": "agent auto-titling through POST /oneshot",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/claudeSessionStore.ts",
+      "server": "claudemon-api",
+      "what": "the session store's conversation resync",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/services/terminalShare.ts",
+      "server": "claudemon-api",
+      "what": "the remote terminal mirror: the PTY byte stream plus the snapshot beside it",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "apps/desktop/src/main/ipc.ts",
+      "server": "claudemon-api",
+      "what": "the heartbeats IPC handler",
+      "patterns": [
+        "tsClaudemonBaseRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "services/hub/cmd/brain/claudemon.go",
+      "server": "claudemon-api",
+      "what": "the brain's claudemon client \u2014 the provider behind every bus/web/mobile/MCP caller on a headless node",
+      "patterns": [
+        "goPathLiteralRe"
+      ],
+      "floor": 18,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "services/hub/cmd/workspacer/status.go",
+      "server": "claudemon-api",
+      "what": "`workspacer status`'s claudemon probe",
+      "patterns": [
+        "goBasePlusRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "services/hub/cmd/hub/main.go",
+      "server": "claudemon-api",
+      "what": "the --claudemon-events SSE URL the hub bridges onto the bus",
+      "patterns": [
+        "goLoopbackURLRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "services/hub/cmd/hub/routing.go",
+      "server": "claudemon-api",
+      "what": "the limit-aware routing layer's usage poll \u2014 the hub's own read of GET /usage/report, on the --claudemon base. It is the SECOND caller of that route: keep-warm reads Codex's 5h window from it in the desktop, and this reads every provider's every window for the routing engine",
+      "patterns": [
+        "goBasePlusRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": false
+    },
+    {
+      "file": "services/hub-rs/src/services/sessions.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/agent_lifecycle.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/models.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/wakes.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/progress.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/terminals.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/host_status.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/live_controls.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/quiescence/source.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/provider_utilities/completion.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/manager_replacements/native.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/analytics/watcher.rs",
+      "server": "claudemon-api",
+      "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/external_claudemon.rs",
+      "server": "claudemon-api",
+      "what": "Read-only externally owned daemon usage, catalog and event bridge.",
+      "patterns": [
+        "rustExternalRe"
+      ],
+      "floor": 3,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/spawn_plan.rs",
+      "server": "claudemon-api",
+      "what": "Selects the concrete endpoint submitted by the owned launch lifecycle.",
+      "patterns": [
+        "rustSpawnEndpointsRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/claudemon/src/daemon/embedded.rs",
+      "server": "claudemon-api",
+      "what": "Typed embedded commands translate to concrete router paths; raw requests are enumerated at their call sites.",
+      "patterns": [
+        "rustEmbeddedSuffixRe",
+        "rustEmbeddedSessionsRe"
+      ],
+      "floor": 6,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/services/routing/sampler.rs",
+      "server": "claudemon-api",
+      "what": "Trusted usage and model evidence from the embedded daemon; production impl follows an earlier test module.",
+      "patterns": [
+        "rustRequestPathRe"
+      ],
+      "floor": 2,
+      "suffix": "",
+      "cutRustTests": true
+    }
+  ],
+  "routeReasons": {
+    "claudemon-api /sessions/:id/decide": "the DECISION-record half of the approval surface. The desktop and the TUI both answer a parked prompt through /approve; /decide is reachable for a caller that has a decision record rather than a yes/no, and nothing in the repo is that caller yet. Serving it costs nothing and it shares post_approve's validation",
+    "claudemon-api /sessions/:id/output": "the raw PTY scrollback as a one-shot GET. Every in-repo client takes the same bytes from /sessions/:id/stream instead, because they all want the live feed and its snapshot-replay first frame. Kept for a caller that wants a single read without holding a stream",
+    "claudemon-hook /hook/:kind": "the per-kind ingress. claudemon init writes the generic `/hook` form into ~/.claude/settings.json, so the sub-routed spelling is for a caller that wants the kind in the URL rather than the body \u2014 hook.rs 404s an unknown :kind on purpose, which is the only reason this route is safe to leave uncalled",
+    "claudemon-hook /health": "liveness on the ingress port. Nothing probes it today; the API port's /health is what every supervisor waits on"
+  },
+  "nonCallers": {
+    "apps/desktop/src/main/services/worktreeArtifactCleanupScheduler.ts": "builds the daemon base and delegates health/session request paths to the enumerated worktreeArtifactCleanup client",
+    "apps/desktop/src/renderer/src/harness/htmlCardHarness.tsx": "isolated hostile-card security fixture; its loopback URL is an intentional blocked request, not a production daemon client",
+    "apps/desktop/src/main/lib/daemonUtils.ts": "declares the PORTS registry and the shared health-poll helper; it composes no claudemon path of its own",
+    "apps/desktop/src/renderer/src/lib/changelog.generated.ts": "generated release-note prose that quotes endpoint names; it makes no request",
+    "apps/tui/src/main.rs": "parses the --claudemon base URL and hands it to claudemon.rs; it builds no path",
+    "services/claudemon/src/daemon/api.rs": "the API router itself \u2014 the served side of this contract, scanned by httproutes_test.go",
+    "services/claudemon/src/daemon/hook.rs": "Registers the hook ingress router; it is a served registration site, not a caller constructing requests.",
+    "services/claudemon/src/daemon/wrapper_ws.rs": "the /wrapper/:id upgrade handler \u2014 the served side; the 127.0.0.1:7891 spellings in it are a doc comment and origin-guard test inputs",
+    "services/claudemon/src/tui/preview.rs": "a screenshot harness that constructs the watch TUI against a loopback base and renders it without making a request",
+    "services/claudemon/src/wrapper/mod.rs": "appends /{session_id} to the base cli.rs supplies; that composition is declared on the cli.rs row's suffix",
+    "services/hub/cmd/brain/main.go": "parses the --claudemon flag and constructs the client; every path lives in claudemon.go",
+    "services/hub/internal/claudemon/bridge.go": "consumes whatever SSE URL it is handed; the URL is composed by cmd/hub/main.go, which is enumerated above",
+    "apps/desktop/src/main/services/hubDaemon.ts": "Passes the external daemon base URL to the owned Rust hub; ExternalDaemon composes the read-only route paths.",
+    "services/hub-rs/src/runtime.rs": "Owns the configured external daemon service and passes its base URL; the service constructs all HTTP request paths."
+  },
+  "markers": [
+    "loadWorktreeCleanupState",
+    "CLAUDEMON_API_URL",
+    "CLAUDEMON_HOOK_URL",
+    "PORTS.claudemonApi",
+    "PORTS.claudemonHook",
+    "claudemonApi:",
+    "claudemonHook:",
+    "127.0.0.1:7891",
+    "127.0.0.1:7890",
+    "{hook_port}",
+    "{api_base}",
+    "{daemon_ws}",
+    "newClaudemonClient",
+    "WKS_CLAUDEMON_URL",
+    "self.api_url",
+    "Command::Request {",
+    "ExternalDaemon",
+    "session_path(&id,",
+    "endpoint: if managed",
+    "Command::Request{"
+  ]
+}

@@ -7,6 +7,7 @@ stage=${1:-all}
 case "$stage" in all|static|build|boot|artifact) ;; *) echo 'usage: preflight.sh [all|static|build|boot|artifact]' >&2; exit 2 ;; esac
 if [ "$stage" = all ] || [ "$stage" = static ]; then
   : "${WORKSPACER_RUST_BIN:?set path to the built Rust CLI for static contracts}"
+  python3 deploy/fly/rust/render-dockerfiles.py --check
   bash deploy/fly/rust/test-launch.sh
   python3 deploy/fly/rust/test-supervisor.py
   bash deploy/fly/node/test-bootstrap.sh
@@ -22,7 +23,7 @@ if [ "$stage" = all ] || [ "$stage" = build ] || [ "$stage" = artifact ]; then
   for role in node hub combined; do
     extra=()
     [ "$install" != artifact ] || extra+=(--build-arg "WKS_RELEASE_TAG=${WKS_RELEASE_TAG:-nightly}" --build-arg "WKS_RELEASE_SHA=${WKS_RELEASE_SHA:-}")
-    docker build -f deploy/fly/rust/Dockerfile --build-arg "WKS_ROLE=$role" --build-arg "WKS_INSTALL=$install" \
+    docker build -f "deploy/fly/$role/Dockerfile" --build-arg "WKS_INSTALL=$install" \
       --build-arg "WKS_SOURCE_SHA=${WKS_SOURCE_SHA:-unknown}" "${extra[@]}" -t "workspacer-rust-$role:preview" .
   done
 fi

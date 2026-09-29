@@ -470,7 +470,10 @@ impl ReplacementState {
     }
     /// Serialize installation of the durable handoff fence with ordinary and
     /// manual admission. Already admitted launches drain during preparation.
-    pub(crate) fn handoff_admission(&self, id: &str) -> Result<std::sync::MutexGuard<'_, BTreeMap<String, usize>>> {
+    pub(crate) fn handoff_admission(
+        &self,
+        id: &str,
+    ) -> Result<std::sync::MutexGuard<'_, BTreeMap<String, usize>>> {
         let guard = self.active.lock().unwrap();
         self.assert_available(id)?;
         Ok(guard)

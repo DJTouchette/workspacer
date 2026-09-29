@@ -5005,7 +5005,10 @@ mod tests {
         let mut updates = store.subscribe();
         store.drop_pending_spawn("shell", "/work", old);
         assert!(store.get("shell").is_some());
-        assert!(updates.try_recv().is_err(), "stale teardown emits no removal");
+        assert!(
+            updates.try_recv().is_err(),
+            "stale teardown emits no removal"
+        );
         store.drop_pending_spawn("shell", "/work", current);
         assert!(store.get("shell").is_none());
         let removed = updates.try_recv().expect("authoritative removal update");
@@ -5013,7 +5016,10 @@ mod tests {
         assert_eq!(removed.event, "SessionRemoved");
         assert_eq!(removed.state.mode, SessionMode::Stopped);
         store.drop_pending_spawn("shell", "/work", current);
-        assert!(updates.try_recv().is_err(), "duplicate teardown emits no update");
+        assert!(
+            updates.try_recv().is_err(),
+            "duplicate teardown emits no update"
+        );
     }
 
     #[test]

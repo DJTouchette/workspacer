@@ -389,7 +389,12 @@ pub fn resolve(
     if !routing.as_object().unwrap().is_empty() {
         metadata["routing"] = routing;
     }
-    if let Some(scrubbed)=params.get("escalationScrubbed").filter(|value|value.is_array()){metadata["escalationScrubbed"]=scrubbed.clone();}
+    if let Some(scrubbed) = params
+        .get("escalationScrubbed")
+        .filter(|value| value.is_array())
+    {
+        metadata["escalationScrubbed"] = scrubbed.clone();
+    }
     let mut contracts = Vec::new();
     if !manager && !text(params, "parentSessionId").trim().is_empty() {
         contracts.push(super::worker_results::ESCALATION_CONTRACT.to_owned());

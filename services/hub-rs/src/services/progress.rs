@@ -54,8 +54,12 @@ pub fn message(row: &Value, note: &str, decision: bool) -> String {
 
 impl Progress {
     #[cfg(feature = "test-support")]
-    pub(crate) fn fixture_remote(mut self, receiver: Arc<super::remote_dispatch::Receiver>) -> Self {
-        self.remote=Some(receiver);self
+    pub(crate) fn fixture_remote(
+        mut self,
+        receiver: Arc<super::remote_dispatch::Receiver>,
+    ) -> Self {
+        self.remote = Some(receiver);
+        self
     }
     pub fn new(lookup: OwnerLookup, deliver: Deliver) -> Self {
         Self {

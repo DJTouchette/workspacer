@@ -238,24 +238,92 @@ async fn run(root: PathBuf) {
             .is_ok_and(|r| r["ambientState"] == "idle")
     })
     .await;
-    let mode=client.call("claude.setPermissionMode",json!({"sessionId":successor_id,"mode":"plan"})).await.unwrap();
-    assert_eq!(mode,json!({"ok":true,"mode":"plan"}));
-    let changed=client.call("claude.setModel",json!({"sessionId":successor_id,"model":"opus[1m]"})).await.unwrap();
-    assert_eq!(changed["ok"],true,"{changed}");assert_eq!(changed["requestedSelection"]["model"],"opus");assert_eq!(changed["requestedSelection"]["contextWindow"],1_000_000);
-    let effort=client.call("claude.setEffort",json!({"sessionId":successor_id,"effort":"high"})).await.unwrap();assert_eq!(effort,json!({"ok":true,"effort":"high"}));
-    until(async || rows(&root,&successor_id).iter().any(|row|row["message"]=="/effort high")).await;
-    let controlled=client.call("sessions.snapshot",json!({"sessionId":successor_id})).await.unwrap();assert_eq!(controlled["settings"]["effort"],"high");assert_eq!(controlled["livePermissionMode"],"plan");
+    let mode = client
+        .call(
+            "claude.setPermissionMode",
+            json!({"sessionId":successor_id,"mode":"plan"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mode, json!({"ok":true,"mode":"plan"}));
+    let changed = client
+        .call(
+            "claude.setModel",
+            json!({"sessionId":successor_id,"model":"opus[1m]"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed["ok"], true, "{changed}");
+    assert_eq!(changed["requestedSelection"]["model"], "opus");
+    assert_eq!(changed["requestedSelection"]["contextWindow"], 1_000_000);
+    let effort = client
+        .call(
+            "claude.setEffort",
+            json!({"sessionId":successor_id,"effort":"high"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(effort, json!({"ok":true,"effort":"high"}));
+    until(async || {
+        rows(&root, &successor_id)
+            .iter()
+            .any(|row| row["message"] == "/effort high")
+    })
+    .await;
+    let controlled = client
+        .call("sessions.snapshot", json!({"sessionId":successor_id}))
+        .await
+        .unwrap();
+    assert_eq!(controlled["settings"]["effort"], "high");
+    assert_eq!(controlled["livePermissionMode"], "plan");
     // A successful daemon change must not turn into a retryable RPC failure
     // just because the subsequent local journal cannot be replaced.
-    let journal=root.join("data/agent-launches.json");let saved=root.join("data/agent-launches.saved");
-    std::fs::rename(&journal,&saved).unwrap();std::fs::create_dir(&journal).unwrap();
-    let accepted=client.call("claude.setEffort",json!({"sessionId":successor_id,"effort":"low"})).await.unwrap();
-    std::fs::remove_dir(&journal).unwrap();std::fs::rename(&saved,&journal).unwrap();
-    assert_eq!(accepted["ok"],true);assert_eq!(accepted["effort"],"low");assert!(accepted["warning"].as_str().is_some());
-    until(async || rows(&root,&successor_id).iter().any(|row|row["message"]=="/effort low")).await;
-    assert_eq!(client.call("claude.setEffort",json!({"sessionId":successor_id,"effort":"high"})).await.unwrap()["ok"],true);
-    let history=client.call("sessions.recent",json!({})).await.unwrap();assert!(history.as_array().unwrap().iter().any(|row|row["sessionId"]==successor_id));
-    let handoff=client.call("claude.handoffBrief",json!({"sessionId":successor_id})).await.unwrap();assert_eq!(handoff["ok"],true,"{handoff}");assert!(std::path::Path::new(handoff["path"].as_str().unwrap()).is_file());
+    let journal = root.join("data/agent-launches.json");
+    let saved = root.join("data/agent-launches.saved");
+    std::fs::rename(&journal, &saved).unwrap();
+    std::fs::create_dir(&journal).unwrap();
+    let accepted = client
+        .call(
+            "claude.setEffort",
+            json!({"sessionId":successor_id,"effort":"low"}),
+        )
+        .await
+        .unwrap();
+    std::fs::remove_dir(&journal).unwrap();
+    std::fs::rename(&saved, &journal).unwrap();
+    assert_eq!(accepted["ok"], true);
+    assert_eq!(accepted["effort"], "low");
+    assert!(accepted["warning"].as_str().is_some());
+    until(async || {
+        rows(&root, &successor_id)
+            .iter()
+            .any(|row| row["message"] == "/effort low")
+    })
+    .await;
+    assert_eq!(
+        client
+            .call(
+                "claude.setEffort",
+                json!({"sessionId":successor_id,"effort":"high"})
+            )
+            .await
+            .unwrap()["ok"],
+        true
+    );
+    let history = client.call("sessions.recent", json!({})).await.unwrap();
+    assert!(
+        history
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["sessionId"] == successor_id)
+    );
+    let handoff = client
+        .call("claude.handoffBrief", json!({"sessionId":successor_id}))
+        .await
+        .unwrap();
+    assert_eq!(handoff["ok"], true, "{handoff}");
+    assert!(std::path::Path::new(handoff["path"].as_str().unwrap()).is_file());
 
     until(async || {
         client

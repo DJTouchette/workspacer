@@ -5,19 +5,21 @@ use serde_json::Value;
 
 /// Opt-in broker-to-provider metadata. Ordinary incoming frames never confer
 /// this authority; the broker replaces it from its authenticated connection.
-#[derive(Clone,Debug,Deserialize,Serialize,PartialEq,Eq,Hash)]
-#[serde(rename_all="camelCase",deny_unknown_fields)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderCaller {
-    pub version:u32,
-    pub connection_id:u64,
-    pub scope:String,
-    pub authenticated_host:bool,
-    pub federated:bool,
-    pub plugin_id:String,
-    pub token_id:String,
-    pub may_assert_session:bool,
+    pub version: u32,
+    pub connection_id: u64,
+    pub scope: String,
+    pub authenticated_host: bool,
+    pub federated: bool,
+    pub plugin_id: String,
+    pub token_id: String,
+    pub may_assert_session: bool,
 }
-fn zero(value:&u32)->bool{*value==0}
+fn zero(value: &u32) -> bool {
+    *value == 0
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
@@ -52,12 +54,12 @@ impl Event {
 #[serde(default, rename_all = "camelCase")]
 pub struct Frame {
     pub op: String,
-    #[serde(skip_serializing_if="std::ops::Not::not")]
-    pub wants_caller_context:bool,
-    #[serde(skip_serializing_if="zero")]
-    pub caller_context_version:u32,
-    #[serde(skip_serializing_if="Option::is_none")]
-    pub provider_caller:Option<ProviderCaller>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub wants_caller_context: bool,
+    #[serde(skip_serializing_if = "zero")]
+    pub caller_context_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_caller: Option<ProviderCaller>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub spawn_full_access: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]

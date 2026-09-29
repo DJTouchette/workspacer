@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use directories::BaseDirs;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::session::state::HookEventKind;
 

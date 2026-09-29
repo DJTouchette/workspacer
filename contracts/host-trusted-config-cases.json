@@ -55,8 +55,7 @@
           "expected"
         ],
         "loaders": [
-          "services/hub/cmd/brain/config_test.go::TestHostTrustedContractCases(",
-          "services/hub/internal/capspec/capspec_test.go::TestConfigSaveDecisionsMatchTheHostTrustedContract(",
+          "services/hub-rs/tests/config.rs::shared_deep_merge_and_host_trusted_contracts",
           "apps/desktop/src/main/lib/hostTrustedConfig.test.ts::dropHostTrusted — cross-language contract"
         ]
       }

@@ -6,8 +6,13 @@ that owns a copy of the logic; the test asserts identical output for identical
 input. If you change one implementation, the fixture forces you to change (or
 consciously extend) the others.
 
+Six Go-to-Rust migration corpora use explicit [captured-reference baselines](reference-baselines/README.md) after retiring Go. Their source/fixture hashes, case floors and real Rust replay remain enforced; independent TypeScript contracts still require both live owners.
+
 | Fixture | Owners | Guards |
 |---|---|---|
+| `backend-capabilities.json` | `services/hub-rs/src/services/capability_inventory.rs` (Rust) · `scripts/generate-rust-brain-capabilities.cjs` (reference generator) | Reference method registration strings and source hashes, compared with actual full-backend health. Method coverage is not behavioral parity. |
+| `analytics-history-cases.json` | `services/hub-rs/tests/analytics.rs` (Rust) · `apps/desktop/scripts/test-headless-analytics.mjs` (TypeScript/Node test) | Persistent session usage, model splits, deduplication and filtering across restarts. |
+| `fleet-quiescence-cases.json` | `services/hub-rs/tests/quiescence.rs` (Rust) · `services/hub/internal/quiescence/rust_contract_test.go` (Go reference) | Quiet-state blockers and monitored power-down delays from actual session/workflow evidence. |
 | `hub-job-cases.json` | `services/hub/internal/jobs` (Go) · `services/hub-rs` (Rust) | Next-run scheduling in hub-local time and context-output prompt substitution. |
 | `routing-policy-cases.json` | `services/hub/internal/routing` (Go) · `services/hub-rs` (Rust) | Provider selection, capability ceilings, freshness, quota health and effort transitions. |
 | `usage-pacing-cases.json` | `services/hub/internal/limits` (Go) · `services/hub-rs` (Rust) | Quota windows, reset boundaries, unknown capacity and calendar pacing. |
@@ -44,3 +49,6 @@ edge case ships; the cheapest place to catch drift is here, before it becomes a
 mispriced session or a clobbered config.
 
 | `desktop-service-methods.json` | `apps/desktop/src/main/shared/desktopServices.test.ts` (TS) · `services/hub/internal/bus/desktop_test.go` (Go) | Shared method manifest, fixed companion dispatch coverage, and owner authority independent of facade/provider credentials. |
+
+Retired anonymous-harness parameter-shape cases are preserved separately under
+[`retired/`](retired/README.md). They do not define current authenticated path policy.

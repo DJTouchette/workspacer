@@ -199,5 +199,12 @@
     "sessions.list",
     "sessions.load",
     "sessions.save"
-  ]
+  ],
+  "architecturalRetirements": {
+    "plugins.prepareLaunch": {
+      "reason": "Private callback from the Go brain process is replaced by owned in-process launch integration with actor-verified launch authority. External plugin prepare methods remain callable only through the validated integration path.",
+      "replacement": "services/hub-rs/src/plugins/launch.rs",
+      "tests": "services/hub-rs/src/plugins/launch/tests.rs"
+    }
+  }
 }

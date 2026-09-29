@@ -88,7 +88,71 @@ pub fn canonicalize(path: &Path) -> Result<PathBuf> {
             }
         }
     }
+    #[cfg(windows)]
+    {
+        // Git and native APIs can spell the same directory with a DOS short
+        // name, a different case, or a verbatim prefix. Resolve the existing
+        // ancestor through the OS after the link-before-parent walk above.
+        // Missing tails remain supported for writes and selected new entries.
+        let mut ancestor = resolved.as_path();
+        let mut missing = Vec::new();
+        loop {
+            match std::fs::canonicalize(ancestor) {
+                Ok(mut canonical) => {
+                    for name in missing.into_iter().rev() {
+                        canonical.push(name);
+                    }
+                    return Ok(canonical);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let Some(name) = ancestor.file_name() else {
+                        return Err(error.into());
+                    };
+                    missing.push(name.to_os_string());
+                    let Some(parent) = ancestor.parent() else {
+                        return Err(error.into());
+                    };
+                    ancestor = parent;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    #[cfg(not(windows))]
     Ok(resolved)
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn git_style_and_verbatim_paths_share_one_selected_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("MixedCaseDirectory");
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("file.txt");
+        std::fs::write(&file, "fixture").unwrap();
+        let canonical = std::fs::canonicalize(&root).unwrap();
+        let spelling = canonical.to_string_lossy();
+        let plain = spelling.strip_prefix(r"\\?\").unwrap_or(&spelling);
+        let git_style = PathBuf::from(plain.replace('\\', "/").to_lowercase());
+        assert_eq!(canonicalize(&git_style).unwrap(), canonical);
+        let selected = canonicalize(&file).unwrap();
+        assert!(contained(&selected, &canonicalize(&git_style).unwrap()));
+        assert_eq!(
+            selected.strip_prefix(&canonical).unwrap(),
+            Path::new("file.txt")
+        );
+        assert_eq!(
+            canonicalize(&git_style.join("new/file.txt")).unwrap(),
+            canonical.join("new/file.txt")
+        );
+        assert!(!contained(
+            &canonicalize(&directory.path().join("outside.txt")).unwrap(),
+            &canonical
+        ));
+    }
 }
 pub fn contained(target: &Path, root: &Path) -> bool {
     #[cfg(not(windows))]

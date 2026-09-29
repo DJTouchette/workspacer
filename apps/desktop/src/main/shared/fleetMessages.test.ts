@@ -18,9 +18,15 @@ import {
 } from './fleetMessages';
 
 it('portableFleetMessageContracts', () => {
-  const corpus = JSON.parse(readFileSync(new URL('../../../../../contracts/fleet-message-cases.json', import.meta.url), 'utf8'));
+  const corpus = JSON.parse(
+    readFileSync(
+      new URL('../../../../../contracts/fleet-message-cases.json', import.meta.url),
+      'utf8',
+    ),
+  );
   expect(corpus.cases.length).toBeGreaterThanOrEqual(18);
-  for (const row of corpus.cases) expect(buildFleetMessage(row.kind, row.entries, row.audience), row.name).toBe(row.expected);
+  for (const row of corpus.cases)
+    expect(buildFleetMessage(row.kind, row.entries, row.audience), row.name).toBe(row.expected);
   for (const row of corpus.excerpts) expect(excerptReply(row.input)).toBe(row.expected);
 });
 

@@ -15,8 +15,13 @@ describe('desktop service manifest', () => {
       path.join(root, 'apps/desktop/src/main/headless/desktopHost.ts'),
       'utf8',
     );
-    const desktop = readFileSync(path.join(root, 'apps/desktop/src/main/services/nativeDesktopServices.ts'), 'utf8');
-    const rust = JSON.parse(readFileSync(path.join(root, 'services/hub-rs/assets/brain-capabilities.json'), 'utf8'));
+    const desktop = readFileSync(
+      path.join(root, 'apps/desktop/src/main/services/nativeDesktopServices.ts'),
+      'utf8',
+    );
+    const rust = JSON.parse(
+      readFileSync(path.join(root, 'services/hub-rs/assets/brain-capabilities.json'), 'utf8'),
+    );
     for (const method of [...manifest.ownerMethods, ...manifest.assetMethods]) {
       expect(
         host.includes(`case '${method}':`) || desktop.includes(`case '${method}':`),

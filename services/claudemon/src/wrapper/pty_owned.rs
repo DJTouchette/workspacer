@@ -34,7 +34,22 @@ impl Scope {
         let pid = child
             .process_id()
             .context("PTY child lacks process identity")?;
-        #[cfg(unix)]
+        #[cfg(target_os = "macos")]
+        {
+            // portable-pty's checked pre_exec calls setsid before exec. XNU
+            // destroys the old session-leader marker at exit, so it cannot be
+            // queried on a zombie. Verify its original child/PGID identity;
+            // every live child still needs the expected SID. Foreground group
+            // signalling separately requires tcgetsid(master)==this PID.
+            let exited = crate::child_group::verify_anchor(pid)?;
+            if !exited
+                && unsafe { nix::libc::getsid(pid as i32) } != pid as i32
+                && !crate::child_group::verify_anchor(pid)?
+            {
+                bail!("PTY child does not own a separate session");
+            }
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
             use nix::libc;
             if pid == 0
@@ -105,17 +120,12 @@ impl Scope {
                     && group != unsafe { libc::getpgrp() }
                     && unsafe { libc::tcgetsid(fd) } == self.pid as i32
                 {
-                    let result = unsafe { libc::kill(-group, signal) };
-                    if result != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
-                    {
-                        foreground_error = Some(io::Error::last_os_error());
+                    if let Err(error) = crate::child_group::signal(group, signal) {
+                        foreground_error = Some(error);
                     }
                 }
             }
-            let result = unsafe { libc::kill(-(self.pid as i32), signal) };
-            if result != 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
-                return Err(io::Error::last_os_error());
-            }
+            crate::child_group::signal(self.pid as i32, signal)?;
             if signal == libc::SIGKILL {
                 state.killed = true;
             }
@@ -271,4 +281,35 @@ pub(super) fn wrap(
         }),
         scope,
     ))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+    #[test]
+    fn already_exited_pty_retains_child_group_ownership_before_adoption() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let master = Arc::new(Mutex::new(pair.master));
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        let mut child = pair.slave.spawn_command(command).unwrap();
+        let pid = child.process_id().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !crate::child_group::verify_anchor(pid).unwrap() {
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("PTY child did not exit");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let scope = Arc::new(Scope::new(child.as_ref(), master).unwrap());
+        let mut owned = OwnedChild {
+            inner: child,
+            scope,
+        };
+        assert!(owned.wait().unwrap().success());
+        assert!(crate::child_group::verify_anchor(pid).is_err());
+    }
 }

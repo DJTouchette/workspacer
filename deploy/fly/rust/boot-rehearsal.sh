@@ -21,6 +21,19 @@ cleanup() { docker rm -f "$combined" "$worker" "$hub" >/dev/null 2>&1 || true; d
 trap cleanup EXIT
 mkdir "$fixture/mock"
 for volume in "$hub_volume" "$worker_volume" "$combined_volume"; do docker volume create "$volume" >/dev/null; done
+# Explicit owner-operated first adoption, matching README. Bootstrap seeds
+# config, so local identity creation must be deliberate; production launch never
+# opts out of lost-key refusal. These are only the fresh volumes created above.
+for pair in "$worker_volume:$node_image" "$combined_volume:$combined_image"; do
+  volume=${pair%%:*}
+  image=${pair#*:}
+  docker run --rm --entrypoint /bin/bash -v "$volume:/data" "$image" -c '
+    /usr/local/lib/wks/bootstrap.sh >/dev/null &&
+    setpriv --reuid=wks --regid=wks --init-groups \
+      /usr/local/bin/workspacer-rust --config-dir /data/home/.config/workspacer \
+      token init-host --allow-new-token >/dev/null
+  '
+done
 cat >"$fixture/mock/tailscale" <<'MOCK'
 #!/bin/sh
 case "$*" in
@@ -48,6 +61,12 @@ ready() {
   return 1
 }
 ready "$hub" http://127.0.0.1:7895/health
+# The credential-owning central hub has no shell-job execution owner.
+if docker exec --user 10001 "$hub" workspacer-rust \
+  --config-dir /data/home/.config/workspacer jobs list >/dev/null 2>&1; then
+  echo 'central hub unexpectedly exposes scheduled jobs' >&2
+  exit 1
+fi
 provider=$(docker exec --user 10001 "$hub" workspacer-rust --config-dir /data/home/.config/workspacer token create --scope provider --label boot-worker-provider)
 docker exec --user 10001 "$hub" /usr/local/lib/wks-rust/provision-worker-caller.sh \
   /data/home/.config/workspacer/tokens.json boot-worker /data/boot-worker-caller >/dev/null

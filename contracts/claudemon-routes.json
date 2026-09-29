@@ -7,7 +7,7 @@
   ],
   "owners": [
     "services/claudemon/src/daemon/routes_contract.rs (Rust) — extracts the table from the two router sources at compile time and fails if this file disagrees. That is what makes the fixture DERIVED rather than declared.",
-    "services/hub/internal/capspec/claudemoncallers_test.go (Go) — sweeps every claudemon HTTP caller in the repo, in three languages, and fails on a path no row here serves; also pins this file to capspec's own httpRoutes registry, which a separate scan already holds to the same two routers.",
+    "apps/desktop/src/main/services/claudemonRouteContract.test.ts (TypeScript) — checks the served routers against this fixture, every caller path against served routes, independent repository-wide caller enumeration, and caller-less routes with explicit non-stale reasons. Includes raw Rust embedded requests and external HTTP clients.",
     "apps/tui/src/claudemon.rs (Rust) — the TUI's mock_server answers 404 for a path absent from this table and 405 for a method it does not serve, so a client-side route assertion can no longer pin the caller's own URL against itself."
   ],
   "routes": [
@@ -208,7 +208,7 @@
       "routes": {
         "loaders": [
           "services/claudemon/src/daemon/routes_contract.rs::the_route_fixture_is_the_router",
-          "services/hub/internal/capspec/claudemoncallers_test.go::TestClaudemonRouteFixtureMatchesTheServedRegistry",
+          "apps/desktop/src/main/services/claudemonRouteContract.test.ts::fixture_matches_served_routers",
           "apps/tui/src/claudemon.rs::every_path_this_client_builds_is_a_route_claudemon_serves"
         ],
         "required": [

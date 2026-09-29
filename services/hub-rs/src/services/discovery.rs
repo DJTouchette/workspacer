@@ -1,8 +1,8 @@
 //! Resume-picker metadata from the same 8KiB transcript heads as Go/desktop.
 use crate::Options;
+use claudemon::session::transcript::project_dir_name as directory_name;
 use serde_json::{Value, json};
 use std::{io::Read, path::Path};
-use claudemon::session::transcript::project_dir_name as directory_name;
 fn summary(bytes: &[u8]) -> String {
     let mut first = String::new();
     for line in bytes.split(|byte| *byte == b'\n') {

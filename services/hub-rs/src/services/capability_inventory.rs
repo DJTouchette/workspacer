@@ -18,7 +18,12 @@ pub fn compare(health: &Value) -> Result<Value> {
         .collect::<Result<_>>()?;
     let reference: Value =
         serde_json::from_str(include_str!("../../assets/brain-capabilities.json"))?;
-    let mut report = json!({"source":reference["source"],"installed":actual,"launchReady":health["launchReady"],"mcpReady":health["mcpReady"],"behavioralParityProven":false});
+    let retired: BTreeSet<String> = reference["architecturalRetirements"]
+        .as_object()
+        .into_iter()
+        .flat_map(|entries| entries.keys().cloned())
+        .collect();
+    let mut report = json!({"source":reference["source"],"architecturalRetirements":reference["architecturalRetirements"],"installed":actual,"launchReady":health["launchReady"],"mcpReady":health["mcpReady"],"behavioralParityProven":false});
     for scope in ["full", "catalog", "hub"] {
         let expected: BTreeSet<String> = reference[scope]
             .as_array()
@@ -26,7 +31,8 @@ pub fn compare(health: &Value) -> Result<Value> {
             .iter()
             .map(|v| v.as_str().unwrap().to_owned())
             .collect();
-        report[scope] = json!({"expected":expected.len(),"present":expected.intersection(&actual).count(),"missing":expected.difference(&actual).collect::<Vec<_>>()});
+        let required: BTreeSet<_> = expected.difference(&retired).cloned().collect();
+        report[scope] = json!({"expected":expected.len(),"required":required.len(),"present":expected.intersection(&actual).count(),"architecturallyRetired":expected.intersection(&retired).collect::<Vec<_>>(),"missing":required.difference(&actual).collect::<Vec<_>>()});
     }
     Ok(report)
 }
@@ -50,6 +56,10 @@ pub async fn probe() -> Result<Value> {
     options.data_dir = Some(data);
     options.scoped_tokens = Some(config.join("tokens.json"));
     options.plugins_dir = Some(config.join("plugins"));
+    options.jobs_file = Some(config.join("jobs.json"));
+    let nodes = config.join("nodes.json");
+    super::config::atomic_bytes(&nodes, br#"[{"id":"inventory-manual-node"}]"#)?;
+    options.nodes_file = Some(nodes);
     options.token = uuid::Uuid::new_v4().to_string();
     options.listen = Some("127.0.0.1:0".parse()?);
     options.mcp_listen = Some("127.0.0.1:0".parse()?);
@@ -84,6 +94,9 @@ mod tests {
         let report = probe().await.unwrap();
         assert_eq!(report["launchReady"], true);
         assert_eq!(report["mcpReady"], true);
+        for scope in ["full", "catalog", "hub"] {
+            assert_eq!(report[scope]["missing"], json!([]), "{scope}: {report}");
+        }
         let installed = report["installed"].as_array().unwrap();
         assert!(installed.contains(&json!("agents.spawn")));
         assert!(installed.contains(&json!("desktop.managerRequestSend")));

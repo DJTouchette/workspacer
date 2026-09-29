@@ -22,68 +22,106 @@ async fn call(args: &CommandLine, method: &str, params: Value) -> Result<Value> 
     result
 }
 pub(super) async fn status(args: &CommandLine, api_port: u16, out: &mut dyn Write) -> Result<i32> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-    let probe = |address: String, token: String| {
-        let client = client.clone();
-        async move {
-            let loopback = address
-                .parse::<std::net::SocketAddr>()
-                .is_ok_and(|a| a.ip().is_loopback())
-                || address.starts_with("localhost:");
-            let client = if loopback {
-                reqwest::Client::builder()
-                    .no_proxy()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(Duration::from_secs(5))
-                    .build()
-                    .unwrap_or(client)
-            } else {
-                client
-            };
-            match client
-                .get(format!("http://{address}/health"))
-                .bearer_auth(token)
-                .send()
-                .await
-            {
-                Ok(response) if response.status().is_success() => {
-                    json!({"ok":true,"detail":"healthy"})
-                }
-                Ok(response) => json!({"ok":false,"detail":format!("HTTP {}",response.status())}),
-                Err(_) => json!({"ok":false,"detail":"unreachable"}),
-            }
+    async fn probe(address: String, token: String, daemon: bool) -> Value {
+        let loopback = address
+            .parse::<std::net::SocketAddr>()
+            .is_ok_and(|a| a.ip().is_loopback())
+            || address.starts_with("localhost:");
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(3));
+        if loopback {
+            builder = builder.no_proxy();
         }
-    };
+        let client = match builder.build() {
+            Ok(client) => client,
+            Err(_) => return json!({"ok":false,"detail":"not running (probe unavailable)"}),
+        };
+        let response = match client
+            .get(format!("http://{address}/health"))
+            .bearer_auth(token)
+            .send()
+            .await
+        {
+            Ok(response) if response.status() == reqwest::StatusCode::OK => response,
+            Ok(response) => {
+                return json!({"ok":false,"detail":format!("not running (HTTP {})",response.status())});
+            }
+            Err(_) => return json!({"ok":false,"detail":"not running (unreachable)"}),
+        };
+        if daemon {
+            let sessions = client
+                .get(format!("http://{address}/sessions"))
+                .send()
+                .await;
+            return match sessions {
+                Ok(response) if response.status() == reqwest::StatusCode::OK => {
+                    match response.json::<Value>().await {
+                        Ok(Value::Array(rows)) => {
+                            json!({"ok":true,"detail":format!("healthy, {} session(s)",rows.len())})
+                        }
+                        _ => json!({"ok":true,"detail":"healthy"}),
+                    }
+                }
+                _ => json!({"ok":true,"detail":"healthy (sessions unreadable)"}),
+            };
+        }
+        match response.json::<Value>().await {
+            Ok(health) if health["status"] == "ok" => match health["methods"].as_u64() {
+                Some(methods) => {
+                    json!({"ok":true,"detail":format!("healthy, {methods} capability method(s)")})
+                }
+                None => {
+                    json!({"ok":true,"detail":"healthy (token not accepted — method count hidden)"})
+                }
+            },
+            _ => json!({"ok":false,"detail":"unexpected /health answer"}),
+        }
+    }
+    // Status must still describe an unauthenticated hub; unlike mutating admin
+    // commands it does not require a stored pairing credential to probe health.
     let (daemon, hub) = tokio::join!(
-        probe(args.authority(api_port), String::new()),
-        probe(args.authority(args.hub_port), args.credential()?)
+        probe(args.authority(api_port), String::new(), true),
+        probe(
+            args.authority(args.hub_port),
+            args.credential().unwrap_or_default(),
+            false
+        )
     );
     let brain = if hub["ok"] == true {
-        match call(args, "brain.info", json!({})).await {
-            Ok(info) => json!({"ok":true,"detail":info}),
-            Err(e) => json!({"ok":false,"detail":e.to_string()}),
+        match tokio::time::timeout(Duration::from_secs(5), call(args, "brain.info", json!({})))
+            .await
+        {
+            Ok(Ok(_)) => json!({"ok":true,"detail":"registered (brain.info answered)"}),
+            Ok(Err(error)) => json!({"ok":false,"detail":format!("probe failed ({error})")}),
+            Err(_) => json!({"ok":false,"detail":"probe failed (timed out)"}),
         }
     } else {
-        json!({"ok":false,"detail":"not checked (hub down)"})
+        json!({"ok":false,"detail":"not checked (hub is down)"})
     };
     let success = daemon["ok"] == true && hub["ok"] == true;
     let report = json!({"claudemon":daemon,"hub":hub,"brain":brain});
     if args.json {
         print_json(out, &report)?
     } else {
-        for name in ["claudemon", "hub", "brain"] {
+        for (name, endpoint) in [
+            ("claudemon", Some(args.authority(api_port))),
+            ("hub", Some(args.authority(args.hub_port))),
+            ("brain", None),
+        ] {
             writeln!(
                 out,
-                "{name}: {} {}",
+                "  {name:<10} {:<5} {}{}",
                 if report[name]["ok"] == true {
                     "up"
                 } else {
                     "down"
                 },
-                report[name]["detail"]
-            )?
+                report[name]["detail"].as_str().unwrap_or(""),
+                endpoint
+                    .map(|address| format!(" — http://{address}"))
+                    .unwrap_or_default()
+            )?;
         }
     }
     Ok(if success { 0 } else { 1 })

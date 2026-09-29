@@ -1,13 +1,13 @@
 /**
  * THE CORPUS VOCABULARY GUARD — every fixture in contracts/, every block.
  *
- * TWIN: services/hub/cmd/brain/corpusvocab_test.go. Same checks, same check IDs,
+ * TWIN: services/hub-rs/tests/corpus_vocabulary.rs. Same checks, same check IDs,
  * same mutation battery, over the same files — and each side asserts the other's
  * source still carries every ID, because the three copies of the ORIGINAL
  * vocabulary test agreed only because a comment said "TWINS:". Deleting one of
  * them was a green run everywhere.
  *
- * What this closes, from the Go twin's header:
+ * What this closes, preserved from the original guard:
  *
  *  - The `vocabulary` block validated tokens, groups and deniedBy for ONE array
  *    (`cases`) of ONE fixture. spawnCwds, methods, checkUse, paramShapes,
@@ -27,7 +27,7 @@ import path from 'path';
 import { SweepTally, itSweptTheWholeCorpus } from '../../../tests/support/sweepTally';
 
 const CONTRACTS = path.join(__dirname, '../../../../../contracts');
-const GO_TWIN = path.join(__dirname, '../../../../../services/hub/cmd/brain/corpusvocab_test.go');
+const RUST_TWIN = path.join(__dirname, '../../../../../services/hub-rs/tests/corpus_vocabulary.rs');
 
 /** The checks this validator performs. Both loaders declare the list. */
 const VOCAB_CHECK_IDS = [
@@ -80,7 +80,7 @@ interface BlockSpec {
   nested?: Record<string, string[]>;
   /** The tests that read THIS BLOCK, "<repo-relative file>::<needle>". The
    *  per-fixture loader count is a per-FILE guard, so a block could lose every
-   *  loader it had while the file kept the others; cmd/brain/contracts_test.go
+   *  loader it had while the file kept the others; services/hub-rs/tests/corpus_vocabulary.rs
    *  resolves these. */
   loaders?: string[];
   verdictField?: string;
@@ -531,24 +531,24 @@ describe('the vocabulary guard is falsifiable', () => {
 });
 
 /**
- * The CROSS-LOADER EXISTENCE GUARD, this side. The Go twin runs the same
+ * The CROSS-LOADER EXISTENCE GUARD, this side. The Rust twin runs the same
  * assertion back at this file.
  */
 describe('the two corpus-vocabulary loaders are one guard', () => {
-  it('the Go twin exists and carries every check this one does', () => {
-    expect(fs.existsSync(GO_TWIN), `${GO_TWIN} is gone — this guard has no twin`).toBe(true);
-    const src = fs.readFileSync(GO_TWIN, 'utf-8');
+  it('the Rust twin exists and carries every check this one does', () => {
+    expect(fs.existsSync(RUST_TWIN), `${RUST_TWIN} is gone — this guard has no twin`).toBe(true);
+    const src = fs.readFileSync(RUST_TWIN, 'utf-8');
     for (const id of VOCAB_CHECK_IDS) {
       expect(
         src.includes(`[${id}]`),
-        `the Go validator does not carry the ${id} check — the two have drifted, and a fixture defect this side catches would ship on the other`,
+        `the Rust validator does not carry the ${id} check — the two have drifted, and a fixture defect this side catches would ship on the other`,
       ).toBe(true);
     }
   });
 
   it('the active cross-language path contract loaders are still there', () => {
     const twins: Array<[string, string]> = [
-      ['services/hub/cmd/brain/fsguard_test.go', 'TestActivePathContractCases'],
+      ['services/hub-rs/tests/files.rs', 'fn shared_active_path_contract('],
       ['apps/desktop/src/main/lib/pathConfinement.test.ts', "describe('active path contract'"],
     ];
     for (const [rel, needle] of twins) {

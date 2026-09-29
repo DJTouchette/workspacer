@@ -226,6 +226,12 @@
       "status": "pending",
       "tests": []
     },
+    "services/hub/cmd/brain/config_defaults.json": {
+      "replacement": [],
+      "sha256": "9ec49ee10363d2d6f0d1963478271a6f5855744dc9ff0f3f2829aadb22f66169",
+      "status": "pending",
+      "tests": []
+    },
     "services/hub/cmd/brain/config_orphans.go": {
       "replacement": [],
       "sha256": "4f307f5e6a9fbd7853680bcfa1247cf4d1186d909fafd3eacd2a83b76d438a1d",
@@ -1420,10 +1426,20 @@
       "tests": []
     },
     "services/hub/cmd/mcp/auth_test.go": {
-      "replacement": [],
+      "note": "Scoped bearer, owner, explicit guest/static tiers, bad credential rejection, tool authorization and policy revocation covered. Authtoken package is not certified wholesale by this narrower review.",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/access.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "937c6259ddb4599e347686dc81a99fd3e63b5f0c3d8f73c69bda5fe4c3e7c31c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/src/mcp/access.rs"
+      ]
     },
     "services/hub/cmd/mcp/configsave_test.go": {
       "replacement": [],
@@ -1672,10 +1688,20 @@
       "tests": []
     },
     "services/hub/cmd/mcp/tiers_test.go": {
-      "replacement": [],
+      "note": "Scoped bearer, owner, explicit guest/static tiers, bad credential rejection, tool authorization and policy revocation covered. Authtoken package is not certified wholesale by this narrower review.",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/access.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "ac61186a856cc7ccb1a9b3eafadffa1e528bc11615d8ffe2a7b1fa230e6319a8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/src/mcp/access.rs"
+      ]
     },
     "services/hub/cmd/mcp/ui.go": {
       "replacement": [],
@@ -1899,16 +1925,28 @@
       "tests": []
     },
     "services/hub/cmd/workspacer/status.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/admin.rs",
+        "services/hub-rs/src/cli/mod.rs"
+      ],
+      "review": "CLI status preserves string detail fields, real daemon session/hub capability counts, endpoint rendering and informational brain readiness. A real broker plus fake HTTP regression rejects an unrelated HTTP200 service and probes without a stored credential; shared cutover batch CLI12 passed.",
       "sha256": "17ce9490f9235bf944dfd1a08111a5ec1bfe15a443cd787d9e96a409c28ae085",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/workspacer/status_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/admin.rs",
+        "services/hub-rs/src/cli/mod.rs"
+      ],
+      "review": "CLI status preserves string detail fields, real daemon session/hub capability counts, endpoint rendering and informational brain readiness. A real broker plus fake HTTP regression rejects an unrelated HTTP200 service and probes without a stored credential; shared cutover batch CLI12 passed.",
       "sha256": "6cc0e73ef234cdb243393027f064883b0ea959974aae1a4ea26189a681a1bcce",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/workspacer/token.go": {
       "replacement": [
@@ -2232,7 +2270,7 @@
     },
     "services/hub/internal/bus/policy_test.go": {
       "replacement": [],
-      "sha256": "3ed8aefc72f9b59b5943e5f6f8aabfbf72ac847ad09bda2329111a07e4c54d21",
+      "sha256": "f8bae3c449e5f909771fb9f10f45a7cd26ea46e1c1c9fd77b6f273ca4b21b920",
       "status": "pending",
       "tests": []
     },
@@ -2437,10 +2475,18 @@
       "tests": []
     },
     "services/hub/internal/capspec/claudemoncallers_test.go": {
-      "replacement": [],
+      "note": "All four ownership guards preserved: served fixture/router equality incl verb, every caller path served with floors, independent repo-wide enumeration and stale entries, each served route has caller or substantive non-stale reason. Added Rust embedded and external callers plus mutation coverage. Guard6 and generator4 passed; no Go runner dependency.",
+      "replacement": [
+        "apps/desktop/src/main/services/claudemonRouteContract.test.ts",
+        "apps/desktop/tests/support/claudemonCallers.json"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "13f4562c6aed15af83c6870a80e55ae154e8f92d8d38184f12d558bceae8eb35",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/claudemonRouteContract.test.ts",
+        "services/claudemon/src/daemon/routes_contract.rs"
+      ]
     },
     "services/hub/internal/capspec/composition.go": {
       "replacement": [],
@@ -2711,88 +2757,186 @@
       "tests": []
     },
     "services/hub/internal/limits/bucket.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "42771ee3d4bc22be347817450cd325484dc3f0350b36bb22863d2ba4c9a32c50",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/bucket_test.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "01c6745c35da6389de426f5bac876c30157664c6616db587ac60b448a7b88e0c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/forecast.go": {
-      "replacement": [],
+      "note": "Weighted work remains unknown quota share unless supplied explicitly.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "6bb8eb94a3911e3210db4a8c3189577b38f12f05bcb397225c4c4e4bc9fed330",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/limits/forecast_test.go": {
-      "replacement": [],
+      "note": "Weighted work remains unknown quota share unless supplied explicitly.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "bc9ea9770e1376dcbe35143460df40739a91d734e674055b0df6b22ed4483d7d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/limits/health.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "2ebb4a5d77cfdf633dc7e417db532ab84b2bee91f75c1aaf42bb3d3fa9fec8c0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/health_test.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "244a853547be2e1e62ff1015ba0bcb30ab208f0270573faf90b0f26191ec74f2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/pace.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "7c7afcebe2706132dbdbb81cb0e867e4308525d011acc06f96fbbd4f1908b498",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/pace_test.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "bca13c4f5e54c70a92feea8c8fe910ee1543ecc3288a75f7f7db1c1b9284f084",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/paceweek_test.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "efed90e68e2d677e223b960308e0d4e1c17644aa46b7f9e6b2d4365d628e4450",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/report.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "b54a9abd321d145e608ba3334f92ad8ea545a1f5ecc56a7adfe14d82d0846fc7",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/report_test.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "6573f70787110b97fadfbab49db473ee931d3431c884e7832fc32e36267b6932",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/rust_contract_test.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "c1de99ef34e0231ebf9186b05fe7217ce7ff86e284cc2a93a7933eacaf584b26",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/window.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "cea8791656213cfdf086a74fdb8bcd7ba158e84ead80fae715b95d7a5fb72aba",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/limits/window_test.go": {
-      "replacement": [],
+      "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
+      "replacement": [
+        "services/hub-rs/src/services/limits.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "cecab78e12e23cddd92a9b89e96f8e233bd719b957e8648a3ac273f149f95ffd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/limits.rs",
+        "contracts/usage-pacing-cases.json"
+      ]
     },
     "services/hub/internal/modelselection/manager.go": {
       "replacement": [],
@@ -3368,28 +3512,68 @@
       ]
     },
     "services/hub/internal/quiescence/parse.go": {
-      "replacement": [],
+      "note": "Session parsing, blocker evaluation and continuous monitor use host-owned evidence; unavailable evidence and uncertain shells block. Shared corpus covers 33 evaluation + 6 monitor cases.",
+      "replacement": [
+        "services/hub-rs/src/services/quiescence.rs",
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "98dc02f074e1db75b89fccbed7b15f4295d117e13f54a2b8e6d9e3a39a5ff9d0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/quiescence.rs",
+        "contracts/fleet-quiescence-cases.json"
+      ]
     },
     "services/hub/internal/quiescence/quiescence.go": {
-      "replacement": [],
+      "note": "Session parsing, blocker evaluation and continuous monitor use host-owned evidence; unavailable evidence and uncertain shells block. Shared corpus covers 33 evaluation + 6 monitor cases.",
+      "replacement": [
+        "services/hub-rs/src/services/quiescence.rs",
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "cf0d1961c16450b48a5592491ecfaa8e2b8c94ca2c33aaab0151794888399ad2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/quiescence.rs",
+        "contracts/fleet-quiescence-cases.json"
+      ]
     },
     "services/hub/internal/quiescence/quiescence_test.go": {
-      "replacement": [],
+      "note": "Session parsing, blocker evaluation and continuous monitor use host-owned evidence; unavailable evidence and uncertain shells block. Shared corpus covers 33 evaluation + 6 monitor cases.",
+      "replacement": [
+        "services/hub-rs/src/services/quiescence.rs",
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "1ea9fe30995d38e5816657f7812312727ed2f2614f404f984de451449e29700a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/quiescence.rs",
+        "contracts/fleet-quiescence-cases.json"
+      ]
     },
     "services/hub/internal/quiescence/rust_contract_test.go": {
-      "replacement": [],
+      "note": "Session parsing, blocker evaluation and continuous monitor use host-owned evidence; unavailable evidence and uncertain shells block. Shared corpus covers 33 evaluation + 6 monitor cases.",
+      "replacement": [
+        "services/hub-rs/src/services/quiescence.rs",
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "fcd9a829ff589b5c7bc36e31e3dc83a27529b0e642813b54cadd0f8a1c73c695",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/quiescence.rs",
+        "contracts/fleet-quiescence-cases.json"
+      ]
     },
     "services/hub/internal/redact/redact.go": {
       "replacement": [],
@@ -3404,226 +3588,493 @@
       "tests": []
     },
     "services/hub/internal/routing/alternatives.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "4b4880ed59229521728a17745de436acadbadc15ac3bd4b283bf5bb536ce5ac4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/availability.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "2f51fdf7030457d87def183ba83346cf5fc58cc6a56eb88c44b769d0d896f995",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/availability_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "39513c1d64e5c1c935a7a6474ee0964230de6eecc985a6e7432c0576946745e6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/ceiling.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "a885251b0e88ade0012aab169f95d8479b968dd6afd79e7f7b23a16e1a50e3e4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/ceiling_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "50aa9527f8f52d4630a8a9bc809d1ff06e4f340b06aa021ba790909265e6a28e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/decisionlog.go": {
-      "replacement": [],
+      "note": "Append-only sanitized decision records, private creation and owner-only repair; Windows exact source also checked by windows-contract-check.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/audit.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "924f21c3c774451e6166e7d87ee12a7232f59278fd0d3faa7b6146ed6302d19d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ]
     },
     "services/hub/internal/routing/decisionlog_private_unix.go": {
-      "replacement": [],
+      "note": "Append-only sanitized decision records, private creation and owner-only repair; Windows exact source also checked by windows-contract-check.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/audit.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "ff5c3ebb6d512f996b307fbd657416593c5a9fe302b8be1bff828a61c4e0d301",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ]
     },
     "services/hub/internal/routing/decisionlog_private_windows.go": {
-      "replacement": [],
+      "note": "Append-only sanitized decision records, private creation and owner-only repair; Windows exact source also checked by windows-contract-check.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ],
+      "review": "ported-source; platform execution pending",
       "sha256": "84d0ced5390c7816a1040f13e5c972fc40ae756552e94befd1d8e6ba9a3c5dd0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ]
     },
     "services/hub/internal/routing/decisionlog_test.go": {
-      "replacement": [],
+      "note": "Append-only sanitized decision records, private creation and owner-only repair; Windows exact source also checked by windows-contract-check.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/audit.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "446ea34272b2b83883e77eae3d6468d83ae3ea3438a98c8b34454de3fc106eeb",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ]
     },
     "services/hub/internal/routing/decisionlog_unix_test.go": {
-      "replacement": [],
+      "note": "Append-only sanitized decision records, private creation and owner-only repair; Windows exact source also checked by windows-contract-check.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/audit.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "10e8c32a2638b06d4efaa81638e7f584d976737ca0baa9bcc68fdee5a8a738a2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ]
     },
     "services/hub/internal/routing/decisionlog_windows_contract_test.go": {
-      "replacement": [],
+      "note": "Append-only sanitized decision records, private creation and owner-only repair; Windows exact source also checked by windows-contract-check.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ],
+      "review": "ported-source; platform execution pending",
       "sha256": "78d4aa603f6d35bdd2ce1ff127458b191179b12068ec9c97b91983a8b241980d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ]
     },
     "services/hub/internal/routing/decisionlog_windows_test.go": {
-      "replacement": [],
+      "note": "Append-only sanitized decision records, private creation and owner-only repair; Windows exact source also checked by windows-contract-check.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ],
+      "review": "ported-source; platform execution pending",
       "sha256": "0f8cb8ddc797c5d0f2ea554922191a82ba6cafa07a51765b8d5d27900a32b5c2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/routing/windows_audit.rs"
+      ]
     },
     "services/hub/internal/routing/effort.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "d2f4e4cb7c347e4415ae58c1798b28bfbde0fc62e2240ebf8bd60a8d167f2f5d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/effort_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "2057249b280748194f2d4be87bc935ec0bd072cb5e454de8bfb42df1ec623b7e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/fresh.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "96804a2e9e1dbf0e31be5398d8f811466517484d741a11d598d4adaebb6621c0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/fresh_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "32e3a5ddec38d05f0ae6f31861eee4b83f1ae57d44b1a944f81149e548b68400",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/load.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "dd48c43e6dbed004ae0339888092e506a669150ff86518cc5f7875daf669cf1a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/matrix.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "2f201b86e89d21033ec9ee0936097f3c7ed1b2a0c480f8f503fc100750c22080",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/matrix_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "13ab1e0aed293490145ba5129c021c0c33b58257ac78cf84f64379a386f7b0bd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/matrix_windows_test.go": {
-      "replacement": [],
+      "note": "Platform path normalization/comparison, Windows drives/UNC/case and component-boundary semantics.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ],
+      "review": "ported-source; platform execution pending",
       "sha256": "a9e5e7280f034d79ba3a792f36e6c3096bd6c69a3a2ab7cd1883151300b2d14c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ]
     },
     "services/hub/internal/routing/modelid.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "d8430494a47a16f98818764d3a0b3bf5002a89281e385ed501d638857d61781b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/modelid_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "1f2e970a1b3c102ef45c39889bf79e362ab0e070eb83aa226b1fea3a8280f29d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/pacing.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "93518eb0c3605a6064a532747102a49159f51a5bacee4853eb7a1c8ed4582077",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/pacing_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "573a285399f0dc8670324e884062b8b4906531c3581ace503d61a616f6aeadc2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/pathmatch_unix.go": {
-      "replacement": [],
+      "note": "Platform path normalization/comparison, Windows drives/UNC/case and component-boundary semantics.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "84531abb59cbb1e192257db88eeca17507ca27d19090d9ff6816b544c4f28398",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ]
     },
     "services/hub/internal/routing/pathmatch_windows.go": {
-      "replacement": [],
+      "note": "Platform path normalization/comparison, Windows drives/UNC/case and component-boundary semantics.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ],
+      "review": "ported-source; platform execution pending",
       "sha256": "be255626c652a3ab9d85e8d8a7dcf8d015f239f84e5abb298d449eeded41393e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ]
     },
     "services/hub/internal/routing/pathmatch_windows_semantics_test.go": {
-      "replacement": [],
+      "note": "Platform path normalization/comparison, Windows drives/UNC/case and component-boundary semantics.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ],
+      "review": "ported-source; platform execution pending",
       "sha256": "9635defae074ddefb421cdf1849a541cf82b5b93bac23a5e57c6cc11706c1ed2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/path.rs"
+      ]
     },
     "services/hub/internal/routing/policy.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "61fe10f7ab4638e87d482cfb509a39b0860f505d3a7c38a46344df9017ec6e3b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/policy_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "0d6c929cde32bd16483e9799f8511e24b889f4ed8b2bd1396e495a094755100a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/preferences.go": {
-      "replacement": [],
+      "note": "Durable preference CAS and strict raw duplicate validation; private atomic replacement uses shared audit protection.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "905f3e18ed7cd32356d3d805b103b803dfeff5bc07c99a29d43d127fcae00133",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ]
     },
     "services/hub/internal/routing/preferences_private_unix.go": {
-      "replacement": [],
+      "note": "Durable preference CAS and strict raw duplicate validation; private atomic replacement uses shared audit protection.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "2b7c766a70bd948b4f29b1089a052398e0c992827811f343cace5e6f8d09bf80",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ]
     },
     "services/hub/internal/routing/preferences_private_windows.go": {
-      "replacement": [],
+      "note": "Durable preference CAS and strict raw duplicate validation; private atomic replacement uses shared audit protection.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "review": "ported-source; platform execution pending",
       "sha256": "084581eaa4a6525e5b6013b8aef9818a049a94f26e11f9dc1744f71082ca5778",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ]
     },
     "services/hub/internal/routing/preferences_test.go": {
-      "replacement": [],
+      "note": "Durable preference CAS and strict raw duplicate validation; private atomic replacement uses shared audit protection.",
+      "replacement": [
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "4ec3963e2be98894a52646c096812c87123c0ef0de95fa465835224bc673470d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ]
+    },
+    "services/hub/internal/routing/routing.default.yaml": {
+      "note": "Default routing matrix retained as data.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.default.yaml"
+      ],
+      "review": "ported-source reviewed",
+      "sha256": "3bd8cf6e67b7655907a0f48e4082309733f1bb69b809383137c9bf71eb5f3e5c",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs"
+      ]
     },
     "services/hub/internal/routing/rust_contract_test.go": {
-      "replacement": [],
+      "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "1e83c92a2bd95fe576f1b5816d6919d04a9b6c7ed7c94281aca990f09e27e732",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "contracts/routing-policy-cases.json"
+      ]
     },
     "services/hub/internal/routing/service.go": {
-      "replacement": [],
+      "note": "Host-owned fresh usage/catalog sampling, serialized refresh, dynamic model aliases and evidence freshness feed decisions. Empty/failed catalog distinguish unavailable/unknown.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "66eb4976028c6f72d09af16d48b5581a20b55b16d621664c7154169232a8e7b9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs"
+      ]
     },
     "services/hub/internal/routing/service_catalog_test.go": {
-      "replacement": [],
+      "note": "Host-owned fresh usage/catalog sampling, serialized refresh, dynamic model aliases and evidence freshness feed decisions. Empty/failed catalog distinguish unavailable/unknown.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "c08d1a9675581f9e21e64b7f2288bf0436095e2a68a0333f09f6c556f280fadc",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs"
+      ]
     },
     "services/hub/internal/routing/service_test.go": {
-      "replacement": [],
+      "note": "Host-owned fresh usage/catalog sampling, serialized refresh, dynamic model aliases and evidence freshness feed decisions. Empty/failed catalog distinguish unavailable/unknown.",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "34698eafef288d320b96bffa31ba4068943f29509bc8555cef5e22131dbbde52",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs"
+      ]
     },
     "services/hub/internal/statelost/statelost.go": {
       "replacement": [],
@@ -3698,16 +4149,32 @@
       "tests": []
     },
     "services/hub/internal/usageprefs/usageprefs.go": {
-      "replacement": [],
+      "note": "Pacing schedule persistence and report projection only; routing selection regression explicitly proves schedule does not alter decision policy.",
+      "replacement": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "60bee000b426e2018656bb81efbb7a60b60db44d18bfb23343d54cbecb2f0dce",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/src/services/routing.rs"
+      ]
     },
     "services/hub/internal/usageprefs/usageprefs_test.go": {
-      "replacement": [],
+      "note": "Pacing schedule persistence and report projection only; routing selection regression explicitly proves schedule does not alter decision policy.",
+      "replacement": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/src/services/routing/preferences.rs"
+      ],
+      "review": "ported-source reviewed",
       "sha256": "ea65c2e6f939676bc1b17a600d1645400eac4c8d29c6096dbba7051c53cfd1f9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/src/services/routing.rs"
+      ]
     }
   },
   "version": 1

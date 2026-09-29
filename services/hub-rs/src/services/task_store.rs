@@ -12,8 +12,8 @@ use std::{
 mod admission;
 mod directory;
 mod host;
-mod remote;
 pub mod references;
+mod remote;
 pub use admission::validate_admission;
 pub type OwnerLookup = std::sync::Arc<dyn Fn(&str) -> Option<Value> + Send + Sync>;
 pub(crate) fn text(v: &Value) -> &str {

@@ -1,24 +1,36 @@
-# Build context is the repo root; the node image needs only the two Go/Rust
-# services. Everything else is weight or, worse, a credential.
-*
-!services/hub
+**
+!services
+!services/hub-rs
+!services/hub-rs/**
 !services/claudemon
+!services/claudemon/**
+!services/hub
+!services/hub/examples
+!services/hub/examples/**
+!contracts
+!contracts/**
+!deploy
+!deploy/fly
+!deploy/fly/rust
+!deploy/fly/rust/**
 !deploy/fly/node
-# Shared with the hub image, so they sit one level up rather than in either
-# image's directory: the release download + verify (artifact mode) and the single
-# writer of the build-stamp format (both modes). Build-time only — neither is
-# copied into the finished image.
-!deploy/fly/fetch-release.sh
+!deploy/fly/node/*.sh
+!deploy/fly/hub
+!deploy/fly/hub/*.sh
+!deploy/fly/combined
+!deploy/fly/combined/entrypoint.sh
 !deploy/fly/write-build-stamp.sh
-
-services/hub/hub
-services/hub/brain
-services/hub/mcp
-services/hub/workspacer
-services/hub/claudemon
-services/hub/web
-services/claudemon/target
-services/claudemon/vitest-out.txt
-**/.git
+!deploy/fly/fetch-release.sh
+!apps
+!apps/desktop
+!apps/desktop/**
+**/target
 **/node_modules
+**/.git
 **/*.log
+**/dist
+**/.env
+**/.env.*
+**/.claude
+**/.codex
+**/.workspacer

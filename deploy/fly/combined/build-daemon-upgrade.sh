@@ -7,18 +7,5 @@ if [ "$#" -ne 2 ]; then
 fi
 base=$1 tag=$2
 root=$(cd "$(dirname "$0")/../../.." && pwd)
-# Explicit Rust cutover updates the embedded engine together with the backend;
-# replacing only the claudemon leaf no longer changes the running engine.
-if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
-  exec "$root/deploy/fly/rust/build-upgrade.sh" "$base" "$tag" --isolated
-fi
-stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
-cargo build --release --manifest-path "$root/services/claudemon/Cargo.toml"
-cp "$root/services/claudemon/target/release/claudemon" "$stage/claudemon"
-cat > "$stage/Dockerfile" <<'DOCKER'
-ARG BASE
-FROM ${BASE}
-COPY --chown=0:0 --chmod=0755 claudemon /usr/local/bin/claudemon
-DOCKER
-docker build --build-arg "BASE=$base" -t "$tag" "$stage"
+# Upgrade the owned backend and embedded engine together; no legacy child fallback.
+exec "$root/deploy/fly/rust/build-upgrade.sh" "$base" "$tag" --isolated

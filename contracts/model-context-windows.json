@@ -128,7 +128,7 @@
         ],
         "loaders": [
           "apps/desktop/src/main/shared/managerSelection.test.ts::managerPreferenceCases",
-          "services/hub/internal/modelselection/manager_test.go::ManagerPreferenceCases"
+          "services/hub-rs/tests/config.rs::shared_model_selection_and_manager_contracts"
         ]
       }
     }

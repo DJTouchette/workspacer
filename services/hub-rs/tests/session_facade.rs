@@ -184,7 +184,7 @@ async fn deliberately_disabled_facade_keeps_selected_servers_and_contracts_witho
     };
     Library::new(root.path().into()).save(&json!({"scope":"global","id":"custom","kind":"mcp","mcp":{"type":"stdio","command":"fixture-mcp","env":{"LIBRARY_ONLY":"preserved"}}})).unwrap();
     let mut plan=spawn_plan::resolve(&json!({"cwd":project,"provider":"claude","transport":"stream","mcpItemIds":["custom"],"resultSchema":{"type":"object"}}),&json!({}),None,root.path(),"disabled-agent",false).unwrap();
-    plan.request["extra_args"] = json!(["--append-system-prompt","Profile instruction."]);
+    plan.request["extra_args"] = json!(["--append-system-prompt", "Profile instruction."]);
     facade.prepare(&mut plan, "generation").await.unwrap();
     let servers: serde_json::Value = serde_json::from_slice(
         &std::fs::read(facade.directory.join("disabled-agent.json")).unwrap(),

@@ -48,7 +48,7 @@ command -v curl >/dev/null 2>&1 || { echo "test-fetch-release.sh: curl is requir
 # rather than breaking a box deploy.
 # ---------------------------------------------------------------------------
 # make_bundle <name> <tag> <commit> [omit...]
-#   omit: file names to leave OUT (e.g. mcp, build-stamp) — the interesting cases
+#   omit: file names to leave OUT (e.g. workspacer-rust, build-stamp) — the interesting cases
 make_bundle() {
   local name="$1" tag="$2" commit="$3"; shift 3
   local omit=" $* "
@@ -56,7 +56,7 @@ make_bundle() {
   rm -rf "$TMP/build/$name"
   mkdir -p "$root/web/assets"
   local f
-  for f in workspacer hub brain claudemon mcp; do
+  for f in workspacer-rust claudemon; do
     case "$omit" in *" $f "*) continue ;; esac
     printf '#!/bin/sh\necho %s\n' "$f" >"$root/$f"
     # Deliberately NOT executable: the archive comes off a Windows-hostile
@@ -98,13 +98,13 @@ section "The happy path installs the same shape a source build produces"
 make_bundle good nightly "$REAL_SHA"
 fetch "$TMP/out-good" WKS_RELEASE_TAG=nightly
 assert_rc "$rc" 0 "a matching bundle installs"
-assert_file "$TMP/out-good/workspacer" "workspacer is installed"
-assert_file "$TMP/out-good/mcp"        "mcp is installed — the file the bundle used to be missing"
+assert_file "$TMP/out-good/workspacer-rust" "workspacer is installed"
+assert_file "$TMP/out-good/claudemon"        "claudemon hook/diagnostic CLI is installed"
 assert_file "$TMP/out-good/claudemon"  "claudemon is installed"
 assert_file "$TMP/out-good/build-stamp" "the stamp travels with the files"
 assert_file "$TMP/out-good/web/index.html" "the web app comes along"
-assert_exec "$TMP/out-good/workspacer" "binaries are made executable (the archive's 0644 is not enough)"
-assert_exec "$TMP/out-good/mcp"        "including mcp"
+assert_exec "$TMP/out-good/workspacer-rust" "binaries are made executable (the archive's 0644 is not enough)"
+assert_exec "$TMP/out-good/claudemon"        "including claudemon"
 assert_grep "$out" "stamp verified: tag=nightly" "says which stamp it accepted"
 assert_grep "$out" "sha256(archive)" "records the exact download in the build log"
 
@@ -127,7 +127,7 @@ assert_rc "$rc" 1 "asking for v0.150.0 and getting a bundle stamped nightly fail
 assert_grep "$out" "RELEASE DRIFT" "names it as drift rather than a download error"
 assert_grep "$out" "asked for tag 'v0.150.0'" "prints what was asked for"
 assert_grep "$out" "the archive says it is 'nightly'" "and what arrived"
-assert_no_file "$TMP/out-drift/workspacer" "and installs nothing"
+assert_no_file "$TMP/out-drift/workspacer-rust" "and installs nothing"
 
 # ===========================================================================
 section "THE SHA GUARD: the right tag built from the wrong commit still fails"
@@ -162,27 +162,25 @@ assert_grep "$out" "WKS_INSTALL=source" "and names the way out"
 # ===========================================================================
 section "COMPLETENESS: a bundle missing a binary fails here, not at 3am on boot"
 # ===========================================================================
-# `mcp` is the concrete one: the node entrypoint starts the MCP facade before the
-# brain and `die`s if it does not answer within ten seconds. An image built from
-# a bundle without it builds green and cannot boot.
-make_bundle nomcp nightly "$REAL_SHA" mcp
-fetch "$TMP/out-nomcp" WKS_RELEASE_TAG=nightly
-assert_rc "$rc" 1 "a bundle without mcp is refused"
-assert_grep "$out" "missing 1 file(s) this image needs: mcp" "names the missing file"
+# The owned backend contains both hub and MCP. A legacy-only archive cannot boot.
+make_bundle nobackend nightly "$REAL_SHA" workspacer-rust
+fetch "$TMP/out-nobackend" WKS_RELEASE_TAG=nightly
+assert_rc "$rc" 1 "a bundle without the Rust backend is refused"
+assert_grep "$out" "missing 1 file(s) this image needs: workspacer-rust" "names the missing file"
 assert_grep "$out" "Bundle standalone server" "and points at the release step that owes it"
 
 # The hub asks for a different set, and gets its own answer.
 make_bundle noweb nightly "$REAL_SHA" web
 fetch "$TMP/out-noweb" WKS_RELEASE_TAG=nightly \
-  WKS_RELEASE_REQUIRE="hub web/index.html build-stamp" WKS_RELEASE_CHMOD=hub
+  WKS_RELEASE_REQUIRE="workspacer-rust web/index.html build-stamp" WKS_RELEASE_CHMOD=workspacer-rust
 assert_rc "$rc" 1 "the hub's own require-list catches a bundle with no web app"
 assert_grep "$out" "web/index.html" "naming the path it wanted"
 
 make_bundle hubok nightly "$REAL_SHA"
 fetch "$TMP/out-hubok" WKS_RELEASE_TAG=nightly \
-  WKS_RELEASE_REQUIRE="hub web/index.html build-stamp" WKS_RELEASE_CHMOD=hub
+  WKS_RELEASE_REQUIRE="workspacer-rust web/index.html build-stamp" WKS_RELEASE_CHMOD=workspacer-rust
 assert_rc "$rc" 0 "and passes on a complete one"
-assert_exec "$TMP/out-hubok/hub" "chmodding only what it was asked to chmod"
+assert_exec "$TMP/out-hubok/workspacer-rust" "chmodding only what it was asked to chmod"
 
 # ===========================================================================
 section "Operator mistakes get a sentence, not a stack trace"

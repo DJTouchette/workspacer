@@ -17,7 +17,7 @@
         "required": ["name", "model", "owners", "note"],
         "loaders": [
           "apps/desktop/src/main/shared/modelVocabulary.test.ts::model-vocabulary-ownership-cases.json",
-          "services/hub/internal/modelselection/manager_test.go::TestManagerModelVocabularyOwnershipCases"
+          "services/hub-rs/tests/models.rs::manager_model_vocabulary_ownership_matches_shared_contract"
         ]
       }
     }

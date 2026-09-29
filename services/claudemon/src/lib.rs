@@ -5,11 +5,13 @@
 //! tests (`tests/*.rs`) and visual previews without redundantly duplicating
 //! file references.
 
-pub mod cli;
 pub mod child_env;
+#[cfg(unix)]
+pub mod child_group;
 #[cfg(windows)]
 #[path = "wrapper/pty_windows_job.rs"]
 pub mod child_job;
+pub mod cli;
 pub mod daemon;
 pub mod execution;
 pub mod protocol;

@@ -5,21 +5,23 @@
 mod admission;
 pub mod auth;
 pub mod backend;
-pub mod client;
 pub mod cli;
+pub mod client;
 pub mod federation;
 pub mod mcp;
 pub mod model_selection;
 pub mod net_address;
-pub mod protocol;
 pub mod plugins;
+pub mod protocol;
 mod runtime;
 pub mod server;
 pub mod services;
-pub use runtime::{Caller, Connection, Handle, Hub, Options, Status};
 pub(crate) use runtime::LaunchPermit;
+pub use runtime::{Caller, Connection, Handle, Hub, Options, Status};
 
 pub mod provider_relay;
 
 #[cfg(feature = "test-support")]
 pub mod test_support;
+
+pub(crate) mod state_loss;

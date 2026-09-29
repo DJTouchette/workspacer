@@ -10,11 +10,11 @@ struct Args {
     #[arg(long)]
     mcp_listen: Option<SocketAddr>,
     /// Read an existing host credential. This program never rotates identity.
-    #[arg(long,required_unless_present="mcp_inventory")]
+    #[arg(long, required_unless_present = "mcp_inventory")]
     token_file: Option<PathBuf>,
     /// Print reference facade mapping gaps without starting services.
     #[arg(long)]
-    mcp_inventory:bool,
+    mcp_inventory: bool,
     /// Shared tokens.json store for scoped clients and providers.
     #[arg(long)]
     tokens_file: Option<PathBuf>,
@@ -39,12 +39,12 @@ struct Args {
     plugin_origin: String,
     #[arg(long)]
     plugin_examples_dir: Option<PathBuf>,
-    #[arg(long="trusted-host",value_delimiter=',')]
-    trusted_hosts:Vec<String>,
+    #[arg(long = "trusted-host", value_delimiter = ',')]
+    trusted_hosts: Vec<String>,
     #[arg(long)]
-    webapp_dir:Option<PathBuf>,
+    webapp_dir: Option<PathBuf>,
     #[arg(long)]
-    push_dir:Option<PathBuf>,
+    push_dir: Option<PathBuf>,
 }
 
 enum Owner {
@@ -70,10 +70,15 @@ impl Owner {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     if args.mcp_inventory {
-        println!("{}",serde_json::to_string_pretty(&workspacer_hub::mcp::migration_inventory())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&workspacer_hub::mcp::migration_inventory())?
+        );
         return Ok(());
     }
-    let token = std::fs::read_to_string(args.token_file.expect("clap requires token-file"))?.trim().to_owned();
+    let token = std::fs::read_to_string(args.token_file.expect("clap requires token-file"))?
+        .trim()
+        .to_owned();
     let mut options = Options::default();
     options.listen = Some(args.listen);
     options.mcp_listen = args.mcp_listen;
@@ -82,17 +87,41 @@ async fn main() -> anyhow::Result<()> {
     options.data_dir = args.data_dir;
     options.config_dir = args.config_dir;
     if options.scoped_tokens.is_none() {
-        options.scoped_tokens = options.config_dir.as_ref().map(|directory| directory.join("tokens.json"));
+        options.scoped_tokens = options
+            .config_dir
+            .as_ref()
+            .map(|directory| directory.join("tokens.json"));
     }
     options.home_dir = args.home_dir;
     options.plugin_origin = args.plugin_origin;
-    options.trusted_hosts=if args.trusted_hosts.is_empty(){std::env::var("HUB_TRUSTED_HOSTS").unwrap_or_default().split(',').map(str::trim).filter(|s|!s.is_empty()).map(str::to_owned).collect()}else{args.trusted_hosts};
-    options.webapp_dir=args.webapp_dir.or_else(||std::env::var_os("WORKSPACER_WEBAPP_DIR").map(PathBuf::from));
-    options.push_dir=args.push_dir;
+    options.trusted_hosts = if args.trusted_hosts.is_empty() {
+        std::env::var("HUB_TRUSTED_HOSTS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect()
+    } else {
+        args.trusted_hosts
+    };
+    options.webapp_dir = args
+        .webapp_dir
+        .or_else(|| std::env::var_os("WORKSPACER_WEBAPP_DIR").map(PathBuf::from));
+    options.push_dir = args.push_dir;
     options.plugin_examples_dir = args.plugin_examples_dir;
-    options.plugins_dir = args.plugins_dir.or_else(|| options.config_dir.as_ref().map(|dir| dir.join("plugins")))
+    options.plugins_dir = args
+        .plugins_dir
+        .or_else(|| options.config_dir.as_ref().map(|dir| dir.join("plugins")))
         .filter(|path| !path.as_os_str().is_empty());
-    options.peers_file = args.peers_file.or_else(|| options.config_dir.as_ref().map(|dir| dir.join("peers.json")))
+    options.peers_file = args
+        .peers_file
+        .or_else(|| {
+            options
+                .config_dir
+                .as_ref()
+                .map(|dir| dir.join("peers.json"))
+        })
         .filter(|path| !path.as_os_str().is_empty());
     options.jobs_file = args
         .jobs_file

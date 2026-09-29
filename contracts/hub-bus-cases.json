@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "vocabulary": {"blocks":{"cases":{"why":"Identical bus scenarios run against Go, Rust WebSocket and Rust embedded transports.","required":["name","steps"],"loaders":["services/hub/internal/bus/migration_test.go::TestMigrationBusFixtures", "services/hub-rs/tests/compatibility.rs::shared_contracts_embedded"]}}},
+  "vocabulary": {"blocks":{"cases":{"why":"Identical bus scenarios run against Go, Rust WebSocket and Rust embedded transports.","required":["name","steps"],"loaders":["services/hub-rs/tests/compatibility.rs::shared_contracts_embedded"]}}},
   "description": "Behavioral fixtures shared by the Go reference, Rust WebSocket adapter and embedded Rust core. Deliberately partial: see the migration inventory.",
   "cases": [
     {

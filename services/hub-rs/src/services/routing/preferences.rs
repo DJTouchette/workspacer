@@ -749,7 +749,7 @@ mod tests {
         let service = RoutingService::open(dir.path().into()).unwrap();
         let caller = crate::Caller {
             call_id: 0,
-            activity_seq:0,
+            activity_seq: 0,
             federated: false,
             connection_id: 1,
             authenticated_host: true,
@@ -776,7 +776,7 @@ mod tests {
         let service = RoutingService::open(dir.path().into()).unwrap();
         let mut caller = crate::Caller {
             call_id: 0,
-            activity_seq:0,
+            activity_seq: 0,
             federated: false,
             connection_id: 1,
             authenticated_host: true,

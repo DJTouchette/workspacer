@@ -325,7 +325,13 @@ pub(crate) fn router_with_policy(
             "/plugins/sdk.js",
             get(|| async {
                 (
-                    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+                    [
+                        (
+                            header::CONTENT_TYPE,
+                            "application/javascript; charset=utf-8",
+                        ),
+                        (header::CACHE_CONTROL, "public, max-age=300"),
+                    ],
                     include_str!("sdk.js"),
                 )
             }),

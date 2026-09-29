@@ -45,12 +45,14 @@ impl Workspace {
             self.ui_bus.guide = matches!(&request.intent, Intent::OpenGuide)
                 || matches!(&request.intent,Intent::RunAction{action,..} if action=="toggle-help");
             let action = effect(&request.intent);
-            if self.requested_session.is_some() && !matches!(action, Effect::Unsupported(_)) {
-                if !matches!(&action,Effect::FocusAgent(id) if Some(id)==self.requested_session.as_ref())
-                {
-                    self.ui_bus.notice="This window is pinned to a session; the navigation request was not applied.".into();
-                    continue;
-                }
+            if self.requested_session.is_some()
+                && !matches!(action, Effect::Unsupported(_))
+                && !matches!(&action,Effect::FocusAgent(id) if Some(id)==self.requested_session.as_ref())
+            {
+                self.ui_bus.notice =
+                    "This window is pinned to a session; the navigation request was not applied."
+                        .into();
+                continue;
             }
             self.ui_bus.notice.clear();
             match action {
@@ -143,7 +145,7 @@ impl Workspace {
         let payload = self.ui_bus.payload.clone();
         div().px_3().pb_3().text_size(px(12.)).text_color(rgb(p.warning)).child(self.ui_bus.notice.clone())
    .child(div().flex().flex_wrap().gap_2().mt_2()
-    .when(payload.as_ref().is_some_and(|p|p.as_object().is_some_and(|p|!p.is_empty())),|d|d.child(self.button("copy-ui-request","Copy request",true).on_click(cx.listener(move|_,_,_,cx|{if let Some(payload)=&payload{if let Ok(text)=serde_json::to_string_pretty(payload){cx.write_to_clipboard(ClipboardItem::new_string(text));}}}))))
+    .when(payload.as_ref().is_some_and(|p|p.as_object().is_some_and(|p|!p.is_empty())),|d|d.child(self.button("copy-ui-request","Copy request",true).on_click(cx.listener(move|_,_,_,cx|{if let Some(payload)=&payload && let Ok(text)=serde_json::to_string_pretty(payload){cx.write_to_clipboard(ClipboardItem::new_string(text));}}))))
     .when(self.ui_bus.guide,|d|d.child(self.button("native-guide","Read native guide",true).on_click(|_,_,cx|cx.open_url("https://github.com/DJTouchette/workspacer/blob/main/apps/native/README.md"))))
     .child(self.button("dismiss-ui-request","Dismiss",true).on_click(cx.listener(|this,_,_,cx|{this.ui_bus.notice.clear();this.ui_bus.payload=None;cx.notify();}))))
     }

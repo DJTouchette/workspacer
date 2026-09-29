@@ -104,7 +104,7 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let caller = crate::Caller {
             call_id: 0,
-            activity_seq:0,
+            activity_seq: 0,
             federated: false,
             connection_id: 0,
             authenticated_host: true,

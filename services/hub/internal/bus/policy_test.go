@@ -49,7 +49,7 @@ type paramShapeCase struct {
 }
 
 func TestParamShapeContractCases(t *testing.T) {
-	raw, err := sweepguard.ReadRepoFile("contracts", "path-containment-cases.json")
+	raw, err := sweepguard.ReadRepoFile("contracts", "retired", "path-parameter-shapes.json")
 	if err != nil {
 		t.Fatal(err)
 	}

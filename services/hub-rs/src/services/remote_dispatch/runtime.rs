@@ -123,7 +123,7 @@ pub(crate) fn install(
     routes: Routes,
 ) -> Result<(Options, Option<Observer>)> {
     if !options.control_plane_only {
-    options=options.handler("fleet.dispatchTargets",|_,_|async{Ok(serde_json::json!({"targets":[],"linkedButNotEnabled":[],"note":"No workers-only pairing is configured."}))});
+        options=options.handler("fleet.dispatchTargets",|_,_|async{Ok(serde_json::json!({"targets":[],"linkedButNotEnabled":[],"note":"No workers-only pairing is configured."}))});
     }
     let Some(directory) = options.config_dir.clone() else {
         return Ok((options, None));

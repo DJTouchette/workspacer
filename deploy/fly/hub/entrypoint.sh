@@ -1,52 +1,15 @@
 #!/usr/bin/env bash
+# Always-on Fly hub. It holds pairing/VAPID identity and the cloud credential
+# used by the node registry, and serves the web/mobile clients over Tailscale.
 #
-# entrypoint.sh — PID 1 on the ALWAYS-ON Fly hub.
+# One workspacer-rust serve --hub-only process owns the bus and HTTP adapters.
+# Local agent execution and scheduled jobs are disabled; uploads go to the
+# external worker. Node liveness is tied to the actual registered provider
+# generation, never a local builtin handler claiming brain.info readiness.
 #
-# This machine exists because the worker node sleeps, and something has to be
-# awake to receive "wake node X" from a phone, hold the Fly API token, and run
-# the node registry. That cannot be the node (a sleeping hub cannot wake
-# anything) and it should not be a desktop (then waking from a phone only works
-# while the desktop is on).
-#
-# It runs exactly ONE workspacer process:
-#
-#   hub --brain-scope off --addr 127.0.0.1:7895 …
-#
-# No claudemon. No brain. No Claude Code sessions. Nothing that holds an agent
-# credential. The machine that is always on and holds a token which spends money
-# is deliberately the machine with the least on it.
-#
-#   *** --brain-scope off IS REQUIRED, NOT PREFERRED. ***
-#
-# The node registry's liveness probe is brain.info, and it cannot tell a LOCAL
-# brain from a REMOTE one. A hub supervising its own brain would report a stopped
-# node as `available`, forever, and every wake would appear to have already
-# happened. cmd/hub/nodes.go logs a warning about exactly this combination and
-# does not enforce it; these artifacts do. It is also the flag's own default —
-# it is passed explicitly anyway, because a default is not a decision.
-#
-# Boot order and why:
-#   1. boot log on the volume       a crash loop at 3am must be readable at 9am;
-#                                   Fly retains logs 7 days
-#   2. bootstrap the volume         refuses an unmounted volume, and decides
-#                                   FIRST RUN vs STATE LOSS per file. This is the
-#                                   step that stops a hub silently becoming a
-#                                   DIFFERENT hub. It may exit 2; that is correct.
-#   3. tailscaled + tailscale up    the tailnet is the hub's only network surface
-#   4. wait for the tailnet         the hub binds loopback and is reached ONLY
-#                                   through `tailscale serve`, so no tailnet
-#                                   means no hub. Refuse rather than pretend.
-#   5. tailscale serve              terminates TLS with a real Let's Encrypt cert
-#                                   for the MagicDNS name. Load-bearing: /m is a
-#                                   PWA and service workers + Web Push REQUIRE a
-#                                   secure context.
-#   6. hub                          with --trusted-host set to the name step 5
-#                                   just proved, derived rather than configured
-#   6b. one end-to-end HTTPS request  serve returning 0 is not the hub being
-#                                      reachable; the certificate is fetched on
-#                                      demand and can fail afterwards. NON-FATAL.
-#   7. supervise + a loopback health watchdog
-#
+# The mounted HOME, lost-state guards, UID/GID, Tailscale TLS and second plugin
+# origin remain unchanged. This root entrypoint prepares them, drops to wks
+# for the hub and supervises its HTTP health until an owned signal shutdown.
 set -euo pipefail
 
 # --------------------------------------------------------------------------
@@ -475,51 +438,10 @@ else
   log "  registered and no node can be woken. See RUNBOOK.md §8."
 fi
 
-if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
-  # Explicit image opt-in; volume, Tailscale and HTTP watchdog remain shared.
-  source /usr/local/lib/wks-rust/launch.sh
-  rust_hub_arguments
-else
-hub_args=(
-  --addr "${HUB_BIND}:${HUB_PORT}"
-  # REQUIRED. The node registry probes liveness with brain.info, which cannot
-  # tell a local brain from a remote one, so a hub that supervises its own brain
-  # reports a stopped node as `available` forever. See the header.
-  --brain-scope off
-  --plugins-dir "$PLUGINS_DIR"
-
-  # *** JOBS OFF, AND THIS IS A SECURITY BOUNDARY, NOT A PREFERENCE. ***
-  #
-  # Follow the authority through. The node attaches with an OPERATOR-tier
-  # $HUB_TOKEN. Operator tier is `trusted`. Every jobs.* method is gated by
-  # jobsTrusted (cmd/hub/main.go), and jobsTrusted is a bare c.IsTrusted(),
-  # nothing narrower. So the node may call jobs.upsert and then jobs.run, and a
-  # job of kind shell reaches jobs.BusRunner.Shell, which is
-  # exec.CommandContext("/bin/sh", "-c", command). Unconfined.
-  #
-  # Where does that /bin/sh run? Not on the node. In THIS process's environment,
-  # on THIS machine: the one holding $FLY_API_TOKEN, on the volume holding
-  # nodes.json, tokens.json and remote-token. And the node is, by design, the
-  # machine that runs code an agent wrote. That is a straight path from a
-  # prompt-injected agent to the credential that creates and destroys machines
-  # and spends the money.
-  #
-  # Nothing on this hub schedules a job: it runs `hub` and nothing else, has no
-  # brain, and no plugin ships here, so the whole subsystem costs nothing to
-  # switch off, and switching it off removes the reachable code rather than
-  # arguing about the gate in front of it. An EMPTY --jobs-file is the documented
-  # off switch: `jobsFile` defaults to defaultJobsFile(), and `if *jobsFile != ""`
-  # is what wraps every jobs.* RegisterLocalIdent, so an empty value registers
-  # none of them and starts no scheduler. Verified in cmd/hub/main.go at the flag
-  # declaration and at the guard, and asserted executably by preflight.sh, which
-  # runs `workspacer jobs list` against a booted hub and requires it to fail.
-  #
-  # The day this hub needs a job, the fix is NOT to delete this line. It is to
-  # give the node a narrower tier than operator, or jobs.* a gate narrower than
-  # IsTrusted.
-  --jobs-file ""
-)
-fi
+# Keep execution and scheduled jobs off on the credential-owning central hub.
+# The Rust node provider supplies execution over its explicit scoped link.
+source /usr/local/lib/wks-rust/launch.sh
+rust_hub_arguments
 if [ -n "$TRUSTED_HOSTS" ]; then
   hub_args+=(--trusted-host "$TRUSTED_HOSTS")
 fi
@@ -534,14 +456,8 @@ else
   log "  is unaffected. Rebuild with --build-arg WKS_WITH_WEBAPP=1 to include it."
 fi
 
-log "starting hub on ${HUB_BIND}:${HUB_PORT} (brain-scope off, trusted-host=${TRUSTED_HOSTS:-<none>})"
-if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
-  rust_as_wks /usr/local/bin/workspacer-rust "${hub_args[@]}" &
-else
-as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
-  XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
-  hub "${hub_args[@]}" &
-fi
+log "starting hub on ${HUB_BIND}:${HUB_PORT} (execution disabled, trusted-host=${TRUSTED_HOSTS:-<none>})"
+rust_as_wks /usr/local/bin/workspacer-rust "${hub_args[@]}" &
 HUB_PID=$!
 
 for _ in $(seq 1 100); do

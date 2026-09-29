@@ -2,7 +2,7 @@
 //!
 //! `contracts/claudemon-routes.json` is the machine-readable answer to "what
 //! does claudemon actually serve". Everything that checks a CALLER against that
-//! seam reads it — `services/hub/internal/capspec/claudemoncallers_test.go`
+//! seam reads it — `apps/desktop/src/main/services/claudemonRouteContract.test.ts`
 //! sweeps every caller in the repo against it, and `apps/tui`'s `mock_server`
 //! answers 404 for a path it does not contain. So the fixture has to be the
 //! router, not a description of it: a hand-maintained list drifts, and a drifted
@@ -26,7 +26,7 @@ use std::fmt::Write as _;
 
 /// The two router sources, verbatim, at compile time. `wrapper_ws.rs` and
 /// `mcp_ask.rs` define handlers but register nothing outside a test module —
-/// `capspec`'s own scan asserts that separately, from the Go side, over every
+/// The portable caller guard asserts that separately over every
 /// file in `daemon/`.
 const API_RS: &str = include_str!("api.rs");
 const HOOK_RS: &str = include_str!("hook.rs");
@@ -173,7 +173,7 @@ const ROUTES_WHY: &str = "One route claudemon's axum routers actually register. 
 /// resolves both halves of each entry, so a renamed test fails here.
 const ROUTES_LOADERS: [&str; 3] = [
     "services/claudemon/src/daemon/routes_contract.rs::the_route_fixture_is_the_router",
-    "services/hub/internal/capspec/claudemoncallers_test.go::TestClaudemonRouteFixtureMatchesTheServedRegistry",
+    "apps/desktop/src/main/services/claudemonRouteContract.test.ts::fixture_matches_served_routers",
     "apps/tui/src/claudemon.rs::every_path_this_client_builds_is_a_route_claudemon_serves",
 ];
 

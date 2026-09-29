@@ -18,7 +18,7 @@
 # night: the tag is deleted and recreated against a new commit. So "I asked for
 # nightly and the download succeeded" says nothing at all about what is now
 # inside the image, and neither does anything else on the box — as of this
-# writing `workspacer`, `hub` and `brain` have no `--version` flag at all, and
+# writing the version comes from the release build stamp, and
 # `claudemon --version` prints a Cargo version (`0.1.0`) that has not moved in
 # the life of the project. There is no honest way to ask a running box what code
 # it is.
@@ -55,7 +55,7 @@
 #                         archive. Default is the node's set. The hub passes its
 #                         own, shorter, list.
 #   WKS_RELEASE_CHMOD     space-separated paths to make executable. Default is
-#                         the four binaries plus mcp.
+#                         workspacer-rust and claudemon.
 #
 # Usage: fetch-release.sh <dest-dir>
 #
@@ -70,8 +70,8 @@ REPO="${WKS_RELEASE_REPO:-DJTouchette/workspacer}"
 ASSET="${WKS_RELEASE_ASSET:-workspacer-server-linux-x64.tar.gz}"
 BASE_URL="${WKS_RELEASE_BASE_URL:-https://github.com/${REPO}/releases/download}"
 TOKEN_FILE="${WKS_RELEASE_TOKEN_FILE:-}"
-REQUIRE="${WKS_RELEASE_REQUIRE:-workspacer hub brain claudemon mcp}"
-CHMOD="${WKS_RELEASE_CHMOD:-workspacer hub brain claudemon mcp}"
+REQUIRE="${WKS_RELEASE_REQUIRE:-workspacer-rust claudemon}"
+CHMOD="${WKS_RELEASE_CHMOD:-workspacer-rust claudemon}"
 
 die() {
   printf '\n' >&2

@@ -583,16 +583,17 @@ fn fresh_host_metadata_can_remove_a_previous_manager_role() {
 }
 
 #[test]
-fn manual_transfer_exclusively_fences_both_owners_and_releases_on_drop(){
- let dir=tempfile::tempdir().unwrap();
- let state=ReplacementState::open(dir.path().join("journal.json")).unwrap();
- let launch=state.admit(&["old"]).unwrap();
- assert!(state.manual_admission(&["old","new"]).is_err());
- drop(launch);
- let transfer=state.manual_admission(&["old","new"]).unwrap();
- assert!(state.admit(&["old"]).is_err());assert!(state.admit(&["new"]).is_err());
- assert!(state.manual_admission(&["new"]).is_err());
- assert!(state.admit(&["unrelated"]).is_ok());
- drop(transfer);
- assert!(state.admit(&["old","new"]).is_ok());
+fn manual_transfer_exclusively_fences_both_owners_and_releases_on_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = ReplacementState::open(dir.path().join("journal.json")).unwrap();
+    let launch = state.admit(&["old"]).unwrap();
+    assert!(state.manual_admission(&["old", "new"]).is_err());
+    drop(launch);
+    let transfer = state.manual_admission(&["old", "new"]).unwrap();
+    assert!(state.admit(&["old"]).is_err());
+    assert!(state.admit(&["new"]).is_err());
+    assert!(state.manual_admission(&["new"]).is_err());
+    assert!(state.admit(&["unrelated"]).is_ok());
+    drop(transfer);
+    assert!(state.admit(&["old", "new"]).is_ok());
 }

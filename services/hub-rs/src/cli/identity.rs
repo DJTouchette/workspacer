@@ -38,23 +38,14 @@ pub fn load_or_create_host_token(directory: &Path, allow_new: bool) -> Result<St
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
     }
-    let mut previous = false;
-    for entry in std::fs::read_dir(directory)? {
-        let entry = entry?;
-        if ["remote-token", ".remote-token.lock"]
-            .iter()
-            .any(|name| entry.file_name() == *name)
-        {
-            continue;
-        }
-        if entry.file_type()?.is_dir()
-            && std::fs::read_dir(entry.path()).is_ok_and(|mut entries| entries.next().is_none())
-        {
-            continue;
-        }
-        previous = true;
-        break;
-    }
+    // Preserve the CLI's read-error refusal; the diagnostic helper itself
+    // follows legacy Suspected's missing/unreadable-root -> false contract.
+    std::fs::read_dir(directory)?;
+    let previous = crate::state_loss::suspected_ignoring(
+        directory,
+        std::ffi::OsStr::new("remote-token"),
+        &[std::ffi::OsStr::new(".remote-token.lock")],
+    );
     if previous && !allow_new {
         bail!(
             "STATE LOSS: remote-token is missing but this configuration directory contains existing state; restore the pairing credential, supply --token, or explicitly use --allow-new-token"

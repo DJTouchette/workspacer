@@ -40,7 +40,7 @@ kill_signal  = "SIGINT"
 kill_timeout = 30
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = "deploy/fly/hub/Dockerfile"
 
 [env]
   # --- persistence -------------------------------------------------------

@@ -136,14 +136,21 @@ test.describe('panes that load a URL', () => {
   test('the Browser pane is either usable or honest — never a silent blank', async ({ page }) => {
     await openPaneOfType(page, 'browser');
 
-    if (await paneContentLoaded(page)) return; // rendered for real — fine.
-
-    // Otherwise it must SAY so, in words a user can act on.
-    const body = await page.locator('body').innerText();
-    expect(
-      /desktop|browser pane|not (available|supported)|open (it )?in/i.test(body),
-      'the Browser pane rendered nothing and explained nothing',
-    ).toBe(true);
+    // Wait for the same user-visible outcome as the plugin pane. A fixed
+    // sleep races layout hydration on a loaded CI worker.
+    await expect
+      .poll(
+        async () => {
+          if (await paneContentLoaded(page)) return true;
+          const body = await page.locator('body').innerText();
+          return /desktop|browser pane|not (available|supported)|open (it )?in/i.test(body);
+        },
+        {
+          timeout: 15_000,
+          message: 'the Browser pane rendered nothing and explained nothing',
+        },
+      )
+      .toBe(true);
   });
 });
 

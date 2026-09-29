@@ -279,11 +279,9 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&guard.path).unwrap()).unwrap();
         assert_eq!(payload["pid"], std::process::id());
-        assert!(
-            payload["token"]
-                .as_str()
-                .is_some_and(|token| uuid::Uuid::parse_str(token).is_ok())
-        );
+        assert!(payload["token"]
+            .as_str()
+            .is_some_and(|token| uuid::Uuid::parse_str(token).is_ok()));
         let sibling = WorktreeAdmission::acquire(nested.to_str().unwrap())
             .unwrap()
             .unwrap();
@@ -304,11 +302,9 @@ mod tests {
         );
         drop(sibling);
         assert!(!lock.exists());
-        assert!(
-            WorktreeAdmission::acquire(nested.to_str().unwrap())
-                .unwrap()
-                .is_some()
-        );
+        assert!(WorktreeAdmission::acquire(nested.to_str().unwrap())
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -320,11 +316,9 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(
-            WorktreeAdmission::acquire(fixture.root.to_str().unwrap())
-                .unwrap()
-                .is_none()
-        );
+        assert!(WorktreeAdmission::acquire(fixture.root.to_str().unwrap())
+            .unwrap()
+            .is_none());
         assert!(!fixture.repo.join(".git").join(LOCK_NAME).exists());
     }
 

@@ -1,8 +1,10 @@
-# Rust Fly image preview
+# Rust Fly deployment images
 
-This is an explicit build-time preview. Existing Fly Dockerfiles and app-config
-default builds still select the legacy backend. Explicit Rust source/artifact
-builds and the isolated upgrade path are available below. Nothing here deploys or changes a Fly machine.
+The default hub, node and combined Dockerfiles build the Rust backend. They are
+generated from `deploy/fly/rust/Dockerfile`; run `render-dockerfiles.py` after
+editing the canonical image, and `render-dockerfiles.py --check` in validation.
+Source and Rust-only release-artifact builds use the same runtime contract.
+Nothing here deploys or changes a Fly machine.
 
 The new Dockerfile has `WKS_ROLE=node`, `hub` and `combined` runtime stages. They run
 `workspacer-rust`; the node also carries the Rust `claudemon` executable for hook
@@ -15,8 +17,7 @@ payload is retained for third-party provider CLIs and installed plugin runtimes;
 it does not implement the backend. The worker preserves the existing
 `@anthropic-ai/claude-code` installation and version check, with the same
 `CLAUDE_CODE_VERSION` build argument. Existing downstream provider/toolchain
-installations are retained by the upgrade layer. Within these explicitly selected
-images, `workspacer` is a verified symlink to `workspacer-rust`; no Go executable
+installations are retained by the upgrade layer. In these images, `workspacer` is a verified symlink to `workspacer-rust`; no Go executable
 backs the compatibility name.
 
 ## Build and validation
@@ -60,17 +61,16 @@ The optional binary check parses the exact container argument arrays with
 `--help`; it starts no backend. Docker is not available in the implementation
 workspace, so no image build or container boot has been certified here.
 `deploy/fly/rust/preflight.sh` supplies static, build, artifact and boot stages;
-`WKS_RUST_BACKEND=1 deploy/fly/preflight.sh` routes to them. The boot rehearsal
+`deploy/fly/preflight.sh` routes to them by default. The boot rehearsal
 uses actual images and fresh local volumes, simulates only Tailscale, provisions
 separate temporary provider/facade identities, verifies Rust relay registration
 and stops both roles gracefully. It also boots/stops the generic combined image. It does not run a model or contact Fly.
 
 ## Existing volumes and identity
 
-The entrypoint opt-in is `WKS_RUST_BACKEND=1`, baked into these images. The old
-entrypoints keep their network, boot logs, UID/GID 10001, volume checks,
-Tailscale identity, TLS setup, doorbell and shutdown traps. Their default branch
-is unchanged. Both roles still use:
+Entrypoints keep their network, boot logs, UID/GID 10001, volume checks,
+Tailscale identity, TLS setup, doorbell and shutdown traps, then start the Rust
+backend directly. There is no Go child fallback. Both roles still use:
 
 - `/data/home` for HOME and provider accounts.
 - `/data/home/.config/workspacer` for config, remote-token, scoped tokens,
@@ -82,8 +82,8 @@ is unchanged. Both roles still use:
 No file symlink replaces persistent directories. A missing established pairing
 identity still refuses startup. The old Go worker could have configuration and
 session tokens but no **local** pairing identity, because it only attached to the
-remote hub. For that reviewed first migration, run this explicitly as the volume
-owner; it preserves an existing token and prints only its prefix:
+remote hub. For that reviewed first migration, and for a new worker/combined volume whose
+bootstrap already seeded config, run this explicitly as the volume owner; it preserves an existing token and prints only its prefix:
 
 ```sh
 workspacer-rust --config-dir /data/home/.config/workspacer \

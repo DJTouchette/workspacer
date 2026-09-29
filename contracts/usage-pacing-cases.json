@@ -437,7 +437,6 @@
           "health"
         ],
         "loaders": [
-          "services/hub/internal/limits/rust_contract_test.go::TestPortableRustPacingContract",
           "services/hub-rs/src/services/limits.rs::portable_pacing_contract"
         ]
       }

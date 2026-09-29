@@ -38,10 +38,9 @@ why it lives in your repo and not in workspacer's.
 
 | Path | What |
 |---|---|
-| `/usr/local/bin/brain` | the node's control-plane client — connects out to the hub over the bus |
-| `/usr/local/bin/workspacer` | the workspacer CLI |
-| `/usr/local/bin/mcp` | the loopback MCP facade injected into spawned agents |
-| `/usr/local/bin/claudemon` | the agent supervisor daemon (Rust) |
+| `/usr/local/bin/workspacer-rust` | owns the engine, MCP facade and outbound provider relay |
+| `/usr/local/bin/workspacer` | compatibility symlink to `workspacer-rust` |
+| `/usr/local/bin/claudemon` | Rust hook-forwarding and diagnostic CLI; no sibling daemon is started |
 | `/usr/local/bin/tailscaled`, `/usr/local/bin/tailscale` | kernel-mode Tailscale |
 | `/usr/local/bin/claude` | Claude Code, via a global npm install under `/usr/local/lib/node_modules` |
 | `/usr/bin/tini` | PID 1 |
@@ -56,7 +55,7 @@ Plus the operational toolkit the entrypoint, bootstrap and agents assume:
 
 | Path | What |
 |---|---|
-| `/usr/local/lib/wks/entrypoint.sh` | PID 1's payload: boot log → bootstrap → doorbell → tailscaled → `claudemon init` → claudemon → mcp facade → brain, plus signals and exit-reason recording |
+| `/usr/local/lib/wks/entrypoint.sh` | PID 1's payload: boot log → bootstrap → doorbell → tailscaled → owned Rust backend (including hook setup), plus signals and exit-reason recording |
 | `/usr/local/lib/wks/bootstrap.sh` | prepares the volume; idempotent on empty, populated and damaged volumes; creates **zero symlinks** |
 | `/usr/local/lib/wks/test-bootstrap.sh` | 106 assertions over `bootstrap.sh` |
 | `/usr/local/lib/wks/verify-image.sh` | **the contract check.** See [the rules](#the-rules) |
@@ -68,9 +67,8 @@ Plus the operational toolkit the entrypoint, bootstrap and agents assume:
 | `/usr/local/share/workspacer/build-stamp` | **what this image is.** `key=value` lines: `component`, `install`, `version`, `tag`, `commit`, `built`, `platform`, `run` |
 
 It is a contract file, not a convenience. Nothing else on a node can answer
-"which workspacer is this": `workspacer`, `hub` and `brain` have no `--version`
-flag, and `claudemon --version` prints the Cargo version `0.1.0`, which has not
-moved in the life of the project. `verify-image.sh` fails the build if the stamp
+"which workspacer commit is this": executable package versions alone do not
+identify the source revision. `verify-image.sh` fails the build if the stamp
 is missing or incomplete, and `entrypoint.sh` prints it on every boot, so `fly
 logs` answers the question without a shell on the machine.
 
@@ -78,20 +76,20 @@ logs` answers the question without a shell on the machine.
 installed them; `install=release` means they came out of a published
 `workspacer-server-*` release bundle (see [build arguments](#build-arguments)).
 A downstream layer that installs workspacer components of its own should write
-its own stamp *beside* this one rather than over it — the hub image does exactly
-that, at `build-stamp.hub`.
+its own stamp *beside* this one rather than silently retaining a stale base stamp.
+The generated hub role now builds independently from the same canonical recipe.
 
 ## Build arguments
 
 | Arg | Default | What |
 |---|---|---|
-| `WKS_INSTALL` | `source` | `source` compiles the daemons from the worktree; `artifact` downloads them from a GitHub release and runs **no Go or Rust stage at all** |
+| `WKS_INSTALL` | `source` | `source` compiles the daemons from the worktree; `artifact` downloads them from a GitHub release and runs **no compiler stage at all** |
 | `WKS_RELEASE_TAG` | `nightly` | artifact mode: which release |
 | `WKS_RELEASE_SHA` | *(unset)* | artifact mode: the commit the release must carry. Worth passing — `nightly` is a mutable tag |
 | `WKS_RELEASE_REPO` | `DJTouchette/workspacer` | artifact mode: where the release lives |
-| `WKS_RELEASE_ASSET` | `workspacer-server-linux-x64.tar.gz` | artifact mode: which platform bundle |
+| `WKS_RELEASE_ASSET` | derived from BuildKit `TARGETARCH` | artifact mode: Rust-only server platform bundle |
 | `WKS_RELEASE_BASE_URL` | GitHub's release-download URL | artifact mode: override the download host |
-| `WKS_SOURCE_SHA` | *(unset → `unknown`)* | source mode: the commit to record in the stamp. `**/.git` is excluded from the build context on purpose, so nothing can infer it — `preflight.sh` passes `git rev-parse HEAD` |
+| `WKS_SOURCE_SHA` | *(unset → `unknown`)* | source mode: the commit to record in the stamp. `**/.git` is excluded from the build context on purpose, so nothing can infer it — pass a reviewed SHA explicitly (CI passes `github.sha`) |
 | `CLAUDE_CODE_VERSION` | `latest` | pin Claude Code for a reproducible image |
 | `WKS_UID` / `WKS_GID` | `10001` | the agent user. Changing these breaks the volume contract — see rule 2 |
 
@@ -236,8 +234,9 @@ inherits the distro and should not try to change it.
 
 ### 7. Do not remove things from `/usr/local/bin`
 
-`verify-image.sh` checks that `brain`, `workspacer`, `mcp`, `claudemon`, `tailscale`,
-`tailscaled`, `claude` and `tini` are all still resolvable.
+`verify-image.sh` checks that `workspacer-rust`, its `workspacer` alias,
+`claudemon`, `tailscale`, `tailscaled`, `claude` and `tini` remain resolvable.
+Legacy `hub`, `brain`, `mcp` executables and the private Node companion are refused.
 
 ---
 
@@ -301,8 +300,8 @@ What exists today:
 
 - The image builds from `deploy/fly/node/Dockerfile` with the **repo root** as
   context, and the conventional local tag is **`workspacer-node-base:dev`**.
-- It carries OCI labels — `org.opencontainers.image.title=workspacer-node-base`
-  and `dev.workspacer.node.role=base` — so a downstream image can be identified
+- It carries OCI labels — `org.opencontainers.image.title=workspacer-rust-node`
+  and `dev.workspacer.node.role=rust-node` — so a downstream image can be identified
   as descending from it (`docker inspect`).
 
 What has **not** been decided, and needs to be before a downstream `FROM` line

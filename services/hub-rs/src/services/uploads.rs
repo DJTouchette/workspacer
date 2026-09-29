@@ -91,13 +91,21 @@ fn store(params: Value, dir: &Path) -> Result<Value> {
     file.persist_noclobber(&path).map_err(|e| e.error)?;
     Ok(json!({"path":path,"size":bytes.len()}))
 }
-fn within_envelope(params:&Value)->bool{
+fn within_envelope(params: &Value) -> bool {
     struct Budget(usize);
-    impl std::io::Write for Budget{
-        fn write(&mut self,bytes:&[u8])->std::io::Result<usize>{if bytes.len()>self.0{return Err(std::io::Error::other("upload envelope exceeds limit"))}self.0-=bytes.len();Ok(bytes.len())}
-        fn flush(&mut self)->std::io::Result<()>{Ok(())}
+    impl std::io::Write for Budget {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.0 {
+                return Err(std::io::Error::other("upload envelope exceeds limit"));
+            }
+            self.0 -= bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    serde_json::to_writer(Budget((MAX_BYTES/3+1)*4+16*1024),params).is_ok()
+    serde_json::to_writer(Budget((MAX_BYTES / 3 + 1) * 4 + 16 * 1024), params).is_ok()
 }
 pub(crate) fn install_front(options: Options, hub: crate::Handle) -> Options {
     let forward = options.uploads_to_worker;
@@ -105,8 +113,8 @@ pub(crate) fn install_front(options: Options, hub: crate::Handle) -> Options {
         let hub = hub.clone();
         async move {
             if forward {
-                anyhow::ensure!(within_envelope(&params),"files.upload: payload too large");
-            let caller = crate::client::Client::connect_service(&hub).await?;
+                anyhow::ensure!(within_envelope(&params), "files.upload: payload too large");
+                let caller = crate::client::Client::connect_service(&hub).await?;
                 let result = caller
                     .call_with_timeout(
                         "files.receiveUpload",

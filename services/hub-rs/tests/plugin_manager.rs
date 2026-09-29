@@ -356,6 +356,18 @@ async fn http_public_manifest_omits_private_fields_and_host_mutations_work() {
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = reqwest::Client::new();
     let base = format!("http://{address}");
+    let sdk = client
+        .get(format!("{base}/plugins/sdk.js"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sdk.status(), 200);
+    assert_eq!(
+        sdk.headers()["content-type"],
+        "application/javascript; charset=utf-8"
+    );
+    assert_eq!(sdk.headers()["cache-control"], "public, max-age=300");
+    assert!(sdk.text().await.unwrap().contains("window.workspacer"));
     let public: Value = client
         .get(format!("{base}/plugins"))
         .send()
@@ -419,6 +431,16 @@ async fn http_public_manifest_omits_private_fields_and_host_mutations_work() {
     assert!(own_ui.contains("__WKS_SETTINGS__"));
     assert!(own_ui.contains("__WKS_SECRET__"));
     assert!(!own_ui.contains("sensitive"));
+    manager.lock().await.remove("fixture").await.unwrap();
+    let empty: Value = client
+        .get(format!("{base}/plugins"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(empty, json!([]));
     manager.lock().await.stop().await.unwrap();
     task.abort();
     hub.shutdown().unwrap();

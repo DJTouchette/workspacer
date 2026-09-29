@@ -1,17 +1,30 @@
 # One machine, stopped when idle
 
-This topology runs hub + brain + claudemon together using `workspacer serve`.
+**Rust backend cutover:** the default Dockerfile is now a generated, standalone
+Rust image; it does not require a separately built Go base. See
+[the current image and credential migration contract](../rust/README.md).
+`WKS_INSTALL=artifact` consumes the Rust-only `workspacer-rust`/`claudemon`
+release bundle. Existing volume paths and pairing identities are preserved.
+Full outbound workers require a separately provisioned scoped facade caller
+credential; their provider or owner token is never silently reused for it.
+
+
+This topology runs the hub, MCP facade and embedded engine in `workspacer-rust serve`.
 Fly Proxy stays available while the machine is stopped. Opening `/m`, `/app/`,
 or a desktop connection to `https://<app>.fly.dev` wakes it via HTTP, including
 the WebSocket handshake. No separate hub or Fly token in the browser is needed.
 
-Build from the repository root, using the same revision for every layer:
+Build the generated combined role directly from the repository root:
 
 ```sh
-docker build -f deploy/fly/node/Dockerfile -t workspacer-node-base:dev .
-docker build -f deploy/fly/hub/Dockerfile -t workspacer-hub:dev .
-docker build -f deploy/fly/combined/Dockerfile -t workspacer-combined:dev .
+docker build -f deploy/fly/combined/Dockerfile \
+  --build-arg WKS_SOURCE_SHA=REVIEWED_COMMIT -t workspacer-combined:dev .
 ```
+
+There is no prerequisite Go base layer. This generic template uses UID 10001;
+existing protected dual-UID deployments must use the audited isolated upgrade
+builder described in [the Rust migration contract](../rust/README.md), which
+preserves their root supervisor, network broker and separate caller authority.
 
 Use `fly.toml` as a new deployment template: choose an app name, provision its
 `wks_data` volume in the selected region, and deploy **one** machine. Publish the

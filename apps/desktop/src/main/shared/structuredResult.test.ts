@@ -25,9 +25,15 @@ const REPORT_SCHEMA: Record<string, unknown> = {
 };
 
 it('portableWorkerResultContracts', () => {
-  const corpus = JSON.parse(readFileSync(new URL('../../../../../contracts/worker-result-cases.json', import.meta.url), 'utf8'));
+  const corpus = JSON.parse(
+    readFileSync(
+      new URL('../../../../../contracts/worker-result-cases.json', import.meta.url),
+      'utf8',
+    ),
+  );
   expect(corpus.validationCases.length).toBeGreaterThanOrEqual(12);
-  for (const row of corpus.validationCases) expect(validateAgainstSchema(row.value, row.schema), row.name).toEqual(row.errors);
+  for (const row of corpus.validationCases)
+    expect(validateAgainstSchema(row.value, row.schema), row.name).toEqual(row.errors);
   expect(corpus.resultCases.length).toBeGreaterThanOrEqual(6);
   for (const row of corpus.resultCases) {
     const result = readStructuredResult(row.message, row.schema);

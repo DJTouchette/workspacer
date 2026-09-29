@@ -44,7 +44,7 @@
      "why"
     ],
     "loaders": [
-     "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+     "services/hub-rs/tests/profiles.rs::shared_profile_store_contract_covers_list_add_and_mutation",
      "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json \u2014 list"
     ]
    },
@@ -59,7 +59,7 @@
      "why"
     ],
     "loaders": [
-     "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+     "services/hub-rs/tests/profiles.rs::shared_profile_store_contract_covers_list_add_and_mutation",
      "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json \u2014 add"
     ]
    },
@@ -78,7 +78,7 @@
      "expectedFileIds"
     ],
     "loaders": [
-     "services/hub/cmd/brain/profiles_contract_test.go::TestClaudeProfilesContractCases(",
+     "services/hub-rs/tests/profiles.rs::shared_profile_store_contract_covers_list_add_and_mutation",
      "apps/desktop/src/main/services/claudeProfilesContract.test.ts::contracts/claude-profiles-cases.json \u2014 update/remove"
     ]
    }

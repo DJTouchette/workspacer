@@ -668,3 +668,107 @@ fn facade_flags_remain_separate_from_the_hub_owner_credential() {
         CommandLine::try_parse_from(["workspacer-rust", "serve", "--untokened", "allow"]).is_err()
     );
 }
+
+#[tokio::test]
+async fn status_preserves_string_details_counts_and_rejects_a_different_http_service() {
+    use axum::{Json, Router, routing::get};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let daemon_address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route(
+                    "/health",
+                    get(|| async { Json(json!({"service":"fixture-daemon"})) }),
+                )
+                .route(
+                    "/sessions",
+                    get(|| async { Json(json!([{"id":"one"},{"id":"two"}])) }),
+                ),
+        )
+        .await
+        .unwrap();
+    });
+    let root = tempfile::tempdir().unwrap();
+    let mut options = Options::default();
+    options.listen = Some("127.0.0.1:0".parse().unwrap());
+    options.token = "status-fixture-owner".into();
+    options = options.handler("brain.info", |_, _| async {
+        Ok(json!({"scope":"full","implementation":"rust"}))
+    });
+    let hub = Hub::start(options).unwrap();
+    let address = hub.ready().await.unwrap().unwrap();
+    let base = vec![
+        "workspacer-rust".to_owned(),
+        "status".into(),
+        "--hub-port".into(),
+        address.port().to_string(),
+        "--claudemon-api-port".into(),
+        daemon_address.port().to_string(),
+        "--config-dir".into(),
+        root.path().to_string_lossy().into_owned(),
+        "--token".into(),
+        "status-fixture-owner".into(),
+    ];
+    let mut args = base.clone();
+    args.push("--json".into());
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    assert_eq!(
+        execute(
+            &CommandLine::try_parse_from(args).unwrap(),
+            &mut out,
+            &mut err
+        )
+        .await
+        .unwrap(),
+        0
+    );
+    let report: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(report["claudemon"]["detail"], "healthy, 2 session(s)");
+    assert!(
+        report["hub"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("capability method(s)")
+    );
+    assert_eq!(
+        report["brain"]["detail"],
+        "registered (brain.info answered)"
+    );
+    out.clear();
+    assert_eq!(
+        execute(
+            &CommandLine::try_parse_from(base).unwrap(),
+            &mut out,
+            &mut err
+        )
+        .await
+        .unwrap(),
+        0
+    );
+    let text = String::from_utf8(out).unwrap();
+    assert!(text.contains(&format!("http://{address}")));
+    assert!(text.contains(&format!("http://{daemon_address}")));
+    let args = CommandLine::try_parse_from([
+        "workspacer-rust",
+        "status",
+        "--hub-port",
+        &daemon_address.port().to_string(),
+        "--claudemon-api-port",
+        &daemon_address.port().to_string(),
+        "--config-dir",
+        root.path().to_str().unwrap(),
+        "--json",
+    ])
+    .unwrap();
+    let mut out = Vec::new();
+    assert_eq!(execute(&args, &mut out, &mut err).await.unwrap(), 1);
+    let report: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(report["hub"]["detail"], "unexpected /health answer");
+    assert_eq!(report["brain"]["detail"], "not checked (hub is down)");
+    hub.shutdown().unwrap();
+    server.abort();
+    let _ = server.await;
+}

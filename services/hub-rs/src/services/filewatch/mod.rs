@@ -223,8 +223,10 @@ mod tests {
         for now in [0, 1000, 2000] {
             watches.watch(&params, now).unwrap();
         }
-        assert_eq!(watches.files.lock().unwrap()[&path].refs, 0);
-        assert_eq!(watches.files.lock().unwrap()[&path].leases.len(), 1);
+        // Watches key by the canonical spelling (/var may alias /private/var).
+        let canonical = crate::services::paths::canonicalize(&path).unwrap();
+        assert_eq!(watches.files.lock().unwrap()[&canonical].refs, 0);
+        assert_eq!(watches.files.lock().unwrap()[&canonical].leases.len(), 1);
         watches.poll(182000);
         assert_eq!(watches.files.lock().unwrap().len(), 1);
         watches.poll(182001);

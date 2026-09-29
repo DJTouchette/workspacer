@@ -849,7 +849,7 @@ pub(crate) fn install(
         return (options, None);
     };
     let (service, receiver) = Service::open(path, hub);
-    options.jobs_service=Some(service.clone());
+    options.jobs_service = Some(service.clone());
     for method in [
         "jobs.list",
         "jobs.upsert",
@@ -947,7 +947,7 @@ mod tests {
     fn owner() -> Caller {
         Caller {
             call_id: 0,
-            activity_seq:0,
+            activity_seq: 0,
             federated: false,
             connection_id: 1,
             authenticated_host: true,

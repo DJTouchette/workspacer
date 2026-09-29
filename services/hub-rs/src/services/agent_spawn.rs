@@ -361,7 +361,13 @@ impl SpawnCoordinator {
                 "profile/provider arguments override the configured routing ceiling; no substitute was launched"
             );
         }
-        if let Some(upstream)=params["escalationScrubbed"].as_array(){for field in upstream.iter().filter_map(Value::as_str){if !scrubbed.iter().any(|key|key==field){scrubbed.push(field.into());}}}
+        if let Some(upstream) = params["escalationScrubbed"].as_array() {
+            for field in upstream.iter().filter_map(Value::as_str) {
+                if !scrubbed.iter().any(|key| key == field) {
+                    scrubbed.push(field.into());
+                }
+            }
+        }
         if !scrubbed.is_empty() {
             resolved.metadata["escalationScrubbed"] = json!(scrubbed);
         }

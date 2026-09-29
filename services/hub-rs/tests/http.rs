@@ -28,7 +28,21 @@ async fn health_hides_topology_and_websocket_checks_credentials_host_and_origin(
         .json::<serde_json::Value>()
         .await
         .unwrap();
-    assert_eq!(private["methodNames"], json!(["federation.peers", "federation.peersConfig", "federation.resumePeer", "federation.savePeersConfig", "fixture.echo", "fleet.dispatchTargets", "fleet.quiescence", "machine.power", "machine.stop", "plugins.tools"]));
+    assert_eq!(
+        private["methodNames"],
+        json!([
+            "federation.peers",
+            "federation.peersConfig",
+            "federation.resumePeer",
+            "federation.savePeersConfig",
+            "fixture.echo",
+            "fleet.dispatchTargets",
+            "fleet.quiescence",
+            "machine.power",
+            "machine.stop",
+            "plugins.tools"
+        ])
+    );
     for (token, origin, host, status) in [
         ("bad", None, None, 401),
         (
@@ -60,13 +74,13 @@ async fn health_hides_topology_and_websocket_checks_credentials_host_and_origin(
         }
     }
     for credential in ["Bearer wrong", "Basic invalid"] {
-    let mut request = format!("ws://{address}/bus?token=fixture-secret")
-        .into_client_request()
-        .unwrap();
-    request
-        .headers_mut()
-        .insert("authorization", credential.parse().unwrap());
-    assert!(tokio_tungstenite::connect_async(request).await.is_err());
+        let mut request = format!("ws://{address}/bus?token=fixture-secret")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("authorization", credential.parse().unwrap());
+        assert!(tokio_tungstenite::connect_async(request).await.is_err());
     }
     let mut request = format!("ws://{address}/bus?token=fixture-secret")
         .into_client_request()

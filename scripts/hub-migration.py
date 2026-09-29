@@ -9,6 +9,8 @@ replacement and every test has a portable regression counterpart.
 import argparse
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,11 +19,18 @@ LEGACY = ROOT / "services/hub"
 
 
 def sources():
-    return {
+    files = {
         str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(LEGACY.rglob("*.go"))
         if "cmd/hub-reference/" not in str(path)
     }
+    # Embedded policy/default data also needs an explicit replacement. Do not
+    # glob arbitrary JSON/YAML: a developer may have private runtime state here.
+    for relative in ("internal/routing/routing.default.yaml", "cmd/brain/config_defaults.json"):
+        path = LEGACY / relative
+        if path.is_file():
+            files[str(path.relative_to(ROOT))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return files
 
 
 def read():
@@ -37,9 +46,52 @@ def read():
     return json.loads(MANIFEST.read_text())
 
 
+def write(manifest):
+    with tempfile.NamedTemporaryFile(mode="w", dir=MANIFEST.parent, delete=False) as target:
+        temporary = Path(target.name)
+        try:
+            target.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+            target.flush()
+            os.fsync(target.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        temporary.replace(MANIFEST)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def apply_review(manifest, plan, live):
+    """Validate a complete reviewed batch before changing any recorded evidence."""
+    proposed = plan.get("records")
+    if not isinstance(proposed, dict) or not proposed:
+        raise ValueError("review plan requires nonempty records")
+    updates = {}
+    for source, row in proposed.items():
+        if source not in live or row.get("sha256") != live[source]:
+            raise ValueError(f"reviewed source is missing or changed: {source}")
+        status = row.get("status", "ported")
+        if status not in ("ported", "retired"):
+            raise ValueError(f"invalid review status: {source}")
+        if status == "retired" and not row.get("reason", "").strip():
+            raise ValueError(f"architectural retirement requires a reason: {source}")
+        for key in ("replacement", "tests"):
+            paths = row.get(key)
+            if not isinstance(paths, list) or not paths:
+                raise ValueError(f"missing {key} evidence: {source}")
+            for path in paths:
+                full = (ROOT / path).resolve()
+                if not full.is_relative_to(ROOT.resolve()) or not full.is_file() or full.is_relative_to(LEGACY.resolve()):
+                    raise ValueError(f"evidence must exist outside the retiring implementation: {path}")
+        updates[source] = {**row, "status": status}
+    manifest["files"].update(updates)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["refresh", "status", "check", "ready", "record"])
+    parser.add_argument("command", choices=["refresh", "status", "check", "ready", "record", "record-review"])
+    parser.add_argument("--plan", type=Path, help="Reviewed per-file JSON evidence with current source hashes")
     parser.add_argument("--source")
     parser.add_argument("--replacement", action="append", default=[])
     parser.add_argument("--test", action="append", default=[])
@@ -49,6 +101,14 @@ def main():
     manifest = read()
     live = sources()
     records = manifest["files"]
+    if args.command == "record-review":
+        if args.plan is None:
+            parser.error("record-review requires --plan")
+        try:
+            apply_review(manifest, json.loads(args.plan.read_text()), live)
+        except (ValueError, OSError, TypeError) as error:
+            parser.error(str(error))
+        write(manifest)
     if args.command == "record":
         if args.source not in live or not args.replacement or not args.test:
             parser.error("record requires an existing --source, --replacement and --test evidence")
@@ -61,14 +121,14 @@ def main():
                                 "replacement": args.replacement, "tests": args.test}
         if args.retire:
             records[args.source]["reason"] = args.reason.strip()
-        MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        write(manifest)
     if args.command == "refresh":
         for name, digest in live.items():
             row = records.setdefault(name, {"status": "pending", "replacement": [], "tests": []})
             if row.get("sha256") != digest:
                 row["status"] = "pending"
                 row["sha256"] = digest
-        MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        write(manifest)
     problems = []
     defaults = LEGACY / "cmd/brain/config_defaults.json"
     rust_defaults = ROOT / "services/hub-rs/assets/config-defaults.json"

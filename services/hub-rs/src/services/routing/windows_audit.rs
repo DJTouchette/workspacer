@@ -210,6 +210,60 @@ mod tests {
         drop(owner);
         out
     }
+    fn grants(descriptor: &LocalAllocation) -> Vec<(String, u32)> {
+        use windows_sys::Win32::{
+            Security::{ACCESS_ALLOWED_ACE, GENERIC_MAPPING, GetAce, MapGenericMask},
+            Storage::FileSystem::{
+                FILE_ALL_ACCESS, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+            },
+        };
+        let (mut present, mut defaulted) = (0, 0);
+        let mut acl = ptr::null_mut();
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted)
+            },
+            0
+        );
+        assert_ne!(present, 0);
+        assert!(!acl.is_null(), "null DACL grants unrestricted access");
+        let mapping = GENERIC_MAPPING {
+            GenericRead: FILE_GENERIC_READ,
+            GenericWrite: FILE_GENERIC_WRITE,
+            GenericExecute: FILE_GENERIC_EXECUTE,
+            GenericAll: FILE_ALL_ACCESS,
+        };
+        let mut grants = Vec::new();
+        for index in 0..unsafe { (*acl).AceCount } {
+            let mut raw = ptr::null_mut();
+            assert_ne!(unsafe { GetAce(acl, u32::from(index), &mut raw) }, 0);
+            let ace = unsafe { &*raw.cast::<ACCESS_ALLOWED_ACE>() };
+            assert_eq!(
+                ace.Header.AceType, 0,
+                "only ACCESS_ALLOWED_ACE entries expected"
+            );
+            assert_eq!(
+                ace.Header.AceFlags, 0,
+                "no inherited or propagation ACEs permitted"
+            );
+            let mut mask = ace.Mask;
+            unsafe { MapGenericMask(&mut mask, &mapping) };
+            assert_eq!(mask, FILE_ALL_ACCESS);
+            let sid = ptr::addr_of!(ace.SidStart).cast_mut().cast();
+            let mut text = ptr::null_mut();
+            assert_ne!(unsafe { ConvertSidToStringSidW(sid, &mut text) }, 0);
+            let allocation = LocalAllocation(text.cast());
+            let mut len = 0;
+            while unsafe { *text.add(len) } != 0 {
+                len += 1;
+            }
+            let sid = String::from_utf16(unsafe { std::slice::from_raw_parts(text, len) }).unwrap();
+            drop(allocation);
+            grants.push((sid, mask));
+        }
+        grants.sort();
+        grants
+    }
     fn assert_private(file: &File, expected: &LocalAllocation) {
         let descriptor = file_descriptor(file);
         let (mut control, mut revision) = (0, 0);
@@ -218,8 +272,16 @@ mod tests {
             0
         );
         assert_ne!(control & SE_DACL_PROTECTED, 0);
-        assert_eq!(dacl_text(&descriptor), dacl_text(expected));
-        assert!(!dacl_text(&descriptor).contains(";;;WD)"));
+        // Windows expands generic-all to file-all and may retain the harmless
+        // AUTO_INHERITED descriptor bit. Compare concrete rights and exact SIDs,
+        // while separately requiring protection and non-inherited ACEs.
+        let actual = grants(&descriptor);
+        assert_eq!(
+            actual.len(),
+            3,
+            "only current user, SYSTEM and Administrators"
+        );
+        assert_eq!(actual, grants(expected));
     }
     #[test]
     fn creates_with_private_dacl_before_any_repair() {

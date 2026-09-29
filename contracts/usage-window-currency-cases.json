@@ -82,7 +82,7 @@
           ]
         },
         "loaders": [
-          "services/hub/internal/limits/window_test.go::TestWindowCurrencyMatchesTheContract",
+          "services/hub-rs/src/services/limits.rs::shared_currency_contract",
           "apps/desktop/src/main/services/keepWarmLogic.test.ts::usage-window currency (cross-language contract)"
         ],
         "verdictField": "expect",

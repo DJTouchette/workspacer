@@ -88,7 +88,7 @@
           "refusedBy"
         ],
         "loaders": [
-          "services/hub/cmd/brain/config_wholesale_test.go::TestWholesaleValueContractCases(",
+          "services/hub-rs/tests/config.rs::shared_wholesale_contract_refuses_malformed_values_without_partial_application",
           "apps/desktop/src/main/services/configService.test.ts::wholesale VALUE contract"
         ],
         "verdictField": "expect",

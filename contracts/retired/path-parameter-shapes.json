@@ -1,0 +1,177 @@
+{
+  "_comment": [
+    "Historical anonymous capability-harness cases, not active authenticated runtime policy. See README.md in this directory."
+  ],
+  "vocabulary": {
+    "tokens": {
+      "SANDBOX": "The per-case sandbox: one fresh temp dir, realpath'd. Every `tree` path is relative to it.",
+      "ROOT": "${SANDBOX}/root — the selected object used by containment cases.",
+      "OUTSIDE": "${SANDBOX}/outside — a sibling used to prove semantic containment.",
+      "CONFIG": "The implementation's own config dir, ${SANDBOX}/config/workspacer. A case may point the implementation at it through a symlink (`configDirVia`) while this token keeps naming the real path.",
+      "HOME": "The process's home directory, resolved. Deliberately OUTSIDE the sandbox: it is where a re-introduced tilde expansion would actually land, and a case that kept it inside the sandbox would deny anyway and prove nothing. A case that declares `homeVia` is the exception — it points the implementation's home at a directory INSIDE the sandbox so the ~/.gitconfig clause can be reached at all, and this token then names that directory.",
+      "PROCESS_CWD": "The test process's working directory, resolved. Deliberately OUTSIDE the sandbox: it is where an empty or relative root resolved against the process cwd would actually land."
+    },
+    "blocks": {
+      "paramShapes": {
+        "why": "The params GATE: what the bus does with a body that is not the object the method's field lives in.",
+        "required": [
+          "name",
+          "field",
+          "expect"
+        ],
+        "verdictField": "expect",
+        "verdicts": {
+          "accept": {},
+          "deny": {}
+        },
+        "optional": [
+          "params",
+          "paramsAbsent",
+          "note"
+        ],
+        "loaders": [
+          "services/hub/internal/bus/policy_test.go::TestParamShapeContractCases("
+        ]
+      }
+    }
+  },
+  "paramShapes": [
+    {
+      "name": "params absent",
+      "field": "path",
+      "paramsAbsent": true,
+      "expect": "deny"
+    },
+    {
+      "name": "params is JSON null",
+      "field": "path",
+      "params": null,
+      "expect": "deny"
+    },
+    {
+      "name": "params is an array",
+      "field": "path",
+      "params": [
+        "${ROOT}/x"
+      ],
+      "expect": "deny"
+    },
+    {
+      "name": "params is a bare string",
+      "field": "path",
+      "params": "${ROOT}/x",
+      "expect": "deny"
+    },
+    {
+      "name": "params is a number",
+      "field": "path",
+      "params": 42,
+      "expect": "deny"
+    },
+    {
+      "name": "params is an empty object",
+      "field": "path",
+      "params": {},
+      "expect": "deny"
+    },
+    {
+      "name": "the declared field is missing and a sibling looks path-shaped",
+      "field": "path",
+      "params": {
+        "cwd": "${ROOT}/x"
+      },
+      "expect": "deny"
+    },
+    {
+      "name": "the field is null",
+      "field": "path",
+      "params": {
+        "path": null
+      },
+      "expect": "deny"
+    },
+    {
+      "name": "the field is a number",
+      "field": "path",
+      "params": {
+        "path": 42
+      },
+      "expect": "deny"
+    },
+    {
+      "name": "the field is a boolean",
+      "field": "path",
+      "params": {
+        "path": true
+      },
+      "expect": "deny"
+    },
+    {
+      "name": "the field is an object",
+      "field": "path",
+      "params": {
+        "path": {
+          "nested": "${ROOT}/x"
+        }
+      },
+      "expect": "deny"
+    },
+    {
+      "name": "the field is an array of paths",
+      "field": "path",
+      "params": {
+        "path": [
+          "${ROOT}/x"
+        ]
+      },
+      "expect": "deny"
+    },
+    {
+      "name": "the field is an empty string",
+      "field": "path",
+      "params": {
+        "path": ""
+      },
+      "expect": "deny"
+    },
+    {
+      "name": "the field is whitespace only",
+      "field": "path",
+      "params": {
+        "path": "   "
+      },
+      "expect": "deny",
+      "note": "paramString's `s != \"\"` accepts three spaces today; trimming before the emptiness test is what closes it, and the trimmed-empty target then never reaches the walk."
+    },
+    {
+      "name": "a case-variant duplicate of the declared field",
+      "field": "path",
+      "params": {
+        "path": "${ROOT}/ok.txt",
+        "Path": "${OUTSIDE}/loot.txt"
+      },
+      "expect": "deny",
+      "note": "A case-variant duplicate is ambiguous across JSON decoders: one layer could inspect path while a Go struct executes Path. Refuse the shape so authentication/provenance checks and semantic object checks apply to the same value the provider uses."
+    },
+    {
+      "name": "a case-variant duplicate that comes first is refused too",
+      "field": "path",
+      "params": {
+        "PATH": "${OUTSIDE}/loot.txt",
+        "path": "${ROOT}/ok.txt"
+      },
+      "expect": "deny",
+      "note": "Key ORDER decides which value a Go struct ends up with, so in this spelling the guard and the provider happen to agree. Accepting it anyway would make the rule 'deny when the divergence is observable', which is a rule about JSON member order — the shape is ambiguous either way and is refused either way."
+    },
+    {
+      "name": "a non-empty absolute string is accepted by the params gate",
+      "field": "cwd",
+      "params": {
+        "cwd": "${ROOT}",
+        "query": "needle"
+      },
+      "expect": "accept",
+      "note": "The only accept-case here. It exists so a paramString rewritten to reject everything cannot pass this block."
+    }
+  ]
+}

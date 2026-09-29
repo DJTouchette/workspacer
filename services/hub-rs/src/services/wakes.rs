@@ -125,8 +125,13 @@ fn schedule_for(
 }
 impl Wakes {
     #[cfg(feature = "test-support")]
-    pub(crate) fn fixture_remote(mut service: Arc<Self>, receiver: Arc<super::remote_dispatch::Receiver>) -> Arc<Self> {
-        Arc::get_mut(&mut service).expect("fresh fixture wake observer").remote = Some(receiver);
+    pub(crate) fn fixture_remote(
+        mut service: Arc<Self>,
+        receiver: Arc<super::remote_dispatch::Receiver>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut service)
+            .expect("fresh fixture wake observer")
+            .remote = Some(receiver);
         service
     }
     pub fn new(

@@ -34,7 +34,16 @@ function exeName(): string {
 /** Resolve the shared Rust service/administration executable. */
 export function workspacerCliPath(): string {
   if (process.env.ELECTRON_DEV || !app.isPackaged) {
-    return path.join(app.getAppPath(), '..', '..', 'services', 'hub-rs', 'target', 'release', exeName());
+    return path.join(
+      app.getAppPath(),
+      '..',
+      '..',
+      'services',
+      'hub-rs',
+      'target',
+      'release',
+      exeName(),
+    );
   }
   return path.join(process.resourcesPath, 'hub', exeName());
 }

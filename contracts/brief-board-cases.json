@@ -63,7 +63,7 @@
           "why"
         ],
         "loaders": [
-          "services/hub/cmd/brain/briefboard_test.go::TestBriefBoardEntryContractCases",
+          "services/hub-rs/tests/briefs.rs::shared_document_archive_and_check_contract",
           "apps/desktop/src/main/services/briefBoardContract.test.ts::brief document model — cross-language contract"
         ]
       },
@@ -83,7 +83,7 @@
           "archive"
         ],
         "loaders": [
-          "services/hub/cmd/brain/briefboard_test.go::TestBriefArchiveContractCases",
+          "services/hub-rs/tests/briefs.rs::shared_document_archive_and_check_contract",
           "apps/desktop/src/main/services/briefBoardContract.test.ts::brief archive — cross-language contract"
         ]
       },
@@ -97,7 +97,7 @@
           "why"
         ],
         "loaders": [
-          "services/hub/cmd/brain/briefboard_test.go::TestBriefCheckContractCases",
+          "services/hub-rs/tests/briefs.rs::shared_document_archive_and_check_contract",
           "apps/desktop/src/main/services/briefBoardContract.test.ts::brief check — cross-language contract"
         ]
       }

@@ -37,7 +37,7 @@
         "why": "claude.listModels' catalog answer for a config + live-snapshot pair.",
         "required": ["name", "config", "live", "expected", "why"],
         "loaders": [
-          "services/hub/cmd/brain/models_contract_test.go::TestClaudeModelCatalogContractCases(",
+          "services/hub-rs/tests/models.rs::claude_model_catalog_matches_shared_contract",
           "apps/desktop/src/main/services/claudeModelCatalogContract.test.ts::contracts/claude-model-catalog-cases.json"
         ]
       }

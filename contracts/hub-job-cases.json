@@ -1,8 +1,8 @@
 {
   "version":1,
   "vocabulary":{"blocks":{
-    "scheduleCases":{"why":"The same trigger produces the same next instant in Go and Rust.","required":["name","trigger","after","offsetSeconds","expected"],"loaders":["services/hub/internal/jobs/migration_test.go::TestRustMigrationJobFixtures","services/hub-rs/tests/jobs.rs::shared_job_contract"]},
-    "promptCases":{"why":"Context output substitution and fallback preserve the existing job prompt.","required":["name","prompt","outputs","expected"],"loaders":["services/hub/internal/jobs/migration_test.go::TestRustMigrationJobFixtures","services/hub-rs/tests/jobs.rs::shared_job_contract"]}
+    "scheduleCases":{"why":"The same trigger produces the same next instant in Go and Rust.","required":["name","trigger","after","offsetSeconds","expected"],"loaders":["services/hub-rs/tests/jobs.rs::shared_job_contract"]},
+    "promptCases":{"why":"Context output substitution and fallback preserve the existing job prompt.","required":["name","prompt","outputs","expected"],"loaders":["services/hub-rs/tests/jobs.rs::shared_job_contract"]}
   }},
   "scheduleCases":[
     {"name":"interval reanchors from the supplied clock","trigger":{"kind":"interval","everyMinutes":5},"after":"2026-09-28T10:00:00Z","offsetSeconds":0,"expected":"2026-09-28T10:05:00Z"},

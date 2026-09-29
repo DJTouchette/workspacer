@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "vocabulary": {"blocks":{"cases":{"why":"The same raw daemon rows must project identically through Go and Rust.","required":["name","raw","expected"],"loaders":["services/hub/cmd/brain/migration_snapshots_test.go::TestRustMigrationSnapshotFixtures", "services/hub-rs/tests/snapshots.rs::shared_snapshot_projection_matches_go_reference"]}}},
+  "vocabulary": {"blocks":{"cases":{"why":"The same raw daemon rows must project identically through Go and Rust.","required":["name","raw","expected"],"loaders":["services/hub-rs/tests/snapshots.rs::shared_snapshot_projection_matches_go_reference"]}}},
   "cases": [
     {
       "name":"unknown mode makes no idle claim",
