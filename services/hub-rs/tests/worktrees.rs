@@ -188,8 +188,22 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
     assert_eq!(service.remove(&cwd).await.unwrap()["skipped"], true);
     assert!(cwd.exists());
     std::fs::remove_file(cwd.join("uncommitted.txt")).unwrap();
-    assert_eq!(service.remove(&cwd).await.unwrap()["ok"], true);
-    assert!(!cwd.exists());
+    let removed = service.remove(&cwd).await.unwrap();
+    let remaining = || {
+        std::fs::read_dir(&cwd).map(|entries| {
+            entries
+                .take(16)
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(
+        removed["ok"],
+        true,
+        "{removed}; remaining: {:?}",
+        remaining()
+    );
+    assert!(!cwd.exists(), "{removed}; remaining: {:?}", remaining());
     assert!(
         !git(
             &project,

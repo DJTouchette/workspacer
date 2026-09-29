@@ -328,7 +328,70 @@ impl Worktrees {
         if !result.ok {
             return Ok(json!({"ok":false,"skipped":true,"error":result.stderr.trim()}));
         }
+        // Windows may keep a successfully deleted directory visible while its
+        // last handle closes. Confirm the postcondition under the same lease;
+        // never recursively delete a leftover/recreated path on Git's behalf.
+        if let Err(error) = confirm_removed(&cwd).await {
+            return Ok(json!({"ok":false,"error":error.to_string()}));
+        }
         Ok(json!({"ok":true,"removed":cwd}))
+    }
+}
+
+async fn confirm_removed(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    let settle = Duration::from_secs(2);
+    #[cfg(not(windows))]
+    let settle = Duration::ZERO;
+    confirm_removed_with_budget(path, settle).await
+}
+
+async fn confirm_removed_with_budget(path: &Path, settle: Duration) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + settle;
+    loop {
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error.into());
+            }
+            Ok(_) if tokio::time::Instant::now() >= deadline => {
+                bail!("Git reported successful worktree removal but the directory remains");
+            }
+            Ok(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn successful_removal_requires_absence_and_never_deletes_leftovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let selected = dir.path().join("tree");
+        std::fs::create_dir(&selected).unwrap();
+        std::fs::write(selected.join("keep"), "new content").unwrap();
+        assert!(
+            confirm_removed_with_budget(&selected, Duration::ZERO)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(selected.join("keep")).unwrap(),
+            b"new content"
+        );
+        let cleanup = selected.clone();
+        let deletion = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            std::fs::remove_file(cleanup.join("keep")).unwrap();
+            std::fs::remove_dir(cleanup).unwrap();
+        });
+        confirm_removed_with_budget(&selected, Duration::from_secs(1))
+            .await
+            .unwrap();
+        deletion.await.unwrap();
+        assert!(!selected.exists());
     }
 }
 pub fn slug(name: &str) -> String {
