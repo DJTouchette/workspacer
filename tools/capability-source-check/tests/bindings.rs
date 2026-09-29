@@ -188,3 +188,91 @@ fn value_function_pointer_adapters_and_sort_comparators_keep_input_evidence() {
     assert!(b.fields.contains("rows.path"), "{b:?}");
     assert!(b.unresolved.is_empty(), "{b:?}");
 }
+#[test]
+fn local_helpers_are_hoisted_lexically_and_never_leak_into_other_blocks() {
+    let report = fixture(
+        r#"
+    fn read(p:&Value){let _=p["shell"].as_str();}
+    fn install(o:Options){
+      o.handler("first",|_,p|async move {
+        local(&p,"cwd");
+        fn local(p:&Value,key:&str){p.get(key).and_then(Value::as_str);}
+        {fn read(p:&Value){let _=p["directory"].as_str();}read(&p);}
+        read(&p);
+      });
+      o.handler("second",|_,p|async move {read(&p);});
+    }
+    "#,
+    );
+    let first = &report.methods["first"];
+    assert_eq!(
+        first.fields.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["cwd", "directory", "shell"]
+    );
+    assert!(first.unresolved.is_empty(), "{first:?}");
+    let second = &report.methods["second"];
+    assert_eq!(
+        second.fields.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["shell"]
+    );
+}
+#[test]
+fn local_helpers_keep_declaration_scope_when_called_under_a_shadowing_function() {
+    let report = fixture(
+        r#"
+    fn install(o:Options){o.handler("one",|_,p|async move {
+      fn leaf(p:&Value){let _=p["cwd"].as_str();}
+      fn outer(p:&Value){leaf(p);}
+      {fn leaf(p:&Value){let _=p["command"].as_str();}outer(&p);}
+    });}
+    "#,
+    );
+    let b = &report.methods["one"];
+    assert_eq!(
+        b.fields.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["cwd"]
+    );
+    assert!(b.unresolved.is_empty(), "{b:?}");
+}
+#[test]
+fn known_empty_key_arrays_do_not_read_unknown_fields_and_unknown_branches_keep_both_arrays() {
+    let report = fixture(
+        r#"
+    fn install(o:Options){o.handler("one",|_,p|async move {
+      let empty:&[&str]=&[];for key in empty {let _=p.get(*key);}
+      let keys=if unknown() {&["cwd"]}else{&["shell"]};
+      for key in keys {let _=p.get(*key).and_then(Value::as_str);}
+      for key in p.as_object().into_iter().flat_map(|map|map.keys()){let _=key.chars();}
+    });}
+    "#,
+    );
+    let b = &report.methods["one"];
+    assert_eq!(
+        b.fields.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["cwd", "shell"]
+    );
+    assert!(b.unresolved.is_empty(), "{b:?}");
+    assert!(b.key_inspections.contains("$"));
+    assert!(b.opaque_transforms.is_empty());
+}
+#[test]
+fn local_unknown_raw_sinks_remain_gaps_and_key_inspection_does_not_hide_serialization() {
+    let report = fixture(
+        r#"
+    fn install(o:Options){o.handler("one",|_,p|async move {
+      fn local(p:Value){p.external_transform();}
+      for key in p.as_object().into_iter().flat_map(|map|map.keys()){let _=key;}
+      serde_json::to_vec(&p);local(p);
+    });}
+    "#,
+    );
+    let b = &report.methods["one"];
+    assert!(
+        b.unresolved
+            .iter()
+            .any(|s| s.contains("external_transform")),
+        "{b:?}"
+    );
+    assert!(b.key_inspections.contains("$"));
+    assert!(b.opaque_transforms.contains("$"));
+}

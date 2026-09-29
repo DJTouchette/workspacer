@@ -103,6 +103,127 @@ fn file_roundtrip_is_lossless_and_binary_and_relative_paths_are_refused() {
 }
 
 #[test]
+fn text_reads_enforce_byte_limit_and_utf8_without_loss_or_write_side_effects() {
+    let home = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let path = outside.path().join("ambient.txt");
+    // The supplied home is picker context, not a filesystem authority grant.
+    files::call(
+        "fs.write",
+        json!({"path":path,"contents":"outside home"}),
+        home.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        files::call("fs.read", json!({"path":path}), home.path()).unwrap()["contents"],
+        "outside home"
+    );
+    for invalid in [json!(false), json!(42), json!([]), json!({})] {
+        assert!(
+            files::call(
+                "fs.write",
+                json!({"path":path,"contents":invalid}),
+                home.path()
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "outside home");
+    }
+    std::fs::write(&path, [0xff, 0xfe]).unwrap();
+    assert!(
+        files::call("fs.read", json!({"path":path}), home.path())
+            .unwrap_err()
+            .to_string()
+            .contains("UTF-8")
+    );
+    let limit = 5 * 1024 * 1024;
+    std::fs::write(&path, vec![b'x'; limit]).unwrap();
+    let read = files::call("fs.read", json!({"path":path}), home.path()).unwrap();
+    assert_eq!(read["size"], limit);
+    assert_eq!(read["contents"].as_str().unwrap().len(), limit);
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"x")
+        .unwrap();
+    assert!(
+        files::call("fs.read", json!({"path":path}), home.path())
+            .unwrap_err()
+            .to_string()
+            .contains("max")
+    );
+    assert!(
+        files::call("fs.read", json!({"path":outside.path()}), home.path())
+            .unwrap_err()
+            .to_string()
+            .contains("regular file")
+    );
+    files::call(
+        "fs.write",
+        json!({"path":path,"contents":null}),
+        home.path(),
+    )
+    .unwrap();
+    assert!(std::fs::read(&path).unwrap().is_empty());
+}
+
+#[test]
+fn empty_containment_roots_refuse_and_directory_defaults_preserve_literal_paths() {
+    let home = tempfile::tempdir().unwrap();
+    let home_path = std::fs::canonicalize(home.path()).unwrap();
+    for target in [
+        home_path.clone(),
+        home_path.join("child"),
+        std::path::PathBuf::new(),
+    ] {
+        assert!(!paths::contained(&target, Path::new("")));
+    }
+    assert!(paths::contained(&home_path.join("child"), &home_path));
+    let volume: std::path::PathBuf = home_path
+        .components()
+        .take_while(|c| {
+            matches!(
+                c,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+        .collect();
+    assert!(paths::contained(&home_path, &volume));
+    for params in [
+        Value::Null,
+        json!({}),
+        json!({"path":null}),
+        json!({"path":" \t\r\n\u{b}\u{c}"}),
+    ] {
+        assert_eq!(
+            files::call("fs.listDir", params, &home_path).unwrap()["path"],
+            json!(home_path)
+        );
+    }
+    for params in [
+        json!([]),
+        json!({"path":42}),
+        json!({"path":false}),
+        json!({"path":{}}),
+        json!({"path":"\u{feff}"}),
+        json!({"path":"\u{85}"}),
+    ] {
+        assert!(files::call("fs.listDir", params, &home_path).is_err());
+    }
+    #[cfg(unix)]
+    {
+        let literal = home_path.join(".. ");
+        std::fs::create_dir(&literal).unwrap();
+        assert_eq!(
+            files::call("fs.listDir", json!({"path":literal}), &home_path).unwrap()["path"],
+            json!(literal)
+        );
+    }
+}
+
+#[test]
 fn file_tree_uses_git_ignore_rules_and_bytewise_directory_first_order() {
     let dir = tempfile::tempdir().unwrap();
     assert!(

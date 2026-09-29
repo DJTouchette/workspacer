@@ -140,7 +140,13 @@ pub(crate) fn install(
     } else {
         return Ok((options, None));
     };
-    let origin = Origin::open(directory, hub.clone(), Arc::new(routes.clone()), delivery)?;
+    let origin = Origin::open_with_routing(
+        directory,
+        hub.clone(),
+        Arc::new(routes.clone()),
+        delivery,
+        options.routing.clone(),
+    )?;
     origin.observer_ready(false);
     options.remote_origin = Some(origin.clone());
     options = super::paired::Paired::install(options, origin.clone(), routes.clone(), hub.clone())?;

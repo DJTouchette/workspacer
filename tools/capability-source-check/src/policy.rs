@@ -15,6 +15,8 @@ pub struct Policy {
     #[serde(default)]
     pub opaque_decisions: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(default)]
+    pub inspection_decisions: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
     pub source_parameter_decisions: BTreeMap<String, BTreeMap<String, Decision>>,
 }
 #[derive(Deserialize)]
@@ -209,14 +211,30 @@ impl Policy {
                 out.opaque_methods += 1;
             }
             for path in &bound.opaque_paths {
-                if !self.opaque_decisions.get(method).is_some_and(|rows| {
+                let key_only = self.inspection_decisions.get(method).is_some_and(|rows| {
                     rows.iter().any(|(reviewed, reason)| {
                         !reason.trim().is_empty()
                             && (reviewed == "$"
                                 || reviewed == path
                                 || path.starts_with(&format!("{reviewed}.")))
+                            && bound.key_inspections.contains(reviewed)
+                            && !bound.opaque_transforms.iter().any(|transformed| {
+                                reviewed == "$"
+                                    || reviewed == transformed
+                                    || transformed.starts_with(&format!("{reviewed}."))
+                            })
                     })
-                }) {
+                });
+                if !key_only
+                    && !self.opaque_decisions.get(method).is_some_and(|rows| {
+                        rows.iter().any(|(reviewed, reason)| {
+                            !reason.trim().is_empty()
+                                && (reviewed == "$"
+                                    || reviewed == path
+                                    || path.starts_with(&format!("{reviewed}.")))
+                        })
+                    })
+                {
                     out.errors
                         .push(format!("opaque caller path lacks decision {method}:{path}"));
                 }

@@ -8,8 +8,9 @@ describe('Rust dispatcher caller parameter extraction', () => {
   it('scans actual service dispatch arms rather than response keys or sibling arms', () => {
     const rows = rustDispatcherBindings(rustSources(ROOT));
     // This ratchet covers Value method-dispatch arms, not serde request structs
-    // or arbitrary callee inference. The separate desktop scan remains complete
-    // for the legacy capspec_test responsibility.
+    // or arbitrary callee inference. Validation-only method matches can add rows
+    // while helper extraction removes inline reads. The Rust AST source guard
+    // independently checks every captured Go binding through those helpers.
     expect(rows.length).toBeGreaterThan(50);
     expect([
       ...new Set(
@@ -24,11 +25,12 @@ describe('Rust dispatcher caller parameter extraction', () => {
         (n, row) => n + row.fields.filter((field) => !!policy.dangerousKind(field)).length,
         0,
       ),
-    }).toEqual({ rows: 62, bindings: 53 });
+    }).toEqual({ rows: 68, bindings: 47 });
     for (const [method, field] of [
       ['git.status', 'cwd'],
       ['git.stage', 'path'],
-      ['fs.write', 'path'],
+      // fs.write.path now goes through a helper; the AST guard requires its
+      // original Go binding independently via go-reference.json.
       ['fs.write', 'contents'],
       ['sessions.load', 'filename'],
       ['claude.profiles.add', 'configDir'],

@@ -13,6 +13,7 @@ struct Value {
     text: Option<String>,
     boolean: Option<bool>,
     items: Vec<Value>,
+    known_items: bool,
     closure: Option<Box<syn::ExprClosure>>,
     captured: Option<Box<Env>>,
 }
@@ -23,6 +24,8 @@ fn join_values(mut left: Value, right: Value) -> Value {
     }
     left.raw |= right.raw;
     left.map |= right.map;
+    left.known_items &= right.known_items;
+    left.items.extend(right.items);
     if left.text != right.text {
         left.text = None;
     }
@@ -45,6 +48,8 @@ struct Trace<'a> {
     return_type: Option<Type>,
     returning: bool,
     scope_key: String,
+    lexical_blocks: Vec<(String, syn::Block)>,
+    next_block_id: usize,
 }
 pub(super) fn scan(index: &Index) -> Report {
     let mut report = Report {
@@ -63,6 +68,8 @@ pub(super) fn scan(index: &Index) -> Report {
             return_type: None,
             returning: false,
             scope_key: function.key.clone(),
+            lexical_blocks: Vec::new(),
+            next_block_id: 0,
         };
         let mut env = Env::new();
         trace.arguments(function, &[], &mut env);
@@ -79,14 +86,17 @@ fn path_name(path: &syn::Path) -> String {
 }
 impl Trace<'_> {
     fn opaque(&mut self, prefix: &[String], reason: String) {
-        self.bound.opaque.insert(reason);
-        self.bound.opaque_paths.insert(if prefix.is_empty() {
-            "$".into()
+        let path = if prefix.is_empty() {
+            "$".to_string()
         } else {
             prefix.join(".")
-        });
+        };
+        if !reason.contains(" Value map/array ") && !reason.contains(" Value adapter ") {
+            self.bound.opaque_transforms.insert(path.clone());
+        }
+        self.bound.opaque.insert(reason);
+        self.bound.opaque_paths.insert(path);
     }
-
     fn hint(&self, ty: &Type) -> Option<String> {
         type_name(ty).map(|name| {
             if name == "Self" {
@@ -199,6 +209,9 @@ impl Trace<'_> {
         }
     }
     fn block(&mut self, block: &syn::Block, env: &mut Env) -> Value {
+        let key = format!("{}::block{}", self.scope_key, self.next_block_id);
+        self.next_block_id += 1;
+        self.lexical_blocks.push((key, block.clone()));
         let mut last = Value::default();
         for statement in &block.stmts {
             match statement {
@@ -231,6 +244,7 @@ impl Trace<'_> {
                 break;
             }
         }
+        self.lexical_blocks.pop();
         last
     }
     fn field(&mut self, source: &Value, key: &str) -> Value {
@@ -268,6 +282,41 @@ impl Trace<'_> {
                 None
             };
         }
+        if !name.contains("::") {
+            for (scope, block) in self.lexical_blocks.iter().rev() {
+                let local: Vec<_> = block
+                    .stmts
+                    .iter()
+                    .filter_map(|s| match s {
+                        Stmt::Item(syn::Item::Fn(f))
+                            if f.sig.ident == name && !crate::index::excluded(&f.attrs) =>
+                        {
+                            Some(f)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if local.len() > 1 {
+                    return None;
+                }
+                if let Some(function) = local.first() {
+                    let depth = self
+                        .lexical_blocks
+                        .iter()
+                        .position(|(key, _)| key == scope)
+                        .unwrap()
+                        + 1;
+                    return Some(Function {
+                        key: format!("{scope}::local::{name}"),
+                        module: self.module.clone(),
+                        owner: None,
+                        sig: function.sig.clone(),
+                        block: (*function.block).clone(),
+                        lexical_blocks: self.lexical_blocks[..depth].to_vec(),
+                    });
+                }
+            }
+        }
         let name = if let Some(rest) = name.strip_prefix("Self::") {
             self.owner
                 .as_ref()
@@ -293,6 +342,8 @@ impl Trace<'_> {
         None
     }
     fn invoke(&mut self, function: &Function, args: &[Value]) -> Value {
+        let old_lexical =
+            std::mem::replace(&mut self.lexical_blocks, function.lexical_blocks.clone());
         let old_module = self.module.clone();
         let old_owner = self.owner.clone();
         let old_scope = self.scope_key.clone();
@@ -316,6 +367,7 @@ impl Trace<'_> {
             self.scope_key = old_scope;
             self.return_type = old_return;
             self.returning = old_returning;
+            self.lexical_blocks = old_lexical;
             return output;
         }
         if self.stack.contains(&function.key) {
@@ -330,6 +382,7 @@ impl Trace<'_> {
             self.scope_key = old_scope;
             self.return_type = old_return;
             self.returning = old_returning;
+            self.lexical_blocks = old_lexical;
             return args.iter().find(|v| v.raw).cloned().unwrap_or(output);
         }
         if self.stack.len() >= 8 {
@@ -341,6 +394,7 @@ impl Trace<'_> {
             self.scope_key = old_scope;
             self.return_type = old_return;
             self.returning = old_returning;
+            self.lexical_blocks = old_lexical;
             return Value::default();
         }
         self.bound.sources.insert(function.key.clone());
@@ -360,6 +414,7 @@ impl Trace<'_> {
         self.scope_key = old_scope;
         self.return_type = old_return;
         self.returning = old_returning;
+        self.lexical_blocks = old_lexical;
         result
     }
     fn register(&mut self, name: Value, handler: &Expr, env: &Env) {
@@ -388,6 +443,8 @@ impl Trace<'_> {
             return_type: None,
             returning: false,
             scope_key: self.scope_key.clone(),
+            lexical_blocks: self.lexical_blocks.clone(),
+            next_block_id: self.next_block_id,
         };
         if let Some(callback) = callback {
             let mut env = env.clone();
@@ -468,6 +525,7 @@ impl Trace<'_> {
                 }
             }
             Expr::Array(a) => Value {
+                known_items: true,
                 items: a.elems.iter().map(|e| self.expr(e, env, None)).collect(),
                 ..Default::default()
             },
@@ -513,7 +571,7 @@ impl Trace<'_> {
                         ],
                         ..Default::default()
                     }]
-                } else if sequence.items.is_empty() {
+                } else if sequence.items.is_empty() && !sequence.known_items {
                     vec![sequence.clone()]
                 } else {
                     sequence.items
@@ -967,6 +1025,24 @@ impl Trace<'_> {
                     }
                     return result;
                 }
+                if matches!(name.as_str(), "values" | "values_mut") && receiver.raw && receiver.map
+                {
+                    self.opaque(
+                        &receiver.prefix,
+                        format!("{} caller map values inspected", self.module),
+                    );
+                    return Value::default();
+                }
+                if name == "keys" && receiver.raw && receiver.map {
+                    self.bound
+                        .key_inspections
+                        .insert(if receiver.prefix.is_empty() {
+                            "$".into()
+                        } else {
+                            receiver.prefix.join(".")
+                        });
+                    return Value::default();
+                }
                 if name == "write_all" && args.iter().any(|v| v.raw) {
                     for arg in args.iter().filter(|v| v.raw) {
                         self.opaque(
@@ -981,6 +1057,7 @@ impl Trace<'_> {
                     "map"
                         | "and_then"
                         | "filter_map"
+                        | "flat_map"
                         | "is_some_and"
                         | "is_none_or"
                         | "filter"

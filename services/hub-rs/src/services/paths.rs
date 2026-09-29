@@ -155,6 +155,9 @@ mod windows_tests {
     }
 }
 pub fn contained(target: &Path, root: &Path) -> bool {
+    if root.as_os_str().is_empty() {
+        return false;
+    }
     #[cfg(not(windows))]
     {
         target.starts_with(root)

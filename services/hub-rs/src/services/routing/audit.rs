@@ -72,6 +72,7 @@ pub(crate) struct SpawnAudit<'a> {
     service: &'a RoutingService,
     scope: String,
     token_id: String,
+    location: &'static str,
     row: Option<Value>,
     scrubbed: std::collections::BTreeSet<String>,
     capability_refused: bool,
@@ -100,7 +101,7 @@ impl SpawnAudit<'_> {
                     || named_rank(
                         &matrix,
                         &pin,
-                        word(&params["model"]),
+                        &requested_model(params).unwrap_or_default(),
                         word(&params["effort"]),
                     ) > limit)
             {
@@ -132,7 +133,7 @@ impl SpawnAudit<'_> {
             "clamped"
         });
         self.row = Some(json!({"kind":"spawn","at":chrono::Utc::now().to_rfc3339(),
-            "decisionId":params["decisionId"].as_str(),"phase":"routing","spawn":spawn}));
+            "decisionId":params["decisionId"].as_str(),"phase":"routing","routingLocation":self.location,"spawn":spawn}));
         result
     }
     pub(crate) fn extend_scrubbed(&mut self, fields: &[String]) {
@@ -173,6 +174,13 @@ fn safe_spawn(params: &Value) -> Value {
             spawn[key] = json!(value);
         }
     }
+    if spawn.get("model").is_none() {
+        if let Ok(model) = requested_model(params) {
+            if !model.is_empty() {
+                spawn["model"] = json!(model);
+            }
+        }
+    }
     if let Some(cwd) = canonical(word(&params["cwd"])) {
         spawn["cwd"] = json!(cwd.to_string_lossy());
     }
@@ -186,10 +194,16 @@ impl RoutingService {
                 .map(|c| c.scope.clone())
                 .unwrap_or_else(|| "internal".into()),
             token_id: caller.map(|c| c.token_id.clone()).unwrap_or_default(),
+            location: "local",
             row: None,
             scrubbed: Default::default(),
             capability_refused: false,
         }
+    }
+    pub(crate) fn begin_origin_spawn_audit(&self, caller: &crate::Caller) -> SpawnAudit<'_> {
+        let mut audit = self.begin_spawn_audit(Some(caller));
+        audit.location = "origin";
+        audit
     }
     pub fn log_decision(&self, decision: &Value) {
         self.log.append(json!({"kind":"decision","at":chrono::Utc::now().to_rfc3339(),"decisionId":decision["decisionId"],"decision":decision}));

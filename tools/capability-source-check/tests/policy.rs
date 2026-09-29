@@ -182,3 +182,37 @@ fn source_specific_spellings_need_real_fields_and_valid_kinds() {
             .any(|s| s.contains("unreviewed dangerous spelling"))
     );
 }
+#[test]
+fn validation_only_key_review_cannot_excuse_payload_storage_or_forwarding() {
+    let (mut p, s, v, mut r) = setup();
+    p.opaque_decisions.clear();
+    p.inspection_decisions.insert(
+        "actor.m1".into(),
+        BTreeMap::from([("overrides".into(), "key validation only".into())]),
+    );
+    let b = r.methods.get_mut("actor.m1").unwrap();
+    b.opaque.clear();
+    b.opaque.insert("fixture Value map/array overrides".into());
+    b.key_inspections.insert("overrides".into());
+    assert!(p.check(&r, &s, &v).errors.is_empty());
+    r.methods
+        .get_mut("actor.m1")
+        .unwrap()
+        .opaque_transforms
+        .insert("overrides".into());
+    assert!(
+        p.check(&r, &s, &v)
+            .errors
+            .iter()
+            .any(|s| s == "opaque caller path lacks decision actor.m1:overrides")
+    );
+    let b = r.methods.get_mut("actor.m1").unwrap();
+    b.opaque_transforms.clear();
+    b.key_inspections.clear();
+    assert!(
+        p.check(&r, &s, &v)
+            .errors
+            .iter()
+            .any(|s| s.contains("opaque caller path lacks decision"))
+    );
+}

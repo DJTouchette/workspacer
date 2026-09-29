@@ -224,6 +224,51 @@ fn named_rank(matrix: &Value, p: &str, m: &str, e: &str) -> i64 {
     }
     strongest
 }
+// Read the same model carriers as actual spawn admission. A canonical-only
+// selection must not disappear at the ceiling lookup, and two conflicting
+// companions must not let policy authorize one model while a provider uses another.
+fn requested_model(params: &Value) -> Result<String> {
+    fn optional_text<'a>(params: &'a Value, key: &str) -> Result<Option<&'a str>> {
+        match params.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(value)) => Ok((!value.trim().is_empty()).then_some(value.as_str())),
+            _ => bail!("{key} must be text"),
+        }
+    }
+    let window = match params.get("contextWindow") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .filter(|value| *value > 0)
+                .ok_or_else(|| anyhow::anyhow!("invalid-context-window"))?,
+        ),
+    };
+    let legacy = optional_text(params, "model")?;
+    let identity = optional_text(params, "modelIdentity")?;
+    let Some(pin) = optional_text(params, "provider")? else {
+        // A remote profile/default may choose the provider. Preserve the
+        // reference's unknown-provider classification rather than guessing it.
+        // The two syntax families are Claude markers and opaque identities;
+        // conflicting companions that neither family accepts are always invalid.
+        if legacy.is_some()
+            && identity.is_some()
+            && !["claude", "codex"].iter().any(|provider| {
+                crate::model_selection::normalize_model_input(provider, legacy, identity, window)
+                    .is_ok()
+            })
+        {
+            bail!("invalid model selection: conflicting-model-identity");
+        }
+        return Ok(identity.or(legacy).unwrap_or_default().to_owned());
+    };
+    Ok(
+        crate::model_selection::normalize_model_input(pin, legacy, identity, window)
+            .map_err(|error| anyhow::anyhow!("invalid model selection: {}", error.code()))?
+            .map(|value| value.selection.model)
+            .unwrap_or_default(),
+    )
+}
 /// Called after profile/config defaults resolve, and before any provider launches.
 /// Only changed field names are returned; caller-authored receipts are never consulted.
 pub fn sanitize(matrix: &Value, params: &mut Value) -> Result<Vec<String>> {
@@ -235,6 +280,7 @@ pub fn sanitize(matrix: &Value, params: &mut Value) -> Result<Vec<String>> {
             );
         }
     }
+    let requested_model = requested_model(params)?;
     let Some((key, c)) = ceiling(matrix, word(&params["cwd"])) else {
         return Ok(vec![]);
     };
@@ -249,7 +295,7 @@ pub fn sanitize(matrix: &Value, params: &mut Value) -> Result<Vec<String>> {
     let capability = word(&params["capability"]).to_lowercase();
     let p = provider(word(&params["provider"]));
     let over = (!capability.is_empty() && rank(matrix, &capability) > limit)
-        || named_rank(matrix, &p, word(&params["model"]), word(&params["effort"])) > limit;
+        || named_rank(matrix, &p, &requested_model, word(&params["effort"])) > limit;
     if !over {
         return Ok(vec![]);
     }

@@ -1048,5 +1048,37 @@
         "reason": "If supplied, canonicalized and required to equal the server-configured worktree root; callers cannot relocate the destination root."
       }
     }
+  },
+  "inspectionDecisions": {
+    "git.status": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.log": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.diff": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.numstat": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.commitDiff": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.commitNumstat": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.stage": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.unstage": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.commit": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.push": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    }
   }
 }

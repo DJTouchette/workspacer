@@ -1,0 +1,141 @@
+{
+  "records": {
+    "services/hub/cmd/brain/git.go": {
+      "sha256": "92fc0dbd541857613bcc6b41bbe9ee6c4b5ba61e07debdd5526cffae77a9aaf9",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read command construction/output capture, root derivation, status/numstat/branch/log parsers, read operations and pathspec anchoring. Commands use a single tested Git constructor with all 10 desktop-matched fixed-key overrides and --no-ext-diff immediately after any of the 9 declared diff-family commands, including after caller -c pairs.",
+          "Retains 256 MiB stdout / 1 MiB stderr caps, owned process cancellation, canonical cwd before rev-parse, repo-root working directory, selected-repository operands resolved before parent traversal, no-index exit 1 with output success, unborn/detached/gone-upstream shapes, log defaults 5 / max 50 and empty-repo log behavior.",
+          "Added complete legacy branch/log/porcelain/rename-numstat vectors and real canonical symlink cwd read coverage. Fixed malformed Unicode status columns to skip without panicking and restored the pinned non-repository diagnostic.",
+          "Typed consumed request fields now reject malformed strings/booleans/integers before Git runs, preventing numeric path from becoming pathless stage-all. git.numstat ignores unknown diff-only path/untracked fields as its actual Go typed request did."
+        ],
+        "intentionalChanges": [
+          "Known ASCII/Unicode-fold aliases of consumed fields are refused instead of ignored or accepted case-insensitively; this deliberately prevents a misspelled operand silently becoming an all-files operation.",
+          "Retains current documented ambient repository authority with repository-object confinement. Old Go extra workspaceRoots restrictions on some explicit path legs are not reintroduced as a directory grant.",
+          "Rust owned capture bounds the whole invocation to 60 seconds, scrubs host authority environment, and cleans descendants. UTF8-invalid output uses replacement characters. Fixed-key overrides and no-ext-diff are not a universal hook/filter/textconv sandbox."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test git passed full library346 plus git integration8 (354 tests; zero ignored; child subprocess tests not counted twice). Log /tmp/workspacer-git-audit.log. Actual status monitor control, actual fs.listEntries argv wrapper/filtering, canonical cwd reads and local-only push all passed. Witness left both edited Git files unmapped; explicit owning targets were run. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/git_test.go": {
+      "sha256": "9e677d2286561bb1cbe755eb9d911d9f42518d2f66ec9953cc02a59cd430ce99",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Exact modified/untracked, rename-following-source-token, short-record refusal and unmerged porcelain assertions are present, plus embedded newline filenames and malformed UTF8-boundary protection. Five raw/braced/empty-side numstat rename vectors and binary null counts remain active.",
+          "All eight reference branch-header cases (no upstream, synced, ahead/behind, ahead-only, gone, detached, unborn, nonheader) and two timestamped log rows plus malformed timestamp refusal run through the same private parsers used in production.",
+          "Actual Command argument inspection pins prefix order, subcommand -c skipping, diff-option placement and non-diff exclusion. Fixed-key and diff-family sets are compared against their real TypeScript source arrays, with no empty-discovery pass."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test git passed full library346 plus git integration8 (354 tests; zero ignored; child subprocess tests not counted twice). Log /tmp/workspacer-git-audit.log. Actual status monitor control, actual fs.listEntries argv wrapper/filtering, canonical cwd reads and local-only push all passed. Witness left both edited Git files unmapped; explicit owning targets were run. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/gitactions.go": {
+      "sha256": "8a5ae198630b18a96a19b93180edda09f862265f1fffb56389609a1d885d69df",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped hex-only 4..40 commit identifiers, optional selected-repository pathspecs, commit patch/numstat projection, pathless stage/unstage scoped to canonical caller cwd, explicit path anchoring, whitespace-only commit refusal, push and action error summaries.",
+          "Real isolated repository test stages deletion plus addition under frontend without staging backend, unstages and restages one file, commits, reads committed patch/two file stats, then pushes to a temporary bare local remote and verifies the exact remote commit hash. No network remote is contacted.",
+          "Malformed mutation operands are rejected before command execution and their no-side-effects test proves an untracked file stays untracked. Conflict/nothing-staged/no-upstream/rejected-push summaries preserve original Git details and empty fallback."
+        ],
+        "intentionalChanges": [
+          "Intentional current policy is ambient host repository selection with semantic repository containment; narrower historical workspace-root grants are not restored. Test repositories explicitly disable hooks and ambient attributes and deny non-file protocols, without changing user-facing production Git mutation policy."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test git passed full library346 plus git integration8 (354 tests; zero ignored; child subprocess tests not counted twice). Log /tmp/workspacer-git-audit.log. Actual status monitor control, actual fs.listEntries argv wrapper/filtering, canonical cwd reads and local-only push all passed. Witness left both edited Git files unmapped; explicit owning targets were run. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/gitactions_test.go": {
+      "sha256": "00163d081118e9b03b66479624912fb5fd3ab1e0e1ee30f32ea7714ecf0e3042",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "stage_delete_unstage_commit_and_local_push_preserve_selected_cwd retains every TestHeadlessGitReviewActions assertion using real repositories: scoped deletion/addition, sibling exclusion, single-path unstage/restage, committed hunk, two-file numstat and exact local bare remote ref after push.",
+          "Fixture Git runs in isolated test subprocesses with empty global/system configuration, empty hooks/templates/attributes and no inherited repository selection. This preserves a meaningful command test without running untrusted repository code or contacting a network remote."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test git passed full library346 plus git integration8 (354 tests; zero ignored; child subprocess tests not counted twice). Log /tmp/workspacer-git-audit.log. Actual status monitor control, actual fs.listEntries argv wrapper/filtering, canonical cwd reads and local-only push all passed. Witness left both edited Git files unmapped; explicit owning targets were run. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/gitconfinement_test.go": {
+      "sha256": "b88be500500a902dd18bd90a407b15b6fabb8ad838235721f1e3c7e561494e46",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Real canonical cwd test builds sub/link -> real then calls with link/../nope/../, a spelling the OS cannot chdir into unchanged. Actual status/log/numstat/diff all succeed from the canonical selected worktree, proving the checked spelling is the executed one.",
+          "Read floor verifies live branch, individually listed untracked file, initial commit subject/nonzero timestamp, exact added/deleted counts and tracked hunk. Non-repository call returns the pinned not-inside-a-git-work-tree diagnosis rather than a confinement error.",
+          "Existing actual untracked diff refuses an escaping directory symlink and ../outside, with a legitimate root-relative untracked patch control; invalid revision-option text is refused as a commit hash. Windows canonical-cwd fixture requires real symlink privilege."
+        ],
+        "intentionalChanges": [
+          "Legacy comments still describe obsolete workspace/secret path grants; actual current project policy is ambient absolute cwd and containment inside the repository chosen by Git. POSIX and Windows runtime proofs remain separate; Linux execution cannot certify Windows fixture execution."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test git passed full library346 plus git integration8 (354 tests; zero ignored; child subprocess tests not counted twice). Log /tmp/workspacer-git-audit.log. Actual status monitor control, actual fs.listEntries argv wrapper/filtering, canonical cwd reads and local-only push all passed. Witness left both edited Git files unmapped; explicit owning targets were run. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/gitexec_test.go": {
+      "sha256": "62c8f25dfc96efa92e7b0204ec5469d4516b22c201b962c92146e2de5aee5b20",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/git.rs",
+        "services/hub-rs/tests/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The actual Git Command constructor is compared to the real desktop fixed-key and diff-family arrays, then inspected for prefix ordering and subcommand option placement. The constructor is the sole Git-program construction in this service and the owned runner uses it for every registered git.* operation.",
+          "A real status control configures a nonexistent fsmonitor executable, proves unguarded Git attempts it, then proves the owned guarded runner suppresses that attempt. No repository-provided code is executed.",
+          "The real fs.listEntries helper runs under an isolated authored Git wrapper which records exact argv then execs actual Git. The test checks all fixed overrides, quotePath/check-ignore/-z/--stdin arguments and actual ignored-file filtering. Removing the helper invocation or its prefix fails rather than silently proving nothing."
+        ],
+        "intentionalChanges": [
+          "The old source scan was Go-syntax-specific and allowed arbitrary args... variables; it is replaced by actual argv evidence for the two migrated command paths plus a source-local single-constructor guard. This is not a claim that every arbitrary Git process in the larger Rust monorepo is statically proven guarded.",
+          "The executable-wrapper fixture is Unix-only; cross-platform constructor assertions still run elsewhere. Fixed-key overrides do not sandbox every named clean/textconv driver or hook, so that broader historical comment is explicitly not certified."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test git passed full library346 plus git integration8 (354 tests; zero ignored; child subprocess tests not counted twice). Log /tmp/workspacer-git-audit.log. Actual status monitor control, actual fs.listEntries argv wrapper/filtering, canonical cwd reads and local-only push all passed. Witness left both edited Git files unmapped; explicit owning targets were run. Windows runtime remains a platform gate."
+      }
+    }
+  }
+}

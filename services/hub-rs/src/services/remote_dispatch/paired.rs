@@ -453,6 +453,9 @@ impl Booking for Source {
     fn local_session_id(&self) -> &str {
         &self.session
     }
+    fn source_root(&self) -> &str {
+        text(&self.params, "cwd")
+    }
     fn prepare<'a>(
         &'a self,
         record: &'a OriginRecord,

@@ -10,6 +10,7 @@ pub(crate) struct Function {
     pub owner: Option<String>,
     pub sig: syn::Signature,
     pub block: syn::Block,
+    pub lexical_blocks: Vec<(String, syn::Block)>,
 }
 #[derive(Clone)]
 pub(crate) enum Data {
@@ -405,6 +406,7 @@ impl Index {
                 owner,
                 sig,
                 block,
+                lexical_blocks: Vec::new(),
             },
         );
         Ok(())

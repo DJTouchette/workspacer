@@ -1,0 +1,74 @@
+{
+  "records": {
+    "services/hub/cmd/brain/fsops.go": {
+      "sha256": "1db04ef311e80a33f6b3c7f2e9902e2408de37ce4436ea17aeb097c5a6da8801",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All292 source lines read: directory picker, text read/write, tree listing, Git fixed-key prefix and ignore protocol, supervisor home. Rust handler dispatch opens the canonical path verbatim and preserves output shapes.",
+          "Exact5MiB success and one-byte overflow refusal, invalid UTF8 and binary NUL refusal, directory refusal, invalid-content no-truncation and null-content truncation are covered by actual filesystem operations. Ambient file access is independent of picker home.",
+          "New0755 parents and0644 files plus preservation of an existing0751 file are tested in a child process with umask0. Missing home yields an empty supervisor-home result without creating relative state.",
+          "Actual helper argv and NUL-delimited nonASCII/newline filenames are observed by an authored executable. Real repository filtering and bytewise directory-first listing remain covered; cancellation and named-pipe refusal run in library tests."
+        ],
+        "intentionalChanges": [
+          "Rust bounds actual read bytes and checks opened regular-file identity; Go stat plus ReadFile did not bound growth after stat. This is not a universal filesystem TOCTOU guarantee.",
+          "Owned Git capture has explicit byte/time limits and cancellation cleanup. Missing Git or non-repository errors still leave the listing unfiltered. Supervisor directory-creation errors are surfaced rather than swallowed."
+        ],
+        "validation": "2026-09-29 Linux: full library346 plus Git8 passed in /tmp/workspacer-git-audit.log, including filesystem unit fixtures for permissions, missing home, actual helper argv, cancellation and special files. Owning files integration target then passed7/7 in /tmp/workspacer-files-audit.log after final byte-boundary and malformed-write regressions. Witness marked all3 filesystem files unmapped, so explicit owning library and files targets were run. Windows/macOS runtime evidence remains separate."
+      }
+    },
+    "services/hub/cmd/brain/fsguard_test.go": {
+      "sha256": "a3b88a0034332001c5a0c4eb1606d0f04af2231e7701e667ae1f84cdbf078d16",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Active shared path corpus runs every case with allow/deny floors and separate ambient versus selected-object handling. Actual filesystem read/write outside picker home proves ambient policy.",
+          "Exact40-link success and41-link refusal are pinned to the shared contract; symlink-before-parent traversal, nonexistent tails, path through a regular file and escaping selected-store entry are tested.",
+          "Fixture-builder helpers used by unrelated legacy tests are replaced by typed Rust per-target fixtures; the removed anonymous workspace refusal string is not authenticated authorization."
+        ],
+        "intentionalChanges": [
+          "Windows symlink fixtures require privilege rather than silently skipping; local Linux evidence does not certify Windows execution."
+        ],
+        "validation": "2026-09-29 Linux: full library346 plus Git8 passed in /tmp/workspacer-git-audit.log, including filesystem unit fixtures for permissions, missing home, actual helper argv, cancellation and special files. Owning files integration target then passed7/7 in /tmp/workspacer-files-audit.log after final byte-boundary and malformed-write regressions. Witness marked all3 filesystem files unmapped, so explicit owning library and files targets were run. Windows/macOS runtime evidence remains separate."
+      }
+    },
+    "services/hub/cmd/brain/fsguard_edges_test.go": {
+      "sha256": "f6f551f13f1336f26e6db7d808cffa4b52d5f7c2df7316aa35cf9c4a484062a2",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Empty selected root refuses absolute targets and the empty target; positive controls show nonempty selected roots and filesystem volume roots still contain their descendants.",
+          "The remaining pathIsSecret unverifiable-target assertion belongs to an obsolete authenticated secret denylist. Current canonicalization refuses empty/relative/tilde paths; authenticated absolute host paths remain ambient."
+        ],
+        "intentionalChanges": [
+          "The dead secret predicate itself is not reintroduced. No active authenticated fs handler calls that predicate. Live cwd inventory is a separate unresolved production fsguard.go review, not certified by this edge-test mapping."
+        ],
+        "validation": "2026-09-29 Linux: full library346 plus Git8 passed in /tmp/workspacer-git-audit.log, including filesystem unit fixtures for permissions, missing home, actual helper argv, cancellation and special files. Owning files integration target then passed7/7 in /tmp/workspacer-files-audit.log after final byte-boundary and malformed-write regressions. Witness marked all3 filesystem files unmapped, so explicit owning library and files targets were run. Windows/macOS runtime evidence remains separate."
+      }
+    }
+  }
+}

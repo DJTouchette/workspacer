@@ -36,6 +36,8 @@ pub trait Delivery: Send + Sync + 'static {
 }
 pub(crate) trait Booking: Send + Sync {
     fn local_session_id(&self) -> &str;
+    /// Host-derived local task project; never taken from the remote wire payload.
+    fn source_root(&self) -> &str;
     /// Runs after remote cwd preparation, before the one and only engine call.
     /// Returns trusted local receipt fields and the rendered message.
     fn prepare<'a>(&'a self, record: &'a OriginRecord, prepared: &'a Value)
@@ -46,6 +48,7 @@ pub struct Origin {
     link: Arc<dyn Link>,
     delivery: Arc<dyn Delivery>,
     hub: Handle,
+    routing: Option<Arc<crate::services::routing::RoutingService>>,
     deliveries: tokio::sync::Mutex<()>,
     observing: tokio::sync::watch::Sender<bool>,
 }
@@ -55,6 +58,15 @@ impl Origin {
         hub: Handle,
         link: Arc<dyn Link>,
         delivery: Arc<dyn Delivery>,
+    ) -> Result<Arc<Self>> {
+        Self::open_with_routing(root, hub, link, delivery, None)
+    }
+    pub(crate) fn open_with_routing(
+        root: PathBuf,
+        hub: Handle,
+        link: Arc<dyn Link>,
+        delivery: Arc<dyn Delivery>,
+        routing: Option<Arc<crate::services::routing::RoutingService>>,
     ) -> Result<Arc<Self>> {
         let journal = Journal::open_legacy(
             root.join("remote-dispatch-origin.json"),
@@ -114,6 +126,7 @@ impl Origin {
             link,
             delivery,
             hub,
+            routing,
             deliveries: tokio::sync::Mutex::new(()),
             observing: tokio::sync::watch::channel(true).0,
         }))
@@ -150,7 +163,8 @@ impl Origin {
         rows
     }
     /// Called only at the broker's qualified-call boundary AFTER provenance
-    /// sanitization. The peer still applies its configured credential ceiling.
+    /// sanitization. Source routing is checked before the first peer call;
+    /// the peer still applies its own independent execution policy.
     pub(crate) async fn forward_sanitized(
         &self,
         caller: &Caller,
@@ -175,6 +189,42 @@ impl Origin {
         }
         if !self.link.dispatch_enabled(peer) {
             bail!("peer is not enabled for worker dispatch")
+        }
+        anyhow::ensure!(params.is_object(), "spawn parameters must be an object");
+        if let Some(routing) = &self.routing {
+            // The origin's policy is independent of the destination's. Apply
+            // it before *any* peer call, including the ownerless forwarding
+            // path and paired/booked dispatch which bypasses qualified RPC.
+            let mut audit = routing.begin_origin_spawn_audit(caller);
+            let remote_cwd = params.get("cwd").cloned();
+            if let Some(booking) = &booking {
+                params["cwd"] = json!(booking.source_root());
+            }
+            let checked = audit.check(&mut params);
+            // Source policy/audit sees the local project for paired work, while
+            // the peer must still receive the independently selected remote cwd.
+            if let Some(cwd) = remote_cwd {
+                params["cwd"] = cwd;
+            } else {
+                params.as_object_mut().unwrap().remove("cwd");
+            }
+            let mut scrubbed = checked?;
+            if scrubbed
+                .iter()
+                .any(|field| matches!(field.as_str(), "model" | "provider"))
+            {
+                if let Some(map) = params.as_object_mut() {
+                    for key in ["modelIdentity", "contextWindow"] {
+                        if map.remove(key).is_some() {
+                            scrubbed.push(key.into());
+                        }
+                    }
+                }
+            }
+            audit.extend_scrubbed(&scrubbed);
+            if !scrubbed.is_empty() {
+                params["escalationScrubbed"] = json!(scrubbed);
+            }
         }
         let map = params
             .as_object_mut()
@@ -512,3 +562,7 @@ impl Origin {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "origin_routing_tests.rs"]
+mod routing_tests;

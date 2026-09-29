@@ -26,6 +26,14 @@ its exact path and descendants; `$` explicitly reviews the whole method payload.
 A decision on an unrelated field cannot excuse it. Novel suspicious spellings
 need a per-method `sourceParameterDecisions` entry rather than automatic admission to the vocabulary. These source-specific entries must match an actual traced field; the older cross-plane `parameterDecisions` retain their vocabulary-only invariant.
 
+Local function declarations use their lexical declaration scope, including
+forward declarations and shadowing. Known empty key arrays perform no reads;
+unknown conditional arrays retain every possible key. `inspectionDecisions`
+separately permits reviewed map-key validation at a caller path, only when the
+trace actually observes key inspection and no payload transformation there.
+It cannot authorize serialization, value inspection, storage, or forwarding;
+those still require a full opaque review or fail as unsupported flows.
+
 `go-reference.json` captures all original Go dispatch bindings, including its
 84 dangerous method/field pairs and byte hashes for the original scanner,
 production inputs and vocabulary. The Rust check verifies those hashes and

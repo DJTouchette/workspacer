@@ -12,6 +12,8 @@ pub struct Bound {
     pub fields: BTreeSet<String>,
     pub opaque: BTreeSet<String>,
     pub opaque_paths: BTreeSet<String>,
+    pub key_inspections: BTreeSet<String>,
+    pub opaque_transforms: BTreeSet<String>,
     pub unresolved: BTreeSet<String>,
     pub sources: BTreeSet<String>,
 }
@@ -20,6 +22,8 @@ impl Bound {
         self.fields.extend(other.fields);
         self.opaque.extend(other.opaque);
         self.opaque_paths.extend(other.opaque_paths);
+        self.key_inspections.extend(other.key_inspections);
+        self.opaque_transforms.extend(other.opaque_transforms);
         self.unresolved.extend(other.unresolved);
         self.sources.extend(other.sources);
     }

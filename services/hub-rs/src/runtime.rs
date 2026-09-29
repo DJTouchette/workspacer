@@ -3061,3 +3061,7 @@ mod bus_audit_tests;
 #[cfg(test)]
 #[path = "runtime/routing_admission_tests.rs"]
 mod routing_admission_tests;
+
+#[cfg(test)]
+#[path = "runtime/federation_routing_tests.rs"]
+mod federation_routing_tests;

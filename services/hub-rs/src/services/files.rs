@@ -38,8 +38,7 @@ fn install_with_git(mut options: Options, home: PathBuf, git: GitCommand) -> Opt
             async move {
                 if method == "fs.listEntries" {
                     let listing = tokio::task::spawn_blocking(move || {
-                        let path =
-                            paths::canonicalize(Path::new(params["path"].as_str().unwrap_or("")))?;
+                        let path = paths::canonicalize(Path::new(path_parameter(&params)?))?;
                         DirectoryListing::read(path)
                     })
                     .await??;
@@ -62,12 +61,19 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
         return Ok(json!(std::env::current_dir()?));
     }
     if method == "app.supervisorHome" {
+        if home.as_os_str().is_empty() {
+            return Ok(json!(""));
+        }
         let path = home.join(".workspacer");
-        std::fs::create_dir_all(&path)?;
+        create_directory_tree(&path)?;
         return Ok(json!(path));
     }
-    let requested = params["path"].as_str().unwrap_or("");
-    let requested = if method == "fs.listDir" && requested.is_empty() {
+    let requested = path_parameter(&params)?;
+    let requested = if method == "fs.listDir"
+        && requested
+            .trim_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c'])
+            .is_empty()
+    {
         home
     } else {
         Path::new(requested)
@@ -88,12 +94,15 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
                 None | Some(Value::Null) => "",
                 Some(v) => v.as_str().ok_or_else(|| anyhow!("contents must be text"))?,
             };
-            std::fs::create_dir_all(path.parent().ok_or_else(|| anyhow!("path has no parent"))?)?;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&path)?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o644);
+            }
+            create_directory_tree(path.parent().ok_or_else(|| anyhow!("path has no parent"))?)?;
+            let mut file = options.open(&path)?;
             file.write_all(text.as_bytes())?;
             Ok(json!({"ok":true}))
         }
@@ -117,6 +126,27 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
         }
         _ => bail!("unknown filesystem method"),
     }
+}
+fn path_parameter(params: &Value) -> Result<&str> {
+    if !params.is_object() && !params.is_null() {
+        bail!("filesystem parameters must be a JSON object");
+    }
+    match params.get("path") {
+        None | Some(Value::Null) => Ok(""),
+        Some(Value::String(path)) => Ok(path),
+        _ => bail!("path must be text"),
+    }
+}
+fn create_directory_tree(path: &Path) -> Result<()> {
+    let mut directory = std::fs::DirBuilder::new();
+    directory.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        directory.mode(0o755);
+    }
+    directory.create(path)?;
+    Ok(())
 }
 struct DirectoryListing {
     path: PathBuf,
@@ -356,6 +386,57 @@ fn picker(params: &Value, home: &Path) -> Result<Value> {
 mod read_tests {
     use super::*;
     #[test]
+    fn file_creation_permissions_and_missing_home_are_checked_in_an_isolated_process() {
+        use std::os::unix::fs::PermissionsExt;
+        const CHILD: &str = "WKS_FS_MODE_TEST_ROOT";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = PathBuf::from(root);
+            std::env::set_current_dir(&root).unwrap();
+            unsafe {
+                libc::umask(0);
+            }
+            assert_eq!(
+                call("app.supervisorHome", Value::Null, Path::new("")).unwrap(),
+                json!("")
+            );
+            assert!(!root.join(".workspacer").exists());
+            call("app.supervisorHome", Value::Null, &root).unwrap();
+            let file = root.join("new/child/file");
+            call("fs.write", json!({"path":file,"contents":"first"}), &root).unwrap();
+            for directory in [
+                root.join(".workspacer"),
+                root.join("new"),
+                root.join("new/child"),
+            ] {
+                assert_eq!(
+                    std::fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+                    0o755
+                );
+            }
+            assert_eq!(
+                std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+                0o644
+            );
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o751)).unwrap();
+            call("fs.write", json!({"path":file,"contents":"second"}), &root).unwrap();
+            assert_eq!(
+                std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
+                0o751
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "services::files::read_tests::file_creation_permissions_and_missing_home_are_checked_in_an_isolated_process", "--nocapture"])
+            .env(CHILD, root.path()).output().unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    #[test]
     fn named_pipe_is_refused_before_a_blocking_open() {
         use std::os::unix::{ffi::OsStrExt, fs::OpenOptionsExt};
         let root = tempfile::tempdir().unwrap();
@@ -390,6 +471,45 @@ mod listing_process_tests {
     use super::*;
     use crate::{Hub, client::Client};
     use std::{os::unix::fs::PermissionsExt, time::Duration};
+    #[tokio::test]
+    async fn actual_ignore_process_receives_all_guard_args_and_nul_delimited_names() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().to_owned();
+        let git: GitCommand = Arc::new(|| {
+            let mut command = tokio::process::Command::new("/bin/sh");
+            command.args([
+                "-c",
+                "printf '%s\\0' \"$@\" > argv; cat > stdin; printf 'ignored\\0'",
+                "git-spy",
+            ]);
+            command
+        });
+        let names = ["ignored".to_owned(), "é\nfile".into()];
+        let ignored = git_ignored_async(&dir, &names, git).await;
+        assert_eq!(ignored, ["ignored".to_owned()].into());
+        let argv = std::fs::read(dir.join("argv")).unwrap();
+        let args: Vec<_> = argv
+            .split(|b| *b == 0)
+            .filter(|b| !b.is_empty())
+            .map(|b| std::str::from_utf8(b).unwrap())
+            .collect();
+        let expected: Vec<_> = GIT_NO_EXEC
+            .iter()
+            .flat_map(|key| ["-c", *key])
+            .chain([
+                "-c",
+                "core.quotePath=false",
+                "check-ignore",
+                "-z",
+                "--stdin",
+            ])
+            .collect();
+        assert_eq!(args, expected);
+        assert_eq!(
+            std::fs::read(dir.join("stdin")).unwrap(),
+            names.join("\0").as_bytes()
+        );
+    }
     #[tokio::test]
     async fn async_listing_preserves_ignore_status_directory_order_and_fallback() {
         let root = tempfile::tempdir().unwrap();
