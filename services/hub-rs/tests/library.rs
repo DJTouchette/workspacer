@@ -30,6 +30,7 @@ fn global_library_remains_visible_through_a_symlinked_config_root() {
 #[test]
 fn every_library_walker_refuses_escaped_aliases_and_retains_ordinary_items() {
     for folder in [
+        "global",
         ".workspacer/library",
         ".claude/agents",
         ".claude/commands",
@@ -37,7 +38,11 @@ fn every_library_walker_refuses_escaped_aliases_and_retains_ordinary_items() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let cwd = root.path().join("project");
-        let directory = cwd.join(folder);
+        let directory = if folder == "global" {
+            root.path().join("config/library")
+        } else {
+            cwd.join(folder)
+        };
         let skill = folder.ends_with("skills");
         let bad = directory.join(if skill {
             "escaped/SKILL.md"
@@ -499,4 +504,365 @@ async fn dispatch_parameters_are_derived_on_save_and_list_and_filters_only_narro
     );
     drop(client);
     hub.shutdown().unwrap();
+}
+
+#[test]
+fn removing_a_skill_selects_its_directory_not_the_target_of_its_markdown_alias() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("project");
+    let selected = cwd.join(".claude/skills/selected");
+    let other = cwd.join(".claude/skills/other");
+    std::fs::create_dir_all(&selected).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("SKILL.md"), "other skill").unwrap();
+    std::fs::write(other.join("keep.txt"), "other resources").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(other.join("SKILL.md"), selected.join("SKILL.md")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(other.join("SKILL.md"), selected.join("SKILL.md"))
+        .expect("Windows contract CI must provide symlink privilege");
+    Library::new(root.path().join("config"))
+        .remove(&json!({"scope":"claude","kind":"skill","cwd":cwd,"id":"selected"}))
+        .unwrap();
+    assert!(!selected.exists(), "the selected skill must be removed");
+    assert_eq!(
+        std::fs::read_to_string(other.join("SKILL.md")).unwrap(),
+        "other skill"
+    );
+    assert_eq!(
+        std::fs::read_to_string(other.join("keep.txt")).unwrap(),
+        "other resources"
+    );
+}
+
+#[test]
+fn malformed_dispatch_schema_cannot_overwrite_an_existing_library_item() {
+    let root = tempfile::tempdir().unwrap();
+    let service = Library::new(root.path().join("config"));
+    let valid = json!({"scope":"global","id":"kept","title":"Kept","kind":"dispatch","body":"{{task}}","resultSchema":{"type":"object"}});
+    let saved = service.save(&valid).unwrap();
+    let path = std::path::Path::new(saved["path"].as_str().unwrap());
+    let bytes = std::fs::read(path).unwrap();
+    for schema in [json!([]), json!("object"), json!(42), json!(false)] {
+        let mut invalid = valid.clone();
+        invalid["resultSchema"] = schema;
+        invalid["body"] = json!("corrupted");
+        assert!(
+            service.save(&invalid).is_err(),
+            "malformed schema accepted: {invalid}"
+        );
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+    let mut cleared = valid;
+    cleared["resultSchema"] = Value::Null;
+    assert!(
+        service
+            .save(&cleared)
+            .unwrap()
+            .get("resultSchema")
+            .is_none()
+    );
+}
+
+#[test]
+fn library_seed_upgrade_preserves_edits_and_deletions_and_all_starter_contracts() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    let service = Library::new(config.clone());
+    let first = service.list(&json!({})).unwrap();
+    let rows = first.as_array().unwrap();
+    assert_eq!(rows.len(), 8);
+    assert_eq!(rows[0]["title"], "Careful refactor (skill)");
+    let ids: std::collections::BTreeSet<_> =
+        rows.iter().map(|r| r["id"].as_str().unwrap()).collect();
+    assert_eq!(ids.len(), 8);
+    assert!(!ids.contains(""));
+    for (id, role) in [
+        ("ship-task", "implementer"),
+        ("review-task", "reviewer"),
+        ("scout-task", "scout"),
+        ("two-explanations", "diagnostician"),
+    ] {
+        let row = rows.iter().find(|r| r["id"] == id).unwrap();
+        assert_eq!(row["kind"], "dispatch");
+        assert!(row["resultSchema"].is_object());
+        assert!(
+            row["description"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("role \"{role}\""))
+        );
+    }
+    for (id, phrases) in [
+        (
+            "ship-task",
+            vec![
+                "{{task}}",
+                "Read what a check actually printed rather than trusting its exit code",
+                "Do not judge whether your own work is correct",
+                "HANDOFF",
+                "Leave your plan and your reasoning out of it",
+            ],
+        ),
+        (
+            "review-task",
+            vec![
+                "{{task}}",
+                "{{handoff}}",
+                "session that never saw it being done",
+                "plan, its reasoning or its transcript",
+                "Rank what you find by severity",
+                "Do not fix it",
+            ],
+        ),
+    ] {
+        let row = rows.iter().find(|r| r["id"] == id).unwrap();
+        for phrase in phrases {
+            assert!(
+                row["body"].as_str().unwrap().contains(phrase),
+                "{id}: {phrase}"
+            );
+        }
+    }
+    let mcp = rows.iter().find(|r| r["kind"] == "mcp").unwrap();
+    assert_eq!(mcp["mcp"]["command"], "npx");
+    assert_eq!(mcp["mcp"]["args"].as_array().unwrap().len(), 2);
+    let stamps: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            let p = std::path::PathBuf::from(r["path"].as_str().unwrap());
+            let m = std::fs::metadata(&p).unwrap().modified().unwrap();
+            (p, m)
+        })
+        .collect();
+    assert_eq!(service.list(&json!({})).unwrap(), first);
+    for (p, m) in &stamps {
+        assert_eq!(std::fs::metadata(p).unwrap().modified().unwrap(), *m);
+    }
+    for (p, _) in stamps {
+        std::fs::remove_file(p).unwrap();
+    }
+    assert_eq!(service.list(&json!({})).unwrap(), json!([]));
+    // Upgrade without a marker: missing old starters represent deletion;
+    // new dispatch starters are additive and existing edited bytes remain exact.
+    let old = root.path().join("old");
+    std::fs::create_dir_all(old.join("library")).unwrap();
+    let edited = b"---\ntitle: Mine\nkind: prompt\n---\n\nedited by hand\n";
+    for id in ["summarize-and-plan", "careful-refactor"] {
+        std::fs::write(old.join(format!("library/{id}.md")), edited).unwrap();
+    }
+    Library::new(old.clone()).list(&json!({})).unwrap();
+    for id in ["summarize-and-plan", "careful-refactor"] {
+        assert_eq!(
+            std::fs::read(old.join(format!("library/{id}.md"))).unwrap(),
+            edited
+        );
+    }
+    for id in ["context7-mcp", "make-workspacer-plugin"] {
+        assert!(!old.join(format!("library/{id}.md")).exists());
+    }
+    for id in ["ship-task", "review-task", "scout-task", "two-explanations"] {
+        assert!(old.join(format!("library/{id}.md")).is_file());
+    }
+}
+
+#[test]
+fn claude_agent_and_command_remove_only_the_named_file_and_never_a_directory_tree() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("project");
+    let service = Library::new(root.path().join("config"));
+    for kind in ["agent", "command", "skill"] {
+        service.save(&json!({"scope":"claude","kind":kind,"cwd":cwd,"id":"same","title":"Same","body":"kept"})).unwrap();
+    }
+    service
+        .remove(&json!({"scope":"claude","kind":"agent","cwd":cwd,"id":"same"}))
+        .unwrap();
+    assert!(!cwd.join(".claude/agents/same.md").exists());
+    assert!(cwd.join(".claude/commands/same.md").is_file());
+    assert!(cwd.join(".claude/skills/same/SKILL.md").is_file());
+    service
+        .remove(&json!({"scope":"claude","kind":"command","cwd":cwd,"id":"same"}))
+        .unwrap();
+    assert!(!cwd.join(".claude/commands/same.md").exists());
+    assert!(cwd.join(".claude/skills/same/SKILL.md").is_file());
+    let tree = cwd.join(".claude/agents/tree.md");
+    std::fs::create_dir_all(&tree).unwrap();
+    std::fs::write(tree.join("keep"), "kept").unwrap();
+    assert!(
+        service
+            .remove(&json!({"scope":"claude","kind":"agent","cwd":cwd,"id":"tree"}))
+            .is_err()
+    );
+    assert_eq!(std::fs::read_to_string(tree.join("keep")).unwrap(), "kept");
+}
+
+#[test]
+fn library_mcp_empty_secrets_and_unbacked_placeholders_remain_distinct() {
+    let root = tempfile::tempdir().unwrap();
+    let service = Library::new(root.path().join("config"));
+    let saved=service.save(&json!({"scope":"global","id":"secret","title":"Secret","kind":"mcp","mcp":{"type":"http","url":" https://example.test/mcp ","env":{"TOKEN":"real-secret","EMPTY":""},"headers":{"Authorization":"real-header","X-Trace":""}}})).unwrap();
+    assert_eq!(saved["mcp"]["env"]["TOKEN"], "__WKS_SECRET__");
+    assert_eq!(saved["mcp"]["env"]["EMPTY"], "");
+    assert_eq!(saved["mcp"]["headers"]["Authorization"], "__WKS_SECRET__");
+    assert_eq!(saved["mcp"]["headers"]["X-Trace"], "");
+    assert_eq!(saved["mcp"]["url"], "https://example.test/mcp");
+    let mut edited = saved.clone();
+    edited["mcp"]["env"]["NEW"] = json!("__WKS_SECRET__");
+    service.save(&edited).unwrap();
+    let bytes = std::fs::read_to_string(saved["path"].as_str().unwrap()).unwrap();
+    assert!(bytes.contains("real-secret") && bytes.contains("real-header"));
+    assert!(!bytes.contains("__WKS_SECRET__"));
+    let new=service.save(&json!({"scope":"global","id":"new","title":"New","kind":"mcp","mcp":{"headers":{"Authorization":"__WKS_SECRET__"}}})).unwrap();
+    assert!(
+        !std::fs::read_to_string(new["path"].as_str().unwrap())
+            .unwrap()
+            .contains("__WKS_SECRET__")
+    );
+    assert!(
+        !service
+            .list(&json!({}))
+            .unwrap()
+            .to_string()
+            .contains("real-secret")
+    );
+}
+
+#[test]
+fn hand_edited_library_metadata_keeps_public_description_and_tags_typed() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    let service = Library::new(config.clone());
+    std::fs::create_dir_all(config.join("library")).unwrap();
+    for (id, metadata, description, tags) in [
+        (
+            "mixed",
+            "description: 17\ntags: [one, 42, false, two, null]",
+            None,
+            Some(json!(["one", "two"])),
+        ),
+        (
+            "scalar",
+            "description: {wrong: shape}\ntags: wrong",
+            None,
+            None,
+        ),
+        (
+            "ordinary",
+            "description: readable\ntags: [one]",
+            Some("readable"),
+            Some(json!(["one"])),
+        ),
+    ] {
+        std::fs::write(
+            config.join(format!("library/{id}.md")),
+            format!("---\ntitle: {id}\n{metadata}\n---\nbody\n"),
+        )
+        .unwrap();
+        let rows = service.list(&json!({"id":id})).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(
+            rows[0].get("description"),
+            description.map(|s| json!(s)).as_ref()
+        );
+        assert_eq!(rows[0].get("tags"), tags.as_ref());
+    }
+}
+
+#[test]
+fn malformed_mcp_frontmatter_does_not_become_a_partial_launch_configuration() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    let service = Library::new(config.clone());
+    std::fs::create_dir_all(config.join("library")).unwrap();
+    for field in [
+        "type: [wrong]",
+        "command: [wrong]",
+        "url: {wrong: shape}",
+        "args: scalar",
+        "args: [good, {wrong: shape}]",
+        "env: scalar",
+        "env: {TOKEN: [wrong]}",
+        "headers: []",
+        "headers: {Authorization: [wrong]}",
+    ] {
+        std::fs::write(
+            config.join("library/malformed.md"),
+            format!("---\ntitle: Broken\nkind: mcp\nmcp:\n  {field}\n---\nnotes\n"),
+        )
+        .unwrap();
+        let listed = service.list(&json!({"id":"malformed"})).unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 1);
+        assert!(listed[0].get("mcp").is_none(), "{field}: {}", listed[0]);
+        assert!(
+            service
+                .selected_mcp(root.path(), &["malformed".into()])
+                .unwrap()
+                .is_empty(),
+            "{field}"
+        );
+    }
+}
+
+#[test]
+fn both_mutating_scopes_refuse_other_project_redirects_and_retain_the_victim() {
+    for (scope, kind, folder) in [
+        ("project", "prompt", ".workspacer/library"),
+        ("claude", "skill", ".claude/skills"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("project");
+        let other = root.path().join("other-project");
+        let link = cwd.join(folder);
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let victim = other.join(if scope == "project" {
+            "keep.md"
+        } else {
+            "keep"
+        });
+        if scope == "project" {
+            std::fs::write(&victim, "precious").unwrap();
+        } else {
+            std::fs::create_dir_all(&victim).unwrap();
+            std::fs::write(victim.join("SKILL.md"), "precious").unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&other, &link)
+            .expect("Windows contract CI must provide symlink privilege");
+        let service = Library::new(root.path().join("config"));
+        assert!(service.save(&json!({"scope":scope,"kind":kind,"cwd":cwd,"id":"pwn","title":"T","body":"owned"})).is_err());
+        assert!(
+            service
+                .remove(&json!({"scope":scope,"kind":kind,"cwd":cwd,"id":"keep"}))
+                .is_err()
+        );
+        assert!(!other.join("pwn").exists() && !other.join("pwn.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(if scope == "project" {
+                victim
+            } else {
+                victim.join("SKILL.md")
+            })
+            .unwrap(),
+            "precious"
+        );
+    }
+}
+
+#[test]
+fn dispatch_frontmatter_keeps_schema_but_never_projects_spawn_arguments() {
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    std::fs::create_dir_all(config.join("library")).unwrap();
+    std::fs::write(config.join("library/sneaky.md"),"---\ntitle: Sneaky\nkind: dispatch\ntoolScope: operator\nskipPermissions: true\ncwd: /\nmodel: opus[1m]\nworktree: true\nparams: [{name: forged}]\nresultSchema:\n  type: object\n  required: [commit]\n---\ndo {{task}}\n").unwrap();
+    let listed = Library::new(config).list(&json!({"id":"sneaky"})).unwrap();
+    let row = &listed[0];
+    assert_eq!(row["kind"], "dispatch");
+    assert_eq!(row["resultSchema"]["required"], json!(["commit"]));
+    assert_eq!(row["params"], json!([{"name":"task","required":true}]));
+    for key in ["toolScope", "skipPermissions", "cwd", "model", "worktree"] {
+        assert!(row.get(key).is_none(), "{key}");
+    }
 }

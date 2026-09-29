@@ -47,6 +47,12 @@ fn validate(input: &Value) -> Result<()> {
             bail!("tags must be an array of strings");
         }
     }
+    if input
+        .get("resultSchema")
+        .is_some_and(|v| !v.is_null() && !v.is_object())
+    {
+        bail!("resultSchema must be an object");
+    }
     if let Some(mcp) = input.get("mcp").filter(|v| !v.is_null()) {
         if !mcp.is_object() {
             bail!("mcp must be an object");
@@ -152,6 +158,11 @@ fn kind(value: &Value) -> &str {
 }
 fn clean_mcp(value: &Value) -> Option<Value> {
     let map = value.as_object()?;
+    // A malformed container cannot become a plausible partial launch config.
+    // String fields remain strict; do not inherit YAML scalar-to-string coercion.
+    if validate(&json!({"mcp": value})).is_err() {
+        return None;
+    }
     let mut result = json!({});
     for key in ["type", "command", "url"] {
         if let Some(value) = map.get(key).and_then(Value::as_str) {
@@ -190,7 +201,11 @@ fn clean_mcp(value: &Value) -> Option<Value> {
 fn redact(mut item: Value) -> Value {
     if item["kind"] == "mcp" {
         for key in ["env", "headers"] {
-            if let Some(values) = item["mcp"][key].as_object_mut() {
+            if let Some(values) = item
+                .get_mut("mcp")
+                .and_then(|mcp| mcp.get_mut(key))
+                .and_then(Value::as_object_mut)
+            {
                 for value in values.values_mut() {
                     if value.as_str().is_some_and(|s| !s.is_empty()) {
                         *value = json!(SECRET);
@@ -203,7 +218,7 @@ fn redact(mut item: Value) -> Value {
 }
 fn restore(mut incoming: Value, stored: &Value) -> Value {
     for key in ["env", "headers"] {
-        if let Some(map) = incoming[key].as_object_mut() {
+        if let Some(map) = incoming.get_mut(key).and_then(Value::as_object_mut) {
             map.retain(|name, value| {
                 if value != SECRET {
                     return true;
@@ -281,9 +296,13 @@ impl Library {
             let title = nonblank_or(string(&data, "title"), &id);
             let kind = kind(&data["kind"]);
             let mut item = json!({"id":id,"scope":scope,"title":title,"kind":kind,"editable":true,"body":body,"path":path});
-            for key in ["description", "tags"] {
-                if let Some(value) = data.get(key).filter(|v| !v.is_null()) {
-                    item[key] = value.clone();
+            if let Some(description) = data["description"].as_str().filter(|s| !s.is_empty()) {
+                item["description"] = json!(description);
+            }
+            if let Some(tags) = data["tags"].as_array() {
+                let tags: Vec<_> = tags.iter().filter_map(Value::as_str).collect();
+                if !tags.is_empty() {
+                    item["tags"] = json!(tags);
                 }
             }
             if matches!(string(&data, "action"), "insert" | "spawn" | "copy") {
@@ -445,7 +464,11 @@ impl Library {
         items.sort_by(|a, b| string(a, "title").cmp(string(b, "title")));
         Ok(json!(items))
     }
-    fn destination(&self, input: &Value) -> Result<(PathBuf, String, Option<PathBuf>, String)> {
+    fn destination(
+        &self,
+        input: &Value,
+        removing: bool,
+    ) -> Result<(PathBuf, String, Option<PathBuf>, String)> {
         let scope = string(input, "scope");
         if !matches!(scope, "global" | "project" | "claude") {
             bail!("invalid library scope");
@@ -484,6 +507,9 @@ impl Library {
             kind(&input["kind"])
         }
         .to_owned();
+        // A skill delete selects the directory itself. Resolving SKILL.md first
+        // could redirect deletion to the parent of an unrelated markdown alias.
+        let skill_directory = removing && scope == "claude" && kind == "skill";
         let path = match (scope, kind.as_str()) {
             ("global", _) => self.global().join(format!("{id}.md")),
             ("project", _) => cwd
@@ -491,12 +517,14 @@ impl Library {
                 .unwrap()
                 .join(".workspacer/library")
                 .join(format!("{id}.md")),
-            ("claude", "skill") => cwd
-                .as_ref()
-                .unwrap()
-                .join(".claude/skills")
-                .join(&id)
-                .join("SKILL.md"),
+            ("claude", "skill") => {
+                let directory = cwd.as_ref().unwrap().join(".claude/skills").join(&id);
+                if skill_directory {
+                    directory
+                } else {
+                    directory.join("SKILL.md")
+                }
+            }
             ("claude", "agent") => cwd
                 .as_ref()
                 .unwrap()
@@ -508,11 +536,16 @@ impl Library {
                 .join(".claude/commands")
                 .join(format!("{id}.md")),
         };
-        Ok((self.guard(&path, cwd.as_deref(), true)?, id, cwd, kind))
+        Ok((
+            self.guard(&path, cwd.as_deref(), !skill_directory)?,
+            id,
+            cwd,
+            kind,
+        ))
     }
     pub fn save(&self, input: &Value) -> Result<Value> {
         validate(input)?;
-        let (path, id, cwd, kind) = self.destination(input)?;
+        let (path, id, cwd, kind) = self.destination(input, false)?;
         let _lock = ConfigLock::take(&path)?;
         let old = self
             .read(&path, cwd.as_deref())
@@ -572,12 +605,7 @@ impl Library {
         if string(input, "id").is_empty() {
             bail!("library.remove requires scope and id");
         }
-        let (path, _, cwd, kind) = self.destination(input)?;
-        let path = if input["scope"] == "claude" && kind == "skill" {
-            self.guard(path.parent().unwrap(), cwd.as_deref(), false)?
-        } else {
-            path
-        };
+        let (path, _, _, kind) = self.destination(input, true)?;
         let result = if input["scope"] == "claude" && kind == "skill" {
             std::fs::remove_dir_all(&path)
         } else {

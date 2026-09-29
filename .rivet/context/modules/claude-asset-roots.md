@@ -19,8 +19,8 @@ last_reviewed: 2026-09-26
 
 `services/claudemon/src/providers/claude_stream.rs` enriches assets reported in
 an init frame for Context inventory. `apps/desktop/src/main/services/libraryService.ts`
-enumerates editable/library assets and slash-picker entries. Go
-`services/hub/cmd/brain/library.go` implements the selected-object bus library.
+enumerates editable/library assets and slash-picker entries. `services/hub-rs/src/services/library.rs` implements the selected-object bus
+library; the retained Go source is its migration reference.
 These implementations share layouts, but do not promise identical root sets
 or authority. Test the caller being changed, not an assumed universal resolver.
 
@@ -81,7 +81,7 @@ Sorted directory enumeration is lexical, not newest-version selection.
 ## Mutation and selected-object containment
 
 Native library operations can expose project/user/plugin rows. Bus
-`library.list` applies a per-file selected-library guard; Go enumerates project
+`library.list` applies a per-file selected-library guard; the Rust hub enumerates project
 Claude assets rather than reproducing native user/plugin discovery. A project
 rooted at home still requires an actual allowed library object directory.
 Do not widen this guard to ambient browse roots to make native and bus lists
@@ -91,8 +91,10 @@ ordinary filesystem tools.
 Writes/deletes reject explicit plugin origins before deriving paths. TS selects
 user or project destinations from origin, with unknown origin falling back to
 project; IDs must be plain basenames. Preserve origin when deleting, or the
-wrong root may report a successful no-op. Go has its own item-path guard and
-must not be described as a universal user-root writer.
+wrong root may report a successful no-op. The Rust hub has its own item-path guard and
+must not be described as a universal user-root writer. Skill removal resolves
+the selected directory itself; resolving SKILL.md first and deleting its parent
+would let a file alias select another skill for recursive deletion.
 
 The per-file guard remains the last argument on TS list/save/remove legs;
 existing guard coverage inspects that argument. Root enumeration/read failures

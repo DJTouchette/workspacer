@@ -1,0 +1,124 @@
+{
+  "records": {
+    "services/hub/cmd/brain/library.go": {
+      "status": "ported",
+      "sha256": "6f2b0d28694630f0a64412996a3d08ed16c805d8b54efbd9ce70ecfa8527107d",
+      "replacement": [
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/library_watch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/tests/provider_parity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete source: selected global/project/Claude directories, per-file canonicalization, frontmatter parse/serialize, kind/filter/precedence, metadata projection, MCP redaction/restoration, save/remove, seed marker/bootstrap and all starter content.",
+          "Fixed actual recursive-delete target bug: remove now canonicalizes and guards the named skill directory directly. It no longer follows a SKILL.md alias and recursively deletes the alias target parent. Save still opens the checked canonical file.",
+          "Added resultSchema object validation before mutation; malformed scalar/array schemas cannot overwrite a stored item. LIST description/tags project typed values; malformed MCP container fields cannot become partial launch configurations.",
+          "Global directory remains intentionally canonicalized for symlinked config paths; project .workspacer/library and .claude directories remain lexical selected-object boundaries. Strict bounded regular-file reads and existing timestamp/title semantics are preserved.",
+          "Owning integration exposed mutable JSON indexing in redact/restore creating absent MCP credential fields. Existing-object get_mut access now preserves absence after validation rejects malformed configurations; final20 tests pass."
+        ],
+        "intentionalChanges": [
+          "Refused or unsuccessful deletion now reports an error instead of the old silent successful skip; no target outside selected roots is touched.",
+          "Library markdown is bounded to5MiB regular files and must resolve to markdown. MCP numeric/boolean YAML-to-string coercion is not adopted: Rust typed fields remain strict (measured yaml.v3 probe in /tmp/workspacer-library-yaml-probe.log).",
+          "Runtime polling/explicit mutation notifications replace the old streaming-phase omission; dispatch templates are now supported by the full Rust spawn service."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/library_test.go": {
+      "status": "ported",
+      "sha256": "c07f6407eacf414925f02ca9a903de43b1918585559603ad38206625de5a9333",
+      "replacement": [
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/library_watch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/tests/provider_parity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Pure ASCII-title fallback,17 slug/suffix/idempotence vectors and mixed-case extensions are already owned by provider_parity; no reference fixture bytes changed.",
+          "New starter test verifies8 unique nonempty IDs, lexical first title, real MCP config,4 dispatch schemas/role descriptions, exact ship/review handoff/fresh-review prose. It verifies unchanged mtimes on repeated listing, deletion of all seeded items never resurrects them, and pre-marker upgrades add new dispatch starters without restoring deleted old starters or overwriting edited bytes.",
+          "Existing tests cover project-over-global merge, exact Claude basename identity and preserved unknown frontmatter. New controls distinguish agent/command file deletion from skill recursive deletion and retain same-named siblings and directory contents.",
+          "Actual dispatch fixture retains resultSchema and derived params while discarding authored spawn/permission fields. MCP tests preserve real stored credentials across masked roundtrips, keep empty values/keys and URL visible, drop unbacked placeholders, and ensure public outputs contain no real tokens."
+        ],
+        "intentionalChanges": [
+          "Refused or unsuccessful deletion now reports an error instead of the old silent successful skip; no target outside selected roots is touched.",
+          "Library markdown is bounded to5MiB regular files and must resolve to markdown. MCP numeric/boolean YAML-to-string coercion is not adopted: Rust typed fields remain strict (measured yaml.v3 probe in /tmp/workspacer-library-yaml-probe.log).",
+          "Runtime polling/explicit mutation notifications replace the old streaming-phase omission; dispatch templates are now supported by the full Rust spawn service."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/library_confinement_test.go": {
+      "status": "ported",
+      "sha256": "5c6a652eeb47cdd43337c64a1c6c30a26d93957d4a338f535b0d2b7226ded1f6",
+      "replacement": [
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/library_watch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/tests/provider_parity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Expanded five-walker test now includes global, project, Claude skills, agents and commands. Every leg has an escaping markdown alias negative and ordinary-item positive, with actual Windows/Unix symlink creation and no silent host skip.",
+          "Both project and Claude mutation tests reject cross-project directory redirects before writes, retain delete victims and leave no pwn destination. Existing config-store redirect, ordinary global/project/Claude save/remove and actual bus publish tests provide positive controls.",
+          "In-store save aliases still write their checked target without replacing the alias. New skill file-alias deletion test proves the selected directory disappears and unrelated skill markdown/resources survive."
+        ],
+        "intentionalChanges": [
+          "Refused or unsuccessful deletion now reports an error instead of the old silent successful skip; no target outside selected roots is touched.",
+          "Library markdown is bounded to5MiB regular files and must resolve to markdown. MCP numeric/boolean YAML-to-string coercion is not adopted: Rust typed fields remain strict (measured yaml.v3 probe in /tmp/workspacer-library-yaml-probe.log).",
+          "Runtime polling/explicit mutation notifications replace the old streaming-phase omission; dispatch templates are now supported by the full Rust spawn service."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/library_itemdirs_test.go": {
+      "status": "ported",
+      "sha256": "2bd07a7a711bcbc4b6423b3cd5688537a0b030fe56a4b090b1d52e83f5fff4df",
+      "replacement": [
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/library_watch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/tests/provider_parity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Existing selected_library_item_directories_match_corpus executes all7 portable cases through actual Library.guard:3accept and4deny, exact canonical returned paths, lexical item directory escapes, prefix collisions and ancestor refusal.",
+          "Negative unavailable_symlink_privilege test verifies a missing host capability produces an unmet deny floor, not a green skipped suite. Shared382 library checkpoint executed both tests. Canonical global config alias integration proves legitimate root indirection remains usable.",
+          "Rust combines the original root and item-directory predicates, so original internal refusal-layer labels are not synthesized. Actual semantic refusal and canonical output are asserted; frozen fixture cases and thresholds are unchanged."
+        ],
+        "intentionalChanges": [
+          "Refused or unsuccessful deletion now reports an error instead of the old silent successful skip; no target outside selected roots is touched.",
+          "Library markdown is bounded to5MiB regular files and must resolve to markdown. MCP numeric/boolean YAML-to-string coercion is not adopted: Rust typed fields remain strict (measured yaml.v3 probe in /tmp/workspacer-library-yaml-probe.log).",
+          "Runtime polling/explicit mutation notifications replace the old streaming-phase omission; dispatch templates are now supported by the full Rust spawn service."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "status": "READY: final library20 passed",
+    "before": "Both exact new tests failed using actual tests/library.rs linked against pre-fix cached hub rlib; /tmp/workspacer-library-before-removal.log and /tmp/workspacer-library-before-schema.log. Temporary executable removed after completion.",
+    "shared_library": "382 passed /tmp/workspacer-shutdown-final-lib.log includes selected-directory corpus and initial removal/schema fix; final description/tags/MCP projection edits follow that snapshot and are validated by the final integration target recorded below.",
+    "source_guard": "122 methods126 dangerous23 opaque zero errors /tmp/workspacer-library-source-guard.log",
+    "witness": "Rust files unmapped; explicit library target plus existing provider-parity/corpus owners selected",
+    "format": "rustfmt/git diff --check passed",
+    "library": "20 passed /tmp/workspacer-library-terminals-projection-final.log (terminal1 also passed independently). Initial19/1 failure in /tmp/workspacer-shutdown-library-terminals-final.log exposed redaction creating phantom null MCP fields; fixed get_mut-only access and reran entire owning target.",
+    "platform": "Current20-test run is Linux. Windows/Unix symlink branches require privilege explicitly; no claim that newly added cases already ran in Windows CI."
+  },
+  "readyToStage": [
+    "services/hub-rs/src/services/library.rs",
+    "services/hub-rs/tests/library.rs",
+    ".rivet/context/modules/claude-asset-roots.md",
+    ".rivet/learnings/2026-09-29-skill-removal-must-resolve-the-selected-director-3a41d9.md",
+    "services/hub-rs/reviews/brain-library.json"
+  ]
+}
