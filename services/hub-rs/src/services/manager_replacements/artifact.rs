@@ -85,7 +85,7 @@ fn open_nofollow(path: &Path) -> Result<File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     #[cfg(windows)]
     {
@@ -96,6 +96,10 @@ fn open_nofollow(path: &Path) -> Result<File> {
         options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS);
     }
     let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        bail!("non-regular checkpoint path refused");
+    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -175,6 +179,9 @@ fn verify(path: &Path) -> Result<Verified> {
         }
     }
     let inspected = std::fs::symlink_metadata(path)?;
+    if !inspected.is_file() && !inspected.is_dir() {
+        bail!("non-regular checkpoint path refused");
+    }
     let first = open_nofollow(path)?;
     let before = identity(&first)?;
     #[cfg(unix)]
@@ -447,5 +454,54 @@ mod windows_tests {
         std::fs::rename(&path, directory.path().join("old.md")).unwrap();
         std::fs::write(&path, b"same bytes").unwrap();
         assert!(bytes_at(&path, &inspected, 1024).is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unix_path_tests {
+    use super::*;
+    #[test]
+    fn canonical_host_root_is_valid_but_linked_candidate_parents_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let direct = root.join("direct");
+        std::fs::create_dir(&direct).unwrap();
+        std::fs::write(direct.join("brief.md"), b"checkpoint").unwrap();
+        assert!(verify(&direct.join("brief.md")).unwrap().file);
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&direct, &alias).unwrap();
+        assert!(verify(&alias.join("brief.md")).is_err());
+    }
+    #[test]
+    fn checkpoint_fifo_open_is_nonblocking_and_never_becomes_regular_evidence() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt, time::Duration};
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::fs::canonicalize(dir.path()).unwrap().join("brief.md");
+        let cpath = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+        let (send, receive) = std::sync::mpsc::channel();
+        let candidate = path.clone();
+        let worker = std::thread::spawn(move || {
+            send.send(open_nofollow(&candidate).is_err()).unwrap();
+        });
+        let first = receive.recv_timeout(Duration::from_millis(200));
+        // A regression must fail promptly instead of wedging the entire suite.
+        // Keep the writer open until the deliberately blocked open can finish.
+        let unblock = if first.is_err() {
+            Some(std::fs::OpenOptions::new().write(true).open(&path).unwrap())
+        } else {
+            None
+        };
+        if first.is_err() {
+            receive.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        worker.join().unwrap();
+        drop(unblock);
+        assert_eq!(
+            first.unwrap(),
+            true,
+            "FIFO must be refused without waiting for a writer"
+        );
+        assert!(verify(&path).is_err());
     }
 }

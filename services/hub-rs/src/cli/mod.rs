@@ -1,6 +1,7 @@
 //! Standalone administration and the in-process Rust launcher.
 mod admin;
 mod identity;
+mod install;
 mod parent;
 mod serve;
 use anyhow::Result;
@@ -103,8 +104,8 @@ pub struct ServeArgs {
     pub examples_dir: Option<PathBuf>,
     #[arg(long)]
     pub sidecar_node: Option<String>,
-    #[arg(long, default_value = "")]
-    pub plugin_origin: String,
+    #[arg(long)]
+    pub plugin_origin: Option<String>,
     #[arg(long, value_delimiter = ',')]
     pub trusted_host: Vec<String>,
     #[arg(long)]
@@ -149,7 +150,7 @@ impl Default for ServeArgs {
             plugins_dir: None,
             examples_dir: None,
             sidecar_node: None,
-            plugin_origin: String::new(),
+            plugin_origin: None,
             trusted_host: Vec::new(),
             webapp_dir: None,
             push_dir: None,
@@ -325,7 +326,7 @@ pub async fn execute(args: &CommandLine, out: &mut dyn Write, err: &mut dyn Writ
                 Ok(2)
             }
         },
-        Command::InstallCli { dir } => admin::install_cli(dir.as_deref(), out),
+        Command::InstallCli { dir } => install::run(dir.as_deref(), out),
     }
 }
 pub(super) fn print_json(out: &mut dyn Write, value: &serde_json::Value) -> Result<()> {

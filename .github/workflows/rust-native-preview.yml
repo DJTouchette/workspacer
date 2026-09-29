@@ -99,6 +99,9 @@ jobs:
           & (Join-Path $rgBin 'rg.exe') --version
           if ($LASTEXITCODE -ne 0) { throw 'ripgrep is not runnable' }
 
+      - name: Enable Developer Mode for actual symlink contracts
+        shell: cmd
+        run: reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
       - name: Test Rust hub and owned native backend
         shell: pwsh
         run: |

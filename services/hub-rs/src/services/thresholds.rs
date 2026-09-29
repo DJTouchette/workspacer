@@ -684,4 +684,40 @@ mod tests {
         );
         assert!(sent[0].1.contains("monitoring invalidated"));
     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn arm_responses_are_detached_from_live_sweep_state() {
+        let (service, rows, _) = fixture(false);
+        let response = service
+            .arm(&json!({"sessionId":"worker","contextUsedPct":90}), now())
+            .unwrap();
+        let before = response.clone();
+        rows.lock().unwrap().get_mut("worker").unwrap()["status_line"] =
+            sample(json!("1788888888888888901"))["status_line"].clone();
+        service.sweep(now()).await;
+        let live = service.state.lock().unwrap().watches[response["id"].as_str().unwrap()].clone();
+        assert_eq!(live.context_epoch.as_deref(), Some("1788888888888888901"));
+        assert!(response.get("contextEpoch").is_none());
+        assert_eq!(response, before);
+        // Exercise the public arm/sweep paths concurrently, not merely cloning
+        // a fixture object: each returned JSON object owns its entire payload.
+        for _ in 0..64 {
+            let (service, rows, _) = fixture(false);
+            let running = service.clone();
+            let sweep = tokio::spawn(async move {
+                for _ in 0..16 {
+                    rows.lock().unwrap().get_mut("worker").unwrap()["status_line"] =
+                        sample(json!("1788888888888888901"))["status_line"].clone();
+                    running.sweep(now()).await;
+                    tokio::task::yield_now().await;
+                }
+            });
+            let response = service
+                .arm(&json!({"sessionId":"worker","contextUsedPct":90}), now())
+                .unwrap();
+            let encoded = serde_json::to_vec(&response).unwrap();
+            sweep.await.unwrap();
+            assert_eq!(serde_json::to_vec(&response).unwrap(), encoded);
+            assert!(response["id"].as_str().is_some_and(|id| !id.is_empty()));
+        }
+    }
 }

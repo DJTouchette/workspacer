@@ -1,0 +1,5 @@
+# Captured portable contracts and their retained Go references are hashed byte
+# for byte. Keep checkout bytes identical on Windows (core.autocrlf=true) rather
+# than weakening those guards with content or whitespace normalization.
+/contracts/**/*.json text eol=lf
+/services/hub/**/*.go text eol=lf

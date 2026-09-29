@@ -208,3 +208,50 @@ pub fn selected_path(root: &Path, name: &str) -> Result<PathBuf> {
     }
     Ok(target)
 }
+
+/// Git for Windows does not accept Rust's verbatim Win32 prefix as an argv
+/// worktree path. This is only an external-command spelling; authorization and
+/// stored directory identity must continue to use the canonical PathBuf.
+pub(crate) fn git_argument(path: &Path) -> Result<String> {
+    let value = path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Git path is not Unicode"))?;
+    #[cfg(windows)]
+    {
+        if matches!(path.components().next(), Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), std::path::Prefix::Verbatim(_) | std::path::Prefix::DeviceNS(_)))
+        {
+            bail!("Git cannot address this Windows device namespace");
+        }
+        let value = if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            value.strip_prefix(r"\\?\").unwrap_or(value).to_owned()
+        };
+        Ok(value.replace('\\', "/"))
+    }
+    #[cfg(not(windows))]
+    Ok(value.to_owned())
+}
+
+#[cfg(all(test, windows))]
+mod git_argument_tests {
+    use super::*;
+    #[test]
+    fn converts_only_windows_filesystem_spellings_for_git() {
+        assert_eq!(
+            git_argument(Path::new(r"\\?\C:\work\my repo\child")).unwrap(),
+            "C:/work/my repo/child"
+        );
+        assert_eq!(
+            git_argument(Path::new(r"\\?\UNC\server\share\child")).unwrap(),
+            "//server/share/child"
+        );
+        assert_eq!(
+            git_argument(Path::new(r"C:\work\child")).unwrap(),
+            "C:/work/child"
+        );
+        assert!(git_argument(Path::new(r"\\?\GLOBALROOT\Device\HarddiskVolume1")).is_err());
+        assert!(git_argument(Path::new(r"\\.\pipe\fixture")).is_err());
+    }
+}

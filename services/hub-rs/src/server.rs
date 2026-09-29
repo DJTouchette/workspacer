@@ -55,7 +55,7 @@ impl Credentials {
             query
         };
         self.token.is_empty()
-            || token == self.token
+            || crate::auth::credential_eq(&self.token, token)
             || self
                 .scoped_tokens
                 .as_ref()

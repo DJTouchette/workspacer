@@ -19,3 +19,9 @@ current committed revision. Changing a baseline after source retirement needs a
 reviewed reference update; simply deleting a guard or adding a new exemption is
 not a refresh. Rust `corpus_ownership` tests independently verify this manifest
 and deliberately corrupt its fields to prove failures remain observable.
+
+Hash inputs are pinned to LF checkout bytes by the repository `.gitattributes`
+(contract JSON and retained Go references), including on Windows with
+`core.autocrlf=true`. The guard compares original bytes; it does not normalize
+whitespace or JSON values before hashing. A Git checkout-filter regression
+checks that platform newline conversion cannot silently change those bytes.

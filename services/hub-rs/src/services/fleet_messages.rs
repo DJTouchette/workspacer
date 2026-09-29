@@ -168,6 +168,13 @@ pub fn build(kind: &str, entries: &[Value], ordinary_parent: bool) -> Result<Str
             ));
         }
     }
+    if !ordinary_parent {
+        for row in entries {
+            if !text(row, "workflowInstructions").is_empty() {
+                extras.push(text(row, "workflowInstructions").into());
+            }
+        }
+    }
     let head = format!(
         "{header}\n{}",
         entries

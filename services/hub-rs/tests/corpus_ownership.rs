@@ -126,7 +126,23 @@ fn every_active_fixture_has_test_loaders_in_distinct_languages() {
             .filter(|s| s.test && s.body.contains(&name))
             .collect();
         let languages: BTreeSet<_> = loaders.iter().map(|s| s.language).collect();
-        if baselines.get(&name).is_none() && (loaders.len() < 2 || languages.len() < 2) {
+        let doc: Value = serde_json::from_slice(&fs::read(entry.path()).unwrap()).unwrap();
+        let architectural = if name == HTTP_SOURCE_REGISTRY {
+            // This is source/authority evidence, not a second behavior replay.
+            // Always validate it, even if this ownership test mentions its name.
+            verify_architectural_registry(&root, &name, &doc);
+            true
+        } else {
+            assert_ne!(
+                doc["ownership"]["kind"], "architectural-source-registry",
+                "unreviewed architectural-registry exception {name}"
+            );
+            false
+        };
+        if !architectural
+            && baselines.get(&name).is_none()
+            && (loaders.len() < 2 || languages.len() < 2)
+        {
             failures.push(format!(
                 "{name}: only {:?} in {languages:?}",
                 loaders
@@ -148,6 +164,196 @@ fn every_active_fixture_has_test_loaders_in_distinct_languages() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+// Exactly one named architectural registry: its TS test compares real Rust
+// production declarations rather than replaying golden behavior in two stacks.
+// This classification does not waive vocabulary, discovery or mutation guards.
+const HTTP_SOURCE_REGISTRY: &str = "http-route-registry.json";
+const HTTP_GUARD: &str = "apps/desktop/src/main/services/httpRouteRegistry.test.ts";
+const HTTP_CHECKS: &[&str] = &[
+    "http_registry_matches_actual_bindings",
+    "discovers new route-bearing production modules instead of trusting the router list",
+    "holds credential primitives to operator versus actual host authority",
+    "rejects mutations of routes, classifiers, guards, operation closure and live confinement layers",
+    "keeps the served fixture and all four caller ownership guards linked",
+    "source parser ignores comments and quoted decoys but retains post-test production",
+];
+const HTTP_SOURCES: &[&str] = &[
+    "services/hub-rs/src/server.rs",
+    "services/hub-rs/src/server/web.rs",
+    "services/hub-rs/src/plugins/http.rs",
+    "services/hub-rs/src/mcp.rs",
+    "services/hub-rs/src/mcp/legacy_sse.rs",
+    "services/claudemon/src/daemon/api.rs",
+    "services/claudemon/src/daemon/hook.rs",
+];
+fn strings(value: &Value) -> BTreeSet<&str> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect()
+}
+fn verify_architectural_registry(root: &Path, name: &str, doc: &Value) {
+    assert_eq!(
+        name, HTTP_SOURCE_REGISTRY,
+        "unreviewed architectural registry"
+    );
+    let ownership = &doc["ownership"];
+    assert_eq!(ownership["kind"], "architectural-source-registry");
+    assert_eq!(ownership["sourceLanguage"], "rust");
+    assert_eq!(ownership["guardLanguage"], "typescript");
+    let expected: BTreeSet<_> = HTTP_SOURCES.iter().copied().collect();
+    assert_eq!(
+        strings(&ownership["sourceFiles"]),
+        expected,
+        "architectural registry must keep every reviewed production router"
+    );
+    assert_eq!(
+        doc["routerOwners"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        expected,
+        "declared source evidence and actual router ownership drifted"
+    );
+    assert_eq!(
+        strings(&ownership["sourceRoots"]),
+        BTreeSet::from(["services/hub-rs/src", "services/claudemon/src/daemon"])
+    );
+    for file in expected {
+        let path = local_path(root, file);
+        assert_eq!(path.extension().and_then(|v| v.to_str()), Some("rs"));
+        let source = fs::read_to_string(path).unwrap();
+        assert!(
+            source.contains("Router")
+                && (source.contains(".route(") || source.contains(".nest_service(")),
+            "missing real Rust route declaration source {file}"
+        );
+    }
+    assert_eq!(
+        ownership["guard"],
+        format!("{HTTP_GUARD}::http_registry_matches_actual_bindings")
+    );
+    assert_eq!(
+        strings(&ownership["requiredChecks"]),
+        HTTP_CHECKS.iter().copied().collect(),
+        "architectural registry lost a required forcing function"
+    );
+    let guard = fs::read_to_string(local_path(root, HTTP_GUARD)).unwrap();
+    assert!(
+        guard.contains(name) && guard.contains("from 'vitest'") && !guard.contains("it.skip("),
+        "guard must be an active Vitest source reader, not a documentation reference"
+    );
+    for check in HTTP_CHECKS {
+        assert!(
+            guard.contains(&format!("'{check}'")),
+            "missing runnable guard {check}"
+        );
+    }
+    for mechanism in [
+        "check(registry, source)",
+        "discover(files, registry.routerOwners)",
+        "primitiveErrors(source)",
+        "rustHttpSource",
+    ] {
+        assert!(
+            guard.contains(mechanism),
+            "guard lost actual-source mechanism {mechanism}"
+        );
+    }
+    assert_eq!(
+        ownership["runner"],
+        "npm --prefix apps/desktop run test:main -- src/main/services/httpRouteRegistry.test.ts"
+    );
+    let package: Value =
+        serde_json::from_slice(&fs::read(root.join("apps/desktop/package.json")).unwrap()).unwrap();
+    assert_eq!(
+        package["scripts"]["test:main"], "vitest run",
+        "recorded runner is no longer valid"
+    );
+    let config = fs::read_to_string(root.join("apps/desktop/vitest.config.ts")).unwrap();
+    assert!(
+        config.contains("src/main/**/*.test.ts") && !config.contains("exclude:"),
+        "normal test runner no longer includes the architectural guard"
+    );
+    let block = &doc["vocabulary"]["blocks"]["routes"];
+    assert!(
+        strings(&block["loaders"])
+            .contains(format!("{HTTP_GUARD}::http_registry_matches_actual_bindings").as_str()),
+        "architectural classification must retain the concrete vocabulary loader"
+    );
+    assert!(
+        doc["routes"].as_array().unwrap().len() >= 70,
+        "route population collapsed"
+    );
+}
+#[test]
+fn architectural_source_registry_requires_real_sources_and_runnable_forcing_functions() {
+    let root = root();
+    let doc: Value = serde_json::from_slice(
+        &fs::read(root.join("contracts").join(HTTP_SOURCE_REGISTRY)).unwrap(),
+    )
+    .unwrap();
+    verify_architectural_registry(&root, HTTP_SOURCE_REGISTRY, &doc);
+    for (field, value) in [
+        ("kind", Value::Null),
+        ("sourceLanguage", Value::String("typescript".into())),
+        ("sourceFiles", serde_json::json!([])),
+        ("sourceRoots", serde_json::json!([])),
+        (
+            "guard",
+            Value::String("apps/desktop/src/main/services/placeholder.test.ts::reads_json".into()),
+        ),
+        (
+            "requiredChecks",
+            serde_json::json!(["http_registry_matches_actual_bindings"]),
+        ),
+        ("runner", Value::String("echo skipped".into())),
+    ] {
+        let mut mutant = doc.clone();
+        mutant["ownership"][field] = value;
+        assert!(
+            std::panic::catch_unwind(|| verify_architectural_registry(
+                &root,
+                HTTP_SOURCE_REGISTRY,
+                &mutant
+            ))
+            .is_err(),
+            "architectural ownership mutation escaped: {field}"
+        );
+    }
+    let mut mutant = doc.clone();
+    mutant["routerOwners"]
+        .as_object_mut()
+        .unwrap()
+        .remove(HTTP_SOURCES[0]);
+    assert!(
+        std::panic::catch_unwind(|| verify_architectural_registry(
+            &root,
+            HTTP_SOURCE_REGISTRY,
+            &mutant
+        ))
+        .is_err()
+    );
+    let mut mutant = doc.clone();
+    mutant["vocabulary"]["blocks"]["routes"]["loaders"] = serde_json::json!([]);
+    assert!(
+        std::panic::catch_unwind(|| verify_architectural_registry(
+            &root,
+            HTTP_SOURCE_REGISTRY,
+            &mutant
+        ))
+        .is_err()
+    );
+    assert!(
+        std::panic::catch_unwind(|| verify_architectural_registry(&root, "unreviewed.json", &doc))
+            .is_err()
+    );
+}
+
 fn windows_guards(workflow: &Value) -> (bool, bool) {
     let mut rust = false;
     let mut ts = false;
@@ -342,6 +548,61 @@ fn captured_reference_guard_rejects_mutations() {
         assert!(
             std::panic::catch_unwind(|| verify_baseline(&root, name, &mutant)).is_err(),
             "baseline mutation escaped: {field}"
+        );
+    }
+}
+
+#[test]
+fn captured_hash_inputs_keep_exact_bytes_under_windows_checkout_filters() {
+    use std::process::Command;
+    let root = root();
+    let fixture = "contracts/fleet-quiescence-cases.json";
+    let source = "services/hub/internal/quiescence/quiescence.go";
+    for path in [fixture, source] {
+        if !root.join(path).exists() {
+            continue;
+        } // Retired Go sources may be removed.
+        let attrs = Command::new("git")
+            .current_dir(&root)
+            .args(["check-attr", "text", "eol", "--", path])
+            .output()
+            .unwrap();
+        assert!(attrs.status.success());
+        let attrs = String::from_utf8(attrs.stdout).unwrap();
+        assert!(
+            attrs.contains(": text: set") && attrs.contains(": eol: lf"),
+            "{path}: {attrs}"
+        );
+        let filtered = Command::new("git")
+            .current_dir(&root)
+            .args([
+                "-c",
+                "core.autocrlf=true",
+                "cat-file",
+                "--filters",
+                &format!("HEAD:{path}"),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            filtered.status.success(),
+            "{}",
+            String::from_utf8_lossy(&filtered.stderr)
+        );
+        // This is the actual checkout conversion, not a test-local LF normalizer.
+        assert!(
+            !filtered.stdout.windows(2).any(|bytes| bytes == b"\r\n"),
+            "CRLF conversion changed {path}"
+        );
+        let blob = Command::new("git")
+            .current_dir(&root)
+            .args(["cat-file", "blob", &format!("HEAD:{path}")])
+            .output()
+            .unwrap();
+        assert!(blob.status.success());
+        assert_eq!(
+            filtered.stdout, blob.stdout,
+            "checkout conversion changed {path} bytes"
         );
     }
 }

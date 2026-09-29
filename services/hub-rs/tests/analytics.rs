@@ -46,6 +46,16 @@ fn persistent_headless_analytics_retains_deduplicated_model_splits_and_filters()
     assert_eq!(first["totals"]["inputTokens"], 3500);
     assert_eq!(first["totals"]["outputTokens"], 350);
     assert_eq!(first["byModel"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        first["byModel"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["key"] == "gpt-5")
+            .unwrap()["costUSD"],
+        json!(0.75),
+        "retain the private-companion managed-provider cost assertion"
+    );
     let filtered = db
         .read("analytics.summary", &json!({"provider":"claude"}))
         .unwrap();

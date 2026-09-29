@@ -5,6 +5,14 @@ use workspacer_hub::services::{
     library::Library,
     workflows::{WorkflowStore, validate_definition},
 };
+fn fixture_cwd(dir: &tempfile::TempDir) -> String {
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    workspacer_hub::services::paths::canonicalize(&project)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
 fn setup() -> (tempfile::TempDir, Arc<Config>, WorkflowStore) {
     let dir = tempfile::tempdir().unwrap();
     let cfg = Arc::new(Config::open(dir.path().join("config.yaml")));
@@ -45,7 +53,8 @@ fn definitions_seed_immutably_clone_and_enforce_revisions() {
 }
 #[test]
 fn selection_uses_cas_and_generic_config_cannot_change_it() {
-    let (_dir, cfg, service) = setup();
+    let (dir, cfg, service) = setup();
+    let cwd = fixture_cwd(&dir);
     let selected = service
         .select(None, Some("direct-implementation"), 0)
         .unwrap();
@@ -62,25 +71,26 @@ fn selection_uses_cas_and_generic_config_cannot_change_it() {
     assert_eq!(conflict["code"], "conflict");
     assert_eq!(conflict["currentRevision"], 1);
     service
-        .select(Some("/project"), Some("implement-review"), 1)
+        .select(Some(&cwd), Some("implement-review"), 1)
         .unwrap();
     assert_eq!(
-        service.pin_for("/project", None).unwrap()["definition"]["id"],
+        service.pin_for(&cwd, None).unwrap()["definition"]["id"],
         "implement-review"
     );
-    service.select(Some("/project"), None, 2).unwrap();
+    service.select(Some(&cwd), None, 2).unwrap();
     assert_eq!(
-        service.pin_for("/project", None).unwrap()["definition"]["id"],
+        service.pin_for(&cwd, None).unwrap()["definition"]["id"],
         "direct-implementation"
     );
 }
 #[test]
 fn task_pins_keep_exact_template_snapshot_when_library_changes() {
     let (dir, _cfg, service) = setup();
-    let pin = service.pin_for("/project", None).unwrap();
+    let cwd = fixture_cwd(&dir);
+    let pin = service.pin_for(&cwd, None).unwrap();
     let original = pin["templates"]["ship-task"]["body"].clone();
     Library::new(dir.path().to_owned()).save(&json!({"scope":"global","id":"ship-task","kind":"dispatch","title":"Changed","body":"{{task}} changed","resultSchema":{"type":"object"}})).unwrap();
-    let next = service.pin_for("/project", None).unwrap();
+    let next = service.pin_for(&cwd, None).unwrap();
     assert_ne!(pin["hash"], next["hash"]);
     assert_eq!(pin["templates"]["ship-task"]["body"], original);
     assert_eq!(next["steps"][0]["state"], "planned");

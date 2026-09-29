@@ -40,8 +40,16 @@ fn naming_and_setup_script_resolution_match_legacy_contract() {
 #[tokio::test]
 async fn setup_timeout_kills_the_process_group_and_skips_successors() {
     let dir = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let (slow, skipped, settle) = ("sleep 0.2; touch escaped", "touch skipped", 300);
+    #[cfg(windows)]
+    let (slow, skipped, settle) = (
+        "ping -n 2 127.0.0.1 >nul & type nul > escaped",
+        "type nul > skipped",
+        1300,
+    );
     let commands = resolve_setup(
-        &json!({"projects":{dir.path().to_str().unwrap():{"worktreeSetup":["sleep 0.2; touch escaped","touch skipped"]}}}),
+        &json!({"projects":{dir.path().to_str().unwrap():{"worktreeSetup":[slow,skipped]}}}),
         &[dir.path()],
     );
     let report = run_setup(&commands, dir.path(), dir.path(), Duration::from_millis(30))
@@ -53,9 +61,9 @@ async fn setup_timeout_kills_the_process_group_and_skips_successors() {
             .unwrap()
             .contains("timed out")
     );
-    assert_eq!(report["skipped"], json!(["touch skipped"]));
+    assert_eq!(report["skipped"], json!([skipped]));
     assert!(!dir.path().join("skipped").exists());
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(settle)).await;
     assert!(!dir.path().join("escaped").exists());
 }
 #[tokio::test]
@@ -72,7 +80,19 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
     std::fs::write(modules.join("dependency.js"), "fixture").unwrap();
     let cfg = Arc::new(Config::open(dir.path().join("config.yaml")));
     let root = dir.path().join("trees");
-    cfg.save(json!({"agents":{"worktreeRoot":root},"projects":{project.to_str().unwrap():{"worktreeSetup":["test -d \"$SOURCE/apps/deep/source/node_modules\"","exit 7","touch should-not-run"]}}}),true).unwrap();
+    #[cfg(unix)]
+    let (check, fail, skipped) = (
+        "test -d \"$SOURCE/apps/deep/source/node_modules\"",
+        "exit 7",
+        "touch should-not-run",
+    );
+    #[cfg(windows)]
+    let (check, fail, skipped) = (
+        "if not exist \"$SOURCE/apps/deep/source/node_modules\" exit /B 1",
+        "exit /B 7",
+        "type nul > should-not-run",
+    );
+    cfg.save(json!({"agents":{"worktreeRoot":root},"projects":{project.to_str().unwrap():{"worktreeSetup":[check,fail,skipped]}}}),true).unwrap();
     let mut engine = EmbeddedDaemon::start_with_options(
         ServeConfig {
             host: "127.0.0.1".into(),
@@ -98,11 +118,8 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
         .unwrap();
     assert_eq!(created.result["ok"], true);
     assert_eq!(created.result["branch"], "wks/review-me");
-    assert_eq!(
-        created.result["setup"]["ran"],
-        json!(["test -d \"$SOURCE/apps/deep/source/node_modules\""])
-    );
-    assert_eq!(created.result["setup"]["failed"]["command"], "exit 7");
+    assert_eq!(created.result["setup"]["ran"], json!([check]));
+    assert_eq!(created.result["setup"]["failed"]["command"], fail);
     let cwd = std::path::PathBuf::from(created.result["path"].as_str().unwrap());
     assert!(
         cwd.join("apps/deep/source/node_modules/dependency.js")
@@ -124,7 +141,11 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
     assert!(WorktreeAdmission::acquire(cwd.to_str().unwrap()).is_err());
     drop(maintenance);
     // A runtime in a nested cwd protects the entire linked checkout.
-    engine.client().request(EngineCommand::Request{method:"POST".into(),path:"/sessions/spawn".into(),payload:Some(json!({"session_id":"fixture-worker","cwd":cwd.join("apps/deep/source"),"argv":["/bin/sh","-c","exec sleep 120"]}))}).await.unwrap();
+    #[cfg(unix)]
+    let argv = json!(["/bin/sh", "-c", "exec sleep 120"]);
+    #[cfg(windows)]
+    let argv = json!(["cmd.exe", "/D", "/C", "ping -n 120 127.0.0.1 >nul"]);
+    engine.client().request(EngineCommand::Request{method:"POST".into(),path:"/sessions/spawn".into(),payload:Some(json!({"session_id":"fixture-worker","cwd":cwd.join("apps/deep/source"),"argv":argv}))}).await.unwrap();
     assert_eq!(
         service.remove(&cwd).await.unwrap()["error"],
         "Worktree still has a live agent"
@@ -173,4 +194,34 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
     );
     assert_eq!(service.remove(&project).await.unwrap()["skipped"], true);
     engine.shutdown().await.unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_configuration_keeps_existing_alias_keys_after_canonical_admission() {
+    let dir = tempfile::tempdir().unwrap();
+    let actual = dir.path().join("actual");
+    let other = dir.path().join("other");
+    let alias = dir.path().join("alias");
+    std::fs::create_dir(&actual).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    std::os::unix::fs::symlink(&actual, &alias).unwrap();
+    let config = json!({
+        "projects":{alias.to_str().unwrap():{"worktreeSetup":["script:deps"]}},
+        "scripts":{alias.to_str().unwrap():[{"name":"deps","command":"echo existing-project"}]}
+    });
+    let canonical = std::fs::canonicalize(&actual).unwrap();
+    let commands = resolve_setup(&config, &[&canonical]);
+    assert_eq!(commands.len(), 1);
+    assert_eq!(
+        commands[0].command.as_deref(),
+        Some("echo existing-project")
+    );
+    assert!(resolve_setup(&config, &[&other]).is_empty());
+    std::fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink(&other, &alias).unwrap();
+    assert!(
+        resolve_setup(&config, &[&canonical]).is_empty(),
+        "a retargeted alias is not the selected project"
+    );
 }

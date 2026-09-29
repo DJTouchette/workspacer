@@ -23,6 +23,12 @@ struct Fixture {
 }
 impl Fixture {
     fn new(manager: bool) -> Self {
+        Self::with_history(manager, None)
+    }
+    fn with_history(
+        manager: bool,
+        history: Option<Arc<workspacer_hub::services::task_store::TaskStore>>,
+    ) -> Self {
         let rows = Arc::new(Mutex::new(BTreeMap::from([
             (
                 "parent".into(),
@@ -91,7 +97,7 @@ impl Fixture {
                 Ok(())
             })
         });
-        let wakes = Wakes::new(lookup, list, capture, delivery, None, None);
+        let wakes = Wakes::new(lookup, list, capture, delivery, history, None);
         wakes.prime(&rows.lock().unwrap().values().cloned().collect::<Vec<_>>());
         Self {
             wakes,
@@ -464,6 +470,49 @@ async fn backstop_obeys_three_minute_grace_parent_activity_and_busy_state() -> R
                 "manager={manager}/{guard}"
             );
         }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn manager_finish_wake_uses_committed_workflow_state_and_current_owner() -> Result<()> {
+    use workspacer_hub::services::task_store::TaskStore;
+    for (manager, owner, expected) in [
+        (true, "parent", true),
+        (false, "parent", false),
+        (true, "other", false),
+    ] {
+        let dir = tempfile::tempdir()?;
+        let history = Arc::new(TaskStore::open(dir.path().join("history.json"))?);
+        history.transaction(|state| {
+            state.tasks.push(json!({"taskId":"task","ownerSessionId":owner,"projectCwd":"/project",
+                "attempts":[{"dispatchId":"dispatch","sessionId":"one","metrics":{}}],
+                "workflow":{"hash":"pin","definition":{"id":"flow","name":"Pinned flow","revision":1,
+                    "steps":[{"id":"implement","kind":"implementation"}]},
+                    "steps":[{"id":"implement","sessionId":"one","state":"dispatched"}]}}));
+            Ok(())
+        })?;
+        let f = Fixture::with_history(manager, Some(history.clone()));
+        f.rows.lock().unwrap().get_mut("one").unwrap()["resultSchema"] = json!({"type":"object"});
+        f.replies.lock().unwrap().insert(
+            "one".into(),
+            json!({"items":[
+            {"kind":"user_message","text":"task"},
+            {"kind":"assistant_text","text":"Done\n```wks-result\n{\"ok\":true}\n```"}]}),
+        );
+        f.mode("one", "idle", 100);
+        f.wakes.tick(1600).await?;
+        let persisted = history.task("task")?.unwrap();
+        assert_eq!(persisted["workflow"]["steps"][0]["state"], "completed");
+        let sent = f.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            sent[0]
+                .1
+                .contains("All configured steps returned valid result contracts"),
+            expected
+        );
+        assert!(!sent[0].1.contains("Step implement is dispatched"));
     }
     Ok(())
 }

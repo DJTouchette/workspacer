@@ -524,16 +524,24 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             let _ = self.0.wait();
         }
     }
-    let root = tempfile::tempdir().unwrap();
-    let config = root.path().join("config");
-    let home = root.path().join("home");
-    std::fs::create_dir(&home).unwrap();
-    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = socket.local_addr().unwrap().port();
-    drop(socket);
-    let db = root.path().join("must-not-create.sqlite");
-    let mut child = Child(
-        Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+    for (origin_override, expected_origin) in [
+        (None, "https://environment.fixture:8443"),
+        (Some(""), ""),
+        (
+            Some("https://explicit.fixture:8443/path"),
+            "https://explicit.fixture:8443",
+        ),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config");
+        let home = root.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = socket.local_addr().unwrap().port();
+        drop(socket);
+        let db = root.path().join("must-not-create.sqlite");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_workspacer-rust"));
+        command
             .args([
                 "serve",
                 "--hub-only",
@@ -550,65 +558,78 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             .arg("--claudemon-db-path")
             .arg(&db)
             .env("HUB_TOKEN", "SUPERVISED_HOST_SECRET")
+            .env(
+                "WORKSPACER_PLUGIN_ORIGIN",
+                "https://environment.fixture:8443/path",
+            )
             .env("WORKSPACER_PARENT_PID", std::process::id().to_string())
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", root.path().join("xdg"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(300))
-        .build()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if client
-            .get(format!("http://127.0.0.1:{port}/health"))
+            .stderr(Stdio::piped());
+        if let Some(origin) = origin_override {
+            command.arg("--plugin-origin").arg(origin);
+        }
+        let mut child = Child(command.spawn().unwrap());
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(300))
+            .build()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if client
+                .get(format!("http://127.0.0.1:{port}/health"))
+                .send()
+                .is_ok_and(|r| r.status().is_success())
+            {
+                break;
+            }
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "control plane exited before readiness"
+            );
+            assert!(Instant::now() < deadline, "control plane readiness timeout");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let origin: Value = client
+            .get(format!("http://127.0.0.1:{port}/plugins/origin"))
             .send()
-            .is_ok_and(|r| r.status().is_success())
-        {
-            break;
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(origin["origin"], expected_origin);
+        assert!(!db.exists());
+        assert!(!home.join(".claude/settings.json").exists());
+        drop(child.0.stdin.take());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(25));
         }
-        assert!(
-            child.0.try_wait().unwrap().is_none(),
-            "control plane exited before readiness"
-        );
-        assert!(Instant::now() < deadline, "control plane readiness timeout");
-        std::thread::sleep(Duration::from_millis(25));
+        use std::io::Read;
+        let mut output = String::new();
+        child
+            .0
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut output)
+            .unwrap();
+        assert!(output.is_empty(), "quiet mode must emit no startup banner");
+        child
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut output)
+            .unwrap();
+        assert!(!output.contains("SUPERVISED_HOST_SECRET"));
     }
-    assert!(!db.exists());
-    assert!(!home.join(".claude/settings.json").exists());
-    drop(child.0.stdin.take());
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(status) = child.0.try_wait().unwrap() {
-            assert!(status.success());
-            break;
-        }
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    use std::io::Read;
-    let mut output = String::new();
-    child
-        .0
-        .stdout
-        .take()
-        .unwrap()
-        .read_to_string(&mut output)
-        .unwrap();
-    assert!(output.is_empty(), "quiet mode must emit no startup banner");
-    child
-        .0
-        .stderr
-        .take()
-        .unwrap()
-        .read_to_string(&mut output)
-        .unwrap();
-    assert!(!output.contains("SUPERVISED_HOST_SECRET"));
 }
 
 #[tokio::test]

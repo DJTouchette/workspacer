@@ -9,10 +9,6 @@ fn shared_active_path_contract() {
     ))
     .unwrap();
     for case in fixture["cases"].as_array().unwrap() {
-        #[cfg(windows)]
-        if case["needsSymlinks"] == true {
-            continue;
-        }
         let dir = tempfile::tempdir().unwrap();
         let sandbox = std::fs::canonicalize(dir.path()).unwrap();
         let root = sandbox.join("root");
@@ -20,21 +16,32 @@ fn shared_active_path_contract() {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         let expand = |raw: &str| {
-            raw.replace("${SANDBOX}", sandbox.to_str().unwrap())
+            let expanded = raw
+                .replace("${SANDBOX}", sandbox.to_str().unwrap())
                 .replace("${ROOT}", root.to_str().unwrap())
-                .replace("${OUTSIDE}", outside.to_str().unwrap())
+                .replace("${OUTSIDE}", outside.to_str().unwrap());
+            #[cfg(windows)]
+            {
+                expanded.replace('/', "\\")
+            }
+            #[cfg(not(windows))]
+            {
+                expanded
+            }
         };
         if let Some(dirs) = case["tree"]["dirs"].as_array() {
             for sub in dirs {
                 std::fs::create_dir_all(sandbox.join(sub.as_str().unwrap())).unwrap();
             }
         }
-        #[cfg(unix)]
         if let Some(links) = case["tree"]["symlinks"].as_object() {
             for (name, target) in links {
                 let link = sandbox.join(name);
                 std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+                #[cfg(unix)]
                 std::os::unix::fs::symlink(sandbox.join(target.as_str().unwrap()), link).unwrap();
+                #[cfg(windows)]
+                std::os::windows::fs::symlink_dir(sandbox.join(target.as_str().unwrap()), link).expect("Windows contract CI must enable Developer Mode rather than skip symlink cases");
             }
         }
         let target = expand(case["target"].as_str().unwrap());
@@ -100,9 +107,11 @@ fn file_tree_uses_git_ignore_rules_and_bytewise_directory_first_order() {
             .success()
     );
     std::fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
-    for name in ["z.txt", "a.txt", "ignored.log", "line\nbreak.log"] {
+    for name in ["z.txt", "a.txt", "ignored.log"] {
         std::fs::write(dir.path().join(name), "test").unwrap();
     }
+    #[cfg(unix)]
+    std::fs::write(dir.path().join("line\nbreak.log"), "test").unwrap();
     std::fs::create_dir(dir.path().join("B-dir")).unwrap();
     let result = files::call("fs.listEntries", json!({"path":dir.path()}), dir.path()).unwrap();
     let names: Vec<_> = result["entries"]
@@ -129,6 +138,6 @@ fn selected_store_entry_cannot_redirect_through_a_symlink() {
     }
     assert_eq!(
         paths::selected_path(&store, "new.yaml").unwrap(),
-        store.join("new.yaml")
+        std::fs::canonicalize(&store).unwrap().join("new.yaml")
     );
 }

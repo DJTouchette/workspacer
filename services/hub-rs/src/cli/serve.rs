@@ -306,7 +306,17 @@ pub(super) async fn run(
             .clone()
             .unwrap_or(plan.config.join("peers.json")),
     );
-    options.plugin_origin = serve.plugin_origin.clone();
+    options.plugin_origin = match &serve.plugin_origin {
+        Some(origin) => origin.clone(),
+        None => std::env::var_os("WORKSPACER_PLUGIN_ORIGIN")
+            .map(|value| {
+                value.into_string().map_err(|_| {
+                    anyhow::anyhow!("WORKSPACER_PLUGIN_ORIGIN must contain valid text")
+                })
+            })
+            .transpose()?
+            .unwrap_or_default(),
+    };
     options.trusted_hosts = if serve.trusted_host.is_empty() {
         std::env::var("HUB_TRUSTED_HOSTS")
             .ok()

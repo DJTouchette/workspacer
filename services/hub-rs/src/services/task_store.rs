@@ -12,7 +12,7 @@ use std::{
 mod admission;
 mod directory;
 mod host;
-mod project;
+pub(crate) mod project;
 use project::same_cwd;
 pub mod references;
 mod remote;

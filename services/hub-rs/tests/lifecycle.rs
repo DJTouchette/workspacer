@@ -148,7 +148,10 @@ async fn provider_timeout_is_bounded_and_late_reply_cannot_complete_another_call
     let old = recv(&mut provider).await;
     assert_eq!(
         recv(&mut caller).await,
-        Frame::error("one", "call timed out")
+        Frame::error(
+            "one",
+            "call timed out; outcome is unknown, do not automatically retry"
+        )
     );
     caller
         .send(Frame {

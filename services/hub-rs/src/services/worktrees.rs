@@ -176,8 +176,10 @@ impl Worktrees {
                 .ok_or_else(|| anyhow!("repository has no directory name"))?,
         );
         std::fs::create_dir_all(&parent)?;
-        if std::fs::canonicalize(&parent)?
-            != std::fs::canonicalize(&root)?.join(project.file_name().unwrap())
+        let actual_parent = std::fs::canonicalize(&parent)?;
+        let expected_parent = std::fs::canonicalize(&root)?.join(project.file_name().unwrap());
+        if !paths::contained(&actual_parent, &expected_parent)
+            || !paths::contained(&expected_parent, &actual_parent)
         {
             bail!("worktree destination contains a symlink");
         }
@@ -200,9 +202,7 @@ impl Worktrees {
                     "add",
                     "-b",
                     &branch,
-                    destination
-                        .to_str()
-                        .ok_or_else(|| anyhow!("worktree path is not Unicode"))?,
+                    &paths::git_argument(&destination)?,
                 ],
             )
             .await?;
@@ -318,10 +318,10 @@ impl Worktrees {
             main,
             &[
                 "--git-dir",
-                common.to_str().unwrap(),
+                &paths::git_argument(&common)?,
                 "worktree",
                 "remove",
-                cwd.to_str().unwrap(),
+                &paths::git_argument(&cwd)?,
             ],
         )
         .await?;
@@ -361,8 +361,8 @@ pub struct Setup {
     pub error: Option<String>,
 }
 fn lookup<'a>(map: &'a Value, dir: &Path) -> Option<&'a Value> {
-    let key = dir
-        .to_string_lossy()
+    let key = paths::git_argument(dir)
+        .ok()?
         .replace('\\', "/")
         .trim_end_matches('/')
         .to_string();
@@ -371,12 +371,25 @@ fn lookup<'a>(map: &'a Value, dir: &Path) -> Option<&'a Value> {
     }
     #[cfg(any(windows, target_os = "macos"))]
     if let Some(map) = map.as_object() {
-        return map
+        if let Some(value) = map
             .iter()
-            .find(|(k, _)| k.to_lowercase() == key.to_lowercase())
-            .map(|(_, v)| v);
+            .find(|(k, _)| {
+                k.replace('\\', "/").trim_end_matches('/').to_lowercase() == key.to_lowercase()
+            })
+            .map(|(_, v)| v)
+        {
+            return Some(value);
+        }
     }
-    None
+    // Existing configurations can use /var instead of /private/var on macOS,
+    // DOS paths on Windows, or a user-selected symlink spelling. Do not lose
+    // their setup commands after admission resolves the same real directory.
+    map.as_object()?
+        .iter()
+        .find(|(candidate, _)| {
+            super::task_store::project::same_cwd(candidate, dir.to_str().unwrap_or(""))
+        })
+        .map(|(_, value)| value)
 }
 pub fn resolve_setup(config: &Value, dirs: &[&Path]) -> Vec<Setup> {
     for dir in dirs {
@@ -426,6 +439,19 @@ pub async fn run_setup(
     if commands.is_empty() {
         return None;
     }
+    #[cfg(windows)]
+    let (source, worktree_env) = match (paths::git_argument(source), paths::git_argument(worktree))
+    {
+        (Ok(source), Ok(destination)) => (source, destination),
+        (Err(error), _) | (_, Err(error)) => {
+            return Some(json!({
+                "ran":[], "failed":{"command":commands[0].raw,"error":error.to_string()},
+                "skipped":commands[1..].iter().map(|command| &command.raw).collect::<Vec<_>>()
+            }));
+        }
+    };
+    #[cfg(not(windows))]
+    let worktree_env = worktree;
     let mut ran = Vec::new();
     for (index, entry) in commands.iter().enumerate() {
         let error = if let Some(command) = &entry.command {
@@ -453,8 +479,8 @@ pub async fn run_setup(
             };
             process
                 .current_dir(worktree)
-                .env("SOURCE", source)
-                .env("WORKTREE", worktree);
+                .env("SOURCE", &source)
+                .env("WORKTREE", &worktree_env);
             match capture(&mut process, timeout).await {
                 Ok(out) if out.ok => None,
                 Ok(out) => Some(if out.stderr.trim().is_empty() {
@@ -516,7 +542,7 @@ pub async fn link_dependencies(source: &Path, destination: &Path) -> Result<Vec<
         #[cfg(unix)]
         let result = std::os::unix::fs::symlink(source.join(&relative), &path);
         #[cfg(windows)]
-        let result = std::os::windows::fs::symlink_dir(source.join(&relative), &path);
+        let result = junction::create(source.join(&relative), &path);
         if result.is_err() {
             continue;
         }
@@ -529,7 +555,10 @@ pub async fn link_dependencies(source: &Path, destination: &Path) -> Result<Vec<
         {
             linked.push(relative);
         } else {
+            #[cfg(unix)]
             let _ = std::fs::remove_file(path);
+            #[cfg(windows)]
+            let _ = junction::delete(path);
         }
     }
     Ok(linked)

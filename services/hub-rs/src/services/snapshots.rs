@@ -128,6 +128,19 @@ pub fn compat(mut snapshot: Value) -> Value {
     snapshot
 }
 
+/// Optional TUI cwd display names never replace a recorded/present label and
+/// never label another hub's row using this host's local configuration.
+pub fn with_cwd_name(mut row: Value, names: &Value) -> Value {
+    if row.get("label").is_none() && row["hub"].as_str().unwrap_or("").is_empty() {
+        if let Some(cwd) = row["cwd"].as_str().filter(|cwd| !cwd.is_empty()) {
+            if let Some(name) = names[cwd].as_str().filter(|name| !name.is_empty()) {
+                row["label"] = json!(name);
+            }
+        }
+    }
+    row
+}
+
 fn parse_time(raw: &str) -> Option<time::OffsetDateTime> {
     time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).ok()
 }

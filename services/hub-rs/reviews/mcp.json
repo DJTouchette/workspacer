@@ -1,0 +1,151 @@
+{
+  "validation": "Reviewed branches with existing pure tests and real MCP fixtures; latest added schema invalid-map checks require next MCP rerun before recording that separate schema source family. These records cover the already-green forwarding/receipt/federation tests.",
+  "records": {
+    "services/hub/cmd/mcp/conversation.go": {
+      "status": "ported",
+      "sha256": "aad4048c18383d23da4218b95a8623034036ac5e856b3a35a687903089d8a447",
+      "replacement": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Reviewed trailing assistant-run semantics, usage/plan skipping, empty windows, text-only filtering, odd-envelope pass-through and lastMessage precedence. Pure tests retain those branches; actual federated MCP fixture asserts stripped facade-only params and reduced peer result. Shared Rust transport preserves JSON values, with normalized JSON text formatting rather than a RawMessage byte buffer."
+    },
+    "services/hub/cmd/mcp/conversation_test.go": {
+      "status": "ported",
+      "sha256": "abcf04b300481543be90ac85c6dc8eb6364325a96526d99cfaf7e98fcb8b1e60",
+      "replacement": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Reviewed trailing assistant-run semantics, usage/plan skipping, empty windows, text-only filtering, odd-envelope pass-through and lastMessage precedence. Pure tests retain those branches; actual federated MCP fixture asserts stripped facade-only params and reduced peer result. Shared Rust transport preserves JSON values, with normalized JSON text formatting rather than a RawMessage byte buffer."
+    },
+    "services/hub/cmd/mcp/federated.go": {
+      "status": "ported",
+      "sha256": "1b09f7d5638cbd73ea600db4f7edc70c5a6f77c903496bb17009498789d7edad",
+      "replacement": [
+        "services/hub-rs/src/mcp/fleet.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/federation.rs"
+      ],
+      "review": "Reviewed local/peer merging, absence of federation, per-peer failure isolation, owner model-selection passthrough and peer-qualified calls. Live MCP fixture waits for both actual peers, positively exercises a connected failing provider, preserves sparse/null owner selection and contradictory legacy window, overwrites forged peer tags and checks facade options do not reach the provider. Broker integration tests retain both endpoint scopes and no-replay reconnect behavior."
+    },
+    "services/hub/cmd/mcp/federated_test.go": {
+      "status": "ported",
+      "sha256": "5893b60d1bf166aa7c021856610e777932d6ba123c4353e5145dfa2f9b1fcce6",
+      "replacement": [
+        "services/hub-rs/src/mcp/fleet.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/federation.rs"
+      ],
+      "review": "Reviewed local/peer merging, absence of federation, per-peer failure isolation, owner model-selection passthrough and peer-qualified calls. Live MCP fixture waits for both actual peers, positively exercises a connected failing provider, preserves sparse/null owner selection and contradictory legacy window, overwrites forged peer tags and checks facade options do not reach the provider. Broker integration tests retain both endpoint scopes and no-replay reconnect behavior."
+    },
+    "services/hub/cmd/mcp/ownerselection_test.go": {
+      "status": "ported",
+      "sha256": "f8d1c9dea7be91fc929e8251325d1479ed509928b4f10a511c514d3b05fd5d30",
+      "replacement": [
+        "services/hub-rs/src/mcp/fleet.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/federation.rs"
+      ],
+      "review": "Reviewed local/peer merging, absence of federation, per-peer failure isolation, owner model-selection passthrough and peer-qualified calls. Live MCP fixture waits for both actual peers, positively exercises a connected failing provider, preserves sparse/null owner selection and contradictory legacy window, overwrites forged peer tags and checks facade options do not reach the provider. Broker integration tests retain both endpoint scopes and no-replay reconnect behavior."
+    },
+    "services/hub/cmd/mcp/adopt_test.go": {
+      "status": "ported",
+      "sha256": "3fda6ebdf5758240c666f3ec23bfccabf201487207585489aefc49d6811d9268",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests."
+    },
+    "services/hub/cmd/mcp/sendmessage_test.go": {
+      "status": "ported",
+      "sha256": "08129da981a0767b90a7f913280c465935bdf012c56bf830e325e3d614f6eba4",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests."
+    },
+    "services/hub/cmd/mcp/openterminal_test.go": {
+      "status": "ported",
+      "sha256": "f4b516ba0b300812e741a62bce36c92c10d8e90053f29c4776d73942ead9b47b",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests."
+    },
+    "services/hub/cmd/mcp/notify_test.go": {
+      "status": "ported",
+      "sha256": "56c4fbf8c48b45061f4c3c744d713a11f7da71fbe791b62b967bf990b649676d",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests."
+    },
+    "services/hub/cmd/mcp/gatetool_test.go": {
+      "status": "ported",
+      "sha256": "4489d92601cb855420698dc73a9eb9bec2154b9a927f939748444b5ed194dc1d",
+      "replacement": [
+        "services/hub-rs/src/mcp/gate.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Actual MCP approval-gate composition preserves provider receipt, reports confirmed live permission mode before stale launch settings, falls back to settings when live mode absent, and survives missing snapshot with unknown mode. Gate-off explanation retains the independent provider prompting behavior."
+    },
+    "services/hub/cmd/mcp/spawn_firstmessage_test.go": {
+      "status": "ported",
+      "sha256": "ef39c14169e132b126b127087bf7df6c5c1c1df45714f7c972e2faa85e31a6f8",
+      "replacement": [
+        "services/hub-rs/src/mcp/spawn.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ],
+      "review": "Real MCP/broker/external-provider fixture covers confirmed first-message receipt (one call), legacy omitted-field fallback (one send), failed fallback, missing addressable identity and message-free spawn. Explicit negative acknowledgment remains uncertainty and is not replayed. Errors identify uncertainty/no-retry instead of incorrectly promising the accepted worker is idle. Actual owned-engine launch verifies first message and bookkeeping-failure receipt separately."
+    },
+    "services/hub/cmd/mcp/spawn_parent_test.go": {
+      "status": "ported",
+      "sha256": "965265623e01f8eaff9798dc0b99d5af3d30e7735023e450579b220b736f4a5b",
+      "replacement": [
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ],
+      "review": "Verified session identity pins parent and dispatch owner; plain caller metadata cannot mint host lineage. Preparation tests and actual MCP forged-owner/retry fields reject before provider execution; owned launch verifies authenticated session facade."
+    }
+  }
+}

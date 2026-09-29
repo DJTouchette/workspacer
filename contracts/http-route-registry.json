@@ -1,0 +1,1065 @@
+{
+  "description": "Reviewed HTTP classifications for the current Rust hub, MCP facade and daemon routers. Every registration and dynamic operation must have an explicit decision; handler-bound proofs and mutation tests keep these claims attached to actual code. This registry is test policy, not runtime authorization.",
+  "routerOwners": {
+    "services/hub-rs/src/server.rs": "hub",
+    "services/hub-rs/src/server/web.rs": "hub",
+    "services/hub-rs/src/plugins/http.rs": "hub",
+    "services/hub-rs/src/mcp.rs": "mcp",
+    "services/hub-rs/src/mcp/legacy_sse.rs": "mcp",
+    "services/claudemon/src/daemon/api.rs": "claudemon-api",
+    "services/claudemon/src/daemon/hook.rs": "claudemon-hook"
+  },
+  "routes": [
+    {
+      "server": "claudemon-api",
+      "pattern": "/conversation/stream",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "conversation_stream"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "global conversation deltas as SSE — the streaming form of the view-tier sessions.conversation read",
+      "twin": "sessions.conversation",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/events",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "event_stream"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the daemon event feed the hub bridges onto the bus. Downstream it becomes agent.state_changed / agent.snapshot, both classified open-by-decision, so the feed itself discloses what the view tier already receives",
+      "twin": "agent.snapshot",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/health",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the literal string \"ok\". No host state at all; it is loopback-confined only because it shares the router's layers"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/heartbeat",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::heartbeat::handle"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "records a wrapper heartbeat: liveness bookkeeping for a process that already holds the session's PTY"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/heartbeats",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "crate::daemon::heartbeat::list"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "lists wrapper heartbeats — session ids and timestamps, a strict subset of the view-tier fleet listing"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/hooks/stream",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "hook_stream"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "raw hook events as SSE — the pre-mapping form of the same feed, carrying the tool inputs a hook reports before the state machine folds them into a snapshot",
+      "twin": "agent.state_changed",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/mcp/ask/:session_id",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::mcp_ask::handle"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the MCP streamable-HTTP endpoint that gives an agent an AskUserQuestion tool, parking a structured question in the GUI. POST-only; it creates a prompt for a human rather than answering one"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/oneshot",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::oneshot::handle"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "runs a one-shot agent invocation. Spawn-class with no scoped-tier equivalent at all, so it sits with /sessions/spawn behind the same loopback boundary",
+      "twin": "agents.spawn",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/providers/:provider/models",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "crate::daemon::spawn::handle_provider_models"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "forks the resolved provider CLI (`opencode models`) in a caller-supplied cwd. The caller-supplied ?bin= is ignored — an earlier fix, still pinned — but the cwd is honoured, and as a simple GET this was reachable cross-site until origin_guard: no preflight fires, so CORS withheld the response while the process ran anyway",
+      "twin": "agents.spawn",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "list_sessions"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the full fleet listing. agents.list / sessions.snapshots are VIEW-tier on the bus, so this route grants no more than a scoped token already has — the confinement is the only difference, not the disposition",
+      "twin": "agents.list",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_session"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "one session's snapshot — sessions.snapshot is VIEW-tier on the bus, so this discloses nothing a scoped token is refused",
+      "twin": "sessions.snapshot",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/answer",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_answer"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "answers an AskUserQuestion picker. claude.answer is TRIAGE-tier; its params are classified as the same PTY bytes sessions.terminalInput carries",
+      "twin": "claude.answer",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/approve",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_approve"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "resolves a parked permission prompt. claude.approve is TRIAGE-tier and is half of the one accepted composition pair, so the bus grants this to a scoped token too",
+      "twin": "claude.approve",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/conversation",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_conversation"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the parsed conversation with ?since= deltas. sessions.conversation is VIEW-tier on the bus",
+      "twin": "sessions.conversation",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/decide",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_decide"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "records a decision on a parked prompt — the same approval surface as /approve, arriving through the decision-record path rather than the yes/no one",
+      "twin": "claude.approve",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/gate",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_gate"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "arms or disarms the approval gate. claude.gate is deliberately OPERATOR-only and its exclusion from triage is pinned by composition_test — so this route hands a loopback caller a verb the bus refuses every scoped tier, and it is the sharpest asymmetry on this router after spawn",
+      "twin": "claude.gate",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/handoff",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_handoff"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "builds a cross-provider handoff brief and PERSISTS it under ~/.workspacer/handoffs/. No bus capability writes handoff files; the nearest read (sessions.conversation) is view-tier and read-only, so the write half exists only here",
+      "twin": "sessions.conversation",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/input",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_input"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "writes raw keystrokes into a live PTY. On the bus this rides sessions.attachTerminal / terminals.*, which are in neither scoped tier; the pty.bytes.* topic mirroring its output is TopicGuardedBy that same method",
+      "twin": "sessions.attachTerminal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/message",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_message"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the settle+verify flush send path — injects a prompt into a running agent. agents.sendMessage is TRIAGE-tier, so a scoped credential can already do this over the bus",
+      "twin": "agents.sendMessage",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/model",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_model"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "owner boundary for live model switching: managed threads receive a structural update, while Claude PTY gets a daemon-built command only after model validation. PTY effort is refused as unapplied, and the response distinguishes queued delivery from accepted delivery. Model choice remains operator business on the bus and owner-authored requested_selection remains canonical",
+      "twin": "claude.setModel",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/output",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_output"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the raw PTY scrollback for one session. On the bus the equivalent stream is guarded by sessions.attachTerminal, which is in NEITHER scoped tier — so this is more available on HTTP than on the bus, bounded only by loopback",
+      "twin": "sessions.attachTerminal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/permission-mode",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_permission_mode"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "live permission-mode switch. Both host and authenticated agent routes apply only provider vocabulary validation; Workspacer no longer maintains a separate bypass grant",
+      "twin": "claude.setPermissionMode",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/resize",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_resize"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "resizes the session PTY — terminal geometry, operator-tier on the bus (terminals.*), harmless beyond the terminal it resizes",
+      "twin": "sessions.attachTerminal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/signal",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_signal"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "sends SIGINT / interrupt to the child. claude.signal is TRIAGE-tier on the bus",
+      "twin": "claude.signal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/stream",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "stream_bytes"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the live SSE feed of the same raw PTY bytes, with the same relationship to sessions.attachTerminal and the pty.bytes.* topic it guards",
+      "twin": "sessions.attachTerminal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/subagents/:agent_id/conversation",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_subagent_conversation"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the parsed provider-owned child-thread conversation. sessions.subagentConversation is VIEW-tier on the bus and claudemon validates the child id belongs to the parent session",
+      "twin": "sessions.subagentConversation",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/transcript",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_transcript"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the on-disk transcript, with the session id validated against traversal by valid_session_id. sessions.transcript is VIEW-tier on the bus",
+      "twin": "sessions.transcript",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/spawn",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::spawn::handle"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "takes caller-supplied argv + cwd + env and pty::spawn()s it as the desktop user. Its bus twin agents.spawn NEVER lets the caller supply argv: the brain builds it from a vetted profile, forces skipPermissions=false, drops an escalating permissionMode and scrubs the profile's bypass extraArgs. This route is therefore strictly more powerful than the bus one, and nothing but the loopback boundary stands between them",
+      "twin": "agents.spawn",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/spawn-managed",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "crate::daemon::spawn::handle_managed"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "passes the provider-native permission mode through; Workspacer does not add a second child-grant clamp",
+      "twin": "agents.spawn",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/statusline/stream",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "status_line_stream"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "statusline frames as SSE. agent.statusline is TopicGuardedBy sessions.snapshot on the bus AND filtered by the fleet-visibility rule before publication; this route applies no visibility filter, which is a second asymmetry the loopback boundary is carrying",
+      "twin": "agent.statusline",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/usage",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_usage"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "account-level rate-limit windows fetched with the user's OAuth credentials. NO bus capability exposes account usage at any tier; the hub's keep-warm path documents this route as deliberately ungated, which makes loopback the whole of its protection"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/usage/report",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_usage_report"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the WHOLE usage picture, and the widest DISCLOSURE on this router: every provider and every configured login in one document — the account key (which IS the profile's absolute configDir path), its label and default flag, 5h/7d/monthly window percentages with reset times, cumulative spend in USD and nano-AIU, the input/cache-read/cache-write/output/reasoning token split, a per-model breakdown, per-account live-session counts, and a failure object that can carry needs_reauth. It answers from the store and from what the provider CLIs left on disk, so a just-booted daemon with no live session serves all of it. THE OTHER TWO PLANES AGREE ABOUT THESE BYTES, and both withhold them from every scoped tier: no bus capability returns account-level usage at any tier (the /usage row's sentence still holds — the usage-at-boot work added no method and no topic), the nearest account-IDENTITY read claude.profiles.list hands back the same configDir strings and is in NEITHER viewMethods nor triageMethods, and the nearest event twin agent.statusline — five_hour_pct and cost_usd for ONE session — is TopicGuardedBy sessions.snapshot and fleet-visibility filtered before publication. So this route grants strictly more than any bus tier and strictly more than its own sibling /usage (the default login's three percentages), and 127.0.0.1 + host_guard + origin_guard are the whole of what stands between an unauthenticated caller and every login's identity, spend and quota headroom on this machine"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/wrapper/:id",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "crate::daemon::wrapper_ws::upgrade"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the wrapper WebSocket: registers and drives a session's PTY. CORS never applies to an upgrade, so this route calls origin_allowed by hand BEFORE upgrading — the same predicate the router-wide origin_guard now applies to everything else",
+      "twin": "sessions.attachTerminal",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-hook",
+      "pattern": "/health",
+      "file": "services/claudemon/src/daemon/hook.rs",
+      "verbs": {
+        "GET": "health"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the literal string \"ok\" on the ingress port. No host state; confined because it shares the router's layers"
+    },
+    {
+      "server": "claudemon-hook",
+      "pattern": "/hook",
+      "file": "services/claudemon/src/daemon/hook.rs",
+      "verbs": {
+        "POST": "receive"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "ingests Claude Code hook events straight into the session state machine, the broadcast fanout and SQLite. On the bus, mayPublish refuses a non-trusted connection the agent.* topics this becomes (EventTopicIsHostOwned) — precisely because internal/push treats agent.snapshot as authoritative; over HTTP any loopback process forges them for free, and host_guard + origin_guard are what keep a browser out of that set",
+      "twin": "agent.state_changed",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "claudemon-hook",
+      "pattern": "/hook/:kind",
+      "file": "services/claudemon/src/daemon/hook.rs",
+      "verbs": {
+        "POST": "receive_named"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "the same ingress with the event kind taken from the URL segment, overriding the body's own `event` field. Same forging reach as /hook",
+      "twin": "agent.state_changed",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "claudemon-hook",
+      "pattern": "/statusline",
+      "file": "services/claudemon/src/daemon/hook.rs",
+      "verbs": {
+        "POST": "receive_status_line"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "ingests statusline frames — model, cost, context and rate-limit percentages — into the same state machine. agent.statusline is capability-guarded on the bus; this is the write side of it",
+      "twin": "agent.statusline",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "hub",
+      "pattern": "/addon-fit.js",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "public!"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "vendored xterm fit-addon bytes, same audience and same reasoning as /xterm.js"
+    },
+    {
+      "server": "hub",
+      "pattern": "/app",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "app_redirect"
+      },
+      "proofs": {
+        "GET": "app-redirect"
+      },
+      "disposition": "public-by-decision",
+      "reason": "This route redirects to the separately guarded app entry; it returns only a location and never reads app files, credentials, settings or other host-owned payloads."
+    },
+    {
+      "server": "hub",
+      "pattern": "/app/",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "app_index"
+      },
+      "proofs": {
+        "GET": "app-entry-tier"
+      },
+      "disposition": "tiered-payload",
+      "reason": "the full React renderer. The ENTRY DOCUMENT requires the token; the hashed asset bundle is served unauthenticated and long-cached. The split is inside one handler because http.FileServer serves a tree, and the renderer's data all arrives over /bus, which is where the boundary is"
+    },
+    {
+      "server": "hub",
+      "pattern": "/app/*path",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "app_path"
+      },
+      "proofs": {
+        "GET": "app-entry-tier"
+      },
+      "disposition": "tiered-payload",
+      "reason": "the full React renderer. The ENTRY DOCUMENT requires the token; the hashed asset bundle is served unauthenticated and long-cached. The split is inside one handler because http.FileServer serves a tree, and the renderer's data all arrives over /bus, which is where the boundary is"
+    },
+    {
+      "server": "hub",
+      "pattern": "/apple-touch-icon.png",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "public!"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "embedded PNG bytes of the iOS home-screen icon — the same file in every build, no host state"
+    },
+    {
+      "server": "hub",
+      "pattern": "/bus",
+      "file": "services/hub-rs/src/server.rs",
+      "verbs": {
+        "GET": "bus"
+      },
+      "proofs": {
+        "GET": "bus-identity"
+      },
+      "disposition": "guarded",
+      "reason": "the bus handshake. Classifies the presented token (plugin token → authenticated plugin identity with ambient ordinary calls, host/empty token → trusted, scoped remote-client token → its tier's method allowlist, else 401) and then runs call plus event-provenance checks per frame. Every other classification in this package is enforced through this route",
+      "twin": "*",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "hub",
+      "pattern": "/health",
+      "file": "services/hub-rs/src/server.rs",
+      "verbs": {
+        "GET": "health"
+      },
+      "proofs": {
+        "GET": "health-projection"
+      },
+      "disposition": "tiered-payload",
+      "reason": "liveness for anyone; subscriber and method COUNTS only for an authorized caller. Topology is host state — how many clients and how many capabilities exist — and an unauthenticated probe gets {status:ok} and nothing else"
+    },
+    {
+      "server": "hub",
+      "pattern": "/icon-192.png",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "public!"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "embedded PNG bytes of the app icon — the same file in every build, no host state"
+    },
+    {
+      "server": "hub",
+      "pattern": "/icon-512.png",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "public!"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "embedded PNG bytes of the app icon — the same file in every build, no host state"
+    },
+    {
+      "server": "hub",
+      "pattern": "/icon-maskable-512.png",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "public!"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "embedded PNG bytes of the maskable app icon — the same file in every build, no host state"
+    },
+    {
+      "server": "hub",
+      "pattern": "/m",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "the mobile PWA shell. Deliberately unguarded: an installed PWA launches at start_url with no token available, so the shell must load and then gate on its own stored token. The document carries no host state"
+    },
+    {
+      "server": "hub",
+      "pattern": "/manifest.webmanifest",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "static PWA manifest bytes; the browser fetches it without our credential and it describes only the app's own icons and start_url"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "list"
+      },
+      "proofs": {
+        "GET": "plugin-list"
+      },
+      "disposition": "tiered-payload",
+      "reason": "THE FINDING. The full Manifest for the trusted host; plugin.PublicManifest — id, name, version and the pane/widget/hotkey contributions — for everyone else. A UI has to know what a plugin contributes to render it and a webview cannot carry the host token, so the split is on the BYTES rather than on the route, and the public half is built by naming what it includes so a new Manifest field is withheld by default",
+      "twin": "plugin.loaded",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/:operation",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "POST": "mutate"
+      },
+      "proofs": {
+        "POST": "plugin-operations"
+      },
+      "disposition": "tiered-payload",
+      "reason": "Only an enumerated plugin operation may execute. Every arm requires an operator credential, reload additionally requires the host credential, and unknown operations are rejected before any manager action.",
+      "operations": {
+        "settings": "guarded",
+        "pane-token": "guarded",
+        "setEnabled": "guarded",
+        "reload": "host-only",
+        "remove": "guarded"
+      }
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/examples",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "examples"
+      },
+      "proofs": {
+        "GET": "plugin-examples"
+      },
+      "disposition": "tiered-payload",
+      "reason": "the bundled example catalog, same handler and same split as /plugins. The manifests ship inside the app rather than describing this host, which makes the disclosure weaker — and 'weaker' is not one of the answers this plane has, so it gets the same one",
+      "twin": "plugin.loaded",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/examples/install",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "POST": "example_install"
+      },
+      "proofs": {
+        "POST": "plugin-host"
+      },
+      "disposition": "host-only",
+      "reason": "copies a bundled example into the writable plugins dir and runs its install step — install with no network, and gated like install: the step runs on this host, so a scoped operator token (a remote node's) is refused"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/inspect",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "POST": "inspect"
+      },
+      "proofs": {
+        "POST": "plugin-credential"
+      },
+      "disposition": "guarded",
+      "reason": "makes the hub fetch a caller-supplied URL from its own network position and parse the manifest — SSRF-shaped, runs no code"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/install",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "POST": "install"
+      },
+      "proofs": {
+        "POST": "plugin-host"
+      },
+      "disposition": "host-only",
+      "reason": "download, extract, run the manifest's install argv under explicit consent, and start the sidecar. The install argv runs on the HUB's own host, so the token guard alone is not the gate: an operator-tier scoped token passes Authorized and every remote worker node carries one, which made a node's bearer string arbitrary code execution here. plugin.install.progress is host-only precisely because it echoes this route's input",
+      "twin": "plugin.install.progress",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/origin",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "plugin-origin"
+      },
+      "disposition": "public-by-decision",
+      "reason": "the second origin the OPERATOR declared for this hub (--plugin-origin), which browser clients must read before they can frame a plugin cross-origin — necessarily before they have shown anything. It is a URL the operator chose to publish (it is about to appear in every plugin iframe's src), not host state: no plugin is named, no port is disclosed, and it answers {\"origin\":\"\"} when undeclared"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/pane-token/revoke",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "POST": "revoke"
+      },
+      "proofs": {
+        "POST": "plugin-credential"
+      },
+      "disposition": "guarded",
+      "reason": "revokes a pane token; operator surface for the same reason minting is"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/sdk.js",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "static-sdk"
+      },
+      "disposition": "public-by-decision",
+      "reason": "the host-owned plugin SDK (window.workspacer): static library code with no host state, injected into every plugin webview by a <script> tag that cannot carry a token"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/settings",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "settings_get",
+        "POST": "settings_post"
+      },
+      "proofs": {
+        "GET": "plugin-credential",
+        "POST": "plugin-settings-delegate"
+      },
+      "disposition": "guarded",
+      "reason": "reads and writes a plugin's setting values (secrets redacted to __WKS_SECRET__ on the way out). The stated reason plugin.settings.changed is host-only is literally that this route is guarded, so the two must not drift",
+      "twin": "plugin.settings.changed",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/tokens",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "tokens"
+      },
+      "proofs": {
+        "GET": "plugin-credential"
+      },
+      "disposition": "guarded",
+      "reason": "the per-plugin bus bearer tokens. Reading one IS becoming that plugin on the bus"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/ui/:id/",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "ui_index"
+      },
+      "proofs": {
+        "GET": "plugin-ui-delegate"
+      },
+      "disposition": "tiered-payload",
+      "reason": "a webview-only plugin's static assets. The FILES are public (they are the plugin's own front-end, and a <script>/webview URL cannot carry a token), but the injected window.__WKS_SETTINGS__ is not: it is the merged non-secret setting values, which the guard()ed /plugins/settings refuses and which plugin.settings.changed is host-only for. AuthorizedForPlugin gates that block on the host token or the plugin's own bus/pane token. The served ROOT is confined by ValidateUIDir — the `ui` field was unchecked, and `..` or `.` moved that root onto the host filesystem or onto the plugin's own .bus-token",
+      "twin": "plugin.settings.changed",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/ui/:id/*path",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "ui"
+      },
+      "proofs": {
+        "GET": "plugin-ui"
+      },
+      "disposition": "tiered-payload",
+      "reason": "a webview-only plugin's static assets. The FILES are public (they are the plugin's own front-end, and a <script>/webview URL cannot carry a token), but the injected window.__WKS_SETTINGS__ is not: it is the merged non-secret setting values, which the guard()ed /plugins/settings refuses and which plugin.settings.changed is host-only for. AuthorizedForPlugin gates that block on the host token or the plugin's own bus/pane token. The served ROOT is confined by ValidateUIDir — the `ui` field was unchecked, and `..` or `.` moved that root onto the host filesystem or onto the plugin's own .bus-token",
+      "twin": "plugin.settings.changed",
+      "twinKind": "event-topic"
+    },
+    {
+      "server": "hub",
+      "pattern": "/plugins/updates",
+      "file": "services/hub-rs/src/plugins/http.rs",
+      "verbs": {
+        "GET": "updates"
+      },
+      "proofs": {
+        "GET": "plugin-credential"
+      },
+      "disposition": "guarded",
+      "reason": "re-fetches every installed plugin's manifest from its recorded Source — the same outbound fetch as inspect, once per plugin"
+    },
+    {
+      "server": "hub",
+      "pattern": "/remote",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "remote"
+      },
+      "proofs": {
+        "GET": "operator-page"
+      },
+      "disposition": "guarded",
+      "reason": "the remote web client's entry document. HTML only, no token baked in — guarded because it is the remote entrypoint"
+    },
+    {
+      "server": "hub",
+      "pattern": "/sw.js",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "static service-worker JS for the PWA; embedded at build time, identical on every host"
+    },
+    {
+      "server": "hub",
+      "pattern": "/xterm.css",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "public!"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "vendored xterm stylesheet; a <link> tag cannot carry the bus token and the file is content-pinned to a vendored version"
+    },
+    {
+      "server": "hub",
+      "pattern": "/xterm.js",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "public!"
+      },
+      "proofs": {
+        "GET": "static-web"
+      },
+      "disposition": "public-by-decision",
+      "reason": "vendored xterm library bytes for the remote terminal mirror; a <script> tag cannot carry the bus token and the file is content-pinned to a vendored version"
+    },
+    {
+      "server": "mcp",
+      "pattern": "/health",
+      "file": "services/hub-rs/src/mcp.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "facade-health"
+      },
+      "disposition": "public-by-decision",
+      "reason": "{status, hubConnected} for liveness probes. requireHost wraps it too, so it is reachable only from loopback or the configured bind address; the payload is one boolean about our own uplink"
+    },
+    {
+      "server": "mcp",
+      "pattern": "/mcp",
+      "file": "services/hub-rs/src/mcp.rs",
+      "verbs": {
+        "SERVICE": "service"
+      },
+      "proofs": {
+        "SERVICE": "facade-authenticate"
+      },
+      "disposition": "guarded",
+      "reason": "Every request passes the socket Host/Origin policy and identity resolution. Missing credentials are denied unless explicit guest policy permits a scoped identity; tool-tier checks remain distinct from owner authority.",
+      "twin": "*",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "mcp",
+      "pattern": "/sse",
+      "file": "services/hub-rs/src/mcp/legacy_sse.rs",
+      "verbs": {
+        "GET": "open",
+        "POST": "message"
+      },
+      "proofs": {
+        "GET": "facade-authenticate",
+        "POST": "facade-authenticate"
+      },
+      "disposition": "guarded",
+      "reason": "Every request passes the socket Host/Origin policy and identity resolution. Missing credentials are denied unless explicit guest policy permits a scoped identity; tool-tier checks remain distinct from owner authority.",
+      "twin": "*",
+      "twinKind": "bus-method"
+    }
+  ],
+  "vocabulary": {
+    "blocks": {
+      "routes": {
+        "why": "One actually registered HTTP path or reviewed protocol mount, with exact methods/handlers, classification reason and a pair-bound proof of authorization or stateless output.",
+        "required": [
+          "server",
+          "pattern",
+          "file",
+          "verbs",
+          "proofs",
+          "disposition",
+          "reason"
+        ],
+        "optional": [
+          "twin",
+          "twinKind",
+          "operations"
+        ],
+        "loaders": [
+          "apps/desktop/src/main/services/httpRouteRegistry.test.ts::http_registry_matches_actual_bindings"
+        ]
+      }
+    }
+  },
+  "ownership": {
+    "kind": "architectural-source-registry",
+    "sourceLanguage": "rust",
+    "guardLanguage": "typescript",
+    "guard": "apps/desktop/src/main/services/httpRouteRegistry.test.ts::http_registry_matches_actual_bindings",
+    "runner": "npm --prefix apps/desktop run test:main -- src/main/services/httpRouteRegistry.test.ts",
+    "sourceRoots": [
+      "services/hub-rs/src",
+      "services/claudemon/src/daemon"
+    ],
+    "sourceFiles": [
+      "services/claudemon/src/daemon/api.rs",
+      "services/claudemon/src/daemon/hook.rs",
+      "services/hub-rs/src/mcp.rs",
+      "services/hub-rs/src/mcp/legacy_sse.rs",
+      "services/hub-rs/src/plugins/http.rs",
+      "services/hub-rs/src/server.rs",
+      "services/hub-rs/src/server/web.rs"
+    ],
+    "requiredChecks": [
+      "http_registry_matches_actual_bindings",
+      "discovers new route-bearing production modules instead of trusting the router list",
+      "holds credential primitives to operator versus actual host authority",
+      "rejects mutations of routes, classifiers, guards, operation closure and live confinement layers",
+      "keeps the served fixture and all four caller ownership guards linked",
+      "source parser ignores comments and quoted decoys but retains post-test production"
+    ]
+  }
+}

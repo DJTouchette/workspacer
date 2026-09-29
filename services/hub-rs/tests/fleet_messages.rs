@@ -38,3 +38,16 @@ fn labelled_and_unlabelled_sender_headers_match_retained_wire_text() {
         "[fleet] session:worker2 says:\n"
     );
 }
+
+#[test]
+fn workflow_instructions_follow_full_result_and_are_manager_only() {
+    let entries = [
+        serde_json::json!({"sessionId":"worker","label":"Worker","cwd":"/project",
+        "fullReply":"complete reply","workflowInstructions":"NEXT PINNED STEP"}),
+    ];
+    let manager = fleet_messages::build("worker-finished", &entries, false).unwrap();
+    assert!(manager.find("complete reply").unwrap() < manager.find("NEXT PINNED STEP").unwrap());
+    let ordinary = fleet_messages::build("worker-finished", &entries, true).unwrap();
+    assert!(ordinary.contains("complete reply"));
+    assert!(!ordinary.contains("NEXT PINNED STEP"));
+}

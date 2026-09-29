@@ -695,14 +695,50 @@ impl Wakes {
                 }
                 continue;
             }
-            let message = fleet_messages::build(
-                kind,
-                &items
-                    .iter()
-                    .map(|(entry, _, _)| entry.clone())
-                    .collect::<Vec<_>>(),
-                ordinary,
-            )?;
+            let mut entries: Vec<_> = items.iter().map(|(entry, _, _)| entry.clone()).collect();
+            if !ordinary && kind != "blocked" {
+                if let Some(history) = self.history.clone() {
+                    // Read after validation commits; use current durable ownership,
+                    // not a task pin cached when the worker was dispatched.
+                    let tasks = tokio::task::spawn_blocking(move || history.list()).await??;
+                    // The disk read yields. A resume, reparent or manager role
+                    // change must not deliver the old task instructions.
+                    if !self.available(&action.parent)
+                        || (self.lookup)(&action.parent)
+                            .is_none_or(|row| row["isWakeTarget"] != true)
+                        || entries.iter().any(|entry| {
+                            let id = text(entry, "sessionId");
+                            (self.lookup)(id).is_none_or(|row| {
+                                !idle(&row)
+                                    || row["lastActivity"] != entry["_wakeActivity"]
+                                    || !self
+                                        .target(text(&row, "parentSessionId"), id)
+                                        .is_ok_and(|parent| parent == action.parent)
+                            })
+                        })
+                    {
+                        continue;
+                    }
+                    for entry in &mut entries {
+                        let session = text(entry, "sessionId");
+                        let instructions: Vec<_> = tasks
+                            .iter()
+                            .filter(|task| {
+                                task["ownerSessionId"] == action.parent
+                                    && task["workflow"].is_object()
+                                    && task["workflow"]["steps"].as_array().is_some_and(|steps| {
+                                        steps.iter().any(|step| step["sessionId"] == session)
+                                    })
+                            })
+                            .map(|task| super::workflow_runtime::instructions(task, &tasks))
+                            .collect();
+                        if !instructions.is_empty() {
+                            entry["workflowInstructions"] = instructions.join("\n\n").into();
+                        }
+                    }
+                }
+            }
+            let message = fleet_messages::build(kind, &entries, ordinary)?;
             (self.delivery)(action.parent.clone(), message, signatures.clone()).await?;
             if kind != "catch-up" && kind != "blocked" {
                 for (entry, signature, reply) in items {

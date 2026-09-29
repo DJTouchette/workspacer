@@ -265,13 +265,17 @@ fn service_fixture() -> (
     Arc<ReplacementService>,
 ) {
     let dir = tempfile::tempdir().unwrap();
+    // Real coordinator launch records carry the canonical host cwd. On macOS
+    // tempdir's /var spelling is a symlink; on Windows avoid verbatim aliases.
+    // The artifact verifier intentionally refuses linked candidate parents.
+    let cwd = workspacer_hub::services::paths::canonicalize(dir.path()).unwrap();
     let state = ReplacementState::open(dir.path().join("journal.json")).unwrap();
     let tasks = Arc::new(TaskStore::open(dir.path().join("history.json")).unwrap());
-    tasks.transaction(|h|{h.tasks.push(json!({"taskId":"task","ownerSessionId":"old","ownerLabel":"Old","projectCwd":dir.path(),"title":"Work","createdAt":"2026-09-28T00:00:00Z","attempts":[]}));Ok(())}).unwrap();
+    tasks.transaction(|h|{h.tasks.push(json!({"taskId":"task","ownerSessionId":"old","ownerLabel":"Old","projectCwd":cwd,"title":"Work","createdAt":"2026-09-28T00:00:00Z","attempts":[]}));Ok(())}).unwrap();
     let host = Arc::new(Host {
         gate: Arc::new(Mutex::new(())),
         state: state.clone(),
-        launch: json!({"options":{"manager":true,"toolScope":"operator","cwd":dir.path(),"transport":"stream","provider":"codex","model":"gpt-5.6-sol"},"grants":"real-host-fingerprint"}),
+        launch: json!({"options":{"manager":true,"toolScope":"operator","cwd":cwd,"transport":"stream","provider":"codex","model":"gpt-5.6-sol"},"grants":"real-host-fingerprint"}),
         bound: AtomicBool::new(false),
         spawned: AtomicUsize::new(0),
         fail_transfer: AtomicBool::new(false),
@@ -280,8 +284,8 @@ fn service_fixture() -> (
         closed: Mutex::new(vec![]),
         outcomes: Mutex::new(vec![]),
         inventory: Mutex::new(vec![
-            json!({"sessionId":"old","cwd":dir.path(),"isWakeTarget":true}),
-            json!({"sessionId":"worker","cwd":dir.path(),"parentSessionId":"old"}),
+            json!({"sessionId":"old","cwd":cwd,"isWakeTarget":true}),
+            json!({"sessionId":"worker","cwd":cwd,"parentSessionId":"old"}),
         ]),
     });
     let service = ReplacementService::new(

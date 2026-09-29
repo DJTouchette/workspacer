@@ -314,8 +314,16 @@ async fn confirmed_live_controls_are_generation_fenced_and_cannot_change_authori
     let fake = Arc::new(Fake::default());
     let path = dir.path().join("launch.json");
     let service = Lifecycle::open(path.clone(), fake.clone(), fake.clone()).unwrap();
-    service.launch(plan(dir.path())).await.unwrap();
+    let mut requested = plan(dir.path());
+    requested.metadata["settings"]["effort"] = json!("low");
+    service.launch(requested).await.unwrap();
     let generation = service.records()["child"].generation.clone();
+    assert!(
+        service
+            .enrich(json!({"sessionId":"child"}))
+            .get("liveEffort")
+            .is_none()
+    );
     let patch = json!({"settings":{"model":"confirmed-model","effort":"high","permissionMode":"plan","launchIntegrationId":"forged"},"requestedSelection":{"model":"confirmed-model"},"livePermissionMode":"plan","isWakeTarget":true,"parentSessionId":"forged"});
     assert!(
         !service
@@ -325,20 +333,38 @@ async fn confirmed_live_controls_are_generation_fenced_and_cannot_change_authori
     );
     assert!(
         service
+            .enrich(json!({"sessionId":"child"}))
+            .get("liveEffort")
+            .is_none(),
+        "a stale acknowledgement must not become a live observation"
+    );
+    assert!(
+        service
             .note_live_control("child", &generation, &patch)
             .await
             .unwrap()
     );
     let row = service.enrich(json!({"sessionId":"child"}));
     assert_eq!(row["settings"]["model"], "confirmed-model");
+    assert_eq!(row["liveEffort"], "high");
+    // Fresh daemon snapshots do not carry the host's control acknowledgement.
+    let next = service.enrich(json!({"sessionId":"child","mode":"input"}));
+    assert_eq!(next["liveEffort"], "high");
     assert_eq!(row["livePermissionMode"], "plan");
     assert_eq!(row["parentSessionId"], "parent");
     assert!(row["settings"]["launchIntegrationId"].is_null());
     assert_ne!(row["isWakeTarget"], true);
     assert_eq!(
-        Lifecycle::open(path, fake.clone(), fake).unwrap().records()["child"].metadata["requestedSelection"]
-            ["model"],
+        Lifecycle::open(path.clone(), fake.clone(), fake.clone())
+            .unwrap()
+            .records()["child"]
+            .metadata["requestedSelection"]["model"],
         "confirmed-model"
+    );
+    let restored = Lifecycle::open(path, fake.clone(), fake).unwrap();
+    assert_eq!(
+        restored.enrich(json!({"sessionId":"child"}))["liveEffort"],
+        "high"
     );
     service.stopped("child", &generation).await.unwrap();
     assert!(

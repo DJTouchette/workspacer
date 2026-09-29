@@ -6,6 +6,7 @@ use workspacer_hub::{Hub, Options, client::Client};
 async fn owned_polling_publishes_live_file_changes_and_releases_watches_on_shutdown() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("appears.txt");
+    let canonical = workspacer_hub::services::paths::canonicalize(&path).unwrap();
     let mut options = Options::default();
     options.home_dir = Some(directory.path().into());
     let hub = Hub::start(options).unwrap();
@@ -21,7 +22,7 @@ async fn owned_polling_publishes_live_file_changes_and_releases_watches_on_shutd
             .call("fs.watch", json!({"path":path,"watchId":"fixture"}))
             .await
             .unwrap()["path"],
-        json!(path)
+        json!(canonical)
     );
     client
         .call("fs.write", json!({"path":path,"contents":"created"}))
@@ -32,7 +33,10 @@ async fn owned_polling_publishes_live_file_changes_and_releases_watches_on_shutd
         .unwrap()
         .unwrap();
     assert_eq!(event.topic, "fs.changed");
-    assert_eq!(event.data, Some(json!({"path":path,"eventType":"rename"})));
+    assert_eq!(
+        event.data,
+        Some(json!({"path":canonical,"eventType":"rename"}))
+    );
     client
         .call("fs.unwatch", json!({"path":path,"watchId":"fixture"}))
         .await

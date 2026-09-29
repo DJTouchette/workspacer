@@ -164,6 +164,11 @@ impl Lifecycle {
                         row.metadata["settings"] = json!({});
                     }
                     row.metadata["settings"][key] = value.into();
+                    if key == "effort" {
+                        // Only this confirmed-control path supplies liveEffort;
+                        // configured/requested launch effort is not observation.
+                        row.metadata["liveEffort"] = value.into();
+                    }
                 }
             }
             if let Some(value) = patch["livePermissionMode"].as_str() {
@@ -195,6 +200,7 @@ impl Lifecycle {
                 "routing",
                 "settings",
                 "livePermissionMode",
+                "liveEffort",
                 "requestedSelection",
                 "taskId",
                 "dispatchId",

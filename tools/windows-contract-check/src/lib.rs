@@ -46,3 +46,6 @@ mod account_links;
 
 #[path = "../../../services/hub-rs/src/services/task_store/project.rs"]
 mod task_project;
+
+#[path = "../../../services/hub-rs/src/cli/install.rs"]
+mod cli_install;

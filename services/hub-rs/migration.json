@@ -98,16 +98,56 @@
       "tests": []
     },
     "services/hub/cmd/brain/agentops.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/progress.rs",
+        "services/hub-rs/src/services/thresholds.rs",
+        "services/hub-rs/src/services/agent_ops.rs",
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/manager_replacements.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every handler and helper, including reportProgress and threshold watches rather than treating this as only close/reparent. Matched trusted caller/current-parent routing, pre-send progress budget charging, duplicate/rate/total limits, remote queued receipts, and explicit delivery failures.",
+          "Matched finite positive threshold validation, exclusive context predicate, provider capability/fresh correlated telemetry, exact epoch identity, recipient validation, per-watcher20 cap, token/cost/inactivity priority and wording,15s sweep, one-shot removal before delivery and deterministic coalescing.",
+          "Matched working-session close refusal before effects, missing-row token cleanup, local projection removal, wake forgetting, best-effort daemon stop, explicit token failures; orphan discovery excludes live/self/unparented children and reports sorted confirmed or unknown parents without adopting them.",
+          "Manual reparent validates distinct source/destination and live local manager, coordinates replacement admissions, moves live and preparing children, immediately exposes current parentage and transfers task/review ownership. Existing local_spawn real fake-provider fixture covers close/refusal/revocation/orphans/reparent through RPC; lifecycle8, manager15 and library224 checkpoints pass."
+        ],
+        "intentionalChanges": [
+          "Unicode progress limits use the current TypeScript UTF-16 contract rather than Go byte length, explicitly covered by progress cap tests.",
+          "Rust adds durable replacement admission fencing and generation-scoped dismissals; completed launch history is preserved while current live/preparing children and held result routing transfer. Unknown/foreign provenance never acquires local authority.",
+          "Retained Go threshold API pointer copying is replaced by owned Rust JSON serialization under the watch mutex, independently tested against concurrent sweeps."
+        ]
+      },
       "sha256": "bd53cc9d957914c180e7174e5e3fe88211f530ebbca3e1853277b04246f307f3",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/progress.rs",
+        "services/hub-rs/src/services/thresholds.rs",
+        "services/hub-rs/src/services/agent_ops.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/manager_replacements.rs"
+      ]
     },
     "services/hub/cmd/brain/agentops_race_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/thresholds.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all three tests: detached mutable pointer fields, source-AST ordering of snapshot before unlock, and64 real notify/sweep races.",
+          "Rust arm serializes an owned serde_json::Value before inserting the owned Watch; no map-owned references escape the mutex. New arm_responses_are_detached_from_live_sweep_state first binds a real telemetry epoch during sweep and verifies the previous returned JSON remains unchanged, then executes64 concurrent public arm/sweep schedules. Passed in full library224."
+        ],
+        "intentionalChanges": [
+          "The Go AST assertion of pointer-detacher spelling is not reproduced as a fake Rust helper. Rust ownership plus the actual API response/concurrent sweep regression protect the same boundary."
+        ]
+      },
       "sha256": "951543cb2859e915c54168a5099a73da6fb0dd31eedf89f9c5706092db3533e5",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/thresholds.rs"
+      ]
     },
     "services/hub/cmd/brain/analytics_test.go": {
       "replacement": [],
@@ -326,10 +366,14 @@
       "tests": []
     },
     "services/hub/cmd/brain/corpusdupkey_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/corpus_duplicates.rs"
+      ],
       "sha256": "8ae33e671ea942dbafa83322bbeefb731f212a8037b1539d463dce98388f853c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/corpus_duplicates.rs"
+      ]
     },
     "services/hub/cmd/brain/corpusvocab_test.go": {
       "replacement": [],
@@ -422,34 +466,130 @@
       "tests": []
     },
     "services/hub/cmd/brain/enrich.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_controls.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every enrichment/projection branch and all sixteen test functions: spawn label precedes optional cwd rename, sender attribution uses recorded label only, and explicit snapshot fallback applies the same host enrichment.",
+          "Checked sparse/sessionId/status/ambient fields, unknown versus idle, positive background tasks and blocked/busy precedence, usage cache/context omission, status line field names, raw approval argument fallback, null decision clearing, requested/resolved model pair key presence and raw evidence preservation against Rust projection and shared corpus.",
+          "Confirmed controls survive new daemon rows through generation-fenced lifecycle metadata; launch truth, routing, parent and role are written before engine admission. Recent actual lifecycle8/snapshots5/embedded_engine1 checkpoints cover those changes."
+        ],
+        "intentionalChanges": [
+          "Rust journals host metadata durably and refuses to enrich remote rows; Go metadata was process-local. Recorded local confirmed settings retain precedence without replacing unrelated settings siblings.",
+          "Current lifecycle reparenting preserves completed historical launch records while transferring live/preparing children; replacement lineage separately redirects pending results. An explicit new generation resets prior live controls."
+        ]
+      },
       "sha256": "cf06c74f88c670eba8418c5ecb891344fb7491463023a9119436ee1533e83c11",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/embedded_engine.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/enrich_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_controls.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every enrichment/projection branch and all sixteen test functions: spawn label precedes optional cwd rename, sender attribution uses recorded label only, and explicit snapshot fallback applies the same host enrichment.",
+          "Checked sparse/sessionId/status/ambient fields, unknown versus idle, positive background tasks and blocked/busy precedence, usage cache/context omission, status line field names, raw approval argument fallback, null decision clearing, requested/resolved model pair key presence and raw evidence preservation against Rust projection and shared corpus.",
+          "Confirmed controls survive new daemon rows through generation-fenced lifecycle metadata; launch truth, routing, parent and role are written before engine admission. Recent actual lifecycle8/snapshots5/embedded_engine1 checkpoints cover those changes."
+        ],
+        "intentionalChanges": [
+          "Rust journals host metadata durably and refuses to enrich remote rows; Go metadata was process-local. Recorded local confirmed settings retain precedence without replacing unrelated settings siblings.",
+          "Current lifecycle reparenting preserves completed historical launch records while transferring live/preparing children; replacement lineage separately redirects pending results. An explicit new generation resets prior live controls."
+        ]
+      },
       "sha256": "5b367a6b46c1b76040c061e19149e0b43ac6709d7d0d6d9c3f9c4bd84d45b1c0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/embedded_engine.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/events.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/services/external_claudemon.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the full stream runner, reconnect helper, resync/seed paths, status-line visibility wrapper and SSE parser. Subscribe-before-seed ordering remains; embedded broadcasts carry typed IDs and updates are always refreshed through the engine-owned canonical request boundary.",
+          "Lag recovery now requests archived and empty rows, recovers known terminal states, and omits unrelated unknown ended history. The actual typed Lagged fixture also preserves host-owned launches whose start/finish both preceded their first projection row.",
+          "live_streams tests assert unknown/hidden statuslines cannot disclose IDs or telemetry, statusline merge remains separate from agent.snapshot publication, and lag forces a fresh stream-ready barrier. Generic external SSE fragmentation/CRLF/multiline/EOF guards live in external_claudemon tests. Current library224 passed."
+        ],
+        "intentionalChanges": [
+          "Local SSE reconnect/backoff is removed for the embedded engine: engine termination ends the owning service; typed lag reconciles without pretending to reconnect a process. Retained external hub-only transport has its own bounded cancellable reconnect implementation."
+        ]
+      },
       "sha256": "334935299c5461998363f144475d91e1889bc3447622bbadff1e6c485cd38cc6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs",
+        "services/hub-rs/tests/embedded_engine.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ]
     },
     "services/hub/cmd/brain/events_reseed_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/services/external_claudemon.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both regressions: recover a lost terminal edge on lag without importing unrelated historical sessions; reseed after a successful event subscription even without another state event.",
+          "New actual engine test uses a size-one typed channel that really reports Lagged, then a deliberately stale queued event. It verifies canonical ended state for an existing worker and a journal-owned fast worker, rejects unrelated retained old-history, and asserts initial seed emits no snapshot events. Passed in library224."
+        ],
+        "intentionalChanges": [
+          "Typed subscription does not fail with HTTP503 or reconnect independently of the owned engine, so that transport-specific half is replaced by subscribe-before-seed and real canonical recovery tests."
+        ]
+      },
       "sha256": "581594658c6e222560454570646ddda70e346eaffec94f43498f663a286fd551",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs",
+        "services/hub-rs/tests/embedded_engine.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ]
     },
     "services/hub/cmd/brain/events_test.go": {
-      "replacement": [],
+      "reason": "The Go local SSE reconnect timer no longer exists in embedded Rust session ownership; retaining a synthetic backoff helper merely for this test would create unused code. Typed lag/reseed and shutdown behavior are covered at the actual Rust boundary.",
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete file: its one test exclusively checks Go local SSE reconnect backoff reset at five seconds; no session projection assertion is hidden in it."
+        ],
+        "intentionalChanges": [
+          "Owned in-process typed broadcast receivers replace reconnecting local SSE sockets. Engine stop terminates the owner instead of retrying a dead local process; lag uses authoritative reconciliation. External hub-only forwarding retains its separately tested owned transport."
+        ]
+      },
       "sha256": "e516bf35c6c9fc87fb4926c30475d786e73c34221a24dfc8ecdfd5c7f90fead9",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ]
     },
     "services/hub/cmd/brain/exactmodel_test.go": {
       "replacement": [],
@@ -518,22 +658,70 @@
       "tests": []
     },
     "services/hub/cmd/brain/fleetmsg.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/assets/fleet-messages.json",
+        "services/hub-rs/src/services/progress.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed every header/tail/note, bullet suffix ordering, note-over-reply precedence, all-failed header, review/result/escalation/full-reply block ordering, ordinary-parent suppression, attribution header and cwd label fallback against Rust and current shared TypeScript source. Generated fleet assets remain pinned by the generator --check seam.",
+          "Review found and fixed omitted WorkflowInstructions: manager finish wakes now derive instructions from committed task history for worker-bound steps whose current owner matches the recipient, with live role/activity/parent rechecked after disk await. Ordinary parents receive no workflow/task instructions.",
+          "Actual Cargo fleet_messages3 (shared corpus plus sender and block-order assertions) and wakes16 (including persisted workflow completion/current-owner/ordinary-parent matrix) passed after the fix."
+        ],
+        "intentionalChanges": [
+          "Rust follows current TypeScript UTF-16 character caps and JavaScript whitespace handling instead of Go rune-count clipping. All-separator cwd label fallback also follows the current TypeScript helper (original cwd) rather than the older Go empty basename.",
+          "Formatted text comes from generated TypeScript assets rather than maintaining another handwritten constant table; generator check and corpus replay enforce the active wire vocabulary."
+        ]
+      },
       "sha256": "2837ade8594f7e01f7c586d119ab55a835f78c0f58350b26cadf2c3f71d4bf03",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/wakes.rs",
+        "scripts/generate-rust-fleet-assets.mjs"
+      ]
     },
     "services/hub/cmd/brain/fleetpermissions.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared fleetSkipsPermissions and all18 legacy provider/role cases. Current config is read for each launch; manager, direct worker and grandchild inherit provider approval preference, ordinary/disabled/cyclic ancestry does not.",
+          "Source review found and fixed the former immediate-parent-only Rust check. has_fleet_ancestor follows host-owned lifecycle/replacement metadata, rejects foreign hub provenance, and bounds cycles/concurrent churn. It never derives token or owner authority.",
+          "fleet_full_access_follows_recorded_ancestry_and_current_config_for_each_provider passed24 cases through actual coordinator admission into a fake engine, including unknown and remote parent refusals; verifies receipt, executed Plan and permission metadata for Claude/Codex/Copilot. Cargo agent_spawn10 passed."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "6d66a5c1c1957f8a2ffd0298d963fd88ebfdc78ec888495c325c2290029698e2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/cmd/brain/fleetpermissions_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared fleetSkipsPermissions and all18 legacy provider/role cases. Current config is read for each launch; manager, direct worker and grandchild inherit provider approval preference, ordinary/disabled/cyclic ancestry does not.",
+          "Source review found and fixed the former immediate-parent-only Rust check. has_fleet_ancestor follows host-owned lifecycle/replacement metadata, rejects foreign hub provenance, and bounds cycles/concurrent churn. It never derives token or owner authority.",
+          "fleet_full_access_follows_recorded_ancestry_and_current_config_for_each_provider passed24 cases through actual coordinator admission into a fake engine, including unknown and remote parent refusals; verifies receipt, executed Plan and permission metadata for Claude/Codex/Copilot. Cargo agent_spawn10 passed."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "3801d118f9f1b09ae3d8bf35b2f95430dcb45beb9bced9b68e115f1c311290fa",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/cmd/brain/fleetview.go": {
       "replacement": [],
@@ -934,52 +1122,172 @@
       "tests": []
     },
     "services/hub/cmd/brain/spawn_browse_test.go": {
-      "replacement": [],
+      "reason": "Empty retained Go test file (package main only). There is no executable responsibility or regression to port; current launch path admission is tested by the Rust coordinator.",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete source: one package declaration, no declarations or tests."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "df1d036cbbf3df46e2045071e082245ece204c7f53ecf0a4e022bff9bb228f47",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/agent_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/spawn_bypass_test.go": {
-      "replacement": [],
+      "reason": "Comment-only test shell for retired grant-policy regressions; no executable Go tests remain. Rust tests retain the current authenticated provenance and host-only boundaries instead of manufacturing the removed policy.",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete23-line source: package declaration plus historical comments, with no test functions.",
+          "The comments describe an earlier profile-grant clamp that was removed before this migration; they must not silently reintroduce a new runtime restriction."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "9782093251656806175e150db2d8ebe23e462373071992475e4941838be6eddd",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/src/admission.rs"
+      ]
     },
     "services/hub/cmd/brain/spawn_context_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Codex fresh1M, explicit requested windows and resume omission use the shared model-selection implementation and corpus; plan regressions distinguish explicit null from an absent contextWindow.",
+          "Unsupported-provider contexts are refused by normalize_model_input before token/worktree/provider effects, with the stable unsupported-context-window classification."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "983492b50ec0c0b537040d57b99fef27927f9ca43bba735994f8322b9f3340b5",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/config.rs"
+      ]
     },
     "services/hub/cmd/brain/spawn_firstmessage_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Retained transport/first-message guard tests actual /sessions/spawn and /sessions/spawn-managed request shapes, keeping the task in first_message rather than passive instructions.",
+          "Acknowledgement matrix covers missing/false/true first_message_queued and forbids messageQueued when no message was requested. Receipt follows engine evidence, never input intent.",
+          "Cargo spawn_plan8 passed after correcting a test assumption: Claude stream is chosen by endpoint, while Codex explicitly carries transport."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "2ec51d1662e4993db8e25e57c3b6a95f766fb41bbe5cab70d4c5f2074c469f78",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/spawn_manager_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Manager isWakeTarget metadata is produced independently of transport/provider, then written by the single Lifecycle launch journal before engine admission.",
+          "Pure manager/provider/PTY tests verify selection and role metadata; lifecycle tests verify persistence/enrichment; actual local_spawn exercises scoped manager_context and child wake delivery through the real embedded backend.",
+          "The legacy file has one executable test; its trailing removed privilege-clamp descriptions are comments, not additional executable regressions."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "d6bdf705c7447dde10960ad28301a7f126af17e28f4791ba79c36a098eb6a152",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/spawn_roleprovider_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Retained manager-provider guard covers configured Codex/Copilot, explicit Claude override, unknown configured harness fallback and ordinary workers ignoring manager defaults.",
+          "Manager model/effort/window normalization is pinned by the shared selection corpus; plan tests preserve explicit null versus omission and profile-pinned effective model.",
+          "Both Claude and Codex manager resume tests assert that current manager/global model, effort and context defaults are not injected into resume payloads."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "c90e3e0010681093b2c46ea99cc9d4b90c72b4edd284f9c4fb60e241703182a5",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/agent_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/spawn_skipdefault_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The executed legacy assertions are the omitted/explicit skipPermissions default and narrow bypass-mode vocabulary. Retained Rust matrix covers omitted,false,true \u00d7 configured toggle \u00d7 all seven mode spellings.",
+          "Explicit false wins unless the separately host-configured fleet ancestry policy applies. Historical comments about removed profile-grant clamps are not treated as live policy."
+        ],
+        "intentionalChanges": []
+      },
       "sha256": "b13f21845b8ce2ab96b0fe7b8bc85aa64e19add3f2c2348b306aa44cc8460c4d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/spawn_transport_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Retained caller > configured transport > shipped fallback matrix includes Codex explicit PTY, configured PTY, shipped stream for both harnesses, and malformed-value provider-specific fallback.",
+          "Pure plans assert endpoint and provider wire transport; actual local spawn tests exercise the embedded stream path. Plugin preparation rejects JSON-selected integrations without a live owner-bound permit before engine submission."
+        ],
+        "intentionalChanges": [
+          "Headless launch integration is now implemented in Rust with an authenticated pending-call permit. The old test responsibility (no silently dropped integration/no launch without admission) remains; blanket unavailability is intentionally superseded."
+        ]
+      },
       "sha256": "5c088637354ff1ca3687e3e83bdc3eecdfa424eb7ee00b209fcc185bc5c7907b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs"
+      ]
     },
     "services/hub/cmd/brain/spawncwd_test.go": {
       "replacement": [],
@@ -1012,16 +1320,63 @@
       "tests": []
     },
     "services/hub/cmd/brain/store.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/agent_ops.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read seed/set/get/all/remove/restamp, ended edge versus durable retry, silent statusline update, and desktop workflow merge. Rust BTreeMap owns ordered detached JSON values; sessions seed is silent, live updates refresh canonical daemon state and publish through visibility, and reads apply current host metadata.",
+          "Typed lag regression proves initial seed silence and canonical refresh after a stale queued event; workflow_artifacts real producer regression verifies workflow/subagent overlay survives daemon changes without replacing liveness or resurrecting dismissed rows. live_streams known-row tests verify silent status data merge and separate light publication.",
+          "Lifecycle reconciliation provides retryable generation-scoped ended credential teardown independently of wake observation. Failed revocation retry and stale-generation fixtures prove cleanup does not repeat launch or revoke a successor. Current library224 and prior lifecycle8 checkpoints pass."
+        ],
+        "intentionalChanges": [
+          "Typed values replace raw JSON/map callback plumbing; the engine and host services share owned channels instead of local SSE. A resync also removes absent authoritative rows and publishes ended state for previously known rows.",
+          "Dismissals retain bounded generation-fenced tombstones rather than relying on removal alone; this prevents retained daemon history resurrecting a closed row while still allowing an intentional new launch generation.",
+          "Recorded metadata is applied on read/publication as well as lifecycle updates, so manual reparent is immediately visible without an extra restamp callback. Workflow caches own their own scan identity and pruning."
+        ]
+      },
       "sha256": "5c26e7c0d864e03b0f8f642e4ecb1af37ab62478782a6088ffc902c572b7adf4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/embedded_engine.rs",
+        "services/hub-rs/tests/workflow_artifacts.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/store_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/agent_ops.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both tests: silent seed, ordered session IDs, set callback/latest canonical snapshot and live SSE-refresh behavior. Typed real-engine projection test covers silent initial seed and canonical refresh of an intentionally stale event, while BTreeMap makes iteration ordered by session ID.",
+          "Real embedded_engine fixture exercises sessions.snapshot/list through the actual hub and owned daemon with hook events; lifecycle and workflow tests cover enrichment and unchanged projection identity."
+        ],
+        "intentionalChanges": [
+          "The fake HTTP/SSE daemon is replaced by a real embedded engine and a bounded typed update queue. No model or provider CLI is invoked."
+        ]
+      },
       "sha256": "2d1fb074db7bdd59f47310bdaee0cc56122a329667b927cf76abe1d3eccf481c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/embedded_engine.rs",
+        "services/hub-rs/tests/workflow_artifacts.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/stores.go": {
       "replacement": [],
@@ -1042,16 +1397,52 @@
       "tests": []
     },
     "services/hub/cmd/brain/terminal.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared terminal.go constants and every attach/keepalive/detach/sweep/flush branch:20s lease,5s sweep,16ms frame,64KiB flush and base64 JSON pty.bytes.<session> payload remain.",
+          "Real embedded shell fixture checks replay, arbitrary byte preservation, input/resize, per-viewer keepalive and detach, natural exit/removal, and shutdown process ownership.",
+          "viewer_lease_expiry_keeps_live_viewers_and_joins_last_forwarder covers the exact deadline, expired versus live viewers, renewal without leaked references, and joining the stream after the final lease expires. Passed in Cargo lib210 checkpoint."
+        ],
+        "intentionalChanges": [
+          "The in-process embedded subscription replaces the local Go SSE retry loop; external Electron remains its own UI capability provider. Native replay subscription is atomic.",
+          "Leases are per verified caller instead of one shared deadline, so detaching one viewer cannot stop another. Reattach includes an explicit terminal reset before ring replay, asserted by the real fixture."
+        ]
+      },
       "sha256": "13de5dcc29aa4875503d63280772cfb1c5f6b93a71c4dc3b4f99cffab03a525c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/tests/pty_ownership.rs"
+      ]
     },
     "services/hub/cmd/brain/terminal_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared terminal.go constants and every attach/keepalive/detach/sweep/flush branch:20s lease,5s sweep,16ms frame,64KiB flush and base64 JSON pty.bytes.<session> payload remain.",
+          "Real embedded shell fixture checks replay, arbitrary byte preservation, input/resize, per-viewer keepalive and detach, natural exit/removal, and shutdown process ownership.",
+          "viewer_lease_expiry_keeps_live_viewers_and_joins_last_forwarder covers the exact deadline, expired versus live viewers, renewal without leaked references, and joining the stream after the final lease expires. Passed in Cargo lib210 checkpoint."
+        ],
+        "intentionalChanges": [
+          "The in-process embedded subscription replaces the local Go SSE retry loop; external Electron remains its own UI capability provider. Native replay subscription is atomic.",
+          "Leases are per verified caller instead of one shared deadline, so detaching one viewer cannot stop another. Reattach includes an explicit terminal reset before ring replay, asserted by the real fixture."
+        ]
+      },
       "sha256": "7bb0e7c55e01a27b83e34c1e5133d15f8a17c2db136405922fb79b7590d4fea2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/tests/pty_ownership.rs"
+      ]
     },
     "services/hub/cmd/brain/terminput_test.go": {
       "replacement": [],
@@ -1182,16 +1573,28 @@
       ]
     },
     "services/hub/cmd/hub/hostonly.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ],
+      "review": "Reviewed host-only install/reload/example execution. RealHTTP matrix now preserves403 with a non-disclosing host-authority explanation for scopedoperators,401 for view/triage/provider/unknown, successful host operations and the explicitly unkeyed standalone-router case. Full plugin_manager20 passes.",
       "sha256": "4166383d2d7a880843a7b17f05a472ad4343398b0eb6b6a172fbabd8ba00947e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/cmd/hub/hostonly_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ],
+      "review": "Reviewed host-only install/reload/example execution. RealHTTP matrix now preserves403 with a non-disclosing host-authority explanation for scopedoperators,401 for view/triage/provider/unknown, successful host operations and the explicitly unkeyed standalone-router case. Full plugin_manager20 passes.",
       "sha256": "fc8f6f8e5c47e5554bfc7b8665333edcdf84bc572490e158d5f76cbc16a3f3aa",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/cmd/hub/launchintegration.go": {
       "replacement": [],
@@ -1218,16 +1621,28 @@
       "tests": []
     },
     "services/hub/cmd/hub/manifestroutes.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/sdk.js"
+      ],
+      "review": "Reviewed closed public manifest keys versus authorized full metadata, [] for empty lists, own-plugin/host-only settings seeding with redacted secrets, SDK bootstrap/injection and unchanged nonHTML asset bytes. SDK MIME/cache headers now match Go exactly; actualHTTP20 regression suite passes.",
       "sha256": "87a9d95efe7f59f224d3dc2ff0efb6648b677f9dadcee82ac1e79825a0aef701",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/cmd/hub/manifestroutes_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/sdk.js"
+      ],
+      "review": "Reviewed closed public manifest keys versus authorized full metadata, [] for empty lists, own-plugin/host-only settings seeding with redacted secrets, SDK bootstrap/injection and unchanged nonHTML asset bytes. SDK MIME/cache headers now match Go exactly; actualHTTP20 regression suite passes.",
       "sha256": "7cec2c702201da005e74826f2902e66351a654d7e752c6cc03562a099b058a6e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/cmd/hub/mobile_capabilities_test.go": {
       "replacement": [
@@ -1297,16 +1712,34 @@
       ]
     },
     "services/hub/cmd/hub/peersconfig.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": "Reviewed owner-only peer configuration, token redaction/keep/clear semantics, name/URL/limit validation before atomic persistence and live replacement, including fixed peers. Closed a request-deadline gap by reserving actor queue capacity before commit and enqueueing under the same write lock. Three deterministic actualHub tests prove postcommit timeout completion, concurrent ordering after caller cancellation and owned shutdown/restart; existing CRUD/federation5 and owner-only jobs tests cover retained contracts.",
       "sha256": "381d990a67e543d9773532c8fbd76336909a39960162a899a09581ad1beefb64",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
     },
     "services/hub/cmd/hub/peersconfig_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": "Reviewed owner-only peer configuration, token redaction/keep/clear semantics, name/URL/limit validation before atomic persistence and live replacement, including fixed peers. Closed a request-deadline gap by reserving actor queue capacity before commit and enqueueing under the same write lock. Three deterministic actualHub tests prove postcommit timeout completion, concurrent ordering after caller cancellation and owned shutdown/restart; existing CRUD/federation5 and owner-only jobs tests cover retained contracts.",
       "sha256": "e6aa7ce6092a4bc17678973e8eab93440581311e5e5267a7a05641fe2dc1ebb4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
     },
     "services/hub/cmd/hub/pluginorigin_test.go": {
       "replacement": [
@@ -1455,16 +1888,32 @@
       "tests": []
     },
     "services/hub/cmd/hub/sdk_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/sdk.js"
+      ],
+      "review": "Reviewed closed public manifest keys versus authorized full metadata, [] for empty lists, own-plugin/host-only settings seeding with redacted secrets, SDK bootstrap/injection and unchanged nonHTML asset bytes. SDK MIME/cache headers now match Go exactly; actualHTTP20 regression suite passes.",
       "sha256": "925a2fbc6b01e908b0e4b56650233c6f040c79433b8ce98e98b10e10ef02fc8d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/cmd/hub/trustedhost_wiring_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Reviewed comma-separated trusted hostname parsing, invalid/wildcard names, real listener socket policy and declared proxy Host/Origin exemption. Actual-socket HTTP tests plus CLI forwarding preserve the source wiring contract.",
       "sha256": "b720afa569817013d3ed5ebf3c702f55f23573547298d1319bb98672bc467d61",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server/tests.rs",
+        "services/hub-rs/tests/http.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/hub/upload.go": {
       "replacement": [
@@ -1517,10 +1966,15 @@
       "tests": []
     },
     "services/hub/cmd/mcp/adopt_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests.",
       "sha256": "3fda6ebdf5758240c666f3ec23bfccabf201487207585489aefc49d6811d9268",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/auth_test.go": {
       "note": "Scoped bearer, owner, explicit guest/static tiers, bad credential rejection, tool authorization and policy revocation covered. Authtoken package is not certified wholesale by this narrower review.",
@@ -1545,16 +1999,30 @@
       "tests": []
     },
     "services/hub/cmd/mcp/conversation.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Reviewed trailing assistant-run semantics, usage/plan skipping, empty windows, text-only filtering, odd-envelope pass-through and lastMessage precedence. Pure tests retain those branches; actual federated MCP fixture asserts stripped facade-only params and reduced peer result. Shared Rust transport preserves JSON values, with normalized JSON text formatting rather than a RawMessage byte buffer.",
       "sha256": "aad4048c18383d23da4218b95a8623034036ac5e856b3a35a687903089d8a447",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/conversation_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Reviewed trailing assistant-run semantics, usage/plan skipping, empty windows, text-only filtering, odd-envelope pass-through and lastMessage precedence. Pure tests retain those branches; actual federated MCP fixture asserts stripped facade-only params and reduced peer result. Shared Rust transport preserves JSON values, with normalized JSON text formatting rather than a RawMessage byte buffer.",
       "sha256": "abcf04b300481543be90ac85c6dc8eb6364325a96526d99cfaf7e98fcb8b1e60",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/mcp/conversation.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/dispatch_chain_fixture_test.go": {
       "replacement": [],
@@ -1563,16 +2031,30 @@
       "tests": []
     },
     "services/hub/cmd/mcp/federated.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/fleet.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Reviewed local/peer merging, absence of federation, per-peer failure isolation, owner model-selection passthrough and peer-qualified calls. Live MCP fixture waits for both actual peers, positively exercises a connected failing provider, preserves sparse/null owner selection and contradictory legacy window, overwrites forged peer tags and checks facade options do not reach the provider. Broker integration tests retain both endpoint scopes and no-replay reconnect behavior.",
       "sha256": "1b09f7d5638cbd73ea600db4f7edc70c5a6f77c903496bb17009498789d7edad",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/federation.rs"
+      ]
     },
     "services/hub/cmd/mcp/federated_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/fleet.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Reviewed local/peer merging, absence of federation, per-peer failure isolation, owner model-selection passthrough and peer-qualified calls. Live MCP fixture waits for both actual peers, positively exercises a connected failing provider, preserves sparse/null owner selection and contradictory legacy window, overwrites forged peer tags and checks facade options do not reach the provider. Broker integration tests retain both endpoint scopes and no-replay reconnect behavior.",
       "sha256": "5893b60d1bf166aa7c021856610e777932d6ba123c4353e5145dfa2f9b1fcce6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/federation.rs"
+      ]
     },
     "services/hub/cmd/mcp/fleet_workflows.go": {
       "replacement": [],
@@ -1581,10 +2063,15 @@
       "tests": []
     },
     "services/hub/cmd/mcp/gatetool_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/gate.rs"
+      ],
+      "review": "Actual MCP approval-gate composition preserves provider receipt, reports confirmed live permission mode before stale launch settings, falls back to settings when live mode absent, and survives missing snapshot with unknown mode. Gate-off explanation retains the independent provider prompting behavior.",
       "sha256": "4489d92601cb855420698dc73a9eb9bec2154b9a927f939748444b5ed194dc1d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/help.go": {
       "replacement": [],
@@ -1635,10 +2122,15 @@
       "tests": []
     },
     "services/hub/cmd/mcp/notify_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests.",
       "sha256": "56c4fbf8c48b45061f4c3c744d713a11f7da71fbe791b62b967bf990b649676d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/notifywhen_test.go": {
       "replacement": [],
@@ -1647,10 +2139,15 @@
       "tests": []
     },
     "services/hub/cmd/mcp/openterminal_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests.",
       "sha256": "f4b516ba0b300812e741a62bce36c92c10d8e90053f29c4776d73942ead9b47b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/operation_schema.go": {
       "replacement": [],
@@ -1665,22 +2162,45 @@
       "tests": []
     },
     "services/hub/cmd/mcp/ownerselection_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/fleet.rs",
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Reviewed local/peer merging, absence of federation, per-peer failure isolation, owner model-selection passthrough and peer-qualified calls. Live MCP fixture waits for both actual peers, positively exercises a connected failing provider, preserves sparse/null owner selection and contradictory legacy window, overwrites forged peer tags and checks facade options do not reach the provider. Broker integration tests retain both endpoint scopes and no-replay reconnect behavior.",
       "sha256": "f8d1c9dea7be91fc929e8251325d1479ed509928b4f10a511c514d3b05fd5d30",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/federation.rs"
+      ]
     },
     "services/hub/cmd/mcp/plugins.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/plugin_catalog.rs",
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/help.rs"
+      ],
+      "review": "Reviewed15-second polling and initial readiness, exact plugin-ID normalization, default object schemas, malformed-schema guard, live replacement/removal and legacy grant inertness. Rust also guards owned method namespaces and builtin-name shadows and rejects ambiguous normalized names atomically. RealMCP tests cover view/triage/operator exposure without widening registered first-party spawn, provider denial, dynamic plugin help, raw argument routing, schema errors and token revocation. No list-changed notification existed in Go or was added here. Catalog3 and fullMCP11 passed in latest combined validation.",
       "sha256": "8e651accb2c1539d3be473e4dcafd62fd01a45953d5210db6867c88ca9bad1fd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/mcp/plugin_catalog.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/plugins_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/plugin_catalog.rs",
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/help.rs"
+      ],
+      "review": "Reviewed15-second polling and initial readiness, exact plugin-ID normalization, default object schemas, malformed-schema guard, live replacement/removal and legacy grant inertness. Rust also guards owned method namespaces and builtin-name shadows and rejects ambiguous normalized names atomically. RealMCP tests cover view/triage/operator exposure without widening registered first-party spawn, provider denial, dynamic plugin help, raw argument routing, schema errors and token revocation. No list-changed notification existed in Go or was added here. Catalog3 and fullMCP11 passed in latest combined validation.",
       "sha256": "7f00ac52c28d4f98e105d6a1a9427709a8fea9e237fab0fc415838281358935f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/mcp/plugin_catalog.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/profilegrant_test.go": {
       "replacement": [],
@@ -1737,22 +2257,41 @@
       "tests": []
     },
     "services/hub/cmd/mcp/sendmessage_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs"
+      ],
+      "review": "Actual HTTP MCP forwarding table checks exact method/params: both reparent IDs, sender identity, terminal cwd/command/label/parent, complete notification click target and display flags, and orphan discovery. Every operator-only entry is refused at view/triage without reaching the handler; send_message remains triage/operator. This is forwarding/scope evidence, not a substitute for actual lifecycle operation tests.",
       "sha256": "08129da981a0767b90a7f913280c465935bdf012c56bf830e325e3d614f6eba4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/cmd/mcp/spawn_firstmessage_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/spawn.rs"
+      ],
+      "review": "Real MCP/broker/external-provider fixture covers confirmed first-message receipt (one call), legacy omitted-field fallback (one send), failed fallback, missing addressable identity and message-free spawn. Explicit negative acknowledgment remains uncertainty and is not replayed. Errors identify uncertainty/no-retry instead of incorrectly promising the accepted worker is idle. Actual owned-engine launch verifies first message and bookkeeping-failure receipt separately.",
       "sha256": "ef39c14169e132b126b127087bf7df6c5c1c1df45714f7c972e2faa85e31a6f8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/mcp/spawn_parent_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "review": "Verified session identity pins parent and dispatch owner; plain caller metadata cannot mint host lineage. Preparation tests and actual MCP forged-owner/retry fields reject before provider execution; owned launch verifies authenticated session facade.",
       "sha256": "965265623e01f8eaff9798dc0b99d5af3d30e7735023e450579b220b736f4a5b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/mcp/spawndefaults_test.go": {
       "replacement": [],
@@ -1924,16 +2463,30 @@
       ]
     },
     "services/hub/cmd/workspacer/install.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/mod.rs"
+      ],
+      "review": "Reviewed default writable system/user destinations, Windows local-app-data/home fallback, explicit destination, public workspacer command from current Rust executable, Unix symlink/copy fallback, executable permissions, replacement/self-install and PATH membership guidance. Four isolated filesystem tests passed with injected writable probe and fake artifacts; existing CLI12 passed. Staged replacement additionally preserves the prior command on copy failure. Windows in-use rename is source implemented; actual Windows execution remains the platform cutover gate.",
       "sha256": "42c68fb22beaa17806dd0e468801fd966e799561f77d91d529b350f461f29632",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/workspacer/install_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/mod.rs"
+      ],
+      "review": "Reviewed default writable system/user destinations, Windows local-app-data/home fallback, explicit destination, public workspacer command from current Rust executable, Unix symlink/copy fallback, executable permissions, replacement/self-install and PATH membership guidance. Four isolated filesystem tests passed with injected writable probe and fake artifacts; existing CLI12 passed. Staged replacement additionally preserves the prior command on copy failure. Windows in-use rename is source implemented; actual Windows execution remains the platform cutover gate.",
       "sha256": "0dd7a2708b567e26bacdc8e6df92464bdffa27414b19dbf721bd1ba07d998ba8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/workspacer/jobscmd.go": {
       "replacement": [
@@ -2693,16 +3246,34 @@
       "tests": []
     },
     "services/hub/internal/capspec/httproutes.go": {
-      "replacement": [],
+      "note": "70 current Rust hub/MCP/daemon route bindings are classified independently of runtime smoke. Actual method/handler registrations, bound guard call chains, stronger host gates, dynamic plugin operation arms/default refusal, cross-plane event/method twins and applied daemon Host/Origin layers are checked. Mutation battery rejects additions/deletions, duplicate paths or methods, unparsed router suffixes, weakened guards, stale twins, unreviewed operation arms, public side effects, and newly discovered production modules. Test-only exclusions must originate in actual cfg(test) module declarations and cannot hide a production import. Existing caller/served fixture guards remain linked. No Go runner is needed; Go package registry was otherwise consumed by reference snapshot generation only.",
+      "replacement": [
+        "contracts/http-route-registry.json",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts",
+        "apps/desktop/tests/support/rustHttpSource.ts"
+      ],
       "sha256": "75eea4bcd471facd874459d6fa8015e9b2c5e702eee8fd136d1ada53cbbe3f4e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts",
+        "apps/desktop/src/main/services/claudemonRouteContract.test.ts",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ]
     },
     "services/hub/internal/capspec/httproutes_test.go": {
-      "replacement": [],
+      "note": "70 current Rust hub/MCP/daemon route bindings are classified independently of runtime smoke. Actual method/handler registrations, bound guard call chains, stronger host gates, dynamic plugin operation arms/default refusal, cross-plane event/method twins and applied daemon Host/Origin layers are checked. Mutation battery rejects additions/deletions, duplicate paths or methods, unparsed router suffixes, weakened guards, stale twins, unreviewed operation arms, public side effects, and newly discovered production modules. Test-only exclusions must originate in actual cfg(test) module declarations and cannot hide a production import. Existing caller/served fixture guards remain linked. No Go runner is needed; Go package registry was otherwise consumed by reference snapshot generation only.",
+      "replacement": [
+        "contracts/http-route-registry.json",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts",
+        "apps/desktop/tests/support/rustHttpSource.ts"
+      ],
       "sha256": "0eaf4cecdff232e1db2887cdc4cb484216471fbc243eac28f61da357f625bdd9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts",
+        "apps/desktop/src/main/services/claudemonRouteContract.test.ts",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts"
+      ]
     },
     "services/hub/internal/capspec/hubnative_test.go": {
       "replacement": [],

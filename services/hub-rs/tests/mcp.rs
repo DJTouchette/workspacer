@@ -318,8 +318,23 @@ async fn enabled_plugin_tools_are_ambient_but_only_delegate_to_the_declared_plug
     let tokens = directory.path().join("tokens.json");
     let view = auth::mint(&tokens, Scope::View, "view fixture").unwrap();
     let provider = auth::mint(&tokens, Scope::Provider, "provider fixture").unwrap();
+    let operator = auth::mint(&tokens, Scope::Operator, "operator fixture").unwrap();
+    let triage = auth::mint(&tokens, Scope::Triage, "triage fixture").unwrap();
+    auth::update_records(&tokens, |records| {
+        records
+            .iter_mut()
+            .find(|record| record.token == triage.token)
+            .unwrap()
+            .metadata
+            .insert("plugins".into(), json!(["missing.plugin"]));
+        Ok(())
+    })
+    .unwrap();
     let mut options = Options::default().handler("fixture.echo", |caller, params| async move {
         Ok(json!({"host":caller.authenticated_host,"message":params["message"]}))
+    });
+    options = options.handler("agents.spawn", |_, _| async {
+        Ok(json!({"sessionId":"unused-fixture"}))
     });
     options.token = "host-fixture".into();
     options.scoped_tokens = Some(tokens.clone());
@@ -344,6 +359,38 @@ async fn enabled_plugin_tools_are_ambient_but_only_delegate_to_the_declared_plug
             .iter()
             .any(|tool| tool["name"] == "fixture_echo"),
         "{tools}"
+    );
+    assert!(
+        !tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "spawn_agent")
+    );
+    for (token, can_spawn) in [(&operator.token, true), (&triage.token, false)] {
+        let listed = result(rpc(&client, &address, token, "tools/list", json!({})).await).await;
+        let names = listed["result"]["tools"].as_array().unwrap();
+        assert!(names.iter().any(|tool| tool["name"] == "fixture_echo"));
+        assert_eq!(
+            names.iter().any(|tool| tool["name"] == "spawn_agent"),
+            can_spawn
+        );
+    }
+    let help = result(
+        rpc(
+            &client,
+            &address,
+            &view.token,
+            "tools/call",
+            json!({"name":"help","arguments":{"topic":"plugins"}}),
+        )
+        .await,
+    )
+    .await;
+    assert!(
+        help["result"]["content"]
+            .to_string()
+            .contains("fixture_echo")
     );
     let provider_tools =
         result(rpc(&client, &address, &provider.token, "tools/list", json!({})).await).await;
@@ -411,10 +458,14 @@ async fn enabled_plugin_tools_are_ambient_but_only_delegate_to_the_declared_plug
 
 #[tokio::test]
 async fn fleet_tools_merge_peers_and_reduce_remote_conversations_at_the_facade() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     use std::time::Duration;
     use workspacer_hub::{client::Client, federation::Peer};
     let mut remote_options=Options::default()
-        .handler("agents.list", |_,_| async {Ok(json!([{"sessionId":"remote","cwd":"/only-on-worker"}]))})
+        .handler("agents.list", |_,_| async {Ok(json!([{"sessionId":"remote","cwd":"/only-on-worker","hub":"forged-peer","requestedSelection":{"model":"opus","contextWindow":1000000},"resolvedContextWindow":1000000,"statusLine":{"contextWindowSize":200000}}]))})
         .handler("sessions.conversation", |_,params| async move {
             anyhow::ensure!(params==json!({"sessionId":"remote","sinceSeq":2}),"facade options leaked to provider: {params}");
             Ok(json!({"seq":9,"items":[{"kind":"user_message","text":"task"},{"kind":"tool_result"},{"kind":"assistant_text","text":"done"},{"kind":"usage"}]}))
@@ -423,24 +474,53 @@ async fn fleet_tools_merge_peers_and_reduce_remote_conversations_at_the_facade()
     remote_options.token = "peer-fixture".into();
     let remote = Hub::start(remote_options).unwrap();
     let remote_address = remote.ready().await.unwrap().unwrap();
+    let failed_calls = Arc::new(AtomicUsize::new(0));
+    let count = failed_calls.clone();
+    let mut failed_options = Options::default().handler("agents.list", move |_, _| {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            anyhow::bail!("peer fixture unavailable")
+        }
+    });
+    failed_options.listen = Some("127.0.0.1:0".parse().unwrap());
+    failed_options.token = "failed-peer-fixture".into();
+    let failed_peer = Hub::start(failed_options).unwrap();
+    let failed_address = failed_peer.ready().await.unwrap().unwrap();
     let mut options = Options::default()
         .handler("agents.list", |_, _| async {
-            Ok(json!([{"sessionId":"local"}]))
+            Ok(json!([{"sessionId":"local","requestedSelection":{"model":"sonnet","contextWindow":null}}]))
         })
         .handler("sessions.conversation", |_, _| async { Ok(json!(null)) });
     options.token = "host-fixture".into();
     options.mcp_listen = Some("127.0.0.1:0".parse().unwrap());
-    options.federation_peers = vec![Peer {
-        name: "worker".into(),
-        url: format!("ws://{remote_address}/bus"),
-        token: "peer-fixture".into(),
-        dispatch: false,
-    }];
+    options.federation_peers = vec![
+        Peer {
+            name: "worker".into(),
+            url: format!("ws://{remote_address}/bus"),
+            token: "peer-fixture".into(),
+            dispatch: false,
+        },
+        Peer {
+            name: "failing".into(),
+            url: format!("ws://{failed_address}/bus"),
+            token: "failed-peer-fixture".into(),
+            dispatch: false,
+        },
+    ];
     let hub = Hub::start(options).unwrap();
     hub.ready().await.unwrap();
     let bus = Client::connect(&hub.handle()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
-        while bus.call("federation.peers", json!({})).await.unwrap()[0]["connected"] != true {
+        while !bus
+            .call("federation.peers", json!({}))
+            .await
+            .unwrap()
+            .as_array()
+            .is_some_and(|peers| {
+                peers.len() == 2 && peers.iter().all(|peer| peer["connected"] == true)
+            })
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -468,7 +548,12 @@ async fn fleet_tools_merge_peers_and_reduce_remote_conversations_at_the_facade()
     assert_eq!(
         serde_json::from_str::<Value>(response["result"]["content"][0]["text"].as_str().unwrap())
             .unwrap(),
-        json!([{"sessionId":"local"},{"sessionId":"remote","cwd":"/only-on-worker","hub":"worker"}])
+        json!([{"sessionId":"local","requestedSelection":{"model":"sonnet","contextWindow":null}},{"sessionId":"remote","cwd":"/only-on-worker","hub":"worker","requestedSelection":{"model":"opus","contextWindow":1000000},"resolvedContextWindow":1000000,"statusLine":{"contextWindowSize":200000}}])
+    );
+    assert_eq!(
+        failed_calls.load(Ordering::SeqCst),
+        1,
+        "peer failure must be exercised rather than skipped as disconnected"
     );
     let response=result(rpc(&client,&address,"host-fixture","tools/call",json!({"name":"get_conversation","arguments":{"sessionId":"remote","hub":"worker","sinceSeq":2,"lastMessage":true,"textOnly":true}})).await).await;
     assert_eq!(
@@ -478,6 +563,7 @@ async fn fleet_tools_merge_peers_and_reduce_remote_conversations_at_the_facade()
     );
     hub.shutdown().unwrap();
     remote.shutdown().unwrap();
+    failed_peer.shutdown().unwrap();
 }
 
 #[tokio::test]
@@ -841,6 +927,7 @@ async fn spawn_first_message_receipts_preserve_legacy_fallback_without_replaying
         .unwrap();
     for (key, value) in [
         ("profileGranted", json!(true)),
+        ("yoloGranted", json!(true)),
         ("skipPermissionsGranted", json!(true)),
         ("retrySourceSessionId", json!("forged-predecessor")),
         ("dispatchOwnerSessionId", json!("forged-owner")),
@@ -950,6 +1037,7 @@ async fn forwarding_tools_keep_identity_click_targets_and_operator_boundaries() 
         "terminals.open",
         "notifications.post",
         "agents.notifyWhen",
+        "config.save",
     ] {
         let calls = calls.clone();
         options = options.handler(method, move |_, params| {
@@ -982,6 +1070,76 @@ async fn forwarding_tools_keep_identity_click_targets_and_operator_boundaries() 
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .unwrap();
+    let inventory = workspacer_hub::mcp::migration_inventory();
+    assert_eq!(inventory["unmapped"], json!([]));
+    assert!(inventory["total"].as_u64().unwrap() >= 100);
+    let listing =
+        result(rpc(&client, &address, &operator.token, "tools/list", json!({})).await).await;
+    let listed = listing["result"]["tools"].as_array().unwrap();
+    let watch = listed
+        .iter()
+        .find(|tool| tool["name"] == "notify_when")
+        .unwrap();
+    let watch_schema = watch["inputSchema"].to_string();
+    for phrase in [
+        "contextUsedPct",
+        "runtime-confirmed",
+        "(0,100]",
+        "cache-inclusive",
+        "not active-context health",
+    ] {
+        assert!(
+            watch_schema.contains(phrase),
+            "watch schema lost its confirmed-health contract: {phrase}"
+        );
+    }
+    let save = listed
+        .iter()
+        .find(|tool| tool["name"] == "save_config")
+        .unwrap();
+    let wholesale: Value = serde_json::from_str(include_str!(
+        "../../../contracts/wholesale-config-paths.json"
+    ))
+    .unwrap();
+    for path in wholesale["paths"].as_array().unwrap() {
+        let mut schema = &save["inputSchema"];
+        let parts: Vec<_> = path.as_str().unwrap().split('.').collect();
+        for part in &parts {
+            schema = &schema["properties"][*part];
+        }
+        assert_eq!(schema["type"], "object", "{path}");
+        assert!(
+            schema["description"]
+                .as_str()
+                .unwrap()
+                .contains("REPLACED wholesale"),
+            "{path}"
+        );
+        let mut invalid = json!({});
+        if parts.len() == 1 {
+            invalid[parts[0]] = "{}".into();
+        } else {
+            invalid[parts[0]] = json!({parts[1]:"{}"});
+        }
+        let before = calls.load(Ordering::SeqCst);
+        let rejected = result(
+            rpc(
+                &client,
+                &address,
+                &operator.token,
+                "tools/call",
+                json!({"name":"save_config","arguments":invalid}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(rejected["result"]["isError"], true, "{path}: {rejected}");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            before,
+            "stringified wholesale map reached provider"
+        );
+    }
     for (tool, method, arguments, triage_allowed) in [
         (
             "send_message",

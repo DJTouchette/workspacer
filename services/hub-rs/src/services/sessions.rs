@@ -16,6 +16,7 @@ use tokio::sync::broadcast;
 struct Sessions {
     dismissals: super::agent_ops::Dismissals,
     tokens: Option<std::path::PathBuf>,
+    config_dir: Option<std::path::PathBuf>,
     mutations: tokio::sync::Mutex<()>,
     engine: EmbeddedClient,
     rows: Arc<RwLock<BTreeMap<String, Value>>>,
@@ -45,6 +46,7 @@ pub(crate) async fn install(
         workflow_artifacts: options.workflow_artifacts.clone(),
         dismissals: Default::default(),
         tokens: options.scoped_tokens.clone(),
+        config_dir: options.config_dir.clone(),
         mutations: tokio::sync::Mutex::new(()),
         engine,
         rows: options.session_snapshots.clone(),
@@ -146,13 +148,34 @@ impl Sessions {
     }
     async fn seed(&self, publish: bool) -> Result<()> {
         let _mutation = self.mutations.lock().await;
-        let raw = self.engine.request(Command::Sessions).await?;
+        let raw = if publish {
+            self.request(
+                "GET",
+                "/sessions?include_archived=true&include_empty=true".into(),
+                None,
+            )
+            .await?
+        } else {
+            self.engine.request(Command::Sessions).await?
+        };
+        let mut known: std::collections::BTreeSet<String> =
+            self.rows.read().unwrap().keys().cloned().collect();
+        if let Some(lifecycle) = &self.lifecycle {
+            // A host-owned launch can finish while both its start and end
+            // notifications are lost, before its first projected row exists.
+            known.extend(lifecycle.records().into_keys());
+        }
         let array = raw
             .as_array()
             .ok_or_else(|| anyhow!("daemon session seed is not an array"))?;
         let mut rows = BTreeMap::new();
         for row in array {
             if let Some(id) = row["session_id"].as_str() {
+                // A lag recovery must recover known terminal edges without
+                // importing unrelated retained history into the live fleet.
+                if publish && !known.contains(id) && super::agent_ops::ended(row) {
+                    continue;
+                }
                 if self.dismissals.allows(id, &self.generation(id)) {
                     rows.insert(id.into(), snapshots::compat(row.clone()));
                 }
@@ -221,10 +244,33 @@ impl Sessions {
             self.lifecycle.as_deref(),
             self.replacements.as_deref(),
         );
+        let row = if row.get("label").is_none() {
+            let names = self
+                .config_dir
+                .as_ref()
+                .filter(|path| path.is_absolute())
+                .map(|path| super::profile_accounts::read(&path.join("tui-names.json")))
+                .unwrap_or(Value::Null);
+            snapshots::with_cwd_name(row, &names)
+        } else {
+            row
+        };
         match &self.workflow_artifacts {
             Some(service) => service.enrich(row),
             None => row,
         }
+    }
+    fn sender_label(&self, id: &str) -> Option<String> {
+        // Attribution names the recorded agent, never a cwd display rename.
+        let row = snapshots::with_host_metadata(
+            json!({"sessionId":id}),
+            self.lifecycle.as_deref(),
+            self.replacements.as_deref(),
+        );
+        row["label"]
+            .as_str()
+            .filter(|label| !label.is_empty())
+            .map(str::to_owned)
     }
     async fn workflow_update(
         &self,
@@ -619,20 +665,10 @@ impl Sessions {
                     .ok_or_else(|| anyhow!("agents.sendMessage requires {{ sessionId, text }}"))?;
                 let mut text = text.to_owned();
                 if let Some(from) = params["fromSessionId"].as_str().filter(|s| !s.is_empty()) {
-                    let sender = self
-                        .rows
-                        .read()
-                        .unwrap()
-                        .get(from)
-                        .cloned()
-                        .map(|row| self.enrich(row));
-                    let label = sender
-                        .as_ref()
-                        .and_then(|row| row["label"].as_str())
-                        .filter(|label| !label.is_empty());
+                    let label = self.sender_label(from);
                     text = format!(
                         "{}{text}",
-                        super::fleet_messages::sender_header(from, label.unwrap_or(""))
+                        super::fleet_messages::sender_header(from, label.as_deref().unwrap_or(""))
                     );
                 }
                 if let Some(tracker) = &self.message_tracker {
@@ -746,5 +782,161 @@ impl Sessions {
             }
             _ => bail!("unknown session method"),
         }
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    struct NoPreparation;
+    impl super::super::agent_lifecycle::LaunchPreparation for NoPreparation {
+        fn prepare<'a>(
+            &'a self,
+            _: &'a mut super::super::spawn_plan::Plan,
+            _: &'a str,
+        ) -> super::super::agent_lifecycle::Operation<'a, ()> {
+            Box::pin(async { bail!("test does not launch providers") })
+        }
+        fn revoke<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a str,
+        ) -> super::super::agent_lifecycle::Operation<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+    #[tokio::test]
+    async fn typed_lag_reloads_canonical_terminal_state_without_importing_history() -> Result<()> {
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        let _single_engine = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: dir.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )?;
+        let ready = engine.ready().await?;
+        let client = engine.client();
+        let mut actual_updates = client.subscribe()?;
+        let hub = crate::Hub::start(Options::default())?;
+        hub.ready().await?;
+        let viewer = crate::client::Client::connect(&hub.handle()).await?;
+        let mut events = viewer.events();
+        viewer.topics(["agent.snapshot".into()].into()).await?;
+        let rows = Arc::new(RwLock::new(BTreeMap::new()));
+        let journal = dir.path().join("launches.json");
+        std::fs::write(
+            &journal,
+            serde_json::to_vec(&json!({"owned-fast":{
+                "generation":"owned-life", "provider":"claude", "cwd":dir.path(),
+                "metadata":{"label":"Owned fast worker"}, "phase":"running",
+                "revocationPending":false, "receipt":null
+            }}))?,
+        )?;
+        let lifecycle = super::super::agent_lifecycle::Lifecycle::open(
+            journal,
+            Arc::new(client.clone()),
+            Arc::new(NoPreparation),
+        )?;
+        let service = Arc::new(Sessions {
+            dismissals: Default::default(),
+            tokens: None,
+            config_dir: None,
+            mutations: tokio::sync::Mutex::new(()),
+            engine: client.clone(),
+            rows: rows.clone(),
+            remote_proxies: Default::default(),
+            layout: None,
+            upstream_layout: None,
+            hub: hub.handle(),
+            lifecycle: Some(lifecycle),
+            review: None,
+            history: None,
+            replacements: None,
+            message_tracker: None,
+            requests: None,
+            wakes: None,
+            workflow_artifacts: None,
+        });
+        let http = reqwest::Client::new();
+        for (id, event) in [("worker", "SessionStart"), ("worker", "UserPromptSubmit")] {
+            http.post(format!("http://{}/hook", ready.hook_addr))
+                .json(&json!({"hook_event_name":event,"session_id":id,"cwd":dir.path()}))
+                .send()
+                .await?
+                .error_for_status()?;
+        }
+        service.seed(false).await?;
+        assert!(rows.read().unwrap().contains_key("worker"));
+        assert!(events.try_recv().is_err(), "initial seed must be silent");
+        for (id, event) in [
+            ("worker", "SessionEnd"),
+            ("old-history", "SessionStart"),
+            ("old-history", "SessionEnd"),
+            ("owned-fast", "SessionStart"),
+            ("owned-fast", "SessionEnd"),
+        ] {
+            http.post(format!("http://{}/hook", ready.hook_addr))
+                .json(&json!({"hook_event_name":event,"session_id":id,"cwd":dir.path()}))
+                .send()
+                .await?
+                .error_for_status()?;
+        }
+        let raw = service
+            .request(
+                "GET",
+                "/sessions?include_archived=true&include_empty=true".into(),
+                None,
+            )
+            .await?;
+        assert!(
+            raw.as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["session_id"] == "old-history" && r["mode"] == "stopped")
+        );
+        // A bounded typed receiver has genuinely lost an edge. Its final queued
+        // frame is deliberately stale: the observer must GET authoritative state.
+        let stale = tokio::time::timeout(std::time::Duration::from_secs(2), actual_updates.recv())
+            .await??;
+        let (updates, receiver) = broadcast::channel(1);
+        for _ in 0..4 {
+            updates.send(stale.clone())?;
+        }
+        let observer = tokio::spawn(service.clone().observe(receiver));
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                let event = events.recv().await?;
+                if event
+                    .data
+                    .as_ref()
+                    .is_some_and(|r| r["sessionId"] == "worker" && r["status"] == "ended")
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+            }
+        })
+        .await??;
+        assert!(!rows.read().unwrap().contains_key("old-history"));
+        assert_eq!(rows.read().unwrap()["worker"]["status"], "ended");
+        assert_eq!(
+            rows.read().unwrap()["owned-fast"]["status"],
+            "ended",
+            "owned launch cannot disappear when both lifecycle edges were lost"
+        );
+        observer.abort();
+        let _ = observer.await;
+        hub.shutdown()?;
+        engine.shutdown().await?;
+        Ok(())
     }
 }
