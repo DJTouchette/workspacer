@@ -20,16 +20,20 @@ LEGACY = ROOT / "services/hub"
 
 def sources():
     files = {
-        str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+        path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(LEGACY.rglob("*.go"))
-        if "cmd/hub-reference/" not in str(path)
+        if "cmd/hub-reference/" not in path.relative_to(LEGACY).as_posix()
     }
-    # Embedded policy/default data also needs an explicit replacement. Do not
+    # Embedded policy/default data and retained contract fixtures need explicit replacements. Do not
     # glob arbitrary JSON/YAML: a developer may have private runtime state here.
-    for relative in ("internal/routing/routing.default.yaml", "cmd/brain/config_defaults.json"):
+    for relative in (
+        "internal/routing/routing.default.yaml",
+        "cmd/brain/config_defaults.json",
+        "internal/capspec/testdata/param-vocabulary.json",
+    ):
         path = LEGACY / relative
         if path.is_file():
-            files[str(path.relative_to(ROOT))] = hashlib.sha256(path.read_bytes()).hexdigest()
+            files[path.relative_to(ROOT).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
     return files
 
 

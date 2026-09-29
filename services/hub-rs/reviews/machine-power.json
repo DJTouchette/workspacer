@@ -1,0 +1,61 @@
+{
+  "records": {
+    "services/hub/cmd/hub/machinepower.go": {
+      "sha256": "c4780a48bb4f3b705f37748c9dc5f9e3ad76140eaf73d8d2eaf4bbf320782799",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/machine_power.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs",
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/machine_power.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the entire source and all eight machinepower tests. Matched explicit Fly/http opt-ins, token-first/file fallback, credential-free wake URL, disabled configuration, operator/trusted admission, read-only power projection, ignored caller coordinates, fixed configured host identity, SIGTERM and 45s grace.",
+          "Matched bounded preflight before receipt/disconnect, idempotent stopping latch, one-second receipt delay, final automatic idle recheck, manual override, disconnect-before-stop, sanitized uncertain failure, and refusal to automatically replay a failed stop. Rust fake providers and local HTTP fixtures exercise actions without cloud effects.",
+          "Matched all scheduled jobs as blockers, unknown fleet refusal, continuous idle dwell reset, observe-only sampling without provider calls, idle mode selection, and minimum ten-minute configuration. Added exact signed nanosecond-bound parsing before millisecond conversion, matching Go unit/sign/fraction precision and boundary behavior for ordinary valid durations.",
+          "Validation checkpoint: full library289, machine_power7, and quiescence3 all passed (299 tests). The duration matrix includes28 accepted/refused cases and is independently inspectable with the standard-library-only tools/go-duration-reference CLI. Existing monitor corpus explicitly replays busy observation resetting dwell."
+        ],
+        "intentionalChanges": [
+          "An owned cancellable controller replaces detached Go goroutines; actor shutdown cancels an accepted pre-disconnect delay, waits bounded provider operations, and prevents ownerless cloud actions. Embedded libraries receive explicit provider authority; only the standalone launcher reads cloud credentials.",
+          "Duration accumulation refuses arithmetic overflow rather than reproducing Go's pathological unsigned wrap where two 2^63-nanosecond components plus10m become10m. Ordinary positive/negative i64 nanosecond limits and documented fractional syntax remain compatible; invalid wrapped input cannot enable automatic stop.",
+          "The provider bounds credential files and response bodies, refuses redirects and invalid host coordinate characters, and sanitizes provider errors. No caller can select an endpoint or pass provider credentials."
+        ]
+      }
+    },
+    "services/hub/cmd/hub/machinepower_test.go": {
+      "sha256": "cbc99c8b89ea262bca4cee26c17cf3db21997fd27c7992869e527b4d898206f8",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/machine_power.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/machine_power.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestMachineStopAuthorityAndIdempotence and TestMachineStopRefusesUnavailableProviderBeforeDisconnect map to manual_authority_preflight_idempotence_and_disconnect_order, including default/untrusted, view, triage, provider and explicit plugin refusal; no disconnect after failed check; sanitized error; three receipts but exactly one stop after disconnect. The handler ignores raw coordinates and the provider has only host-configured fields.",
+          "TestFlySelfStopUsesOnlyConfiguredCoordinatesAndGrace maps to fly_self_stop_uses_fixed_host_coordinates_and_grace: real local HTTP GET/POST paths, bearer credential and exact SIGTERM/45s JSON body. TestMachinePowerRequiresExplicitWakeAndCredentials maps to provider_authority_requires_explicit_host_optins_and_credentials, including each missing field and invalid credential-bearing wake URL.",
+          "TestIdleStopProtectsEveryScheduledJobAndUnknownFleet maps to the explicit running-shell/distant-shell/distant-spawn matrix plus automatic_stop_requires_continuous_quiet_and_all_schedules_block. Unknown fleet is never quiet. TestIdleStopRechecksBeforeDisconnect maps to automatic_recheck_cancels_new_work_but_manual_request_can_override, including stopping reset and no stop on newly busy evidence.",
+          "TestAutomaticStopWaitsForContinuousQuietAndResetsOnWork maps to the real controller busy/job/unknown-to-quiet test plus the shared Monitor busy-reset/dwell-boundary corpus. TestObservationModeMeasuresIdleWithoutCallingPowerProvider maps to observation_mode_reports_quiet_without_preflight_or_action, asserting a quiet reading and zero check/stop/disconnect effects.",
+          "Additional Rust assertions cover explicit owner cancellation, uncertain-stop visibility/no automatic replay and manual retry. Full library289 +machine_power7 +quiescence3 passed; no real Fly action was invoked."
+        ],
+        "intentionalChanges": [
+          "Owned fake providers and injected short controller timing replace Go goroutine sleeps; actual provider HTTP tests remain loopback-only. The portable quiescence corpus supplies the exact dwell reset/boundary assertions shared with the reference implementation."
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "records": {
+    "services/hub/internal/jobs/migration_test.go": {
+      "sha256": "79f53912df2464a816c57e8e5d6c3312b194b07d8d7b8e6d841a0f76897c9ece",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/jobs.rs",
+        "contracts/hub-job-cases.json"
+      ],
+      "review": "Read entire original test. Existing Rust shared_job_contract loads the same actual JSON corpus, preserves schedule>=5/prompt>=4 floors, uses fixed-offset zones and RFC3339 UTC expected times, checks optional no-next result and exact prompt substitutions. The jobs integration target8 passed in the current ownership/regex checkpoint. This record is only the migration corpus adapter, not certification of other scheduler/handedit/docs assertions.",
+      "status": "ported"
+    }
+  }
+}

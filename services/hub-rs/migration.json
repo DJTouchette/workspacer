@@ -2187,16 +2187,61 @@
       "tests": []
     },
     "services/hub/cmd/hub/machinepower.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/machine_power.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs",
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the entire source and all eight machinepower tests. Matched explicit Fly/http opt-ins, token-first/file fallback, credential-free wake URL, disabled configuration, operator/trusted admission, read-only power projection, ignored caller coordinates, fixed configured host identity, SIGTERM and 45s grace.",
+          "Matched bounded preflight before receipt/disconnect, idempotent stopping latch, one-second receipt delay, final automatic idle recheck, manual override, disconnect-before-stop, sanitized uncertain failure, and refusal to automatically replay a failed stop. Rust fake providers and local HTTP fixtures exercise actions without cloud effects.",
+          "Matched all scheduled jobs as blockers, unknown fleet refusal, continuous idle dwell reset, observe-only sampling without provider calls, idle mode selection, and minimum ten-minute configuration. Added exact signed nanosecond-bound parsing before millisecond conversion, matching Go unit/sign/fraction precision and boundary behavior for ordinary valid durations.",
+          "Validation checkpoint: full library289, machine_power7, and quiescence3 all passed (299 tests). The duration matrix includes28 accepted/refused cases and is independently inspectable with the standard-library-only tools/go-duration-reference CLI. Existing monitor corpus explicitly replays busy observation resetting dwell."
+        ],
+        "intentionalChanges": [
+          "An owned cancellable controller replaces detached Go goroutines; actor shutdown cancels an accepted pre-disconnect delay, waits bounded provider operations, and prevents ownerless cloud actions. Embedded libraries receive explicit provider authority; only the standalone launcher reads cloud credentials.",
+          "Duration accumulation refuses arithmetic overflow rather than reproducing Go's pathological unsigned wrap where two 2^63-nanosecond components plus10m become10m. Ordinary positive/negative i64 nanosecond limits and documented fractional syntax remain compatible; invalid wrapped input cannot enable automatic stop.",
+          "The provider bounds credential files and response bodies, refuses redirects and invalid host coordinate characters, and sanitizes provider errors. No caller can select an endpoint or pass provider credentials."
+        ]
+      },
       "sha256": "c4780a48bb4f3b705f37748c9dc5f9e3ad76140eaf73d8d2eaf4bbf320782799",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/machine_power.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs"
+      ]
     },
     "services/hub/cmd/hub/machinepower_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/machine_power.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestMachineStopAuthorityAndIdempotence and TestMachineStopRefusesUnavailableProviderBeforeDisconnect map to manual_authority_preflight_idempotence_and_disconnect_order, including default/untrusted, view, triage, provider and explicit plugin refusal; no disconnect after failed check; sanitized error; three receipts but exactly one stop after disconnect. The handler ignores raw coordinates and the provider has only host-configured fields.",
+          "TestFlySelfStopUsesOnlyConfiguredCoordinatesAndGrace maps to fly_self_stop_uses_fixed_host_coordinates_and_grace: real local HTTP GET/POST paths, bearer credential and exact SIGTERM/45s JSON body. TestMachinePowerRequiresExplicitWakeAndCredentials maps to provider_authority_requires_explicit_host_optins_and_credentials, including each missing field and invalid credential-bearing wake URL.",
+          "TestIdleStopProtectsEveryScheduledJobAndUnknownFleet maps to the explicit running-shell/distant-shell/distant-spawn matrix plus automatic_stop_requires_continuous_quiet_and_all_schedules_block. Unknown fleet is never quiet. TestIdleStopRechecksBeforeDisconnect maps to automatic_recheck_cancels_new_work_but_manual_request_can_override, including stopping reset and no stop on newly busy evidence.",
+          "TestAutomaticStopWaitsForContinuousQuietAndResetsOnWork maps to the real controller busy/job/unknown-to-quiet test plus the shared Monitor busy-reset/dwell-boundary corpus. TestObservationModeMeasuresIdleWithoutCallingPowerProvider maps to observation_mode_reports_quiet_without_preflight_or_action, asserting a quiet reading and zero check/stop/disconnect effects.",
+          "Additional Rust assertions cover explicit owner cancellation, uncertain-stop visibility/no automatic replay and manual retry. Full library289 +machine_power7 +quiescence3 passed; no real Fly action was invoked."
+        ],
+        "intentionalChanges": [
+          "Owned fake providers and injected short controller timing replace Go goroutine sleeps; actual provider HTTP tests remain loopback-only. The portable quiescence corpus supplies the exact dwell reset/boundary assertions shared with the reference implementation."
+        ]
+      },
       "sha256": "cbc99c8b89ea262bca4cee26c17cf3db21997fd27c7992869e527b4d898206f8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/machine_power.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/services/machine_power/fly.rs",
+        "services/hub-rs/src/services/quiescence/power.rs"
+      ]
     },
     "services/hub/cmd/hub/main.go": {
       "replacement": [],
@@ -4223,16 +4268,56 @@
       ]
     },
     "services/hub/internal/capspec/capspec.go": {
-      "replacement": [],
+      "note": "Portable authority classification retains all174 methods exactly once, method-specific parameter decisions, known path namespaces, the independent71-name/44-stem golden and closed inert exceptions, exact-versus-Unicode-folded lookup, both-direction count ratchets, config host-trusted key equality, live helper/own-method call claims, and prototype/pattern-name refusal. Path kinds are schema metadata, not retired workspace grants. Stale profile-permission-clamp prose was corrected. The actual desktop AST finds exactly79 dangerous method/parameter bindings, matching the original scanner ratchet; nested type/destructuring/member/alias/rename and new-name mutations preserve the original coverage. Supplemental Rust source scanning covers62 Value-based dispatch arms and53 dangerous bindings, not arbitrary interprocedural inference or serde struct decoding. Eight new Rust decisions explicitly describe owner-only file/font inputs, the used git.numstat operand and five ignored shared-prelude Git path reads. The separate cmd/brain/capspec_params_test.go scanner is NOT implicitly certified. No Rust production behavior changed.",
+      "replacement": [
+        "apps/desktop/tests/support/capabilityParameters.ts",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts",
+        "apps/desktop/tests/support/parameterBindings.ts",
+        "apps/desktop/tests/support/rustParameterBindings.ts",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
       "sha256": "05a5d88eb20e619326fe9185de40822b05fe17da73f5413c7e0851efc9528328",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json",
+        "contracts/host-trusted-config-cases.json"
+      ]
     },
     "services/hub/internal/capspec/capspec_test.go": {
-      "replacement": [],
+      "note": "Portable authority classification retains all174 methods exactly once, method-specific parameter decisions, known path namespaces, the independent71-name/44-stem golden and closed inert exceptions, exact-versus-Unicode-folded lookup, both-direction count ratchets, config host-trusted key equality, live helper/own-method call claims, and prototype/pattern-name refusal. Path kinds are schema metadata, not retired workspace grants. Stale profile-permission-clamp prose was corrected. The actual desktop AST finds exactly79 dangerous method/parameter bindings, matching the original scanner ratchet; nested type/destructuring/member/alias/rename and new-name mutations preserve the original coverage. Supplemental Rust source scanning covers62 Value-based dispatch arms and53 dangerous bindings, not arbitrary interprocedural inference or serde struct decoding. Eight new Rust decisions explicitly describe owner-only file/font inputs, the used git.numstat operand and five ignored shared-prelude Git path reads. The separate cmd/brain/capspec_params_test.go scanner is NOT implicitly certified. No Rust production behavior changed. All original desktop scanner responsibilities are represented: full method classification/disjointness; path/inert namespace checks; binding canaries and count floor; per-parameter/non-inert decisions rather than per-method exemptions; vocabulary/stem/case-fold fixtures; host config closure; exact live helper definitions and method-bound canonicalization calls. Mutation tests add a new registry file, new env/executable-shaped/nested field, unknown or inert-method decisions, lose guards/config keys/imports/source trees, vary CRLF, and attempt prototype or regex punctuation laundering.",
+      "replacement": [
+        "apps/desktop/tests/support/capabilityParameters.ts",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts",
+        "apps/desktop/tests/support/parameterBindings.ts",
+        "apps/desktop/tests/support/rustParameterBindings.ts",
+        "apps/desktop/tests/support/capabilitySource.ts",
+        "apps/desktop/tests/support/rustProductionSource.ts"
+      ],
       "sha256": "b826239866bfa9d969ae4c42c40e05f37f8baca89d10a72efcecb0b1151e776f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json",
+        "contracts/host-trusted-config-cases.json"
+      ]
     },
     "services/hub/internal/capspec/claudemoncallers_test.go": {
       "note": "All four ownership guards preserved: served fixture/router equality incl verb, every caller path served with floors, independent repo-wide enumeration and stale entries, each served route has caller or substantive non-stale reason. Added Rust embedded and external callers plus mutation coverage. Guard6 and generator4 passed; no Go runner dependency.",
@@ -4289,10 +4374,29 @@
       ]
     },
     "services/hub/internal/capspec/desktop.go": {
-      "replacement": [],
+      "note": "Shared ownerMethods/assetMethods remain exact manifest data and feed the actual Rust authenticated-owner desktop prefix gate; unknown private desktop names cannot borrow the dispatcher. UI fonts remains an inert listing; ui.asset has its filename decision and fixed-root selected_path/bounded-read source bearing. Source guards include all dynamic owner/asset registrations and desktop init-added actor decisions. Existing Rust authority and asset runtime tests remain separate behavioral evidence; this checkpoint adds no platform claim.",
+      "replacement": [
+        "contracts/desktop-service-methods.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/services/ui_assets.rs",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts"
+      ],
       "sha256": "fe7d1c0f348706d01bb2503554217348c3981e6c1f3c74109e5cf1d4fdb50625",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/ui_assets.rs"
+      ]
     },
     "services/hub/internal/capspec/eventtopics.go": {
       "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests passed in the246-test lib checkpoint.",
@@ -4384,16 +4488,67 @@
       ]
     },
     "services/hub/internal/capspec/repofile_test.go": {
-      "replacement": [],
+      "note": "The old helper only adapted Go sweepguard/testing and normalized CRLF for textual cross-repo guards. Portable readers now freshly enumerate source, fail on absent checkout/source/imports/populations, and use TS AST/Rust structure independent of line endings. Tests cover missing roots, empty source trees, a missing generated import, CRLF and actual cfg(test) ancestry. Production references to test-like filenames and unreferenced files stay scanned; no Go test-cache omission remains to pin.",
+      "reason": "Go-only sweepguard/testing/cache adapter eliminated; fresh fail-fast portable source readers own its retained responsibility.",
+      "replacement": [
+        "apps/desktop/tests/support/capabilitySource.ts",
+        "apps/desktop/tests/support/rustProductionSource.ts",
+        "apps/desktop/tests/support/rustHttpSource.ts"
+      ],
       "sha256": "3dbdd1b35ffc6ab4957d378df90d5eaec827414c182bba4a98cddba9573e6bd7",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts"
+      ]
     },
     "services/hub/internal/capspec/serveradmin.go": {
-      "replacement": [],
+      "note": "All init-added records retained: owner-only files.receiveUpload plus copied upload-name decision, both peer-config methods, three network-admin methods, and inert remote.sharingInfo. Actual source bearings connect receiver authorization to Core may_call, peer config to owner(), and network dispatch to Network.call/guard/trusted; scoped operator/provider flags cannot invent authenticated_host. Existing Rust unit suites supply runtime evidence. No live cloud/network action was performed.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/services/uploads.rs",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts"
+      ],
       "sha256": "5761824ac8e36da0945b8fc60aad050dec7d619ebfec7bbdd67ee0e18fc613f6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "services/hub-rs/src/services/uploads.rs",
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/federation/config.rs"
+      ]
+    },
+    "services/hub/internal/capspec/testdata/param-vocabulary.json": {
+      "note": "Independent single-language golden moved to its actual portable test owner. All71 parameter names/kinds,44 stems and the empty inert-exception map are identical; only owner commentary changed. Equality to the separate classifier plus actual binding/mutation/ratchet tests prevents silent shrinkage. No dummy cross-language loader or broad corpus exemption was introduced.",
+      "replacement": [
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json",
+        "apps/desktop/tests/support/capabilityParameters.ts"
+      ],
+      "sha256": "1b9595b4fdec6569ae99102408fe7b1b010c58b6b5130e786e01c93cdd18477c",
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json"
+      ]
     },
     "services/hub/internal/capspec/timeouts.go": {
       "replacement": [
@@ -4661,10 +4816,16 @@
       "tests": []
     },
     "services/hub/internal/jobs/migration_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "Read entire original test. Existing Rust shared_job_contract loads the same actual JSON corpus, preserves schedule>=5/prompt>=4 floors, uses fixed-offset zones and RFC3339 UTC expected times, checks optional no-next result and exact prompt substitutions. The jobs integration target8 passed in the current ownership/regex checkpoint. This record is only the migration corpus adapter, not certification of other scheduler/handedit/docs assertions.",
       "sha256": "79f53912df2464a816c57e8e5d6c3312b194b07d8d7b8e6d841a0f76897c9ece",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/jobs.rs",
+        "contracts/hub-job-cases.json"
+      ]
     },
     "services/hub/internal/jobs/preset_test.go": {
       "replacement": [],

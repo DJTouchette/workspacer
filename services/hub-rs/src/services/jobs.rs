@@ -1,4 +1,7 @@
 //! Host-owned job specifications, scheduling and invocation history.
+mod go_regex;
+#[cfg(test)]
+mod reference_tests;
 use crate::{Caller, Handle, Options, client::Client, protocol::Event};
 use anyhow::{Result, anyhow, bail};
 use chrono::{DateTime, Datelike, Days, Local, NaiveTime, Offset, TimeZone, Timelike, Utc};
@@ -140,7 +143,7 @@ pub fn validate(job: &Job) -> Result<()> {
                     optional_type(step, "skipUnlessMatch", Value::is_string, "a string")?;
                     validate_step(step).map_err(|e| anyhow!("context step {}: {e}", index + 1))?;
                     if !string(step, "skipUnlessMatch").is_empty() {
-                        regex::Regex::new(string(step, "skipUnlessMatch")).map_err(|e| {
+                        go_regex::compile(string(step, "skipUnlessMatch")).map_err(|e| {
                             anyhow!(
                                 "context step {} has an invalid skipUnlessMatch: {e}",
                                 index + 1
@@ -679,15 +682,24 @@ impl Service {
             },
         );
     }
-    async fn run(self: Arc<Self>, mut receiver: mpsc::UnboundedReceiver<Job>) -> Result<()> {
+    async fn run(self: Arc<Self>, receiver: mpsc::UnboundedReceiver<Job>) -> Result<()> {
+        self.run_with_clock(receiver, Duration::from_secs(30), Utc::now)
+            .await
+    }
+    async fn run_with_clock(
+        self: Arc<Self>,
+        mut receiver: mpsc::UnboundedReceiver<Job>,
+        tick_every: Duration,
+        now: impl Fn() -> DateTime<Utc> + Send + Sync + 'static,
+    ) -> Result<()> {
         self.hub.ready().await?;
         let client = Client::connect_service(&self.hub).await?;
         let mut runs = tokio::task::JoinSet::new();
-        let mut tick = tokio::time::interval(Duration::from_secs(30));
+        let mut tick = tokio::time::interval(tick_every);
         tick.tick().await;
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            let jobs = tokio::select! {_=tick.tick()=>self.due(Utc::now()),Some(job)=receiver.recv()=>vec![job],Some(_)=runs.join_next()=>continue};
+            let jobs = tokio::select! {_=tick.tick()=>self.due(now()),Some(job)=receiver.recv()=>vec![job],Some(_)=runs.join_next()=>continue};
             for job in jobs {
                 let service = self.clone();
                 let client = client.clone();
@@ -770,7 +782,7 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
                         return Err(Skip("no output — nothing to send an agent".into()).into());
                     }
                     let pattern = string(step, "skipUnlessMatch");
-                    if !pattern.is_empty() && !regex::Regex::new(pattern)?.is_match(output) {
+                    if !pattern.is_empty() && !go_regex::compile(pattern)?.is_match(output) {
                         return Err(Skip(format!("output did not match {pattern}")).into());
                     }
                     outputs.push(elide(output, 12000));
@@ -798,14 +810,23 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
     }
 }
 async fn shell(action: &Value) -> Result<(String, bool)> {
-    let mut command = if cfg!(windows) {
-        let mut c = tokio::process::Command::new("cmd");
-        c.args(["/C", string(action, "command")]);
-        c
-    } else {
-        let mut c = tokio::process::Command::new("/bin/sh");
-        c.args(["-c", string(action, "command")]);
-        c
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = tokio::process::Command::new("cmd.exe");
+        command.args(["/D", "/S", "/C"]);
+        // Shell programs are not CRT argv strings: ordinary args escaping
+        // inserts backslashes before quotes that cmd treats as literal bytes.
+        command
+            .as_std_mut()
+            .raw_arg(format!("\"{}\"", string(action, "command")));
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command.args(["-c", string(action, "command")]);
+        command
     };
     if !string(action, "cwd").is_empty() {
         command.current_dir(string(action, "cwd"));
@@ -923,6 +944,30 @@ mod tests {
                 .is_some()
         );
         assert_eq!(runner.calls.lock().unwrap().len(), 1);
+    }
+    #[tokio::test]
+    async fn context_regex_uses_go_ascii_guards_without_losing_unicode_properties() {
+        for (pattern, expected_skip) in [(r"^\w+$", true), (r"^\p{L}+$", false)] {
+            let runner = Recording {
+                calls: Mutex::new(vec![]),
+                output: "é".into(),
+            };
+            let job:Job=serde_json::from_value(json!({"name":"guard","trigger":{"kind":"manual"},"action":{"kind":"spawn","spawn":{"cwd":"/project","prompt":"{{output}}","context":[{"kind":"shell","shell":{"command":"fixture"},"skipUnlessMatch":pattern}]}}})).unwrap();
+            validate(&job).unwrap();
+            let result = perform(&job, &runner).await;
+            if expected_skip {
+                assert!(result.unwrap_err().downcast_ref::<Skip>().is_some());
+                assert_eq!(
+                    runner.calls.lock().unwrap().len(),
+                    1,
+                    "veto reached an agent"
+                );
+            } else {
+                assert_eq!(result.unwrap(), "spawned child");
+                assert_eq!(runner.calls.lock().unwrap().len(), 3);
+                assert_eq!(runner.calls.lock().unwrap()[2].1["text"], "é");
+            }
+        }
     }
     fn owner() -> Caller {
         Caller {

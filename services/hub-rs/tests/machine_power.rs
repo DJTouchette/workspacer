@@ -172,6 +172,11 @@ async fn manual_authority_preflight_idempotence_and_disconnect_order() {
         assert!(controller.manual_stop(&c).await.is_err());
         assert_eq!(controller.info(&c, 0)["canStop"], false);
     }
+    let mut plugin = caller();
+    plugin.plugin_id = "plugin".into();
+    plugin.trusted = false;
+    assert!(controller.manual_stop(&plugin).await.is_err());
+    assert_eq!(controller.info(&plugin, 0)["canStop"], false);
     provider.fail_check.store(true, Ordering::SeqCst);
     let error = controller
         .manual_stop(&caller())
@@ -269,29 +274,36 @@ async fn owner_close_cancels_accepted_delay_without_host_effect() {
 }
 #[test]
 fn idle_power_promotes_distant_shell_schedule_to_running_blocker() {
-    let evidence = Evidence {
-        now_ms: 1000,
-        sessions: Ok(json!([])),
-        clients: Ok(vec![]),
-        jobs: Ok(vec![JobInfo {
-            id: "future".into(),
-            name: String::new(),
-            action_kind: "shell".into(),
-            next_run_ms: Some(86_400_000),
-            running: false,
-        }]),
-        peers: Ok(vec![]),
-        operations: vec![],
-    };
-    assert_eq!(
-        evaluate(
-            &idle_inputs(evidence),
-            Tunables::default(),
-            &Default::default()
-        )[0]
-        .kind,
-        "job-running"
-    );
+    for (kind, running, next_run_ms) in [
+        ("shell", true, None),
+        ("shell", false, Some(86_400_000)),
+        ("spawn", false, Some(86_400_000)),
+    ] {
+        let evidence = Evidence {
+            now_ms: 1000,
+            sessions: Ok(json!([])),
+            clients: Ok(vec![]),
+            jobs: Ok(vec![JobInfo {
+                id: "future".into(),
+                name: String::new(),
+                action_kind: kind.into(),
+                next_run_ms,
+                running,
+            }]),
+            peers: Ok(vec![]),
+            operations: vec![],
+        };
+        assert_eq!(
+            evaluate(
+                &idle_inputs(evidence),
+                Tunables::default(),
+                &Default::default()
+            )[0]
+            .kind,
+            "job-running",
+            "{kind}: running={running}, schedule={next_run_ms:?}"
+        );
+    }
 }
 
 #[tokio::test]

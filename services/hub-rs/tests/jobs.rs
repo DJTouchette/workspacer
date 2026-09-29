@@ -377,3 +377,53 @@ async fn shutdown_cancels_shell_descendants_and_their_shared_output_pipe() {
         "shell descendant survived hub shutdown"
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_quoted_shell_fixture() {
+    if let Some(marker) = std::env::var_os("WKS_QUOTED_JOB_MARKER") {
+        std::fs::write(marker, "quoted command reached child").unwrap();
+        println!("QUOTED-JOB-OK");
+    }
+}
+#[cfg(windows)]
+#[tokio::test]
+async fn shell_jobs_run_quoted_executables_and_paths_with_spaces() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("job fixture with spaces");
+    std::fs::create_dir(&directory).unwrap();
+    let executable = directory.join("fixture program.exe");
+    std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    let marker = directory.join("result with spaces.txt");
+    let mut options = Options::default();
+    options.jobs_file = Some(directory.join("jobs.json"));
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    let script = format!(
+        "set \"WKS_QUOTED_JOB_MARKER={}\" && \"{}\" --exact windows_quoted_shell_fixture --nocapture",
+        marker.display(),
+        executable.display()
+    );
+    let job=client.call("jobs.upsert",json!({"name":"quoted fixture","enabled":true,"trigger":{"kind":"manual"},"action":{"kind":"shell","shell":{"cwd":directory,"command":script}}})).await.unwrap();
+    assert_eq!(
+        client
+            .call("jobs.run", json!({"id":job["id"]}))
+            .await
+            .unwrap()["started"],
+        true
+    );
+    let history = wait_history(&client, &job["id"]).await;
+    assert_eq!(history["runs"][0]["status"], "ok", "{history}");
+    assert!(
+        history["runs"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("QUOTED-JOB-OK")
+    );
+    assert_eq!(
+        std::fs::read_to_string(marker).unwrap(),
+        "quoted command reached child"
+    );
+    hub.shutdown().unwrap();
+}

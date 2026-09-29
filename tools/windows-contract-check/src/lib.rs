@@ -35,6 +35,8 @@ mod services;
 #[path = "../../../services/hub-rs/src/services/filewatch/sample.rs"]
 mod filewatch_sample;
 
+#[path = "../../../services/hub-rs/src/services/atomic_persist.rs"]
+mod atomic_persist;
 #[path = "../../../services/hub-rs/src/services/worktrees/dependency_junctions.rs"]
 mod dependency_junctions;
 #[path = "../../../services/claudemon/src/protocol.rs"]

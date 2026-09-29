@@ -4,6 +4,7 @@ pub mod agent_lifecycle;
 pub mod agent_ops;
 pub mod agent_spawn;
 pub mod analytics;
+mod atomic_persist;
 pub mod briefs;
 pub mod capability_inventory;
 pub mod config;
@@ -348,7 +349,7 @@ pub(crate) fn atomic_json(
     serde_json::to_writer(&mut file, value)?;
     file.write_all(b"\n")?;
     file.as_file().sync_all()?;
-    file.persist(path).map_err(|e| e.error)?;
+    atomic_persist::persist(file, path)?;
     Ok(())
 }
 

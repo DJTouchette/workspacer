@@ -12,6 +12,17 @@ spec.loader.exec_module(migration)
 
 
 class ReviewTests(unittest.TestCase):
+    def test_retained_parameter_fixture_is_inventoried_without_collecting_runtime_json(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            legacy = root / "services/hub"
+            fixture = legacy / "internal/capspec/testdata/param-vocabulary.json"
+            fixture.parent.mkdir(parents=True)
+            fixture.write_text('{"parameters":[]}')
+            (legacy / "private-runtime.json").write_text('{"not_source":true}')
+            with patch.object(migration, "ROOT", root), patch.object(migration, "LEGACY", legacy):
+                self.assertEqual(set(migration.sources()), {fixture.relative_to(root).as_posix()})
+
     def test_stale_or_retiring_evidence_never_partially_applies_a_batch(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

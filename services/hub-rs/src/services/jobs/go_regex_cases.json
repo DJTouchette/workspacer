@@ -1,0 +1,323 @@
+{
+  "meta": {
+    "goVersion": "go1.25.14",
+    "unicodeVersion": "15.0.0"
+  },
+  "cases": [
+    {
+      "pattern": "^\\w+$",
+      "text": "é",
+      "matches": false
+    },
+    {
+      "pattern": "^\\W+$",
+      "text": "é",
+      "matches": true
+    },
+    {
+      "pattern": "^\\d+$",
+      "text": "٣",
+      "matches": false
+    },
+    {
+      "pattern": "^\\D+$",
+      "text": "٣",
+      "matches": true
+    },
+    {
+      "pattern": "^\\s$",
+      "text": " ",
+      "matches": false
+    },
+    {
+      "pattern": "^\\s$",
+      "text": "\u000b",
+      "matches": false
+    },
+    {
+      "pattern": "^\\s$",
+      "text": "\t",
+      "matches": true
+    },
+    {
+      "pattern": "^\\S$",
+      "text": "\u000b",
+      "matches": true
+    },
+    {
+      "pattern": "^[\\w]+$",
+      "text": "é",
+      "matches": false
+    },
+    {
+      "pattern": "^[^\\w]+$",
+      "text": "é",
+      "matches": true
+    },
+    {
+      "pattern": "^[[:space:]]$",
+      "text": "\u000b",
+      "matches": true
+    },
+    {
+      "pattern": "^[\\\\w]+$",
+      "text": "\\w",
+      "matches": true
+    },
+    {
+      "pattern": "(?i)^\\w+$",
+      "text": "K",
+      "matches": true
+    },
+    {
+      "pattern": "\\bbar",
+      "text": "ébar",
+      "matches": true
+    },
+    {
+      "pattern": "\\Bbar",
+      "text": "ébar",
+      "matches": false
+    },
+    {
+      "pattern": "^é$",
+      "text": "é",
+      "matches": true
+    },
+    {
+      "pattern": "^.$",
+      "text": "é",
+      "matches": true
+    },
+    {
+      "pattern": "^.$",
+      "text": "\n",
+      "matches": false
+    },
+    {
+      "pattern": "(?s)^.$",
+      "text": "\n",
+      "matches": true
+    },
+    {
+      "pattern": "^\\p{Greek}+$",
+      "text": "μ",
+      "matches": true
+    },
+    {
+      "pattern": "^\\p{L}+$",
+      "text": "é",
+      "matches": true
+    },
+    {
+      "pattern": "^\\P{^Greek}$",
+      "text": "μ",
+      "matches": true
+    },
+    {
+      "pattern": "^\\Q[\\w].*\\E$",
+      "text": "[\\w].*",
+      "matches": true
+    },
+    {
+      "pattern": "^\\Qab",
+      "text": "ab",
+      "matches": true
+    },
+    {
+      "pattern": "^[a\u0026\u0026b]+$",
+      "text": "\u0026",
+      "matches": true
+    },
+    {
+      "pattern": "^[a~~b]+$",
+      "text": "~",
+      "matches": true
+    },
+    {
+      "pattern": "^[[]$",
+      "text": "[",
+      "matches": true
+    },
+    {
+      "pattern": "^[^^]$",
+      "text": "a",
+      "matches": true
+    },
+    {
+      "pattern": "^[^^]$",
+      "text": "^",
+      "matches": false
+    },
+    {
+      "pattern": "(?P\u003csame\u003ea)(?P\u003csame\u003eb)",
+      "text": "ab",
+      "matches": true
+    },
+    {
+      "pattern": "(?P\u003c1\u003ea)",
+      "text": "a",
+      "matches": true
+    },
+    {
+      "pattern": "^\\123+$",
+      "text": "SS",
+      "matches": true
+    },
+    {
+      "pattern": "^\\0$",
+      "text": "\u0000",
+      "matches": true
+    },
+    {
+      "pattern": "a\\b{start}",
+      "text": "a{start}",
+      "matches": true
+    },
+    {
+      "pattern": "^\\\u003c$",
+      "text": "\u003c",
+      "matches": true
+    },
+    {
+      "pattern": "[",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(?x)a",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(?u)a",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(?R)a",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "\\u0041",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "\\1",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "\\p{White_Space}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "\\p{Script=Greek}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(?P\u003ca-b\u003ex)",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "a{1001}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(a{100}){100}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(?\u003c=a)b",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "[\\b]",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "[\\Qx\\E]",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(a{40}){40}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(a{40}){26}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(a{40}){40,}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "(a{40,}){40}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "^(a{40}){25}$",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "matches": true
+    },
+    {
+      "pattern": "^(a{40})*$",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "matches": true
+    },
+    {
+      "pattern": "^(a{40})+$",
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "matches": true
+    },
+    {
+      "pattern": "^(a{1000}){0}$",
+      "text": "",
+      "matches": true
+    },
+    {
+      "pattern": "^\\p{Cs}$",
+      "text": "é",
+      "matches": false
+    },
+    {
+      "pattern": "^\\P{Cs}$",
+      "text": "\n",
+      "matches": true
+    },
+    {
+      "pattern": "^[\\p{Cs}a]$",
+      "text": "a",
+      "matches": true
+    },
+    {
+      "pattern": "^\\p{cased letter}$",
+      "text": "É",
+      "matches": true
+    },
+    {
+      "pattern": "^\\p{greek}$",
+      "text": "μ",
+      "matches": true
+    }
+  ]
+}

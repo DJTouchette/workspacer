@@ -4652,6 +4652,7 @@ dependencies = [
  "os_pipe",
  "rand 0.8.8",
  "regex",
+ "regex-syntax",
  "reqwest",
  "rmcp",
  "rusqlite",

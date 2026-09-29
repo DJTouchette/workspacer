@@ -1,0 +1,146 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "107 focused parameter/registration/composition/publication/HTTP/route/vocabulary tests passed, /tmp/workspacer-parameter-final.log. Explicit strict TypeScript noEmit check of new test files/imported helpers passed, /tmp/workspacer-parameter-typecheck.log; main tsconfig excludes tests, so this was checked separately. Priority module-ancestry fix also passed14 focused tests. No Cargo build or production Rust edit. Witness unmapped new helpers/fixture; their direct importing/mutation suites were executed explicitly.",
+  "records": {
+    "services/hub/internal/capspec/capspec.go": {
+      "status": "ported",
+      "sha256": "05a5d88eb20e619326fe9185de40822b05fe17da73f5413c7e0851efc9528328",
+      "replacement": [
+        "apps/desktop/tests/support/capabilityParameters.ts",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts",
+        "apps/desktop/tests/support/parameterBindings.ts",
+        "apps/desktop/tests/support/rustParameterBindings.ts",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json",
+        "contracts/host-trusted-config-cases.json"
+      ],
+      "note": "Portable authority classification retains all174 methods exactly once, method-specific parameter decisions, known path namespaces, the independent71-name/44-stem golden and closed inert exceptions, exact-versus-Unicode-folded lookup, both-direction count ratchets, config host-trusted key equality, live helper/own-method call claims, and prototype/pattern-name refusal. Path kinds are schema metadata, not retired workspace grants. Stale profile-permission-clamp prose was corrected. The actual desktop AST finds exactly79 dangerous method/parameter bindings, matching the original scanner ratchet; nested type/destructuring/member/alias/rename and new-name mutations preserve the original coverage. Supplemental Rust source scanning covers62 Value-based dispatch arms and53 dangerous bindings, not arbitrary interprocedural inference or serde struct decoding. Eight new Rust decisions explicitly describe owner-only file/font inputs, the used git.numstat operand and five ignored shared-prelude Git path reads. The separate cmd/brain/capspec_params_test.go scanner is NOT implicitly certified. No Rust production behavior changed."
+    },
+    "services/hub/internal/capspec/capspec_test.go": {
+      "status": "ported",
+      "sha256": "b826239866bfa9d969ae4c42c40e05f37f8baca89d10a72efcecb0b1151e776f",
+      "replacement": [
+        "apps/desktop/tests/support/capabilityParameters.ts",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts",
+        "apps/desktop/tests/support/parameterBindings.ts",
+        "apps/desktop/tests/support/rustParameterBindings.ts",
+        "apps/desktop/tests/support/capabilitySource.ts",
+        "apps/desktop/tests/support/rustProductionSource.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json",
+        "contracts/host-trusted-config-cases.json"
+      ],
+      "note": "Portable authority classification retains all174 methods exactly once, method-specific parameter decisions, known path namespaces, the independent71-name/44-stem golden and closed inert exceptions, exact-versus-Unicode-folded lookup, both-direction count ratchets, config host-trusted key equality, live helper/own-method call claims, and prototype/pattern-name refusal. Path kinds are schema metadata, not retired workspace grants. Stale profile-permission-clamp prose was corrected. The actual desktop AST finds exactly79 dangerous method/parameter bindings, matching the original scanner ratchet; nested type/destructuring/member/alias/rename and new-name mutations preserve the original coverage. Supplemental Rust source scanning covers62 Value-based dispatch arms and53 dangerous bindings, not arbitrary interprocedural inference or serde struct decoding. Eight new Rust decisions explicitly describe owner-only file/font inputs, the used git.numstat operand and five ignored shared-prelude Git path reads. The separate cmd/brain/capspec_params_test.go scanner is NOT implicitly certified. No Rust production behavior changed. All original desktop scanner responsibilities are represented: full method classification/disjointness; path/inert namespace checks; binding canaries and count floor; per-parameter/non-inert decisions rather than per-method exemptions; vocabulary/stem/case-fold fixtures; host config closure; exact live helper definitions and method-bound canonicalization calls. Mutation tests add a new registry file, new env/executable-shaped/nested field, unknown or inert-method decisions, lose guards/config keys/imports/source trees, vary CRLF, and attempt prototype or regex punctuation laundering."
+    },
+    "services/hub/internal/capspec/desktop.go": {
+      "status": "ported",
+      "sha256": "fe7d1c0f348706d01bb2503554217348c3981e6c1f3c74109e5cf1d4fdb50625",
+      "replacement": [
+        "contracts/desktop-service-methods.json",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/services/ui_assets.rs",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/ui_assets.rs"
+      ],
+      "note": "Shared ownerMethods/assetMethods remain exact manifest data and feed the actual Rust authenticated-owner desktop prefix gate; unknown private desktop names cannot borrow the dispatcher. UI fonts remains an inert listing; ui.asset has its filename decision and fixed-root selected_path/bounded-read source bearing. Source guards include all dynamic owner/asset registrations and desktop init-added actor decisions. Existing Rust authority and asset runtime tests remain separate behavioral evidence; this checkpoint adds no platform claim."
+    },
+    "services/hub/internal/capspec/serveradmin.go": {
+      "status": "ported",
+      "sha256": "5761824ac8e36da0945b8fc60aad050dec7d619ebfec7bbdd67ee0e18fc613f6",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/services/uploads.rs",
+        "apps/desktop/tests/support/capabilityParameterDecisions.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts",
+        "services/hub-rs/src/services/uploads.rs",
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/federation/config.rs"
+      ],
+      "note": "All init-added records retained: owner-only files.receiveUpload plus copied upload-name decision, both peer-config methods, three network-admin methods, and inert remote.sharingInfo. Actual source bearings connect receiver authorization to Core may_call, peer config to owner(), and network dispatch to Network.call/guard/trusted; scoped operator/provider flags cannot invent authenticated_host. Existing Rust unit suites supply runtime evidence. No live cloud/network action was performed."
+    },
+    "services/hub/internal/capspec/repofile_test.go": {
+      "status": "retired",
+      "sha256": "3dbdd1b35ffc6ab4957d378df90d5eaec827414c182bba4a98cddba9573e6bd7",
+      "replacement": [
+        "apps/desktop/tests/support/capabilitySource.ts",
+        "apps/desktop/tests/support/rustProductionSource.ts",
+        "apps/desktop/tests/support/rustHttpSource.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/src/main/services/rustProductionSource.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/compositionRecord.test.ts",
+        "apps/desktop/src/main/services/compositionObjectBearings.test.ts",
+        "apps/desktop/src/main/services/compositionBearings.test.ts"
+      ],
+      "note": "The old helper only adapted Go sweepguard/testing and normalized CRLF for textual cross-repo guards. Portable readers now freshly enumerate source, fail on absent checkout/source/imports/populations, and use TS AST/Rust structure independent of line endings. Tests cover missing roots, empty source trees, a missing generated import, CRLF and actual cfg(test) ancestry. Production references to test-like filenames and unreferenced files stay scanned; no Go test-cache omission remains to pin.",
+      "reason": "Go-only sweepguard/testing/cache adapter eliminated; fresh fail-fast portable source readers own its retained responsibility."
+    },
+    "services/hub/internal/capspec/testdata/param-vocabulary.json": {
+      "status": "ported",
+      "sha256": "1b9595b4fdec6569ae99102408fe7b1b010c58b6b5130e786e01c93cdd18477c",
+      "replacement": [
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json",
+        "apps/desktop/tests/support/capabilityParameters.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/capabilityParameters.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/rustParameterBindings.test.ts",
+        "apps/desktop/tests/fixtures/capability-parameter-vocabulary.json"
+      ],
+      "note": "Independent single-language golden moved to its actual portable test owner. All71 parameter names/kinds,44 stems and the empty inert-exception map are identical; only owner commentary changed. Equality to the separate classifier plus actual binding/mutation/ratchet tests prevents silent shrinkage. No dummy cross-language loader or broad corpus exemption was introduced."
+    }
+  }
+}
