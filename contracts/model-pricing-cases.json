@@ -22,6 +22,7 @@
         ],
         "loaders": [
           "services/claudemon/src/session/pricing.rs::model-pricing-cases.json",
+          "services/hub-rs/tests/analytics.rs::pricing_roundtrip_and_shared_cost_contract",
           "apps/desktop/src/main/services/modelPricingContract.test.ts::model pricing contract (shared with Rust pricing.rs)"
         ]
       },
@@ -43,6 +44,7 @@
         ],
         "loaders": [
           "services/claudemon/src/session/usage.rs::model-pricing-cases.json",
+          "services/hub-rs/tests/analytics.rs::pricing_roundtrip_and_shared_cost_contract",
           "apps/desktop/src/main/services/modelPricingContract.test.ts::cacheMultiplierCases"
         ]
       }

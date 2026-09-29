@@ -23,6 +23,7 @@
 //! The pure `translate` (event → [`AgentUpdate`]s) is unit-tested; the live
 //! driver needs a real `claude` binary.
 
+use crate::child_env::SanitizeChildEnvironment;
 use std::collections::{HashMap, VecDeque};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1259,6 +1260,7 @@ async fn run_session(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
+        .scrub_host_authority()
         .spawn()
         .with_context(|| format!("spawning `{} {}`", cfg.bin, argv.join(" ")))?;
 

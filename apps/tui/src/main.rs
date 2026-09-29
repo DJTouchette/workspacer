@@ -67,9 +67,8 @@ struct Cli {
     #[arg(long)]
     no_spawn: bool,
 
-    /// Hub bus URL. By default the TUI is a thin client of the hub's brain
-    /// provider — driving, the agent list, and terminals all flow over the bus
-    /// (it auto-spawns the hub + brain for a loopback URL). This overrides the
+    /// Hub bus URL. The default local bootstrap owns the standalone Rust
+    /// backend; existing or remote servers are only adopted. This overrides the
     /// address (as does `hubUrl` in tui.json); pass `--direct` to bypass the
     /// bus entirely.
     #[arg(long, env = "WKS_HUB_BUS", default_value = DEFAULT_BUS_URL)]
@@ -112,15 +111,19 @@ async fn main() -> Result<()> {
     // discover that token so the TUI can join a desktop-owned bus instead of
     // being rejected with 401 and hanging in reconnect. Harmless against a
     // token-less hub (it's ignored).
-    let bus_token = cli
+    let mut bus_token = cli
         .bus_token
         .clone()
         .or_else(|| config.hub_token.clone())
         .or_else(config::hub_token);
 
-    // Bring up claudemon (and, in bus mode, the hub + brain) if not already
-    // running, before we take over the screen. The guard stops what we started.
+    // Start the shared Rust backend (or direct claudemon) before taking over
+    // the screen. The guard stops only resources this TUI started.
     let _daemons = daemons::ensure(&cli.claudemon_url, bus_url.as_deref(), !cli.no_spawn);
+    // A backend first started above may just have created the pairing token.
+    if bus_token.is_none() {
+        bus_token = config::hub_token();
+    }
 
     // Robustness: if we'd use a loopback bus but nothing's listening (e.g. the
     // hub binary isn't built), fall back to claudemon-direct so the TUI still
@@ -129,7 +132,7 @@ async fn main() -> Result<()> {
         if daemons::loopback_bus_unreachable(&url, bus_token.as_deref()) {
             eprintln!(
                 "[wks-tui] hub bus not usable at {url}; using claudemon directly \
-                 (build the hub with `make build-hub`, or run with --direct to silence this)"
+                 (build the Rust backend with `make build-rust-cli`, or run with --direct to silence this)"
             );
             bus_url = None;
         }

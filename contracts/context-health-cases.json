@@ -6,7 +6,8 @@
         "required": ["input", "expected"],
         "loaders": [
           "apps/desktop/src/main/services/thresholdWatch.test.ts::formatPctCases",
-          "services/hub/cmd/brain/contexthealth_contract_test.go::FormatPctCases"
+          "services/hub/cmd/brain/contexthealth_contract_test.go::FormatPctCases",
+          "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
         ]
       },
       "unsupportedProviders": {
@@ -14,7 +15,8 @@
         "required": ["provider"],
         "loaders": [
           "apps/desktop/src/main/services/thresholdWatch.test.ts::unsupportedProviders",
-          "services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders"
+          "services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders",
+          "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
         ]
       },
       "cumulativeCodex": {
@@ -28,7 +30,8 @@
         "loaders": [
           "services/claudemon/src/providers/codex.rs::cumulativeCodex",
           "apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
-          "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex"
+          "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex",
+          "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
         ]
       }
     }

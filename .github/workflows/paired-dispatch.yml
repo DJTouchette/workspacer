@@ -16,9 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.4'
+      - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install hosted dependencies
         run: |
@@ -44,8 +42,8 @@ jobs:
         run: npm test
       - name: Hub regression suites
         if: ${{ !cancelled() }}
-        working-directory: services/hub
-        run: go test -race -count=1 ./...
+        working-directory: services/hub-rs
+        run: cargo test --locked
       - name: Real MCP to desktop dispatch fixtures
         if: ${{ !cancelled() }}
         working-directory: apps/desktop

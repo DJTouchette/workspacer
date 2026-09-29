@@ -4,7 +4,7 @@
 #   apps/native       GPUI client (Rust/cargo)  — the native GUI
 #   apps/tui          wks-tui (Rust/cargo)      — the terminal client
 #   services/claudemon  Claude session daemon (Rust/cargo)
-#   services/hub        control-plane / event bus (Go)
+#   services/hub-rs     shared Rust backend and standalone launcher
 #
 # Each component also builds on its own from its directory; these targets just
 # delegate so you have one entry point from the repo root.
@@ -14,6 +14,7 @@ TUI       := apps/tui
 NATIVE    := apps/native
 CLAUDEMON := services/claudemon
 HUB       := services/hub
+HUB_RUST  := services/hub-rs
 
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
         build-cli test test-desktop test-hub test-tui test-claudemon test-routing-harness \
@@ -38,14 +39,14 @@ dev:
 dev-share:
 	cd $(DESKTOP) && WORKSPACER_DISABLE_GPU=$(WORKSPACER_DISABLE_GPU) npm run dev:share
 
-## dev-tui: run wks-tui (debug); builds claudemon + hub/brain first. The TUI now
-##          defaults to the hub bus (auto-spawning the hub + brain); pass
+## dev-tui: run wks-tui (debug); builds the Rust services first. The TUI
+##          defaults to the hub bus (auto-starting the Rust backend); pass
 ##          `ARGS="--direct"` for the standalone claudemon-direct path.
 dev-tui: build-hub
 	cd $(CLAUDEMON) && cargo build
 	cd $(TUI) && cargo run -- $(ARGS)
 
-## run-tui: run wks-tui (release); builds release claudemon + hub/brain + tui first.
+## run-tui: run wks-tui (release); builds Rust services + tui first.
 ##          Defaults to the bus; `ARGS="--direct"` for claudemon-direct.
 run-tui: build-claudemon build-hub build-tui
 	cd $(TUI) && cargo run --release -- $(ARGS)
@@ -57,11 +58,11 @@ run-tui: build-claudemon build-hub build-tui
 dev-native:
 	cargo run --locked --manifest-path $(NATIVE)/Cargo.toml -- $(ARGS)
 
-## dev-native-local: build hub/brain/MCP/launcher and run the embedded native GUI.
+## dev-native-local: run the native GUI with its shared in-process Rust backend.
 ##                   ARGS="--keep-running" minimizes the window on close.
 ##                   No standalone claudemon executable is needed.
-dev-native-local: build-hub
-	cargo run --locked --manifest-path $(NATIVE)/Cargo.toml -- --local --services-dir "$(abspath $(HUB))" $(ARGS)
+dev-native-local:
+	cargo run --locked --manifest-path $(NATIVE)/Cargo.toml -- --local $(ARGS)
 
 ## run-native: build and launch the release native GUI against the running hub.
 run-native: build-native
@@ -69,14 +70,14 @@ run-native: build-native
 
 ## run-native-local: build and launch the release GUI with its embedded backend.
 run-native-local: build-native-local
-	cargo run --locked --release --manifest-path $(NATIVE)/Cargo.toml -- --local --services-dir "$(abspath $(HUB))" $(ARGS)
+	cargo run --locked --release --manifest-path $(NATIVE)/Cargo.toml -- --local $(ARGS)
 
 ## build-native: build the native GUI binary (existing-hub or embedded mode).
 build-native:
 	cd $(NATIVE) && cargo build --locked --release --bin wks-native
 
 ## build-native-local: build the native binary and all required local services.
-build-native-local: build-hub build-native
+build-native-local: build-native
 
 ## test-native: native UI/protocol tests and embedded-engine lifecycle regression.
 test-native:
@@ -93,14 +94,57 @@ build: build-hub build-claudemon build-desktop build-tui build-native
 build-desktop:
 	cd $(DESKTOP) && npm run build
 
-build-hub:
-	cd $(HUB) && go build -o . ./cmd/hub && go build -o . ./cmd/mcp && go build -o . ./cmd/brain && go build -o . ./cmd/workspacer
+build-hub: build-rust-backend
 
-## build-cli: build the headless-server launcher (`workspacer serve`) plus the
-##            daemons it supervises, all as siblings in services/hub/ so the
-##            launcher's sibling-first binary resolution finds them.
-build-cli: build-hub build-claudemon
-	cp $(CLAUDEMON)/target/release/claudemon $(HUB)/claudemon
+.PHONY: test-hub-rust test-hub-parity hub-migration hub-vocabulary test-native-rust hub-mcp-catalog
+hub-mcp-catalog:
+	cd $(HUB) && WKS_UPDATE_RUST_MIGRATION_ASSETS=1 go test ./cmd/mcp -run '^TestRustMigrationToolCatalog$$' -count=1
+test-native-rust:
+	cargo test --locked --manifest-path $(NATIVE)/Cargo.toml --no-default-features --features rust-hub
+test-hub-rust:
+	cargo test --locked --manifest-path $(HUB_RUST)/Cargo.toml
+
+# Build the reference in a disposable directory. The environment variable is
+# mandatory in the ignored test: this target never silently skips Go parity.
+test-hub-parity: test-hub-rust
+	@fixture_dir=$$(mktemp -d); trap 'rm -rf "$$fixture_dir"' EXIT; \
+	(cd $(HUB) && go build -o "$$fixture_dir/hub-reference" ./cmd/hub-reference) && \
+	WKS_GO_HUB_REFERENCE="$$fixture_dir/hub-reference" cargo test --locked --manifest-path $(HUB_RUST)/Cargo.toml --test compatibility shared_contracts_go_reference -- --ignored
+	cd $(HUB) && go test ./cmd/brain -run '^Test(RustMigrationSnapshotFixtures|ContextHealthFormattingMatchesDesktopContract|ContextWatchRejectsUnsupportedProvidersWithoutUsingSlots|CumulativeCodexContractCannotFireContextWatch|TelemetryEpochKeepsAdjacentProductionValuesDistinct|ClaudeProjectDirNameContractCases|HeadlessFileWatch.*)$$' -count=1
+	cd $(HUB) && go test ./internal/bus -run '^TestMigrationBusFixtures$$' -count=1
+	cd $(HUB) && go test ./cmd/mcp -run '^TestRustMigrationToolCatalog$$' -count=1
+	cd $(HUB) && go test ./internal/jobs -run '^TestRustMigrationJobFixtures$$' -count=1
+	cd $(HUB) && go test ./internal/quiescence -run '^TestPortableFleetQuiescenceContract$$' -count=1
+	cd $(HUB) && go test ./internal/routing ./internal/limits -run '^TestPortableRust(Routing|Pacing)Contract$$' -count=1
+	cd apps/desktop && npm run test:main -- src/main/shared/structuredResult.test.ts src/main/shared/workerEscalation.test.ts src/main/shared/fleetMessages.test.ts src/main/services/thresholdWatch.test.ts
+	@vocabulary=$$(mktemp); trap 'rm -f "$$vocabulary"' EXIT; \
+	(cd $(HUB) && go run ./cmd/hub-reference --snapshot) > "$$vocabulary" && \
+	cmp "$$vocabulary" $(HUB_RUST)/assets/hub-vocabulary.json
+
+hub-migration:
+	python3 scripts/hub-migration.py check
+
+.PHONY: check-hub-rust-windows-platform
+check-hub-rust-windows-platform:
+	cargo check --manifest-path tools/windows-contract-check/Cargo.toml --target x86_64-pc-windows-gnu --tests
+
+.PHONY: check-hub-rust-assets
+check-hub-rust-assets:
+	python3 scripts/generate-rust-launch-assets.py --check
+	node scripts/generate-rust-library-assets.mjs --check
+	node scripts/generate-rust-workflow-assets.mjs --check
+	node scripts/generate-rust-fleet-assets.mjs --check
+	node scripts/generate-rust-brief-fixtures.cjs --check
+	node scripts/generate-rust-asset-fixtures.cjs --check
+	node scripts/generate-rust-workflow-artifact-fixtures.cjs --check
+	node scripts/generate-rust-workflow-watcher-fixtures.cjs --check
+	node scripts/generate-rust-brain-capabilities.cjs --check
+
+hub-vocabulary:
+	cd $(HUB) && go run ./cmd/hub-reference --snapshot > ../hub-rs/assets/hub-vocabulary.json
+
+## build-cli: build the standalone shared Rust backend.
+build-cli: build-rust-backend
 
 build-claudemon:
 	cd $(CLAUDEMON) && cargo build --release
@@ -114,21 +158,12 @@ test: test-desktop test-hub test-claudemon test-tui test-native
 test-desktop:
 	cd $(DESKTOP) && npm test
 
-## test-hub: the Go suite. -count=1 is the second belt on the cross-repo guards.
-##           Much of services/hub's suite reads files ABOVE the module —
-##           apps/desktop/src/main/services/hubCapabilities.ts, contracts/*.json,
-##           this Makefile, .github/workflows/ci.yml — and cmd/go's test cache
-##           drops out-of-module inputs from the cache key
-##           (computeTestInputsID: "Do not recheck files outside the module").
-##           internal/extinput puts them back by reading through a path that
-##           still descends lexically from the module root, which covers the
-##           edits that change a file's size or mtime; it does NOT cover a
-##           listing that grew a file where nothing was read, and cmd/go never
-##           hashes contents for these. The whole module runs uncached in 7s, so
-##           there is no reason to pay that risk for a saving nobody notices.
-##           cmd/brain's TestTheTestCacheBeltIsInCIAndTheMakefile asserts this
-##           flag is still here.
+## test-hub: shared Rust backend and standalone CLI.
 test-hub:
+	cargo test --locked --manifest-path $(HUB_RUST)/Cargo.toml
+
+## test-hub-reference: temporary Go oracle, retained until cutover validation.
+test-hub-reference:
 	cd $(HUB) && go test -race -count=1 ./...
 
 test-claudemon:
@@ -171,3 +206,15 @@ clean:
 	cd $(CLAUDEMON) && cargo clean
 	cd $(TUI) && cargo clean
 	cd $(NATIVE) && cargo clean
+
+.PHONY: hub-mcp-inventory
+hub-mcp-inventory:
+	cargo run --manifest-path $(HUB_RUST)/Cargo.toml --bin wks-hub -- --mcp-inventory
+
+.PHONY: hub-capability-inventory
+hub-capability-inventory:
+	cargo run --manifest-path $(HUB_RUST)/Cargo.toml --example capability_inventory
+
+.PHONY: build-rust-backend
+build-rust-backend:
+	cargo build --release --manifest-path $(HUB_RUST)/Cargo.toml --bin workspacer-rust

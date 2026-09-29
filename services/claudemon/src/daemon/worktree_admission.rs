@@ -22,13 +22,49 @@ struct Owner {
     token: String,
 }
 
-pub(crate) struct WorktreeAdmission {
+pub struct WorktreeAdmission {
     path: PathBuf,
 }
 
 struct FileFence {
     path: PathBuf,
     owner: Owner,
+}
+
+/// Exclusive maintenance lease using the same on-disk protocol as admission.
+/// It never shares an active spawn fence, even inside the embedding process.
+pub struct WorktreeMaintenance {
+    _fence: FileFence,
+}
+impl WorktreeMaintenance {
+    pub fn acquire_git_dir(git_dir: &Path) -> io::Result<Self> {
+        let git_dir = fs::canonicalize(git_dir)?;
+        if !git_dir.is_dir() {
+            return Err(io::Error::other(
+                "Git administration path is not a directory",
+            ));
+        }
+        let _registry = admissions()
+            .lock()
+            .map_err(|_| io::Error::other("worktree admission registry poisoned"))?;
+        let path = git_dir.join(LOCK_NAME);
+        let owner = Owner {
+            pid: std::process::id(),
+            token: uuid::Uuid::new_v4().to_string(),
+        };
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&path)?;
+        let fence = FileFence { path, owner };
+        file.write_all(&serde_json::to_vec(&fence.owner)?)?;
+        file.sync_all()?;
+        Ok(Self { _fence: fence })
+    }
 }
 
 struct ActiveAdmission {
@@ -62,7 +98,7 @@ impl WorktreeAdmission {
     /// Primary checkouts and ordinary directories need no worktree fence.
     /// Resolve the closest Git boundary so a nested cwd locks the same gitdir
     /// as the worktree root, including relative `gitdir:` paths.
-    pub(crate) fn acquire(cwd: &str) -> io::Result<Option<Self>> {
+    pub fn acquire(cwd: &str) -> io::Result<Option<Self>> {
         let cwd = fs::canonicalize(cwd)?;
         for ancestor in cwd.ancestors() {
             let marker = ancestor.join(".git");
@@ -243,9 +279,11 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&guard.path).unwrap()).unwrap();
         assert_eq!(payload["pid"], std::process::id());
-        assert!(payload["token"]
-            .as_str()
-            .is_some_and(|token| uuid::Uuid::parse_str(token).is_ok()));
+        assert!(
+            payload["token"]
+                .as_str()
+                .is_some_and(|token| uuid::Uuid::parse_str(token).is_ok())
+        );
         let sibling = WorktreeAdmission::acquire(nested.to_str().unwrap())
             .unwrap()
             .unwrap();
@@ -266,9 +304,11 @@ mod tests {
         );
         drop(sibling);
         assert!(!lock.exists());
-        assert!(WorktreeAdmission::acquire(nested.to_str().unwrap())
-            .unwrap()
-            .is_some());
+        assert!(
+            WorktreeAdmission::acquire(nested.to_str().unwrap())
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -280,9 +320,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(WorktreeAdmission::acquire(fixture.root.to_str().unwrap())
-            .unwrap()
-            .is_none());
+        assert!(
+            WorktreeAdmission::acquire(fixture.root.to_str().unwrap())
+                .unwrap()
+                .is_none()
+        );
         assert!(!fixture.repo.join(".git").join(LOCK_NAME).exists());
     }
 

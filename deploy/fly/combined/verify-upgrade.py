@@ -27,7 +27,7 @@ req = urllib.request.Request('https://api.machines.dev/v1/apps/'+power['app']+'/
 with urllib.request.urlopen(req, timeout=15) as response: machine = json.load(response)
 env = dict(os.environ, XDG_CONFIG_HOME='/data/hub/home/.config')
 env.pop('HUB_TOKEN', None)
-idle = subprocess.run(['workspacer','fleet','idle','--json'], env=env, capture_output=True, text=True)
+idle = subprocess.run([('workspacer-rust' if __import__('shutil').which('workspacer-rust') else 'workspacer'),'fleet','idle','--json'], env=env, capture_output=True, text=True)
 if idle.returncode not in (0, 1): raise SystemExit('idle query failed')
 out = dict(hubHealth=status('http://127.0.0.1:7895/health'),
     workerHealth=status('http://127.0.0.1:7891/sessions'),

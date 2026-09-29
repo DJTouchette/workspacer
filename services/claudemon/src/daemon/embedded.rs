@@ -17,6 +17,19 @@ pub struct ReadyInfo {
     pub hook_addr: SocketAddr,
     pub api_addr: SocketAddr,
 }
+/// A completed engine response that explicitly refused the command. Transport
+/// loss/timeouts are different: their execution outcome can be unknown.
+#[derive(Debug, Clone)]
+pub struct CommandRejected {
+    pub status: u16,
+    pub message: String,
+}
+impl std::fmt::Display for CommandRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for CommandRejected {}
 #[derive(Debug, Clone)]
 pub enum Status {
     Starting,
@@ -30,16 +43,38 @@ pub struct Options {
     /// None preserves the standalone environment/default behavior.
     pub usage_poll_on_boot: Option<bool>,
 }
-/// Only local session operations are exposed. Workspacer launch setup must
-/// continue through the hub/brain's agents.spawn capability.
+/// Host-owned daemon operations. Workspacer launch setup belongs to the hub's
+/// agents.spawn service even when that service and this engine share a process.
 #[derive(Debug)]
 pub enum Command {
     Sessions,
-    Conversation { id: String, since: Option<u64> },
-    Message { id: String, text: String },
-    Approve { id: String, decision: String },
-    Answer { id: String, answer: Value },
-    Interrupt { id: String },
+    Conversation {
+        id: String,
+        since: Option<u64>,
+    },
+    Message {
+        id: String,
+        text: String,
+    },
+    Approve {
+        id: String,
+        decision: String,
+    },
+    Answer {
+        id: String,
+        answer: Value,
+    },
+    Interrupt {
+        id: String,
+    },
+    /// Adapter for the Rust backend's daemon services. Dispatches through the
+    /// same router/body limits/shutdown fence as the standalone API, without a
+    /// socket. Do not expose this as a caller-controlled bus capability.
+    Request {
+        method: String,
+        path: String,
+        payload: Option<Value>,
+    },
 }
 struct Envelope {
     command: Command,
@@ -49,8 +84,81 @@ struct Envelope {
 pub struct EmbeddedClient {
     commands: mpsc::Sender<Envelope>,
     status: watch::Receiver<Status>,
+    store: std::sync::Arc<std::sync::Mutex<Option<crate::session::SessionStore>>>,
+    conversations: std::sync::Arc<std::sync::Mutex<Option<crate::session::ConversationStore>>>,
 }
 impl EmbeddedClient {
+    /// Subscribe before seeding snapshots so state changes during the seed are
+    /// retained. Lagged receivers must re-read authoritative session state.
+    pub fn subscribe(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<crate::session::store::SessionUpdate>> {
+        anyhow::ensure!(
+            matches!(*self.status.borrow(), Status::Ready(_)),
+            "embedded daemon is not ready"
+        );
+        self.store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|store| store.subscribe())
+            .ok_or_else(|| anyhow!("embedded daemon stopped"))
+    }
+    /// Subscribe to the engine's one retained conversation producer. This is a
+    /// read-only broadcast handle; snapshot/resync still uses the normal API.
+    pub fn subscribe_conversations(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<crate::session::conversation::ConversationDelta>>
+    {
+        anyhow::ensure!(
+            matches!(*self.status.borrow(), Status::Ready(_)),
+            "embedded daemon is not ready"
+        );
+        self.conversations
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|store| store.subscribe())
+            .ok_or_else(|| anyhow!("embedded daemon stopped"))
+    }
+    /// High-frequency status lines are distinct from durable hook events.
+    pub fn subscribe_status_lines(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<crate::session::store::StatusLineUpdate>> {
+        anyhow::ensure!(
+            matches!(*self.status.borrow(), Status::Ready(_)),
+            "embedded daemon is not ready"
+        );
+        self.store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|store| store.subscribe_status_lines())
+            .ok_or_else(|| anyhow!("embedded daemon stopped"))
+    }
+    /// Atomically replay retained PTY output and subscribe to future raw bytes.
+    /// A caller must re-acquire this pair after broadcast lag; a snapshot-only
+    /// repaint with the old receiver can replay overlapping chunks twice.
+    pub async fn subscribe_terminal(
+        &self,
+        session: &str,
+    ) -> Result<(Vec<u8>, tokio::sync::broadcast::Receiver<Vec<u8>>)> {
+        anyhow::ensure!(
+            matches!(*self.status.borrow(), Status::Ready(_)),
+            "embedded daemon is not ready"
+        );
+        let store = self
+            .store
+            .lock()
+            .unwrap()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| anyhow!("embedded daemon stopped"))?;
+        store
+            .snapshot_and_subscribe(session)
+            .await
+            .ok_or_else(|| anyhow!("no PTY buffer for that session"))
+    }
     pub fn status(&self) -> watch::Receiver<Status> {
         self.status.clone()
     }
@@ -91,6 +199,11 @@ impl EmbeddedDaemon {
         let (shutdown, shutdown_rx) = oneshot::channel();
         let cleanup =
             std::sync::Arc::new(std::sync::Mutex::new(None::<crate::session::SessionStore>));
+        let client_store = cleanup.clone();
+        let conversations = std::sync::Arc::new(std::sync::Mutex::new(
+            None::<crate::session::ConversationStore>,
+        ));
+        let client_conversations = conversations.clone();
         let thread = std::thread::Builder::new()
             .name("claudemon-backend".into())
             .spawn(move || {
@@ -111,6 +224,7 @@ impl EmbeddedDaemon {
                             receiver,
                             status: status_tx.clone(),
                             cleanup: cleanup.clone(),
+                            conversations: conversations.clone(),
                             options,
                         }),
                     ));
@@ -149,6 +263,7 @@ impl EmbeddedDaemon {
                     }
                     result
                 })();
+                conversations.lock().unwrap().take();
                 if cleanup_timed_out {
                     // Never let a replacement runtime reuse provider callbacks
                     // while timed-out blocking work might still reference them.
@@ -162,7 +277,12 @@ impl EmbeddedDaemon {
             })
             .context("starting claudemon backend thread")?;
         Ok(Self {
-            client: EmbeddedClient { commands, status },
+            client: EmbeddedClient {
+                commands,
+                status,
+                store: client_store,
+                conversations: client_conversations,
+            },
             shutdown: Some(shutdown),
             thread: Some(thread),
         })
@@ -215,6 +335,8 @@ pub(super) struct Control {
     status: watch::Sender<Status>,
     pub(super) cleanup: std::sync::Arc<std::sync::Mutex<Option<crate::session::SessionStore>>>,
     pub(super) options: Options,
+    pub(super) conversations:
+        std::sync::Arc<std::sync::Mutex<Option<crate::session::ConversationStore>>>,
 }
 pub(super) fn serve_commands(
     mut control: Control,
@@ -246,6 +368,22 @@ pub(super) fn serve_commands(
     })
 }
 async fn dispatch(router: Router, command: Command) -> Result<Value> {
+    if let Command::Request {
+        method,
+        path,
+        payload,
+    } = command
+    {
+        anyhow::ensure!(
+            matches!(method.as_str(), "GET" | "POST" | "DELETE"),
+            "unsupported embedded API method"
+        );
+        anyhow::ensure!(
+            path.starts_with('/') && !path.starts_with("//") && !path.chars().any(char::is_control),
+            "invalid embedded API path"
+        );
+        return dispatch_request(router, &method, path, payload).await;
+    }
     let session_path = |id: &str, suffix: &str| -> Result<String> {
         anyhow::ensure!(
             !id.is_empty()
@@ -279,9 +417,24 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
             session_path(&id, "signal")?,
             Some(json!({"signal": "SIGINT"})),
         ),
+        Command::Request { .. } => unreachable!(),
     };
+    dispatch_request(
+        router,
+        if payload.is_some() { "POST" } else { "GET" },
+        path,
+        payload,
+    )
+    .await
+}
+async fn dispatch_request(
+    router: Router,
+    method: &str,
+    path: String,
+    payload: Option<Value>,
+) -> Result<Value> {
     let request = Request::builder()
-        .method(if payload.is_some() { "POST" } else { "GET" })
+        .method(method)
         .uri(path)
         .header("content-type", "application/json")
         .body(Body::from(
@@ -290,15 +443,23 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
     let response = router.oneshot(request).await?;
     let status = response.status();
     let body = to_bytes(response.into_body(), 32 * 1024 * 1024).await?;
-    anyhow::ensure!(
-        status.is_success(),
-        "daemon returned {status}: {}",
-        String::from_utf8_lossy(&body)
-    );
+    if !status.is_success() {
+        return Err(CommandRejected {
+            status: status.as_u16(),
+            message: format!(
+                "daemon returned {status}: {}",
+                String::from_utf8_lossy(&body)
+            ),
+        }
+        .into());
+    }
     let value: Value = serde_json::from_slice(&body)?;
-    anyhow::ensure!(
-        value.get("ok").and_then(Value::as_bool) != Some(false),
-        "daemon rejected command: {value}"
-    );
+    if value.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Err(CommandRejected {
+            status: status.as_u16(),
+            message: format!("daemon rejected command: {value}"),
+        }
+        .into());
+    }
     Ok(value)
 }

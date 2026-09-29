@@ -1,0 +1,15 @@
+{
+ "version":1,
+ "vocabulary":{"blocks":{"cases":{"why":"Persistent headless analytics must deduplicate repeated turns, attribute sidechain models, preserve managed native cost and expose unrecorded rows.","required":["name","mainJsonl","subagentJsonl","snapshots","expected"],"loaders":["services/hub-rs/tests/analytics.rs::persistent_headless_analytics_retains_deduplicated_model_splits_and_filters","apps/desktop/scripts/test-headless-analytics.mjs::headless analytics retains real usage and model splits across process restarts"]}}},
+ "cases":[{
+  "name":"mixed provider history survives transcript cleanup",
+  "mainJsonl":"{\"type\":\"assistant\",\"message\":{\"id\":\"one\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":100}}}\n{\"type\":\"assistant\",\"message\":{\"id\":\"one\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":100}}}\n",
+  "subagentJsonl":"{\"type\":\"assistant\",\"message\":{\"id\":\"two\",\"model\":\"claude-haiku-4-5\",\"usage\":{\"input_tokens\":500,\"output_tokens\":50}}}\n",
+  "snapshots":{
+   "claude-session":{"session_id":"claude-session","provider":"claude","mode":"stopped","started_at":"2026-09-10T00:00:00Z","updated_at":"2026-09-10T01:00:00Z"},
+   "codex-session":{"session_id":"codex-session","provider":"codex","mode":"stopped","started_at":"2026-09-11T00:00:00Z","updated_at":"2026-09-11T01:00:00Z","usage":{"costUSD":0},"status_line":{"model_display":"gpt-5","total_input_tokens":2000,"total_output_tokens":200,"cost_usd":0.75}},
+   "unknown-session":{"session_id":"unknown-session","provider":"claude","mode":"stopped","started_at":"2026-09-11T00:00:00Z"}
+  },
+  "expected":{"sessions":3,"unrecordedSessions":1,"inputTokens":3500,"outputTokens":350,"modelBuckets":4,"claudeInputTokens":1500,"providerBuckets":2,"managedCostUSD":0.75}
+ }]
+}

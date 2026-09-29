@@ -14,6 +14,7 @@
 //! Same division of labor as spawns and heartbeats: the client resolves the
 //! launcher argv (PATH/nvm quirks live there), the daemon runs it.
 
+use crate::child_env::SanitizeChildEnvironment;
 use std::process::Stdio;
 
 use axum::{
@@ -120,6 +121,7 @@ async fn run_claude_print(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
+        .scrub_host_authority()
         .spawn()
         .context("spawning claude for one-shot")?;
 

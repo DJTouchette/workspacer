@@ -72,7 +72,7 @@
           "why"
         ],
         "loaders": [
-          "services/hub/internal/bus/desktop_test.go::TestDesktopServiceManifest",
+          "services/hub-rs/src/auth.rs::desktop_service_manifest_authority_cases",
           "apps/desktop/src/main/shared/desktopServices.test.ts::authorityCases"
         ],
         "why": "Desktop method authority is independent of scoped operator promotion and provider registration."

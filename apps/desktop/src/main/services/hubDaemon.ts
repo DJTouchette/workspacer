@@ -1,16 +1,8 @@
 import { noteRuntimePhase, observeRuntimeStart } from './agentRuntimeStatus';
 /**
- * Spawns and supervises the `hub` daemon — workspacer's control-plane / event
- * bus (Go, in `services/hub/`). It runs independently of the UI so plugins (and,
- * later,
- * an MCP facade) can broker events with or without a window open.
- *
- * On startup we point it at claudemon's /events so claudemon becomes the first
- * producer on the bus; the renderer then consumes a single normalized stream.
- *
- * Binary resolution:
- *   - dev (ELECTRON_DEV=1): <repo>/services/hub/hub[.exe]
- *   - packaged:             <resourcesPath>/hub/hub[.exe]
+ * Owns the Rust hub launcher independently of the Electron window. Live desktop
+ * capabilities remain in Electron; catalog delegation is handled separately.
+ * Development and packaged launches use workspacer-rust, with no Go fallback.
  */
 
 import * as fs from 'fs';
@@ -20,7 +12,7 @@ import * as crypto from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import { app } from 'electron';
 import { CLAUDEMON_API_URL, isClaudemonAdopted } from './claudemonDaemon';
-import { DELEGATE_CATALOG_TO_BRAIN, DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
+import { DESKTOP_RENDERER_USES_BUS } from './brainDelegation';
 import { getRemoteServer, getPairedWorkerInfo } from './remoteServer';
 import { suspectedStateLoss } from '../lib/stateLoss';
 import {
@@ -51,6 +43,18 @@ let child: ChildProcess | null = null;
 let readyPromise: Promise<void> | null = null;
 /** Set by stopHub() / app shutdown so an intentional kill isn't respawned. */
 let intentionalStop = false;
+let generation = 0;
+let healthAbort: AbortController | null = null;
+let restartTimer: ReturnType<typeof setTimeout> | null = null;
+let stoppingPromise: Promise<void> | null = null;
+function cancelRestart(): void {
+  if (restartTimer !== null) clearTimeout(restartTimer);
+  restartTimer = null;
+}
+function assertCurrent(epoch: number, signal: AbortSignal): void {
+  if (epoch !== generation || intentionalStop || signal.aborted)
+    throw new Error('hub startup cancelled');
+}
 /**
  * True when we ADOPTED an already-running external hub (e.g. `workspacer
  * serve`, which runs the hub with --brain-scope full). Adopted hubs are not
@@ -174,9 +178,10 @@ export function urlHost(host: string): string {
 export function dialAuthority(bind = bindAddr()): string {
   const { host, port } = splitHostPort(bind);
   const p = port || String(PORT);
-  if (host === '' || host === '0.0.0.0' || host === '::' || host === '[::]') {
+  if (host === '' || host === '0.0.0.0') {
     return `127.0.0.1:${p}`;
   }
+  if (host === '::' || host === '[::]') return `[::1]:${p}`;
   return `${urlHost(host)}:${p}`;
 }
 
@@ -374,7 +379,7 @@ export async function getRemoteShareInfo(): Promise<RemoteShareInfo> {
   // hub itself rather than advertise a 404.
   const hasWebApp =
     enabled &&
-    (adopted ? await probeHealth(`http://127.0.0.1:${PORT}/app/${q}`) : fs.existsSync(webappDir()));
+    (adopted ? await probeHealth(`${hubHttpUrl()}/app/${q}`) : fs.existsSync(webappDir()));
   // An owned hub is (re)spawned with the right binding when sharing flips on,
   // so only the adopted case can advertise an address nothing listens on —
   // probe it rather than hand out a QR that scans to a dead endpoint.
@@ -401,12 +406,22 @@ export function getHubToken(): string {
 }
 
 function exeName(): string {
-  return process.platform === 'win32' ? 'hub.exe' : 'hub';
+  return process.platform === 'win32' ? 'workspacer-rust.exe' : 'workspacer-rust';
 }
 
 export function hubBinaryPath(): string {
+  if (process.env.WORKSPACER_RUST_HUB_BINARY) return process.env.WORKSPACER_RUST_HUB_BINARY;
   if (process.env.ELECTRON_DEV || !app.isPackaged) {
-    return path.join(app.getAppPath(), '..', '..', 'services', 'hub', exeName());
+    return path.join(
+      app.getAppPath(),
+      '..',
+      '..',
+      'services',
+      'hub-rs',
+      'target',
+      'release',
+      exeName(),
+    );
   }
   return path.join(process.resourcesPath, 'hub', exeName());
 }
@@ -473,67 +488,76 @@ function ensurePluginsDir(): string {
  */
 export function startHub(): Promise<void> {
   if (readyPromise) return readyPromise;
-
+  cancelRestart();
   intentionalStop = false;
+  const epoch = ++generation;
+  const controller = new AbortController();
+  healthAbort?.abort();
+  healthAbort = controller;
+  const addr = bindAddr();
+  const healthUrl = `http://${dialAuthority(addr)}/health`;
+  const stopping = stoppingPromise;
   const starting = (async () => {
-    if (await probeHealth(`http://127.0.0.1:${PORT}/health`)) {
+    // Do not mistake an owned child still stopping for an external server.
+    if (stopping) await stopping;
+    assertCurrent(epoch, controller.signal);
+    const healthy = await probeHealth(healthUrl, 1200, controller.signal);
+    assertCurrent(epoch, controller.signal);
+    if (healthy) {
       adopted = true;
       console.log(
-        `[hub] adopted external hub on :${PORT} (workspacer serve?) — not spawning, not supervising; ` +
-          'its full-scope brain keeps the capabilities it already provides',
+        `[hub] adopted external hub at ${dialAuthority(addr)} — not spawning or supervising`,
       );
       return;
     }
     adopted = false;
     const bin = hubBinaryPath();
-    if (!fs.existsSync(bin)) {
-      throw new Error(
-        `hub binary not found at ${bin} (run: cd services/hub && go build -o hub ./cmd/hub)`,
-      );
-    }
-    return launch(bin);
+    if (!fs.existsSync(bin))
+      throw new Error(`hub binary not found at ${bin} (run: make build-rust-backend)`);
+    return launch(bin, addr, epoch, controller);
   })();
-  // launch() re-assigns readyPromise to its health promise (needed by the
-  // crash-restart path); until then this placeholder keeps repeat callers off
-  // a second probe/spawn.
-  readyPromise = observeRuntimeStart('hub', starting, `http://127.0.0.1:${PORT}/health`);
+  readyPromise = observeRuntimeStart('hub', starting, healthUrl);
   return readyPromise;
 }
 
 /** Spawn the process and wire up exit-driven restart. Returns the health promise. */
-function launch(bin: string): Promise<void> {
+function launch(
+  bin: string,
+  addr: string,
+  epoch: number,
+  controller: AbortController,
+): Promise<void> {
+  assertCurrent(epoch, controller.signal);
   // Only reached when the health probe failed: whatever holds the port (if
   // anything) is a stale orphan, not an adoptable hub — clear it.
-  killStaleListener(PORT, 'hub', bin);
+  const selectedPort = Number(splitHostPort(addr).port || PORT);
+  if (!Number.isInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535)
+    throw new Error('Invalid hub listener port');
+  killStaleListener(selectedPort, 'hub', bin);
 
   const pluginsDir = ensurePluginsDir();
-  const addr = bindAddr();
   const remote = isRemoteEnabled();
   console.log(`[hub] spawning ${bin} (addr ${addr})`);
   backoff.markStarted();
+  const endpoint = splitHostPort(addr);
   const hubArgs = [
-    '--addr',
-    addr,
-    '--claudemon-events',
-    `${CLAUDEMON_API_URL}/events`,
+    '--config-dir',
+    getConfigDir(),
+    '--host',
+    endpoint.host || '0.0.0.0',
+    '--hub-port',
+    endpoint.port || String(PORT),
+    'serve',
+    '--hub-only',
+    '--quiet',
+    '--mcp-port',
+    String(PORTS.mcpFacade),
+    '--external-claudemon',
+    CLAUDEMON_API_URL,
     '--plugins-dir',
     pluginsDir,
-    // Read-only catalog of bundled examples the user can add from the UI.
     '--examples-dir',
     bundledExamplesDir(),
-    // Have the hub supervise the headless brain provider. With delegation on it
-    // owns the file-backed "catalog" capabilities (main stops registering them —
-    // see hubCapabilities + brainDelegation); the brain binary ships next to the
-    // hub binary, so the hub auto-detects it. Off → no brain, main stays the
-    // provider (kill switch: WORKSPACER_NO_BRAIN=1).
-    '--brain-scope',
-    DELEGATE_CATALOG_TO_BRAIN ? 'catalog' : 'off',
-    '--claudemon',
-    CLAUDEMON_API_URL,
-    // Run `node` plugin sidecars on our own bundled Node (the hub sets
-    // ELECTRON_RUN_AS_NODE when spawning) — plugins get the app's Node version
-    // regardless of what, if anything, is installed on the system. execPath is
-    // the electron binary in dev and Workspacer(.exe) when packaged.
     '--sidecar-node',
     process.execPath,
   ];
@@ -558,7 +582,12 @@ function launch(bin: string): Promise<void> {
   // sharing. The hub's --token flag already defaults to os.Getenv("HUB_TOKEN")
   // (cmd/hub/main.go), which is also how it forwards the token to the brain it
   // supervises, so dropping the flag changes nothing else.
-  child = spawn(bin, hubArgs, daemonSpawnOptions(HUB_TOKEN ? { HUB_TOKEN } : undefined));
+  const processChild = spawn(
+    bin,
+    hubArgs,
+    daemonSpawnOptions(HUB_TOKEN ? { HUB_TOKEN } : undefined),
+  );
+  child = processChild;
 
   if (remote) {
     // Log the reachable address but NOT the token — the tokened URL/QR lives in
@@ -568,27 +597,26 @@ function launch(bin: string): Promise<void> {
     );
   }
 
-  // AbortController so a fast-exiting daemon cancels the health-check poll
-  // instead of spinning for the full HEALTH_TIMEOUT_MS.
-  const healthAbort = new AbortController();
-
-  child.stdout?.on('data', (d) => process.stdout.write(`[hub] ${d}`));
-  child.stderr?.on('data', (d) => process.stderr.write(`[hub] ${d}`));
-  child.on('exit', (code, signal) => {
+  processChild.stdout?.on('data', (d) => process.stdout.write(`[hub] ${d}`));
+  processChild.stderr?.on('data', (d) => process.stderr.write(`[hub] ${d}`));
+  processChild.on('exit', (code, signal) => {
+    controller.abort();
+    if (generation !== epoch || child !== processChild) return;
     console.log(`[hub] exited code=${code} signal=${signal}`);
     child = null;
     noteRuntimePhase('hub', 'failed');
     readyPromise = null;
-    healthAbort.abort(); // cancel any in-progress health poll
-    if (!intentionalStop) scheduleRestart(bin);
+    if (healthAbort === controller) healthAbort = null;
+    if (!intentionalStop) scheduleRestart(epoch);
   });
-
+  const healthUrl = `http://${dialAuthority(addr)}/health`;
   readyPromise = observeRuntimeStart(
     'hub',
-    awaitHealthPatiently(`http://${dialAuthority(addr)}/health`, healthAbort.signal).then(() => {
+    awaitHealthPatiently(healthUrl, controller.signal).then(() => {
+      assertCurrent(epoch, controller.signal);
       backoff.reset();
     }),
-    `http://${dialAuthority(addr)}/health`,
+    healthUrl,
   );
   return readyPromise;
 }
@@ -608,6 +636,7 @@ function launch(bin: string): Promise<void> {
 async function awaitHealthPatiently(url: string, signal: AbortSignal): Promise<void> {
   try {
     await waitForHealthShared(url, HEALTH_TIMEOUT_MS, 'hub', signal);
+    if (signal.aborted) throw new Error('hub health check cancelled');
     return;
   } catch (err) {
     if (signal.aborted) throw err;
@@ -628,6 +657,7 @@ async function awaitHealthPatiently(url: string, signal: AbortSignal): Promise<v
   while (Date.now() < deadline) {
     try {
       await waitForHealthShared(url, HEALTH_TIMEOUT_MS, 'hub', signal);
+      if (signal.aborted) throw new Error('hub health check cancelled');
       notifySystem({
         level: 'info',
         key: 'hub-start',
@@ -645,7 +675,8 @@ async function awaitHealthPatiently(url: string, signal: AbortSignal): Promise<v
 }
 
 /** Respawn after an unexpected exit, with exponential backoff. */
-function scheduleRestart(bin: string): void {
+function scheduleRestart(epoch: number): void {
+  cancelRestart();
   const delay = backoff.nextDelay();
   if (delay === null) {
     notifySystem({
@@ -658,10 +689,14 @@ function scheduleRestart(bin: string): void {
     return;
   }
   console.warn(`[hub] unexpected exit — restarting in ${delay}ms`);
-  setTimeout(() => {
-    if (intentionalStop || child) return; // stopped, or already back up
-    launch(bin).catch((err) => console.error('[hub] restart failed health check:', err));
+  const timer = setTimeout(() => {
+    if (restartTimer !== timer) return;
+    restartTimer = null;
+    if (epoch !== generation || intentionalStop || child || readyPromise) return;
+    // A healthy external replacement must be adopted, not killed by a retry.
+    startHub().catch((err) => console.error('[hub] restart failed health check:', err));
   }, delay);
+  restartTimer = timer;
 }
 
 /**
@@ -695,21 +730,35 @@ export async function setRemoteShare(enabled: boolean): Promise<RemoteShareInfo>
 
 export function stopHub(): Promise<void> {
   intentionalStop = true;
-  backoff.reset(); // clear failure counter so the next startHub() begins fresh
-  // Adopted hub: it isn't ours — leave it (and its plugin sidecars/brain)
-  // running. Quitting the app must not take down `workspacer serve`.
+  generation++;
+  cancelRestart();
+  healthAbort?.abort();
+  healthAbort = null;
+  backoff.reset();
+  noteRuntimePhase('hub', 'unknown');
+  readyPromise = null;
   if (adopted) {
     console.log('[hub] adopted hub left running (owned by the external server)');
     adopted = false;
-    readyPromise = null;
-    return Promise.resolve();
+    return stoppingPromise ?? Promise.resolve();
   }
-  const c = child;
+  const processChild = child;
   child = null;
-  readyPromise = null;
-  // Extra grace: closing stdin makes the hub run mgr.Stop(), which SIGTERMs each
-  // supervised plugin sidecar (up to a few seconds apiece) before it exits.
-  return gracefulStop(c, 'hub', 6000);
+  if (!processChild) return stoppingPromise ?? Promise.resolve();
+  const previous = stoppingPromise;
+  const stopping = Promise.all([previous, gracefulStop(processChild, 'hub', 6000)]).then(
+    () => undefined,
+  );
+  stoppingPromise = stopping;
+  void stopping.then(
+    () => {
+      if (stoppingPromise === stopping) stoppingPromise = null;
+    },
+    () => {
+      if (stoppingPromise === stopping) stoppingPromise = null;
+    },
+  );
+  return stopping;
 }
 
 export const HUB_PORT = PORT;

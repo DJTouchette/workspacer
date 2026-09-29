@@ -147,19 +147,25 @@ processes so your sessions outlive any window:
 ```
 apps/
   desktop/     Electron + React desktop app — the primary GUI client
+  native/      GPUI native client with an embedded Rust backend
   tui/         wks-tui — Rust terminal client over the hub bus
 services/
   claudemon/   Rust session daemon: owns sessions/PTYs, runs per-provider
                adapters, streams conversation and usage (git review is
                handled by the clients)
-  hub/         Go control plane: event bus, process supervisor, capability
-               router, plugin system, an MCP facade (cmd/mcp), a headless
-               provider (cmd/brain), and the workspacer CLI (cmd/workspacer)
+  hub-rs/      Shared Rust backend: hub, MCP, plugins, desktop services and
+               the standalone workspacer-rust launcher
+  hub/         Retiring reference implementation and bundled plugin examples
 docs/          specs, design notes, and the feature catalog
 landing/       the marketing site + user docs (static HTML)
 ```
 
-The desktop app spawns `claudemon` and `hub` and restarts them if they crash —
+On this migration branch, the native GUI embeds the Rust backend and session
+engine; `workspacer-rust serve` runs the same services as a standalone process.
+Platform validation and legacy removal are still in progress (see
+[the migration gates](services/hub-rs/MIGRATION.md)).
+
+The Electron app spawns `claudemon` and the Rust control plane and restarts them if they crash —
 or, if a `workspacer serve` is already running on the machine, adopts it
 instead of spawning its own. The advanced clients (`wks-tui`, `/remote`,
 `/app/`) and the phone client all connect to the same `hub` bus, so a session
@@ -172,11 +178,11 @@ running on one client can be observed and driven from another.
 | `make dev`             | Desktop app in dev mode (Vite + Electron)             |
 | `./dev`                | Same as `make dev` (wrapper around `npm run dev`)     |
 | `make dev-share`       | Desktop app in dev mode with remote sharing forced on |
-| `make dev-tui`         | Run wks-tui (debug); builds claudemon + hub/brain first |
-| `make run-tui`         | Run wks-tui (release); builds claudemon + hub/brain + tui first |
-| `make build`           | Build all four components                             |
-| `make build-hub`       | Build the Go `hub` + `mcp` + `brain` + `workspacer` binaries |
-| `make build-cli`       | The `workspacer` CLI + all its sibling daemon binaries |
+| `make dev-tui`         | Run wks-tui (debug); builds the Rust services first |
+| `make run-tui`         | Run wks-tui (release); builds the Rust services and TUI first |
+| `make build`           | Build all components                             |
+| `make build-hub`       | Build the standalone shared Rust backend |
+| `make build-cli`       | Build `workspacer-rust` (backend and administration CLI) |
 | `make build-claudemon` | `cargo build --release` for claudemon                 |
 | `make build-tui`       | `cargo build --release` for wks-tui                   |
 | `make test`            | Desktop + hub + claudemon + tui test suites           |
@@ -185,7 +191,7 @@ running on one client can be observed and driven from another.
 
 Each component also builds independently from its own directory — see the
 per-component READMEs (`apps/desktop/README.md`, `apps/tui/README.md`,
-`services/claudemon/README.md`, `services/hub/README.md`).
+`services/claudemon/README.md`, `services/hub-rs/MIGRATION.md`).
 
 ## Toolchains
 

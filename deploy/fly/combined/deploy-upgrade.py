@@ -26,7 +26,7 @@ if row["state"] != "stopped":
 import os, json, subprocess, sys
 env = dict(os.environ, XDG_CONFIG_HOME='/data/hub/home/.config')
 env.pop('HUB_TOKEN',None)
-r = subprocess.run(['workspacer','fleet','idle','--json'],env=env,capture_output=True,text=True)
+r = subprocess.run([('workspacer-rust' if __import__('shutil').which('workspacer-rust') else 'workspacer'),'fleet','idle','--json'],env=env,capture_output=True,text=True)
 if r.returncode not in (0,1): sys.exit('Could not inspect live work')
 state = json.loads(r.stdout)['idle']
 blockers = [b for b in state.get('blockers',[]) if b['kind'] not in ('client-active','dwell')]

@@ -6,16 +6,17 @@
  *   - stop/setRemoteShare never signal or restart an adopted hub,
  *   - getRemoteShareInfo surfaces the adopted state for the UI.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 
-const probeHealth = vi.fn<(url: string, t?: number) => Promise<boolean>>();
+const probeHealth = vi.fn<(url: string, t?: number, signal?: AbortSignal) => Promise<boolean>>();
+let restartDelay: number | null = null;
 const killStaleListener = vi.fn();
 const waitForHealth = vi.fn().mockResolvedValue(undefined);
 const gracefulStop = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../lib/daemonUtils', () => ({
-  probeHealth: (...a: [string, number?]) => probeHealth(...a),
+  probeHealth: (...a: [string, number?, AbortSignal?]) => probeHealth(...a),
   killStaleListener: (...a: unknown[]) => killStaleListener(...a),
   waitForHealth: (...a: unknown[]) => waitForHealth(...a),
   gracefulStop: (...a: unknown[]) => gracefulStop(...a),
@@ -30,7 +31,7 @@ vi.mock('../lib/daemonUtils', () => ({
     markStarted() {}
     reset() {}
     nextDelay() {
-      return null; // never restart in tests
+      return restartDelay;
     }
   },
 }));
@@ -104,6 +105,13 @@ beforeEach(() => {
   gracefulStop.mockClear().mockResolvedValue(undefined);
   spawnMock.mockClear();
   delete process.env.WORKSPACER_REMOTE_SHARE;
+  delete process.env.WORKSPACER_REMOTE_ADDR;
+  delete process.env.WORKSPACER_RUST_HUB_BINARY;
+  restartDelay = null;
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('hubDaemon adopt-vs-spawn', () => {
@@ -174,5 +182,145 @@ describe('hubDaemon adopt-vs-spawn', () => {
     expect(gracefulStop).not.toHaveBeenCalled();
     expect(spawnMock).not.toHaveBeenCalled();
     expect(info.hubAdopted).toBe(true);
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((yes) => {
+    resolve = yes;
+  });
+  return { promise, resolve };
+}
+async function drain() {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+}
+
+describe('Rust hub owner generations', () => {
+  for (const healthy of [true, false]) {
+    it(`stop fences a late initial probe (${healthy ? 'healthy' : 'absent'})`, async () => {
+      const probe = deferred<boolean>();
+      probeHealth.mockReturnValue(probe.promise);
+      const mod = await loadModule();
+      const starting = mod.startHub();
+      const rejected = expect(starting).rejects.toThrow(/cancelled/);
+      const signal = probeHealth.mock.calls[0][2];
+      await mod.stopHub();
+      expect(signal?.aborted).toBe(true);
+      probe.resolve(healthy);
+      await rejected;
+      expect(mod.isHubAdopted()).toBe(false);
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(killStaleListener).not.toHaveBeenCalled();
+    });
+  }
+  it('an earlier probe cannot adopt or reset a replacement startup', async () => {
+    const oldProbe = deferred<boolean>();
+    probeHealth.mockReturnValueOnce(oldProbe.promise).mockResolvedValue(false);
+    const mod = await loadModule();
+    const oldStart = mod.startHub();
+    const rejected = expect(oldStart).rejects.toThrow(/cancelled/);
+    await mod.stopHub();
+    await mod.startHub();
+    oldProbe.resolve(true);
+    await rejected;
+    expect(mod.isHubAdopted()).toBe(false);
+    await mod.startHub();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    await mod.stopHub();
+  });
+  it('an old child exit cannot clear the new child or schedule its restart', async () => {
+    probeHealth.mockResolvedValue(false);
+    const mod = await loadModule();
+    await mod.startHub();
+    const old = spawnMock.mock.results[0].value;
+    await mod.stopHub();
+    await mod.startHub();
+    const runtime = await import('./agentRuntimeStatus');
+    const phase = vi.spyOn(runtime, 'noteRuntimePhase');
+    old.emit('exit', 1, null);
+    await drain();
+    expect(phase).not.toHaveBeenCalled();
+    await mod.startHub();
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    await mod.stopHub();
+    expect(gracefulStop.mock.calls.at(-1)?.[0]).toBe(spawnMock.mock.results[1].value);
+  });
+  it('stop aborts owned health and a late success cannot complete the old start', async () => {
+    probeHealth.mockResolvedValue(false);
+    const oldHealth = deferred<void>();
+    waitForHealth.mockReturnValueOnce(oldHealth.promise).mockResolvedValue(undefined);
+    const mod = await loadModule();
+    const oldStart = mod.startHub();
+    const rejected = expect(oldStart).rejects.toThrow(/cancelled/);
+    await drain();
+    const signal = waitForHealth.mock.calls[0][3] as AbortSignal;
+    await mod.stopHub();
+    expect(signal.aborted).toBe(true);
+    await mod.startHub();
+    oldHealth.resolve();
+    await rejected;
+    await mod.startHub();
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    await mod.stopHub();
+  });
+  it('start waits for owned shutdown before probing or spawning again', async () => {
+    probeHealth.mockResolvedValue(false);
+    const mod = await loadModule();
+    await mod.startHub();
+    const ended = deferred<void>();
+    gracefulStop.mockReturnValueOnce(ended.promise);
+    const stopping = mod.stopHub();
+    const restarting = mod.startHub();
+    await drain();
+    expect(probeHealth).toHaveBeenCalledTimes(1);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    ended.resolve();
+    await stopping;
+    await restarting;
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    await mod.stopHub();
+  });
+  it('stop cancels queued restarts even if a later start has reset the stop flag', async () => {
+    vi.useFakeTimers();
+    restartDelay = 100;
+    probeHealth.mockResolvedValue(false);
+    const mod = await loadModule();
+    await mod.startHub();
+    spawnMock.mock.results[0].value.emit('exit', 1, null);
+    await mod.stopHub();
+    await mod.startHub();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    await mod.stopHub();
+  });
+  it('a crash retry adopts a healthy external replacement without killing it', async () => {
+    vi.useFakeTimers();
+    restartDelay = 100;
+    probeHealth.mockResolvedValueOnce(false).mockResolvedValue(true);
+    const mod = await loadModule();
+    await mod.startHub();
+    spawnMock.mock.results[0].value.emit('exit', 1, null);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(mod.isHubAdopted()).toBe(true);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(killStaleListener).toHaveBeenCalledTimes(1);
+    await mod.stopHub();
+    expect(gracefulStop).not.toHaveBeenCalled();
+  });
+  it('launches only the Rust executable and Rust serve flags', async () => {
+    probeHealth.mockResolvedValue(false);
+    const mod = await loadModule();
+    await mod.startHub();
+    const [binary, args] = spawnMock.mock.calls[0] as unknown as [string, string[]];
+    expect(binary).toMatch(/workspacer-rust(?:\.exe)?$/);
+    expect(binary).toContain('hub-rs');
+    expect(args).toContain('serve');
+    expect(args).toContain('--hub-only');
+    expect(args).toContain('--external-claudemon');
+    expect(args).not.toContain('--brain-scope');
+    expect(args).not.toContain('--claudemon-events');
+    expect(args).not.toContain('--addr');
+    await mod.stopHub();
   });
 });

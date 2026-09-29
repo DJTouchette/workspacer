@@ -1085,3 +1085,263 @@ async fn native_card_diffs_use_the_owner_validated_desktop_service() {
             .contains("outside")
     );
 }
+
+#[tokio::test]
+async fn ui_events_are_bounded_display_intents_and_terminal_requests_never_spawn_headlessly() {
+    use wks_native::ui_requests::{Intent, MAX_PENDING};
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let subscription = loop {
+        let frame = hub.frame("subscribe", None).await;
+        if frame.value["topics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "facade.openTerminal")
+        {
+            break frame;
+        }
+    };
+    for topic in wks_native::ui_requests::TOPICS {
+        assert!(
+            subscription.value["topics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == topic)
+        );
+    }
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([])).await;
+    let payload = json!({"cwd":"/workspace","command":"echo visible only","label":"Checks","parentSessionId":"manager"});
+    fleet.event("facade.openTerminal", payload.clone()).await;
+    let pending = view(&controller, |v| v.ui_requests.len() == 1).await;
+    assert!(
+        matches!(&pending.ui_requests[0].intent,Intent::Terminal{command,..} if command=="echo visible only")
+    );
+    assert_eq!(pending.ui_requests[0].payload, payload);
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    while let Ok(frame) = hub.frames.try_recv() {
+        assert_ne!(frame.value["method"], "terminals.create");
+        assert_ne!(frame.value["method"], "agents.spawn");
+        assert_ne!(frame.value["method"], "sessions.terminalInput");
+    }
+    controller
+        .command(Command::ConsumeUiRequest(pending.ui_requests[0].number))
+        .unwrap();
+    view(&controller, |v| v.ui_requests.is_empty()).await;
+    for _ in 0..MAX_PENDING + 2 {
+        fleet
+            .event("command.open_spawn_dialog", json!({"cwd":"/project"}))
+            .await;
+    }
+    let full = view(&controller, |v| !v.ui_request_warning.is_empty()).await;
+    assert_eq!(full.ui_requests.len(), MAX_PENDING);
+    assert!(!full.creating);
+    assert!(full.spawn_receipt.is_none());
+}
+
+#[tokio::test]
+async fn foreign_ui_requests_cannot_navigate_the_local_workspace() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([])).await;
+    view(&controller, |v| v.connected).await;
+    fleet.send.send(Message::Text(json!({"op":"event","event":{"type":"facade.openTerminal","hub":"other","data":{"cwd":"/remote","command":"no"}}}).to_string())).await.unwrap();
+    fleet
+        .event(
+            "command.focus_agent",
+            json!({"sessionId":"foreign","hub":"other"}),
+        )
+        .await;
+    fleet
+        .event("command.open_pane", json!({"paneType":"settings"}))
+        .await;
+    let v = view(&controller, |v| !v.ui_requests.is_empty()).await;
+    assert_eq!(v.ui_requests.len(), 1);
+    assert!(
+        matches!(&v.ui_requests[0].intent,wks_native::ui_requests::Intent::OpenPane{pane_type,..} if pane_type=="settings")
+    );
+}
+
+#[tokio::test]
+async fn power_close_before_and_after_hello_requires_explicit_resume_and_never_replays() {
+    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+    for hello in [false, true] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config =
+            Config::new(format!("ws://{}/bus", listener.local_addr().unwrap()), None).unwrap();
+        let (client, events) = Client::start(config);
+        let (stream, _) = timeout(DEADLINE, listener.accept()).await.unwrap().unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let pending = if hello {
+            socket
+                .send(Message::Text(json!({"op":"hello"}).to_string()))
+                .await
+                .unwrap();
+            connected(&events).await;
+            let client = client.clone();
+            let pending = tokio::spawn(async move {
+                client
+                    .call("agents.sendMessage", json!({"sessionId":"a","text":"once"}))
+                    .await
+            });
+            loop {
+                if let Some(Ok(Message::Text(text))) = socket.next().await {
+                    let frame: Value = serde_json::from_str(&text).unwrap();
+                    if frame["op"] == "call" {
+                        assert_eq!(frame["method"], "agents.sendMessage");
+                        break;
+                    }
+                }
+            }
+            Some(pending)
+        } else {
+            None
+        };
+        socket
+            .send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Library(4001),
+                reason: "machine stopping; reconnect only to wake".into(),
+            })))
+            .await
+            .unwrap();
+        timeout(DEADLINE, async {
+            while !matches!(events.recv().await.unwrap(), Event::PowerPaused) {}
+        })
+        .await
+        .unwrap();
+        if let Some(pending) = pending {
+            assert!(
+                pending
+                    .await
+                    .unwrap()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("outcome unknown")
+            );
+        }
+        assert!(client.call("fixture.read", json!({})).await.is_err());
+        client
+            .topics(BTreeSet::from(["agent.snapshot".into()]))
+            .await
+            .unwrap();
+        assert!(
+            timeout(Duration::from_millis(650), listener.accept())
+                .await
+                .is_err(),
+            "paused client redialed without user intent"
+        );
+        client.resume_power_pause().unwrap();
+        assert!(
+            client.resume_power_pause().is_err(),
+            "duplicate resume queued for a later pause"
+        );
+        let (stream, _) = timeout(DEADLINE, listener.accept()).await.unwrap().unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(json!({"op":"hello"}).to_string()))
+            .await
+            .unwrap();
+        connected(&events).await;
+        let frame = timeout(DEADLINE, async {
+            loop {
+                if let Some(Ok(Message::Text(text))) = socket.next().await {
+                    break serde_json::from_str::<Value>(&text).unwrap();
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(frame["op"], "subscribe");
+        assert_eq!(frame["topics"], json!(["agent.snapshot"]));
+        assert!(
+            timeout(Duration::from_millis(80), socket.next())
+                .await
+                .is_err(),
+            "old mutation replayed after resume"
+        );
+        socket
+            .send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Library(4001),
+                reason: "second stop".into(),
+            })))
+            .await
+            .unwrap();
+        timeout(DEADLINE, async {
+            while !matches!(events.recv().await.unwrap(), Event::PowerPaused) {}
+        })
+        .await
+        .unwrap();
+        assert!(
+            timeout(Duration::from_millis(350), listener.accept())
+                .await
+                .is_err(),
+            "a previous resume escaped into the next stop"
+        );
+        drop(client);
+        drop(events);
+    }
+}
+
+#[tokio::test]
+async fn controller_pauses_all_host_reads_until_user_refresh() {
+    use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([])).await;
+    view(&controller, |v| v.connected).await;
+    while hub.frames.try_recv().is_ok() {}
+    fleet
+        .send
+        .send(Message::Close(Some(CloseFrame {
+            code: CloseCode::Library(4001),
+            reason: "pause".into(),
+        })))
+        .await
+        .unwrap();
+    let paused = view(&controller, |v| v.power_paused).await;
+    assert!(!paused.connected);
+    assert!(paused.can_resume_power_pause);
+    assert!(!paused.notice.contains("Reconnecting"));
+    controller
+        .command(Command::Request(wks_native::features::Request::Recent))
+        .unwrap();
+    view(&controller, |v| {
+        v.requests.get("recent").is_some_and(|s| s.error.is_some())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert!(
+        hub.frames.try_recv().is_err(),
+        "maintenance or read request woke paused host"
+    );
+    controller.command(Command::Refresh).unwrap();
+    let resumed = hub.frame("call", Some("sessions.snapshots")).await;
+    resumed.result(json!([])).await;
+    view(&controller, |v| v.connected && !v.power_paused).await;
+    while hub.frames.try_recv().is_ok() {}
+    resumed
+        .send
+        .send(Message::Close(Some(CloseFrame {
+            code: CloseCode::Library(4001),
+            reason: "new stop episode".into(),
+        })))
+        .await
+        .unwrap();
+    let later = view(&controller, |v| {
+        v.power_paused && v.power_pause_generation != paused.power_pause_generation
+    })
+    .await;
+    assert!(later.power_pause_generation > paused.power_pause_generation);
+    controller
+        .command(Command::ResumePowerPause(paused.power_pause_generation))
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(
+        hub.frames.try_recv().is_err(),
+        "a queued old GUI gesture woke a later stop episode"
+    );
+}

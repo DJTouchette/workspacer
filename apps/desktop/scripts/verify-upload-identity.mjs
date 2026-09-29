@@ -6,14 +6,16 @@ const image=process.argv[2];if(!image)throw new Error('usage: verify-upload-iden
 const docker=(...args)=>execFileSync('docker',args,{encoding:'utf8',maxBuffer:1024*1024}).trim();
 const launch=`
 set -eu
-mkdir -p /scratch/hub/config/workspacer /scratch/worker/config
-printf '%s' '[{"token":"provider-fixture","scope":"provider","label":"worker","created":"2026-01-01T00:00:00Z","provides":["*"]},{"token":"triage-fixture","scope":"triage","label":"phone","created":"2026-01-01T00:00:00Z"}]' > /scratch/hub/config/workspacer/tokens.json
+mkdir -p /scratch/hub/config/workspacer /scratch/worker/config/workspacer
+printf '%s' '[{"token":"provider-fixture","scope":"provider","label":"worker","created":"2026-01-01T00:00:00Z","provides":["*"]},{"token":"caller-fixture","scope":"operator","label":"worker-caller","facadeAuthority":true,"created":"2026-01-01T00:00:00Z"},{"token":"triage-fixture","scope":"triage","label":"phone","created":"2026-01-01T00:00:00Z"}]' > /scratch/hub/config/workspacer/tokens.json
+printf '%s' 'worker-owner-fixture' > /scratch/worker/config/workspacer/remote-token
+chmod 0600 /scratch/worker/config/workspacer/remote-token
 chown -R 10002:10002 /scratch/hub
 chown -R 10001:10001 /scratch/worker
 chmod 0700 /scratch/hub /scratch/worker
 chmod 0600 /scratch/hub/config/workspacer/tokens.json
-setpriv --reuid=10002 --regid=10002 --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- env HOME=/scratch/hub XDG_CONFIG_HOME=/scratch/hub/config WKS_UPLOAD_PROVIDER=worker hub --addr 0.0.0.0:7895 --token owner-fixture --tokens-file /scratch/hub/config/workspacer/tokens.json --brain-scope off --plugins-dir '' --jobs-file '' --nodes-file '' --peers-file '' --push-dir '' &
-setpriv --reuid=10001 --regid=10001 --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- env HOME=/scratch/worker XDG_CONFIG_HOME=/scratch/worker/config HUB_TOKEN=provider-fixture brain --hub ws://127.0.0.1:7895/bus --scope full --claudemon http://127.0.0.1:1 &
+setpriv --reuid=10002 --regid=10002 --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- env HOME=/scratch/hub XDG_CONFIG_HOME=/scratch/hub/config HUB_TOKEN=owner-fixture workspacer-rust --config-dir /scratch/hub/config/workspacer --host 0.0.0.0 --hub-port 7895 serve --hub-only --quiet --no-mcp --no-jobs --uploads-to-worker --data-dir /scratch/hub/state --plugins-dir /scratch/hub/plugins &
+setpriv --reuid=10001 --regid=10001 --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- env HOME=/scratch/worker XDG_CONFIG_HOME=/scratch/worker/config HUB_TOKEN=provider-fixture WKS_MCP_HUB_TOKEN=caller-fixture workspacer-rust --config-dir /scratch/worker/config/workspacer --hub-port 7896 serve --quiet --upstream ws://127.0.0.1:7895/bus --provider-scope full --node-id fixture-worker --no-claudemon-init --no-jobs --home-dir /scratch/worker --data-dir /scratch/worker/state --plugins-dir /scratch/worker/plugins --claudemon-db-path /scratch/worker/sessions.db &
 wait
 `;
 const container=docker('run','--rm','-d','-p','127.0.0.1::7895','--entrypoint','/bin/sh',image,'-c',launch);

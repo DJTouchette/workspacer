@@ -260,7 +260,12 @@ fi
 # and it is not this change.
 if [ -f "${WKS_DATA}/state/last-exit.json" ]; then
   log "  previous run ended: $(cat "${WKS_DATA}/state/last-exit.json")"
-  mv -f "${WKS_DATA}/state/last-exit.json" "${WKS_DATA}/state/last-exit.consumed.json" 2>/dev/null || true
+  if mv -f "${WKS_DATA}/state/last-exit.json" "${WKS_DATA}/state/last-exit.consumed.json" 2>/dev/null; then
+    # Only this boot's consumed record is eligible; an older consumed file is not.
+    if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
+      export WKS_LAST_EXIT_FILE="${WKS_DATA}/state/last-exit.consumed.json"
+    fi
+  fi
 else
   log "  previous run ended: <no record. Either a first boot, a volume that was not mounted, or a run"
   log "    that was KILLED WITHOUT WARNING (host eviction, OOM, SIGKILL): no trap runs, so nothing is written>"
@@ -483,6 +488,14 @@ done
 log "TAILNET UP after $(($(date +%s) - ts_wait_start))s — ipv4=${ts_ip}"
 log "  (this address must be IDENTICAL across a stop/start cycle. If it changed, the state file was not persisted.)"
 tailscale --socket="$TS_SOCKET" status --peers=false 2>/dev/null | sed 's/^/    /' || true
+
+# Explicit Rust image opt-in. Keep the same mounted HOME, bootstrap guards,
+# Tailscale identity and doorbell; replace all three backend child processes.
+if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
+  source /usr/local/lib/wks-rust/launch.sh
+  run_rust_worker
+  exit $?
+fi
 
 # --------------------------------------------------------------------------
 # 6. claudemon init — this entrypoint drives claudemon directly, not `serve`.

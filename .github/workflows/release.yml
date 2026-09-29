@@ -1,6 +1,6 @@
 name: release
 
-# Build the desktop app + bundled daemons (claudemon/Rust, hub/mcp/brain/Go) on
+# Build the desktop app and shared Rust backend/claudemon executables on
 # all three desktop OSes. On a version tag (v*) the installers are attached to a
 # GitHub Release — along with a standalone headless-server bundle
 # (workspacer-server-<os>-<arch>) and a claudemon-only bundle
@@ -126,19 +126,15 @@ jobs:
             apps/desktop/package-lock.json
             apps/desktop/src/renderer/package-lock.json
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.4'
-          cache-dependency-path: services/hub/go.sum
-
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust build (claudemon)
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: services/claudemon
+          workspaces: |
+            services/claudemon
+            services/hub-rs
           cache-on-failure: true
 
       # apps/desktop's postinstall rebuilds better-sqlite3 against Electron's
@@ -244,33 +240,16 @@ jobs:
           node apps/native/scripts/package-windows.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Native packaging failed' }
 
-      - name: Test native private Node lookup
-        if: runner.os == 'Windows'
-        working-directory: services/hub
-        run: go test ./cmd/brain -run '^TestDesktopNodeExecutable$' -count=1
-
       - name: Smoke test native Windows install, local backend and uninstall
         if: runner.os == 'Windows'
         working-directory: ${{ github.workspace }}
         shell: pwsh
         run: |
           $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Setup-$version-x64.exe"
+          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
 
-      # Standalone headless-server bundle: the binaries `workspacer serve`
-      # supervises — workspacer + hub + brain + claudemon — in ONE directory
-      # (the CLI resolves its daemons sibling-first, so extract-and-run needs no
-      # flags) plus a short README. Reuses the binaries the package step just
-      # built; tar.gz per Unix convention, zip on Windows. Dropped into
-      # apps/desktop/release/ so the existing upload/attach steps pick it up.
-      #
-      # `mcp` rides along too, and the web app, because this bundle is ALSO what
-      # deploy/fly's box images install in artifact mode (WKS_INSTALL=artifact) —
-      # they install the same files to the same paths a source build would, and
-      # `mcp` is the agent-facing MCP facade the node's entrypoint starts before
-      # the brain. A bundle without it produces an image that dies ten seconds
-      # into every boot. Adding files here is additive and backward compatible:
-      # `workspacer serve` ignores what it does not use.
+      # Shared Rust backend: one standalone executable, plus the separately
+      # usable claudemon executable and browser/plugin assets.
       - name: Bundle standalone server
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -285,25 +264,14 @@ jobs:
           dir="$tmp/workspacer-server"
           rm -rf "$dir"
           mkdir -p "$dir"
-          cp "services/hub/workspacer$ext" "services/hub/hub$ext" \
-             "services/hub/brain$ext" "services/hub/mcp$ext" \
+          cp "services/hub-rs/target/release/workspacer-rust$ext" \
              "services/claudemon/target/release/claudemon$ext" "$dir/"
+          cp "$dir/workspacer-rust$ext" "$dir/workspacer$ext"
           # The built web app: `workspacer serve` auto-serves a sibling web/
           # at /app (the full renderer), no flag needed.
           cp -r "apps/desktop/dist/web" "$dir/web"
-          cp "apps/desktop/dist/headless/desktop-host.cjs" "$dir/desktop-host.cjs"
           cp -r "services/hub/examples" "$dir/examples"
-          # The build stamp — the ONLY thing in this bundle that says what it is.
-          # None of the four binaries has an honest --version (`workspacer`, `hub`
-          # and `brain` have no such flag at all; `claudemon --version` prints the
-          # Cargo version 0.1.0, unchanged for the life of the project), and the
-          # `nightly` tag is rolled every night, so neither the files nor the tag
-          # can answer "which commit is this". deploy/fly/fetch-release.sh FAILS
-          # A BOX BUILD when this disagrees with the tag/sha that was asked for,
-          # and both box entrypoints print it on every boot.
-          #
-          # Format and key set live in deploy/fly/write-build-stamp.sh, which is
-          # the single writer for CI and for both Dockerfiles' source stages.
+          # Shared stamp writer gives artifact consumers the exact source revision.
           stamp_tag=""
           if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then
             stamp_tag="nightly"
@@ -323,26 +291,19 @@ jobs:
 
           Run workspacer's agent fleet on a machine with no desktop app:
 
-          1. Extract this directory anywhere (keep the binaries together —
-             `workspacer` finds its daemons next to itself).
-          2. Install Node.js 22.13 or newer (required by shared desktop services).
-          3. `./workspacer serve`
+          1. Extract this directory anywhere.
+          2. Run `./workspacer serve`.
 
-          That starts and supervises claudemon (sessions) + the hub (bus, with a
-          full-scope brain), and prints the client URLs + pairing token — for the
-          phone client (/m), the browser client (/remote), the full web app
-          (/app, served from the bundled web/ directory), wks-tui, and MCP.
+          The Rust executable owns the session engine, hub, desktop services,
+          and MCP facade in one process. The bundled web/ directory serves the
+          browser app; examples/ contains optional plugins. External provider
+          CLIs and plugin sidecars may need their own runtimes, including Node.
 
-          Also:
+              ./workspacer status
+              ./workspacer install-cli
+              ./workspacer --host 0.0.0.0 serve
 
-              ./workspacer status                 what's running
-              ./workspacer install-cli            put `workspacer` on your PATH
-              ./workspacer serve --host 0.0.0.0   remote access opt-in (pair with Tailscale)
-
-          `mcp` (the agent-facing MCP facade) and `web/` (the full renderer served
-          at /app) ride along; `workspacer serve` wires up what it needs. The
-          `build-stamp` file says which commit and release tag this bundle was
-          built from — nothing else here can tell you.
+          The build-stamp file records the source commit and release tag.
 
           Docs: https://github.com/DJTouchette/workspacer
           EOF

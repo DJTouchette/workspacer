@@ -3,12 +3,12 @@
  * `install-cli` subcommand, which symlinks/copies the binary onto PATH
  * (/usr/local/bin → ~/.local/bin on Unix; %LOCALAPPDATA%\workspacer\bin plus
  * printed PATH instructions on Windows). All install policy lives in the CLI
- * itself (services/hub/cmd/workspacer/install.go) — we only spawn it and
+ * itself (services/hub-rs/src/cli/admin.rs) — we only spawn it and
  * surface what it printed.
  *
  * Binary resolution (mirrors hubDaemon.ts):
- *   - dev (ELECTRON_DEV=1): <repo>/services/hub/workspacer[.exe] (`npm run build:cli`)
- *   - packaged:             <resourcesPath>/hub/workspacer[.exe]
+ *   - dev (ELECTRON_DEV=1): <repo>/services/hub-rs/target/release/workspacer-rust[.exe] (`npm run build:cli`)
+ *   - packaged:             <resourcesPath>/hub/workspacer-rust[.exe]
  */
 
 import * as fs from 'fs';
@@ -28,15 +28,13 @@ export interface CliInstallResult {
 }
 
 function exeName(): string {
-  return process.platform === 'win32' ? 'workspacer.exe' : 'workspacer';
+  return process.platform === 'win32' ? 'workspacer-rust.exe' : 'workspacer-rust';
 }
 
-/** Resolve the bundled `workspacer` CLI for the current run mode. It ships in
- *  hub/ next to hub/brain/claudemon so its sibling-first daemon resolution
- *  works from the packaged layout with zero flags. */
+/** Resolve the shared Rust service/administration executable. */
 export function workspacerCliPath(): string {
   if (process.env.ELECTRON_DEV || !app.isPackaged) {
-    return path.join(app.getAppPath(), '..', '..', 'services', 'hub', exeName());
+    return path.join(app.getAppPath(), '..', '..', 'services', 'hub-rs', 'target', 'release', exeName());
   }
   return path.join(process.resourcesPath, 'hub', exeName());
 }

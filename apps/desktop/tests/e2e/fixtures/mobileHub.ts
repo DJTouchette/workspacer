@@ -1,3 +1,5 @@
+import { test } from '@playwright/test';
+import { buildRustHubFixture } from './rustHub';
 /**
  * Test rig for the /m mobile client.
  *
@@ -11,7 +13,7 @@
  * right params, and `pushSnapshot` lets a test drive live transitions (e.g. the
  * working→idle edge the "Finished" attention item is derived from).
  */
-import { spawn, spawnSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as path from 'path';
@@ -26,9 +28,7 @@ import {
   withBuildLock,
 } from './scratchState';
 
-const REPO = path.resolve(__dirname, '../../../../..');
-const HUB_DIR = path.join(REPO, 'services/hub');
-const HUB_BIN = path.join(HUB_DIR, 'hub');
+let HUB_BIN: string;
 
 export const HOST_TOKEN = 'test-host-token';
 export const TRIAGE_TOKEN = 'test-triage-token';
@@ -89,20 +89,11 @@ export interface MobileHubOptions {
 }
 
 export async function startMobileHub(opts: MobileHubOptions = {}): Promise<MobileHub> {
-  // Always rebuild. mobile.html is go:embed'd into the binary, so a stale hub
-  // would serve a stale client and the whole suite would be testing nothing.
-  // Go's build cache makes the no-op case cheap.
-  // Under the build lock: two spec files in this project (mobileClient and
-  // mobileNodes) both call this, Playwright runs them in parallel workers, and
-  // an unsynchronised `go build -o hub` for the same output path lets one
-  // worker launch a half-written binary.
-  const built = withBuildLock(() =>
-    spawnSync('go', ['build', '-o', 'hub', './cmd/hub'], {
-      cwd: HUB_DIR,
-      encoding: 'utf8',
-    }),
-  );
-  if (built.status !== 0) throw new Error('failed to build hub: ' + built.stderr);
+  // A clean Rust build belongs to fixture setup, not the 30s browser action budget.
+  test.setTimeout(600_000);
+  // Cargo's dependency fingerprint includes the embedded mobile assets. The
+  // existing cross-worker lock preserves one build/launch ownership boundary.
+  HUB_BIN = withBuildLock(buildRustHubFixture);
 
   // Scratch state, isolated the same way the /app rig is (see scratchState.ts).
   // This used to be an os.tmpdir() mkdtemp with three of the hub's five path
@@ -140,7 +131,11 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
     HUB_BIN,
     [
       ...nodesArgs,
-      '--addr',
+      '--mode',
+      'browser',
+      '--root',
+      dir,
+      '--listen',
       `127.0.0.1:${port}`,
       '--token',
       HOST_TOKEN,
@@ -156,8 +151,6 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
       scratch('config', 'workspacer', 'peers.json'),
       '--jobs-file',
       scratch('config', 'workspacer-hub', 'jobs.json'),
-      '--brain-scope',
-      'off',
     ],
     // stdin must stay OPEN: the hub's parentwatch treats a closed stdin as "my
     // parent died" and shuts down immediately.

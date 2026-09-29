@@ -12,3 +12,5 @@ pub mod model;
 pub mod navigation;
 pub mod reading;
 pub mod transcript;
+
+pub mod ui_requests;

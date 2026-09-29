@@ -35,6 +35,18 @@ import { startAppHub, layoutOf, workspace, pane, type AppHub } from './fixtures/
 
 let hub: AppHub;
 const SESSION = 'ws1';
+// Optional fixture diagnostics, containing only this test's synthetic state.
+test.afterEach(async ({ page }, info) => {
+  if (process.env.WKS_E2E_DEBUG && info.status !== info.expectedStatus) {
+    console.error(
+      'fixture diagnostic',
+      JSON.stringify({
+        layout: await page.evaluate(() => window.electronAPI.layoutGet()).catch(String),
+        calls: hub.calls.map((call) => call.method),
+      }),
+    );
+  }
+});
 
 test.beforeAll(async () => {
   hub = await startAppHub({

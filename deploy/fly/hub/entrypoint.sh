@@ -475,6 +475,11 @@ else
   log "  registered and no node can be woken. See RUNBOOK.md §8."
 fi
 
+if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
+  # Explicit image opt-in; volume, Tailscale and HTTP watchdog remain shared.
+  source /usr/local/lib/wks-rust/launch.sh
+  rust_hub_arguments
+else
 hub_args=(
   --addr "${HUB_BIND}:${HUB_PORT}"
   # REQUIRED. The node registry probes liveness with brain.info, which cannot
@@ -514,6 +519,7 @@ hub_args=(
   # IsTrusted.
   --jobs-file ""
 )
+fi
 if [ -n "$TRUSTED_HOSTS" ]; then
   hub_args+=(--trusted-host "$TRUSTED_HOSTS")
 fi
@@ -529,9 +535,13 @@ else
 fi
 
 log "starting hub on ${HUB_BIND}:${HUB_PORT} (brain-scope off, trusted-host=${TRUSTED_HOSTS:-<none>})"
+if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
+  rust_as_wks /usr/local/bin/workspacer-rust "${hub_args[@]}" &
+else
 as_wks env HOME="$WKS_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" XDG_DATA_HOME="$XDG_DATA_HOME" \
   XDG_STATE_HOME="$XDG_STATE_HOME" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
   hub "${hub_args[@]}" &
+fi
 HUB_PID=$!
 
 for _ in $(seq 1 100); do

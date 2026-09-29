@@ -1,8 +1,8 @@
 /**
  * installWorkspacerCli spawns the bundled `workspacer install-cli` and reports
  * what it printed. These tests point the dev-mode resolution at a temp repo
- * layout (<tmp>/services/hub/workspacer) holding a stub script, so we exercise
- * the real spawn + output capture without the actual Go binary.
+ * layout (<tmp>/services/hub-rs/target/release/workspacer-rust) holding a stub script, so we exercise
+ * the real spawn + output capture without the actual Rust binary.
  *
  * Strategy (mirrors claudeResolver.test.ts): mock 'electron' before importing
  * the module under test — app.getAppPath() points two levels below the temp
@@ -16,8 +16,8 @@ import * as path from 'path';
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-cli-install-'));
 const appPath = path.join(tmpRoot, 'apps', 'desktop'); // <repo>/apps/desktop
-const binDir = path.join(tmpRoot, 'services', 'hub');
-const binPath = path.join(binDir, 'workspacer');
+const binDir = path.join(tmpRoot, 'services', 'hub-rs', 'target', 'release');
+const binPath = path.join(binDir, 'workspacer-rust');
 
 vi.mock('electron', () => ({
   app: {

@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use directories::BaseDirs;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::session::state::HookEventKind;
 
@@ -144,7 +144,30 @@ fn settings_path() -> Result<PathBuf> {
 }
 
 pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
-    let path = settings_path()?;
+    run_with_port_reporting(dry_run, hook_port, true).await
+}
+/// Install hooks without writing to stdout, for an in-process launcher whose
+/// stdout is reserved for its machine-readable readiness banner.
+pub async fn run_with_port_quiet(dry_run: bool, hook_port: u16) -> Result<()> {
+    run_with_port_reporting(dry_run, hook_port, false).await
+}
+async fn run_with_port_reporting(dry_run: bool, hook_port: u16, report: bool) -> Result<()> {
+    merge_settings_at(settings_path()?, dry_run, hook_port, report)
+}
+
+/// Explicit owner-selected settings integration for embedded hosts. This never
+/// resolves HOME or changes process environment; merely starting the library
+/// does not opt a caller into writing provider settings.
+pub async fn run_at_with_port_quiet(path: PathBuf, hook_port: u16) -> Result<()> {
+    anyhow::ensure!(path.is_absolute(), "hook settings path must be absolute");
+    anyhow::ensure!(
+        hook_port != 0,
+        "hook forwarding requires the bound listener port"
+    );
+    tokio::task::spawn_blocking(move || merge_settings_at(path, false, hook_port, false)).await?
+}
+
+fn merge_settings_at(path: PathBuf, dry_run: bool, hook_port: u16, report: bool) -> Result<()> {
     let existing = match fs::read_to_string(&path) {
         Ok(text) if text.trim().is_empty() => Value::Object(Default::default()),
         Ok(text) => {
@@ -162,14 +185,17 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
     let formatted = serde_json::to_string_pretty(&merged)? + "\n";
 
     if dry_run {
+        if !report {
+            return Ok(());
+        }
         println!("# would write to {}", path.display());
         if nothing_changed {
             println!("# (no changes — already up to date)");
         } else {
-            if !changed_events.is_empty() {
+            if report && !changed_events.is_empty() {
                 println!("# adding/updating hooks for: {}", changed_events.join(", "));
             }
-            if status_changed {
+            if report && status_changed {
                 println!("# adding/updating statusLine forwarder");
             }
         }
@@ -178,7 +204,9 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
     }
 
     if nothing_changed {
-        println!("✓ {} already up to date", path.display());
+        if report {
+            println!("✓ {} already up to date", path.display());
+        }
         return Ok(());
     }
 
@@ -196,7 +224,7 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
     fs::rename(&tmp, &path)
         .with_context(|| format!("renaming {} → {}", tmp.display(), path.display()))?;
 
-    if !changed_events.is_empty() {
+    if report && !changed_events.is_empty() {
         println!(
             "✓ wrote {} hook(s) to {}: {}",
             changed_events.len(),
@@ -204,7 +232,7 @@ pub async fn run_with_port(dry_run: bool, hook_port: u16) -> Result<()> {
             changed_events.join(", ")
         );
     }
-    if status_changed {
+    if report && status_changed {
         println!("✓ wrapped statusLine forwarder in {}", path.display());
     }
     Ok(())
@@ -383,21 +411,19 @@ fn merge_status_line(doc: &mut Value, hook_port: u16) -> bool {
     };
     let existing = obj.get("statusLine");
 
-    // Already ours → idempotent no-op (also guards against re-wrapping).
-    if existing
-        .and_then(|sl| sl.get("command"))
-        .and_then(Value::as_str)
-        .is_some_and(|c| c.contains(STATUS_TAG))
-    {
+    // Recover the original command before rebuilding our wrapper. A tag proves
+    // ownership, not that a previous ephemeral listener port is still current.
+    let inner = inner_status_line(existing);
+    let wrapped = status_line_entry(hook_port, inner.as_deref());
+    if existing.is_some_and(|entry| {
+        wrapped
+            .as_object()
+            .unwrap()
+            .iter()
+            .all(|(key, value)| entry.get(key) == Some(value))
+    }) {
         return false;
     }
-
-    // Preserve the user's existing command (wrap it) and any sibling keys.
-    let inner = existing
-        .and_then(|sl| sl.get("command"))
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let wrapped = status_line_entry(hook_port, inner.as_deref());
 
     let entry = obj
         .entry("statusLine".to_string())
@@ -562,6 +588,21 @@ mod tests {
         assert!(cmd.contains("/statusline"));
         assert!(cmd.contains(STATUS_TAG));
         assert_eq!(doc["statusLine"]["type"], json!("command"));
+    }
+
+    #[test]
+    fn status_line_retargets_changed_port_without_rewrapping_user_command() {
+        let mut doc =
+            json!({"statusLine":{"type":"command","command":"printf user-status","padding":3}});
+        assert!(merge_status_line(&mut doc, 12345));
+        assert!(merge_status_line(&mut doc, 23456));
+        let command = doc["statusLine"]["command"].as_str().unwrap();
+        assert!(command.contains("127.0.0.1:23456/statusline"));
+        assert!(!command.contains("127.0.0.1:12345/statusline"));
+        assert_eq!(command.matches("printf user-status").count(), 1);
+        assert_eq!(doc["statusLine"]["padding"], 3);
+        assert_eq!(doc["statusLine"][STATUS_STASH_KEY], "printf user-status");
+        assert!(!merge_status_line(&mut doc, 23456));
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub mod oneshot;
 mod routes_contract;
 pub mod spawn;
 mod worktree_admission;
+pub use worktree_admission::{WorktreeAdmission, WorktreeMaintenance};
 pub mod wrapper_ws;
 
 use std::net::SocketAddr;
@@ -166,6 +167,9 @@ async fn run_controlled(
     // Transcript tailer: daemon-owned conversation parsing. Streams structured
     // deltas to clients so they never re-read the JSONL themselves.
     let conv = ConversationStore::new();
+    if let Some(control) = &control {
+        *control.conversations.lock().unwrap() = Some(conv.clone());
+    }
     conversation::spawn_tailer(store.clone(), conv.clone());
 
     // Account-usage poller: fills the 5h/7d/monthly gauges for stream-transport

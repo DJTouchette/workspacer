@@ -130,13 +130,23 @@ pub struct SpawnReceipt {
 }
 
 pub enum Command {
+    /// Consume a rendered UI intent; this does not acknowledge a remote tool.
+    ConsumeUiRequest(u64),
+    /// Bound to the pause the user actually saw, never a future stop episode.
+    ResumePowerPause(u64),
     Select(String),
     OpenRecent(Box<Session>),
     Request(crate::features::Request),
-    Act { session: String, action: Action },
+    Act {
+        session: String,
+        action: Action,
+    },
     Refresh,
     Create(NewSession),
-    LoadModels { key: CatalogKey, refresh: bool },
+    LoadModels {
+        key: CatalogKey,
+        refresh: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -159,9 +169,14 @@ pub struct PendingMessage {
 
 #[derive(Clone, Debug, Default)]
 pub struct View {
+    pub ui_requests: Vec<crate::ui_requests::Request>,
+    pub ui_request_warning: String,
     pub catalog: Catalog,
     pub requests: BTreeMap<&'static str, crate::features::RequestState>,
     pub connected: bool,
+    pub power_paused: bool,
+    pub power_pause_generation: u64,
+    pub can_resume_power_pause: bool,
     pub sessions: Arc<Vec<Session>>,
     pub selected: Option<String>,
     pub transcript: Transcript,
@@ -222,6 +237,17 @@ impl Controller {
     }
 
     pub fn command(&self, command: Command) -> Result<()> {
+        let command = match command {
+            Command::Refresh => {
+                let view = self.views.borrow();
+                if view.power_paused {
+                    Command::ResumePowerPause(view.power_pause_generation)
+                } else {
+                    Command::Refresh
+                }
+            }
+            other => other,
+        };
         self.commands
             .try_send(command)
             .map_err(|_| anyhow!("Client busy or stopped; action was not queued"))
@@ -264,9 +290,13 @@ struct Worker {
 
 impl Worker {
     fn new(backend: Backend) -> Self {
+        let can_resume_power_pause = backend.can_resume_power_pause();
         Self {
             backend,
-            view: View::default(),
+            view: View {
+                can_resume_power_pause,
+                ..Default::default()
+            },
             sessions: BTreeMap::new(),
             jobs: FuturesUnordered::new(),
             epoch: 0,
@@ -310,15 +340,33 @@ impl Worker {
                         self.fleet_dirty = true;
                         self.select(Some(id)).await;
                     }
+                    Some(Command::ConsumeUiRequest(number)) => {
+                        self.view.ui_requests.retain(|r|r.number!=number);
+                        self.dirty=true;
+                    }
                     Some(Command::Request(request)) => self.request(request),
                     Some(Command::Act { session, action }) => self.act(session, action),
                     Some(Command::Create(request)) => self.create(request),
                     Some(Command::LoadModels { key, refresh }) => self.load_models(key, refresh),
-                    Some(Command::Refresh) => { self.fetch_fleet(); self.fetch_conversation(); }
+                    Some(Command::ResumePowerPause(generation)) => {
+                        if self.view.power_paused && self.view.power_pause_generation==generation {
+                            match self.backend.resume_power_pause() {
+                                Ok(())=>{self.view.power_paused=false;self.view.notice="Reconnecting at your request…".into();},
+                                Err(error)=>self.view.notice=error.to_string(),
+                            }
+                            self.dirty=true;
+                        }
+                    }
+                    Some(Command::Refresh) => {self.fetch_fleet();self.fetch_conversation();}
                     _ => {}
                 },
                 event = events.recv() => match event {
-                    Err(_) => break,
+                    Err(_) => {
+                        if self.view.connected {self.disconnected("Backend event stream closed".into(),false);}
+                        if self.fleet_dirty {self.view.sessions=Arc::new(self.sessions.values().cloned().collect());}
+                        updates.send_replace(Arc::new(self.view.clone()));
+                        break;
+                    },
                     Ok(event) => self.event(event).await,
                 },
                 Some(result) = self.jobs.next(), if !self.jobs.is_empty() => self.complete(result).await,
@@ -517,6 +565,7 @@ impl Worker {
         self.push_ready = false;
         self.buffered.clear();
         let mut topics = BTreeSet::from(["agent.snapshot".into()]);
+        topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));
         }
@@ -536,34 +585,53 @@ impl Worker {
         self.fleet_dirty = true;
     }
 
+    fn disconnected(&mut self, reason: String, power_paused: bool) {
+        self.epoch += 1;
+        self.view.connected = false;
+        self.view.ui_requests.clear();
+        for state in self.view.requests.values_mut() {
+            if state.loading {
+                state.loading = false;
+                state.error = Some("Connection lost. Check the result before retrying.".into());
+            }
+        }
+        self.view.catalog.loading = false;
+        self.view.catalog.error = Some("Hub disconnected. Reconnect to load models.".into());
+        self.view.loading = false;
+        self.view.power_paused = power_paused;
+        if power_paused {
+            self.view.power_pause_generation = self.epoch;
+        }
+        self.view.notice = if power_paused {
+            if self.view.can_resume_power_pause {
+                "Server requested a reconnect pause. Reconnect when you want to inspect or wake it."
+                    .into()
+            } else {
+                "Local hub connection is paused. Restart it through its owning host when ready."
+                    .into()
+            }
+        } else if self.view.can_resume_power_pause {
+            format!("{reason}. Reconnecting…")
+        } else {
+            reason
+        };
+        self.push_ready = false;
+    }
+
     async fn event(&mut self, event: Event) {
         match event {
             Event::Connected => {
                 self.epoch += 1;
                 self.view.connected = true;
+                self.view.power_paused = false;
                 self.view.notice.clear();
                 self.fleet_pending = false;
                 self.conversation_pending = false;
                 self.fetch_fleet();
                 self.select(self.view.selected.clone()).await;
             }
-            Event::Disconnected(reason) => {
-                self.epoch += 1;
-                self.view.connected = false;
-                for state in self.view.requests.values_mut() {
-                    if state.loading {
-                        state.loading = false;
-                        state.error =
-                            Some("Connection lost. Check the result before retrying.".into());
-                    }
-                }
-                self.view.catalog.loading = false;
-                self.view.catalog.error =
-                    Some("Hub disconnected. Reconnect to load models.".into());
-                self.view.loading = false;
-                self.view.notice = format!("{reason}. Reconnecting…");
-                self.push_ready = false;
-            }
+            Event::Disconnected(reason) => self.disconnected(reason, false),
+            Event::PowerPaused => self.disconnected(String::new(), true),
             Event::Data { topic, data, hub } => {
                 // This first client operates on the connected hub only. Never
                 // interpret a federated session as locally owned.
@@ -575,7 +643,26 @@ impl Worker {
                 {
                     return;
                 }
-                if topic == "agent.snapshot" {
+                if crate::ui_requests::TOPICS.contains(&topic.as_str()) {
+                    match crate::ui_requests::parse(&topic, &data) {
+                        Ok(Some((intent, payload)))
+                            if self.view.ui_requests.len() < crate::ui_requests::MAX_PENDING =>
+                        {
+                            self.action_number += 1;
+                            self.view.ui_requests.push(crate::ui_requests::Request {
+                                number: self.action_number,
+                                intent,
+                                payload,
+                            });
+                        }
+                        Ok(Some(_)) => {
+                            self.view.ui_request_warning =
+                                "UI request queue is full; the new request was not applied.".into()
+                        }
+                        Err(error) => self.view.ui_request_warning = error.to_string(),
+                        Ok(None) => (),
+                    }
+                } else if topic == "agent.snapshot" {
                     if self.fleet_pending
                         && let Some(id) = Session::id_of(&data)
                         && self.fleet_overlay.len() < MAX_SESSIONS

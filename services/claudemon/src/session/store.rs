@@ -2348,7 +2348,18 @@ impl SessionStore {
             return;
         }
         self.release_spawn_plumbing(session_id, cwd);
-        self.states.remove(session_id);
+        if let Some((_, mut state)) = self.states.remove(session_id) {
+            // A plain shell never sends SessionEnd hooks. Publish authoritative
+            // removal after deleting the row so observers re-fetch/reseed rather
+            // than retain its original active snapshot forever.
+            state.mode = SessionMode::Stopped;
+            state.updated_at = OffsetDateTime::now_utc();
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.to_string(),
+                event: "SessionRemoved".to_string(),
+                state,
+            });
+        }
         // Drop any hook-id → canonical-id aliases pointing at this session, so the
         // alias map doesn't accrue a permanent entry per spawn across churn.
         self.aliases.retain(|_, canonical| canonical != session_id);
@@ -4983,6 +4994,26 @@ mod tests {
         assert!(!store.is_resumable("ghost"));
         store.drop_pending_spawn("ghost", "/work", 1);
         assert!(store.get("ghost").is_none(), "nothing to resume, so no row");
+    }
+
+    #[test]
+    fn pending_spawn_removal_notifies_once_and_rejects_foreign_generation() {
+        let store = SessionStore::new();
+        let old = store.claim_generation("shell");
+        store.register_spawn("shell", "/work", handle());
+        let current = store.claim_generation("shell");
+        let mut updates = store.subscribe();
+        store.drop_pending_spawn("shell", "/work", old);
+        assert!(store.get("shell").is_some());
+        assert!(updates.try_recv().is_err(), "stale teardown emits no removal");
+        store.drop_pending_spawn("shell", "/work", current);
+        assert!(store.get("shell").is_none());
+        let removed = updates.try_recv().expect("authoritative removal update");
+        assert_eq!(removed.session_id, "shell");
+        assert_eq!(removed.event, "SessionRemoved");
+        assert_eq!(removed.state.mode, SessionMode::Stopped);
+        store.drop_pending_spawn("shell", "/work", current);
+        assert!(updates.try_recv().is_err(), "duplicate teardown emits no update");
     }
 
     #[test]

@@ -468,13 +468,13 @@ describe('deepMerge semantics – via configService.saveConfig', () => {
 
 // ─── default-config single-source drift guard ────────────────────────────────
 // The default config has ONE source of truth: services/hub/cmd/brain/
-// config_defaults.json (the brain go:embeds it; the desktop consumes it through
+// config-defaults.json (the Rust backend embeds it; the desktop consumes it through
 // the generated configDefaults.generated.ts). If someone edits the JSON without
 // re-running `npm run gen:config-defaults`, the committed generated module falls
 // out of sync — this test catches that so the two runtimes can't drift.
 import { CONFIG_DEFAULTS } from './configDefaults.generated';
 import { CONFIG_DEFAULTS as RENDERER_CONFIG_DEFAULTS } from '../../renderer/src/hooks/configDefaults.generated';
-import brainDefaults from '../../../../../services/hub/cmd/brain/config_defaults.json';
+import brainDefaults from '../../../../../services/hub-rs/assets/config-defaults.json';
 
 describe('default-config single source — generated TS matches the canonical brain JSON', () => {
   it('the main-process generated defaults deep-equal config_defaults.json', () => {

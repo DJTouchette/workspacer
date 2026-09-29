@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { readWorkerEscalation } from './workerEscalation';
 import {
   RESULT_FENCE,
   RESULT_SCHEMA_MAX,
@@ -21,6 +23,25 @@ const REPORT_SCHEMA: Record<string, unknown> = {
     followUps: { type: 'array', items: { type: 'string' } },
   },
 };
+
+it('portableWorkerResultContracts', () => {
+  const corpus = JSON.parse(readFileSync(new URL('../../../../../contracts/worker-result-cases.json', import.meta.url), 'utf8'));
+  expect(corpus.validationCases.length).toBeGreaterThanOrEqual(12);
+  for (const row of corpus.validationCases) expect(validateAgainstSchema(row.value, row.schema), row.name).toEqual(row.errors);
+  expect(corpus.resultCases.length).toBeGreaterThanOrEqual(6);
+  for (const row of corpus.resultCases) {
+    const result = readStructuredResult(row.message, row.schema);
+    if (row.errorContains) expect(result.error, row.name).toContain(row.errorContains);
+    else expect(JSON.parse(result.json!), row.name).toEqual(row.value);
+  }
+  expect(corpus.escalationCases.length).toBeGreaterThanOrEqual(6);
+  for (const row of corpus.escalationCases) {
+    const result = readWorkerEscalation(row.message);
+    if (row.absent) expect(result, row.name).toBeNull();
+    else if (row.errorContains) expect(result?.error, row.name).toContain(row.errorContains);
+    else expect(result?.value, row.name).toEqual(row.value);
+  }
+});
 
 describe('checkResultSchema', () => {
   it('accepts a plain schema object', () => {

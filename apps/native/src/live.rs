@@ -69,6 +69,11 @@ pub async fn run(
             match events.recv().await? {
                 Event::Connected => return Ok(()),
                 Event::Disconnected(reason) => return Err(anyhow!(reason)),
+                Event::PowerPaused => {
+                    return Err(anyhow!(
+                        "Server requested a reconnect pause; probe did not wake it"
+                    ));
+                }
                 Event::Data { .. } => {}
             }
         }

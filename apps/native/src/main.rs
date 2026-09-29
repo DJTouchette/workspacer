@@ -25,7 +25,11 @@ struct Args {
     /// Own an embedded local engine and its hub services.
     #[arg(long, conflicts_with_all = ["bus", "demo", "token_file"])]
     local: bool,
-    /// Directory containing workspacer, hub, brain, and mcp service binaries.
+    /// Own the Rust backend with isolated state in this directory.
+    #[cfg(feature = "rust-hub")]
+    #[arg(long, conflicts_with_all = ["bus", "demo", "token_file", "services_dir", "database"])]
+    rust_local_dir: Option<PathBuf>,
+    /// Retired service-bundle override; local ownership uses Rust in process.
     #[arg(long, requires = "local")]
     services_dir: Option<PathBuf>,
     #[arg(long, requires = "local")]
@@ -99,29 +103,35 @@ fn main() -> Result<()> {
         .bus
         .clone()
         .unwrap_or_else(|| "ws://127.0.0.1:7895/bus".into());
-    if args.local && (args.hub_port != 7895 || args.mcp_port != 7897) && args.database.is_none() {
-        anyhow::bail!("An alternate local stack requires an explicit --database path");
-    }
-    let mode = if args.local {
-        #[cfg(feature = "embedded")]
-        {
-            Mode::Local(wks_native::host::LocalOptions {
-                services_dir: args.services_dir.clone(),
-                database: match args.database.clone() {
-                    Some(path) => path,
-                    None => wks_native::host::LocalOptions::default_database()?,
-                },
-                hub_port: args.hub_port,
-                mcp_port: args.mcp_port,
-                hook_port: 0,
-                api_port: 0,
-                no_plugins: false,
-            })
-        }
-        #[cfg(not(feature = "embedded"))]
-        {
-            anyhow::bail!("This build does not include the embedded backend");
-        }
+    let local_requested = args.local;
+    #[cfg(feature = "rust-hub")]
+    let local_requested = local_requested || args.rust_local_dir.is_some();
+    #[cfg(feature = "rust-hub")]
+    let rust_mode = if local_requested {
+        anyhow::ensure!(
+            args.services_dir.is_none() && args.database.is_none(),
+            "Rust local mode uses --rust-local-dir, not legacy service/database paths"
+        );
+        anyhow::ensure!(
+            args.hub_port == 7895 && args.mcp_port == 7897,
+            "Rust native local mode owns an in-process bus; port overrides are unavailable"
+        );
+        let directory = match &args.rust_local_dir {
+            Some(directory) => directory.clone(),
+            None => wks_native::host::RustOptions::default_directory()?,
+        };
+        Some(Mode::Rust(wks_native::host::RustOptions::isolated(
+            directory,
+        )?))
+    } else {
+        None
+    };
+    #[cfg(not(feature = "rust-hub"))]
+    let rust_mode: Option<Mode> = None;
+    let mode = if let Some(mode) = rust_mode {
+        mode
+    } else if args.local {
+        anyhow::bail!("This build does not include the Rust backend; build with rust-hub");
     } else if args.demo {
         Mode::Demo
     } else {
@@ -163,8 +173,18 @@ fn main() -> Result<()> {
         .unwrap_or_default();
     let project_scope = if args.demo {
         "demo".to_owned()
-    } else if args.local {
-        format!("ws://127.0.0.1:{}/bus", args.hub_port)
+    } else if local_requested {
+        #[cfg(feature = "rust-hub")]
+        {
+            let Mode::Rust(options) = &mode else {
+                unreachable!("local mode has a Rust owner")
+            };
+            format!("rust-local:{}", options.config_dir.display())
+        }
+        #[cfg(not(feature = "rust-hub"))]
+        {
+            unreachable!("local mode requires the Rust feature")
+        }
     } else {
         let url = url::Url::parse(&bus_url)?;
         format!(
@@ -218,7 +238,7 @@ fn main() -> Result<()> {
                     let view = cx.new(|cx| {
                         let mut view = ui::Workspace::new(controller, args.demo, window, cx);
                         view.configure_settings(settings, settings_path, project_scope);
-                        view.configure_local(args.local, keep_running.clone());
+                        view.configure_local(local_requested, keep_running.clone());
                         view.set_appearance(appearance, window, cx);
                         view.open_session(args.session);
                         view

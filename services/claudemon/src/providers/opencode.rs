@@ -14,6 +14,7 @@
 //! through `translate` + the shared `apply_updates` needs a real `opencode`
 //! binary to validate end-to-end.
 
+use crate::child_env::SanitizeChildEnvironment;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -53,6 +54,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         .stderr(Stdio::null())
         .stdout(Stdio::piped())
         .kill_on_drop(true)
+        .scrub_host_authority()
         .spawn()
         .with_context(|| format!("running `{bin} models`"))?;
     let out = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
@@ -727,6 +729,7 @@ async fn run_session(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true)
+        .scrub_host_authority()
         .spawn()
         .with_context(|| format!("spawning `{bin} serve`"))?;
 

@@ -130,8 +130,15 @@ export function gracefulStop(
  * timeout, non-200) means "not adoptable" and the caller proceeds to
  * kill-stale + spawn.
  */
-export async function probeHealth(url: string, timeoutMs = 1200): Promise<boolean> {
+export async function probeHealth(
+  url: string,
+  timeoutMs = 1200,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (signal?.aborted) return false;
   const ctl = new AbortController();
+  const abort = () => ctl.abort();
+  signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { signal: ctl.signal });
@@ -140,6 +147,7 @@ export async function probeHealth(url: string, timeoutMs = 1200): Promise<boolea
     return false;
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 

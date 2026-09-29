@@ -21,7 +21,7 @@ if len(selected) != 1: raise SystemExit('Approved MCP service credential is not 
 record = selected[0]
 env = dict(os.environ, XDG_CONFIG_HOME='/data/hub/home/.config')
 env.pop('HUB_TOKEN',None)
-result = subprocess.run(['workspacer','fleet','idle','--json'],env=env,capture_output=True,text=True)
+result = subprocess.run([('workspacer-rust' if __import__('shutil').which('workspacer-rust') else 'workspacer'),'fleet','idle','--json'],env=env,capture_output=True,text=True)
 blockers = ['unknown']
 if result.returncode in (0,1):
     state = json.loads(result.stdout)['idle']

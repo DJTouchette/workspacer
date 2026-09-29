@@ -1,0 +1,3823 @@
+{
+  "operator": [
+    {
+      "description": "After inspecting recorded concrete outcomes, explicitly accept a task under expectedTaskRevision CAS and a reason. Valid schema/idle/terminal steps alone do not mean success. Failed, blocked or waived policy remains ineligible. Returns newly ready followups; never spawns or publishes.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "compact": {
+            "description": "omit pinned template bodies from returned tasks; evidence and policy remain",
+            "type": "boolean"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "expectedTaskRevision": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "reason": {
+            "description": "explicit evidence acceptance rationale; never a grant of execution authority",
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "cwd",
+          "expectedTaskRevision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "accept_task_outcome"
+    },
+    {
+      "description": "Add a Claude profile. name is required; configDir and extraArgs optional.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "configDir": {
+            "description": "CLAUDE_CONFIG_DIR for this profile (optional)",
+            "type": "string"
+          },
+          "extraArgs": {
+            "description": "extra CLI args passed to claude for this profile (optional)",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "name": {
+            "description": "display name for the profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "name": "add_profile"
+    },
+    {
+      "description": "Take over the workers a PREVIOUS manager dispatched, so their finished and progress wakes arrive at you instead of at the session that is gone. Pass fromSessionId (the manager you are replacing — a handoff file names it on its first line) and toSessionId (your own session id). See help topic 'drive'.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "fromSessionId": {
+            "description": "the session id of the manager you are replacing — every worker still parented to it moves to you",
+            "type": "string"
+          },
+          "toSessionId": {
+            "description": "your own session id (it is in your system instructions); it must be a live manager session, or the call is refused rather than silencing the workers",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fromSessionId",
+          "toSessionId"
+        ],
+        "type": "object"
+      },
+      "name": "adopt_workers"
+    },
+    {
+      "description": "Get the most recent finished sessions with their per-session usage. Pass limit to cap the count.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "description": "max number of recent sessions to return",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "analytics_recent"
+    },
+    {
+      "description": "Get aggregate usage analytics across sessions (totals for tokens, cost, durations).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "analytics_summary"
+    },
+    {
+      "description": "Answer an agent's AskUserQuestion picker by option number, free text, or a list of answers.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "description": "a list of answers for a multi-part question",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "option": {
+            "description": "the numeric option to pick",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "text": {
+            "description": "a free-text answer",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "answer"
+    },
+    {
+      "description": "Resolve a pending permission prompt for an agent: 'yes', 'no', or 'always'.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "description": "one of: yes, no, always",
+            "type": "string"
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "reason": {
+            "description": "optional reason to record with the decision",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "name": "approve"
+    },
+    {
+      "description": "Atomically add a brief line (Recently prepends). With sessionId/result, line is your significance sentence; host adds date, facts and reference. Returns section size; overlong lines are refused.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "line": {
+            "description": "the line to add, e.g. '2026-08-21  shipped X (session:abc)'. A leading '- ' bullet is added if you omit it, and the line is flattened to a single line. Over 4000 characters it is refused rather than cut, and nothing is written: split it into separate entries. WITH sessionId/result this becomes just your ONE SENTENCE of significance — what the result MEANS — and the host adds the date, the facts and the reference",
+            "type": "string"
+          },
+          "project": {
+            "description": "absolute path of the PROJECT DIRECTORY whose brief to update (the repo, not the brief file — .workspacer/brief.md under it is composed for you). Use your own cwd for your fleet brief",
+            "type": "string"
+          },
+          "result": {
+            "additionalProperties": true,
+            "description": "OPTIONAL the worker's parsed wks-result object, passed through as you received it (commonly commit / filesChanged / checksRun / caveats / followUps, but any JSON object works). The host renders it compactly onto the end of the line, so you do NOT retype the mechanical facts. Long lists are capped with an explicit '+K more'; caveats are never capped and never dropped. It cannot stand alone: without your own sentence in 'line' the call is refused, because the judgement is the half only you can write",
+            "type": "object"
+          },
+          "section": {
+            "description": "which heading to add the line under: Now (in flight), Direction (durable goals), Recently (a dated log — this one PREPENDS, newest first), or User (standing preferences; fleet brief). An unknown name is refused, never guessed",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "OPTIONAL id of the session whose result this is. The host VALIDATES it and renders the canonical 'session:\u003cshort id\u003e' the briefs and the UI link on — a malformed id (a label, a round number, a nickname like '6a-round2') is REFUSED with nothing written, rather than left as a dead link. Copy it from list_agents or from the wake that reported the result; never compose one",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "section",
+          "line"
+        ],
+        "type": "object"
+      },
+      "name": "brief_append"
+    },
+    {
+      "description": "Archive a section's oldest entries under the brief lock. Give keep or count; history is preserved in brief.archive.md. See help topic brief.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "archive exactly this many of the section's OLDEST entries, 1 or more. Give this or keep, never both",
+            "type": "integer"
+          },
+          "keep": {
+            "description": "leave this many of the section's NEWEST entries and archive everything older. 1 or more; running it twice changes nothing the second time. Give this or count, never both",
+            "type": "integer"
+          },
+          "project": {
+            "description": "absolute path of the PROJECT DIRECTORY whose brief to trim. That is the repo, not the brief file: both .workspacer paths under it are composed for you. Use your own cwd for your fleet brief",
+            "type": "string"
+          },
+          "section": {
+            "description": "which heading to trim: Now, Direction, Recently or User. An unknown name is refused, never guessed",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "section"
+        ],
+        "type": "object"
+      },
+      "name": "brief_archive"
+    },
+    {
+      "description": "Report stale or malformed Now references in one project brief. Read-only: you decide which lines to remove.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "project": {
+            "description": "absolute path of the PROJECT DIRECTORY whose brief to check (the repo, not the brief file). Use your own cwd for your fleet brief",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "type": "object"
+      },
+      "name": "brief_check"
+    },
+    {
+      "description": "Clone a definition at expectedRevision into a new custom id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "description": "required CAS revision for edits/clones/deletes; selectionRevision for selection",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "id": {
+            "description": "workflow definition id",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "name": "clone_workflow"
+    },
+    {
+      "description": "Dismiss a FINISHED session — it leaves list_agents and the fleet stops counting it. This is the definitive answer to \"did it actually die\", which used to be inferred from a follow-up signal returning 404. Refused while the session is still working: stop it first (signal SIGTERM), then close it. Idempotent — closing an already-forgotten session succeeds.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "close_session"
+    },
+    {
+      "description": "Open a new shell terminal session. Returns the new sessionId; write to it with terminal_input.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cols": {
+            "description": "initial terminal width in columns",
+            "type": "integer"
+          },
+          "cwd": {
+            "description": "working directory (defaults to the user's home)",
+            "type": "string"
+          },
+          "rows": {
+            "description": "initial terminal height in rows",
+            "type": "integer"
+          },
+          "shell": {
+            "description": "shell to run (defaults to the platform default shell)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "create_terminal"
+    },
+    {
+      "description": "Create a custom Fleet definition with a unique id, revision 1.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "additionalProperties": true,
+            "description": "strict Fleet definition: id/revision/name/description/enabled/steps only; no privileges or scripts",
+            "type": "object"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "type": "object"
+      },
+      "name": "create_workflow"
+    },
+    {
+      "description": "Record run=true/false and a reason for the next conditional or explicit bounded repair step. Required review cannot be skipped. Requires taskId/cwd/stepId.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "compact": {
+            "description": "omit pinned template bodies from task responses; keeps policy, inputs, result schemas and evidence",
+            "type": "boolean"
+          },
+          "cwd": {
+            "description": "local project directory; omit for global selection",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "run": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "stepId": {
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "cwd",
+          "stepId",
+          "run",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "decide_workflow_step"
+    },
+    {
+      "description": "Delete a layout template by id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "the target id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "delete_layout"
+    },
+    {
+      "description": "Delete a saved workspace session by filename.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "description": "the saved session's filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename"
+        ],
+        "type": "object"
+      },
+      "name": "delete_saved_session"
+    },
+    {
+      "description": "Delete an unselected custom definition at expectedRevision; pinned tasks retain their snapshot.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "description": "required CAS revision for edits/clones/deletes; selectionRevision for selection",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "id": {
+            "description": "workflow definition id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "name": "delete_workflow"
+    },
+    {
+      "description": "Disable an unselected custom definition at expectedRevision. Pinned tasks continue.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "description": "required CAS revision for edits/clones/deletes; selectionRevision for selection",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "id": {
+            "description": "workflow definition id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "name": "disable_workflow"
+    },
+    {
+      "description": "Dispatch one exact pinned step: validate/decide, route, apply host metadata and spawn in one call. Optional context watch. Returns a compact receipt; never retries or launches a following step.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "that task's local project directory",
+            "type": "string"
+          },
+          "executionTarget": {
+            "description": "paired for an explicitly selected paired worker; omit for local",
+            "type": "string"
+          },
+          "expectedTaskRevision": {
+            "description": "current task revision; stale calls are refused before dispatch",
+            "type": "integer"
+          },
+          "label": {
+            "description": "short worker label",
+            "type": "string"
+          },
+          "modelSelection": {
+            "additionalProperties": false,
+            "description": "explicit user model choice instead of automatic routing; mutually exclusive with routing. Model ceilings still apply; provider permission modes require no separate Workspacer grant.",
+            "properties": {
+              "contextWindow": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "effort": {
+                "type": "string"
+              },
+              "model": {
+                "description": "the explicitly requested provider model ID; never replaced by automatic role routing",
+                "type": "string"
+              },
+              "provider": {
+                "description": "the explicitly requested coding-agent provider",
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "profileId": {
+            "description": "optional provider profile",
+            "type": "string"
+          },
+          "reason": {
+            "description": "required with run",
+            "type": "string"
+          },
+          "remoteCwd": {
+            "description": "exact remote path from list_dispatch_targets; required with paired",
+            "type": "string"
+          },
+          "routing": {
+            "additionalProperties": false,
+            "description": "optional routing constraints; role/cwd/previousProvider are host-derived",
+            "properties": {
+              "decisionDensity": {
+                "type": "string"
+              },
+              "difficulty": {
+                "type": "string"
+              },
+              "expectedWork": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "count": {
+                      "description": "how many agent runs of that phase are still expected before the window resets",
+                      "type": "integer"
+                    },
+                    "phase": {
+                      "description": "the workflow phase, from the matrix's forecast_weights keys: scouting | implementation | review | fixing | validation. A phase the matrix has no weight for is REPORTED back as unweighted rather than counted as free",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "phase",
+                    "count"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "forecastDemandBeforeResetPct": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "profile": {
+                "description": "optional routing profile",
+                "type": "string"
+              },
+              "provider": {
+                "description": "optional provider pin; unavailable routes never substitute silently",
+                "type": "string"
+              },
+              "requireIndependentFamily": {
+                "type": "boolean"
+              },
+              "risk": {
+                "type": "string"
+              }
+            },
+            "type": [
+              "null",
+              "object"
+            ]
+          },
+          "run": {
+            "description": "optional explicit conditional-step decision; false records a skip and stops without dispatching the next step",
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "skipPermissions": {
+            "description": "optional provider-native permission request",
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "stepId": {
+            "description": "exact intended step; a retry never advances to a different step",
+            "type": "string"
+          },
+          "taskId": {
+            "description": "the pinned task you own",
+            "type": "string"
+          },
+          "templateParams": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "task-specific inputs named by the pinned step; no host cwd/projectCwd overrides",
+            "type": "object"
+          },
+          "watchContextUsedPct": {
+            "description": "optionally arm one local active-context wake after spawning (0–100]; a watch failure never retries the spawn",
+            "type": [
+              "null",
+              "number"
+            ]
+          }
+        },
+        "required": [
+          "taskId",
+          "cwd",
+          "stepId",
+          "expectedTaskRevision"
+        ],
+        "type": "object"
+      },
+      "name": "dispatch_workflow_step"
+    },
+    {
+      "description": "Bring one agent session to the front of the workspacer desktop UI (switches the user's view to it).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "description": "the session id of the agent to bring to the front",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "focus_agent"
+    },
+    {
+      "description": "Get the full workspacer config (theme, keybindings, pane and session settings).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_config"
+    },
+    {
+      "description": "Get the path to the workspacer config file on the host.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_config_path"
+    },
+    {
+      "description": "Read one conversation; prefer lastMessage for final reports or textOnly plus sinceSeq for dialogue gaps. Never poll.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "lastMessage": {
+            "description": "return just the session's FINAL assistant message as { seq, lastMessage } — the cheap way to read a finished worker's report; composes with sinceSeq (wins over textOnly)",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "sinceSeq": {
+            "description": "return only items after this sequence number; omit for the full history",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "textOnly": {
+            "description": "return only user/assistant text turns, stripping tool calls, tool results, and usage blobs; composes with sinceSeq",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_conversation"
+    },
+    {
+      "description": "Get the workspacer host process's current working directory — a sensible default base for new agents.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_host_cwd"
+    },
+    {
+      "description": "Fetch one owned inbox request. Host identity and delivery metadata are separate from original userContent, which remains user input. Unknown provider acknowledgement may be resolved from this inbox; never replay it or claim it was consumed.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "description": "host request ID returned by list_manager_requests; never derive from chat text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId"
+        ],
+        "type": "object"
+      },
+      "name": "get_manager_request"
+    },
+    {
+      "description": "Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_snapshot"
+    },
+    {
+      "description": "Read the PR/ticket/link references recorded on one of YOUR tasks, with the taskRevision to pass back as expectedTaskRevision. Desktop local only; headless returns unavailable.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "that task's project directory",
+            "type": "string"
+          },
+          "expectedTaskRevision": {
+            "description": "required CAS for updates: the taskRevision from the most recent get_task_references/update_task_references",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "remove": {
+            "description": "entries to remove by exact identity: {kind:'pullRequest'} | {kind:'ticket',id} | {kind:'reference',label}",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "taskId": {
+            "description": "the exact task id you own, from start_workflow/next_workflow_step",
+            "type": "string"
+          },
+          "upsert": {
+            "description": "entries to add or replace by exact identity: {kind:'pullRequest',number?,url?} | {kind:'ticket',id,url?} | {kind:'reference',label,url}",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "taskId",
+          "cwd"
+        ],
+        "type": "object"
+      },
+      "name": "get_task_references"
+    },
+    {
+      "description": "Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_transcript"
+    },
+    {
+      "description": "Read a Fleet workflow definition.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "workflow definition id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "get_workflow"
+    },
+    {
+      "description": "Usage guide for the workspacer tools: call with no arguments for the grouped overview, or with a topic (group name) for detailed guidance. Request only the topic you need; no mandatory overview call.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "topic": {
+            "description": "a tool group to expand (one of the groups the overview lists); omit for the overview",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "help"
+    },
+    {
+      "description": "Get recent run records for one job id (status ok/error/skipped, plus an output or error tail).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "the target id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "job_history"
+    },
+    {
+      "description": "List live agent state and attention needs across local and federated hubs. Preserve remote rows' hub on subsequent calls.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_agents"
+    },
+    {
+      "description": "List sub-directories of a host path (directories only, hidden skipped) — for choosing a working directory. Defaults to the user's home; returns { path, parent, home, dirs }.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "the host directory to list (defaults to the user's home)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_dir"
+    },
+    {
+      "description": "Discover explicitly enabled worker targets, protocol support and actual remote provider authentication and repository choices. The manager remains local.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_dispatch_targets"
+    },
+    {
+      "description": "Read origin dispatch records, including uncertain admission and delivery. Do not repeat a spawn whose admission is unknown.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_dispatches"
+    },
+    {
+      "description": "List files and directories at a host path (gitignore-aware), for an editor-style file tree.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "the host directory to list (defaults to the user's home)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_entries"
+    },
+    {
+      "description": "List the hub's scheduled jobs with their trigger, action, next run and last result. Rows with a proposedBy field are proposals awaiting the user's approval and never run.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_jobs"
+    },
+    {
+      "description": "List saved layout templates (pane geometry presets).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_layouts"
+    },
+    {
+      "description": "List reusable library items (prompts, skills, agents, dispatch templates) — global plus, if cwd is given, that project's items. Filter with kind and/or id; a kind:'dispatch' row carries `params`, its placeholders parsed out ({name, required, default?}), which is what spawn_agent's templateParams fills.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "a project/working directory on the host — adds that project's .workspacer/library and .claude assets to the global ones",
+            "type": "string"
+          },
+          "id": {
+            "description": "return only the item with this exact id (the filename slug, e.g. 'ship-task') — the cheap way to read ONE template's params instead of the whole library",
+            "type": "string"
+          },
+          "kind": {
+            "description": "return only items of this kind: prompt | skill | agent | mcp | command | dispatch. Use 'dispatch' to list just the Fleet Manager dispatch templates spawn_agent's template param accepts. An unknown kind is refused, never answered with an empty list",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_library"
+    },
+    {
+      "description": "Check your authoritative local desktop request inbox once on each user or wake turn. Use view=pending to include original content and omit resolved history; fetch only contentDeferred requests separately. Wakes and worker continuations are events, not new user requests. Headless/remote unavailable.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "view": {
+            "description": "pending returns up to 8 eligible unresolved requests with original content (16 KiB total); omits resolved history/tasks. Omit for the full metadata inventory.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_manager_requests"
+    },
+    {
+      "description": "List the Claude models available to spawn_agent (ids + display names).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_models"
+    },
+    {
+      "description": "Find dead parents with live workers for standalone recovery. Adopt only the intended confirmed manager; never guess from dangling parent IDs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_orphans"
+    },
+    {
+      "description": "List configured Claude profiles (named CLAUDE_CONFIG_DIR + extra-args presets used when spawning agents).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_profiles"
+    },
+    {
+      "description": "List the coding-agent HARNESSES spawn_agent can use (claude, codex, copilot, opencode, pi) and whether each is installed/available on this host — call before dispatching a worker on a non-default provider.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_providers"
+    },
+    {
+      "description": "List prior Claude Code sessions for a directory that can be resumed (the resume picker), newest first.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "a project/working directory on the host",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_resumable_sessions"
+    },
+    {
+      "description": "List saved workspace sessions (the session picker — saved pane/agent arrangements).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_saved_sessions"
+    },
+    {
+      "description": "Get full snapshots for every session at once, spanning federated peer hubs (verbose — large payload; remote rows carry a hub field). Prefer list_agents for an overview and get_snapshot for one session.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_snapshots"
+    },
+    {
+      "description": "List local Fleet workflows, revisioned selections and dispatch template inputs.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_workflows"
+    },
+    {
+      "description": "Load one saved workspace session by filename.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "filename": {
+            "description": "the saved session's filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename"
+        ],
+        "type": "object"
+      },
+      "name": "load_saved_session"
+    },
+    {
+      "description": "Read your pending inbox and up to four owned task states/next dispatch inputs in one call. Compact evidence and partial errors; no mutations or polling.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tasks": {
+            "description": "up to 4 tasks to inspect alongside your pending inbox; use task IDs from the current wake/request, not the whole fleet",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "cwd": {
+                  "description": "the task's exact local project directory",
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "taskId",
+                "cwd"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "name": "manager_context"
+    },
+    {
+      "description": "Read pinned task policy and the next eligible step. Requires taskId/cwd under your manager. Follow the returned select_model/spawn_agent metadata; never infer pass from a valid result or idle.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "compact": {
+            "description": "omit pinned template bodies from task responses; keeps policy, inputs, result schemas and evidence",
+            "type": "boolean"
+          },
+          "cwd": {
+            "description": "local project directory; omit for global selection",
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "cwd"
+        ],
+        "type": "object"
+      },
+      "name": "next_workflow_step"
+    },
+    {
+      "description": "Show a desktop notification on the workspacer machine. Give it a click target (sessionId, or paneType plus paneSection) whenever there is somewhere for the user to go — a notification that says \"go and look in Settings\" in prose makes them navigate by hand.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "description": "notification body",
+            "type": "string"
+          },
+          "inAppOnly": {
+            "description": "skip the OS notification but still show the in-app toast",
+            "type": "boolean"
+          },
+          "key": {
+            "description": "stable key: a later notification with the same key REPLACES the earlier one instead of stacking. Use it for repeated alerts about the same condition",
+            "type": "string"
+          },
+          "level": {
+            "description": "info (the default), success, warn or error. Colors the entry in the notification center; anything else is read as info",
+            "type": "string"
+          },
+          "paneSection": {
+            "description": "with paneType settings, the section the click lands on: jobs, appearance, keybindings, session, profiles, projects, notifications, plugins, tools and so on. Without it the Settings pane opens wherever it was last, which for a review-this notification means the user still has to go looking",
+            "type": "string"
+          },
+          "paneType": {
+            "description": "click target: open this pane type, e.g. settings, usage, sessions, or a plugin pane type. Used when no sessionId is given",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "click target: select this agent session. Use it whenever the notification is about one agent. Highest priority of the three targets",
+            "type": "string"
+          },
+          "silent": {
+            "description": "record it in the notification center only — no toast and no OS notification. For things worth logging that are not worth interrupting for",
+            "type": "boolean"
+          },
+          "title": {
+            "description": "notification title",
+            "type": "string"
+          },
+          "url": {
+            "description": "click target: open this http(s) URL in the user's browser. Lowest priority of the three; any other scheme is dropped",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "notify"
+    },
+    {
+      "description": "Arm a one-shot wake: contextUsedPct for confirmed active-context health OR tokens/usd/idleSeconds for cumulative/idle thresholds. Never poll.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contextUsedPct": {
+            "description": "single-purpose health watch: fire when runtime-confirmed ACTIVE context occupancy reaches this percentage of the same confirmed effective window. Finite range (0,100]; cannot be combined with tokens/usd/idleSeconds. Missing, stale or provisional telemetry waits without firing",
+            "type": "number"
+          },
+          "idleSeconds": {
+            "description": "fire when NOTHING has arrived from the session for this many seconds — whether it is sitting at a prompt or still claiming to work. This is the catch-all for a worker that stopped without finishing, including a wedged one whose state still reads 'streaming'; the wake says which it is",
+            "type": "number"
+          },
+          "notifySessionId": {
+            "description": "the session to wake when it crosses; omit to wake the watched session's parent (which is you, for a worker you dispatched)",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the session to watch",
+            "type": "string"
+          },
+          "tokens": {
+            "description": "legacy cadence alert: fire when cache-inclusive CUMULATIVE throughput (input + output, including cache reads where reported) reaches this. This is not active-context health",
+            "type": "number"
+          },
+          "usd": {
+            "description": "fire when cumulative session cost in USD reaches this; provider-authoritative where supplied, otherwise Workspacer's estimate; absent cost telemetry cannot cross it",
+            "type": "number"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "notify_when"
+    },
+    {
+      "description": "Open workspacer's built-in browser pane on a URL, shown to the user in the desktop UI. A file:// URL works too when it points at a file under the user's home or a configured project directory; a markdown file opens in the preview pane instead.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "description": "the URL to open in the built-in browser pane",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "name": "open_browser"
+    },
+    {
+      "description": "Open the Workspacer Guide pane in the desktop UI — the built-in tour/help chat. Use to hand the user to the in-app guide instead of explaining workspacer yourself.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "open_guide"
+    },
+    {
+      "description": "Open a workspacer pane in the desktop UI by type — e.g. settings, analytics, library, overview, sessions, review, terminal, browser.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "working directory for panes that take one (e.g. terminal)",
+            "type": "string"
+          },
+          "paneType": {
+            "description": "the pane type to open: settings, analytics, library, overview, sessions, review, terminal, or browser",
+            "type": "string"
+          },
+          "url": {
+            "description": "browser pane only: the URL to open",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paneType"
+        ],
+        "type": "object"
+      },
+      "name": "open_pane"
+    },
+    {
+      "description": "Open an installed plugin's pane in the desktop UI by its pane type (e.g. djtouchette.jira).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "description": "the plugin pane type, e.g. djtouchette.jira",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "open_plugin"
+    },
+    {
+      "description": "Open the New Agent dialog in the desktop UI, optionally pre-filled with a directory — shows the user how to start an agent WITHOUT spawning one.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "directory to pre-fill in the dialog",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "open_spawn_dialog"
+    },
+    {
+      "description": "Open a visible terminal and optionally run a command; returns immediately. Use cwd/label/parentSessionId to place it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "a command to run in the terminal on open, e.g. \"npm run dev\" — omit to open an empty shell",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "the project/working directory to open the terminal in (defaults to the user's home)",
+            "type": "string"
+          },
+          "label": {
+            "description": "a short human label for the terminal pane, e.g. \"preheat dev server\"",
+            "type": "string"
+          },
+          "parentSessionId": {
+            "description": "your own session id, so the terminal nests under you in the UI",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "open_terminal"
+    },
+    {
+      "description": "Git state for every configured project in ONE call: branch, upstream, unpushed commits, behind count, and whether the tree is dirty. Replaces the per-repo shell-outs a standup needs. Pass dirs to limit it. A directory that is not a repo (or errors) comes back as a row with an error, never as a failed call.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dirs": {
+            "description": "specific project directories to report on; omit for every project in the workspacer config",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "project_status"
+    },
+    {
+      "description": "Propose a scheduled job for the user to approve — pass a job spec ({name, trigger, action}; see help topic \"jobs\"). It is saved DISABLED and cannot run until the user approves it in Settings → Jobs, so say so rather than implying it is scheduled.",
+      "inputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "name": "propose_job"
+    },
+    {
+      "description": "Read a UTF-8 text file on the workspacer host. Returns its contents.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "description": "absolute path of the file to read on the host",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "name": "read_file"
+    },
+    {
+      "description": "Re-read the config file from disk and return it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "reload_config"
+    },
+    {
+      "description": "Delete a job (or withdraw a proposal) by id, along with its run history.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "the target id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "remove_job"
+    },
+    {
+      "description": "Remove a library item. Pass { scope: 'global'|'project'|'claude', id, cwd?, kind?: 'prompt'|'skill'|'agent' }.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "project directory (required for project/claude scope)",
+            "type": "string"
+          },
+          "id": {
+            "description": "the library item id",
+            "type": "string"
+          },
+          "kind": {
+            "description": "one of: prompt, skill, agent",
+            "type": "string"
+          },
+          "scope": {
+            "description": "one of: global, project, claude",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "remove_library"
+    },
+    {
+      "description": "Remove a Claude profile by id.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "the target id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "remove_profile"
+    },
+    {
+      "description": "Tell the agent that dispatched you how your task is going, mid-task, in ONE line — a phase landed, the approach you were given is wrong, you are burning context faster than expected. It goes to your manager and nowhere else (you cannot name a recipient, and you have no way to reach any other session with it), it does NOT end your turn or your task, and your final message still reaches your manager in full when you finish. Limited to one per minute and 20 per session; use it when your manager's next decision would change, not to narrate.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "needsDecision": {
+            "description": "true if you are BLOCKED on your manager's answer rather than just keeping it informed; it is marked NEEDS A DECISION. The channel is one-way either way — your manager replies (if it replies) with a message to you, so keep working if you can",
+            "type": "boolean"
+          },
+          "note": {
+            "description": "ONE line, in your own words, about your own run — a phase that landed, an approach that is not working, a budget you are burning faster than expected. Not a report: say what changed for your manager's DECISION and leave the detail for your final message, which it receives in full. Max 500 characters",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "type": "object"
+      },
+      "name": "report_progress"
+    },
+    {
+      "description": "Atomically resolve all independent intents in an owned request with expectedRevision CAS. Creates visible pinned tasks without workers; followUp links concrete task IDs. Questions/status/ack use none or question; corrections use update and existing taskId. Retry the same intent keys; conflicts return current state. A single pasted PR URL is attached to a single work task atomically. Ambiguous URLs require explicit references mapping; use generic named references for unknown providers. Preserve existing PR unless replacement was explicitly requested. No execution/publish authority is granted.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "compact": {
+            "description": "omit pinned template bodies from returned tasks; evidence and policy remain",
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "description": "current host request revision for atomic resolution",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "intents": {
+            "description": "1-8 independent actions with stable key, kind(create/followUp/update/question/none/untracked), reason; create/followUp adds cwd, title, provenance(explicit/inferred), optional workflowId(null=no workflow, id=chosen policy, omitted=default); untracked records an explicit opt-out with key/kind/reason only and creates no task; update requires taskId and expectedTaskRevision; workflowId may change only before the first worker; followUp requires dependsOn task IDs or dependsOnKeys naming earlier work intents in this same resolution; cancel is optional on update; references optionally maps pasted URLs using kind pullRequest(number,url), ticket(id,url), or reference(label,url); multiple URLs/tasks require references on every work intent ([] assigns none); replacePullRequest true requires explicit replacement intent",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "requestId": {
+            "description": "host request ID returned by list_manager_requests; never derive from chat text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "expectedRevision",
+          "intents"
+        ],
+        "type": "object"
+      },
+      "name": "resolve_manager_request"
+    },
+    {
+      "description": "Redispatch a worker: clone a session's ORIGINAL task and cwd/model/provider/parent/role, append your correction, and start a fresh agent with both. The standing move for a worker that has crept out of scope — stop it (signal SIGTERM, then close_session), then respawn_with the diagnosis baked in, instead of re-authoring the whole first message by hand. Returns the new sessionId.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "amendment": {
+            "description": "the correction, in your words: what went wrong and what the successor must do differently. It is appended to the original task under a clear heading, so state the DIAGNOSIS, not the whole task again",
+            "type": "string"
+          },
+          "capability": {
+            "description": "override the model CAPABILITY the successor is dispatched at (cheap | balanced | frontier | frontier_max | reviewer | deep_reviewer | frontier_plus); defaults to the original's. Copy it from a fresh select_model answer rather than raising it by hand — the host still clamps it to the target directory's ceiling",
+            "type": "string"
+          },
+          "contextWindow": {
+            "description": "canonical context-window override in tokens; pair with modelIdentity",
+            "minimum": 0,
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "cwd": {
+            "description": "override the working directory; defaults to the original's — which for a ship task is its WORKTREE, so the successor continues on the same branch with the partial work in place. Pass the repo path (with worktree:true) to start clean instead",
+            "type": "string"
+          },
+          "effort": {
+            "description": "override the reasoning effort; defaults to the original's",
+            "type": "string"
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "label": {
+            "description": "label for the successor; defaults to the original's with a retry marker",
+            "type": "string"
+          },
+          "model": {
+            "description": "override the model (e.g. step up for a task that proved harder than it looked); defaults to the original's",
+            "type": "string"
+          },
+          "modelIdentity": {
+            "description": "canonical provider model identity override; pair with contextWindow. The legacy model companion is derived for old peers",
+            "type": "string"
+          },
+          "role": {
+            "description": "override the work ROLE the successor is dispatched as (scout | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | mechanical | judge); defaults to the original's. Set it when the redispatch changes what the worker IS — a failed implementer respawned to diagnose is a diagnostician, not an implementer",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the session to clone — usually one you have just stopped",
+            "type": "string"
+          },
+          "toolScope": {
+            "description": "accepted and ignored compatibility field; supported successors receive the full Workspacer tool surface automatically",
+            "type": "string"
+          },
+          "trackTask": {
+            "description": "false to keep an explicitly untracked retry out of task history; parent/wakes remain",
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "worktree": {
+            "description": "carve a FRESH isolated worktree for the successor instead of reusing the original's cwd; use when the partial work should be abandoned rather than continued",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionId",
+          "amendment"
+        ],
+        "type": "object"
+      },
+      "name": "respawn_with"
+    },
+    {
+      "description": "Read this connected hub's safe routing defaults, managed preferences, source revision and cached catalog.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "routing_preferences_get"
+    },
+    {
+      "description": "Clear managed routing preferences to inherited host/shipped values; authenticated host authority and current baseRevision required.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "baseRevision"
+        ],
+        "type": "object"
+      },
+      "name": "routing_preferences_reset"
+    },
+    {
+      "description": "Atomically apply a validated routing patch on this hub; authenticated host authority and current baseRevision required.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "activeProfile": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "forecastWeights": {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              "modeShifts": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "effortStep": {
+                      "type": [
+                        "null",
+                        "integer"
+                      ]
+                    },
+                    "effortStepCapabilities": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "roles": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              "modes": {
+                "additionalProperties": false,
+                "properties": {
+                  "global": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "providers": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "profiles": {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alternatives": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "effort": {
+                              "type": "string"
+                            },
+                            "enabled": {
+                              "type": [
+                                "null",
+                                "boolean"
+                              ]
+                            },
+                            "fresh": {
+                              "type": "boolean"
+                            },
+                            "minEffort": {
+                              "type": "string"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "type": [
+                          "null",
+                          "array"
+                        ]
+                      },
+                      "effort": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "enabled": {
+                        "type": [
+                          "null",
+                          "boolean"
+                        ]
+                      },
+                      "fresh": {
+                        "type": [
+                          "null",
+                          "boolean"
+                        ]
+                      },
+                      "minEffort": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "model": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "provider": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              "providers": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": [
+                        "null",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              "roles": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "thresholds": {
+                "additionalProperties": false,
+                "properties": {
+                  "health": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "redAtUsedPct": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "yellowAtUsedPct": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "null",
+                      "object"
+                    ]
+                  },
+                  "pacing": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "blockSpendDownAtRatio": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "bootstrap": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "expectedOffsetPct": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "minElapsedPct": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          }
+                        },
+                        "type": [
+                          "null",
+                          "object"
+                        ]
+                      },
+                      "conserveAtRatio": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "enabled": {
+                        "type": [
+                          "null",
+                          "boolean"
+                        ]
+                      },
+                      "sevenDay": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "curve": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "timezone": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "weekend": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "weekendReservePct": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "weekendWeight": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          }
+                        },
+                        "type": [
+                          "null",
+                          "object"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "null",
+                      "object"
+                    ]
+                  },
+                  "spendDown": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "maxForecastPctOfRemaining": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "minRemainingPct": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "timeToResetMinutes": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "null",
+                      "object"
+                    ]
+                  }
+                },
+                "type": [
+                  "null",
+                  "object"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "baseRevision",
+          "patch"
+        ],
+        "type": "object"
+      },
+      "name": "routing_preferences_save"
+    },
+    {
+      "description": "Validate a sparse typed routing patch against its source revision without writing; authenticated host authority required.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "baseRevision": {
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": false,
+            "properties": {
+              "activeProfile": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "forecastWeights": {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              "modeShifts": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "effortStep": {
+                      "type": [
+                        "null",
+                        "integer"
+                      ]
+                    },
+                    "effortStepCapabilities": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "roles": {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              "modes": {
+                "additionalProperties": false,
+                "properties": {
+                  "global": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "providers": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "profiles": {
+                "additionalProperties": {
+                  "additionalProperties": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "alternatives": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "effort": {
+                              "type": "string"
+                            },
+                            "enabled": {
+                              "type": [
+                                "null",
+                                "boolean"
+                              ]
+                            },
+                            "fresh": {
+                              "type": "boolean"
+                            },
+                            "minEffort": {
+                              "type": "string"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "provider": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "model"
+                          ],
+                          "type": "object"
+                        },
+                        "type": [
+                          "null",
+                          "array"
+                        ]
+                      },
+                      "effort": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "enabled": {
+                        "type": [
+                          "null",
+                          "boolean"
+                        ]
+                      },
+                      "fresh": {
+                        "type": [
+                          "null",
+                          "boolean"
+                        ]
+                      },
+                      "minEffort": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "model": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      },
+                      "provider": {
+                        "type": [
+                          "null",
+                          "string"
+                        ]
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              "providers": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": [
+                        "null",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              "roles": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "thresholds": {
+                "additionalProperties": false,
+                "properties": {
+                  "health": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "redAtUsedPct": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "yellowAtUsedPct": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "null",
+                      "object"
+                    ]
+                  },
+                  "pacing": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "blockSpendDownAtRatio": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "bootstrap": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "expectedOffsetPct": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "minElapsedPct": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          }
+                        },
+                        "type": [
+                          "null",
+                          "object"
+                        ]
+                      },
+                      "conserveAtRatio": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "enabled": {
+                        "type": [
+                          "null",
+                          "boolean"
+                        ]
+                      },
+                      "sevenDay": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "curve": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "timezone": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "weekend": {
+                            "type": [
+                              "null",
+                              "string"
+                            ]
+                          },
+                          "weekendReservePct": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          },
+                          "weekendWeight": {
+                            "type": [
+                              "null",
+                              "number"
+                            ]
+                          }
+                        },
+                        "type": [
+                          "null",
+                          "object"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "null",
+                      "object"
+                    ]
+                  },
+                  "spendDown": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "maxForecastPctOfRemaining": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "minRemainingPct": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      },
+                      "timeToResetMinutes": {
+                        "type": [
+                          "null",
+                          "number"
+                        ]
+                      }
+                    },
+                    "type": [
+                      "null",
+                      "object"
+                    ]
+                  }
+                },
+                "type": [
+                  "null",
+                  "object"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "baseRevision",
+          "patch"
+        ],
+        "type": "object"
+      },
+      "name": "routing_preferences_validate"
+    },
+    {
+      "description": "Preview a route and reasons without spawning, audit rows or decision events; uses bounded cached provider state.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "description": "the account key the spawn will bill to; omit for the provider's default login",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "the project directory the work happens in — it selects which per-directory routing ceiling applies",
+            "type": "string"
+          },
+          "decisionDensity": {
+            "description": "low | medium | high — how many consequential decisions are NOT already made for the agent. A 1500-line mechanical migration is low; a 20-line authorization change is high",
+            "type": "string"
+          },
+          "difficulty": {
+            "description": "low | medium | high | extreme",
+            "type": "string"
+          },
+          "expectedWork": {
+            "description": "the work still AHEAD before the window resets, as counts per workflow phase — e.g. [{phase: implementation, count: 2}, {phase: review, count: 4}]. Weighted by the matrix's forecast_weights and REPORTED with its arithmetic on the answer (demand.units / demand.phases); it does not become a percentage, so on its own it leaves demand UNKNOWN for the mode rules. Pass forecastDemandBeforeResetPct when you know the actual share — that wins over this",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "description": "how many agent runs of that phase are still expected before the window resets",
+                  "type": "integer"
+                },
+                "phase": {
+                  "description": "the workflow phase, from the matrix's forecast_weights keys: scouting | implementation | review | fixing | validation. A phase the matrix has no weight for is REPORTED back as unweighted rather than counted as free",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "phase",
+                "count"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "forecastDemandBeforeResetPct": {
+            "description": "how much of this provider's allowance you expect the work still ahead to consume before the window resets, as a percentage. 0 is a real answer meaning 'nothing more is coming' and is what unlocks spend-down; omitting it leaves demand UNKNOWN, which keeps routing in normal mode",
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "previousProvider": {
+            "description": "the provider that ran the PREVIOUS agent on this work, so a reviewer can be given a different model family from the implementer",
+            "type": "string"
+          },
+          "profile": {
+            "description": "a routing profile to resolve under (mixed | codex_only | anthropic_only); omit to use whichever the matrix has active",
+            "type": "string"
+          },
+          "profileId": {
+            "description": "a Claude profile id, used as the account key when account is omitted",
+            "type": "string"
+          },
+          "provider": {
+            "description": "ask about ONE provider (claude | codex | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
+            "type": "string"
+          },
+          "requireIndependentFamily": {
+            "description": "true when the answer must be a different model family from previousProvider; the response says plainly if that could not be arranged",
+            "type": "boolean"
+          },
+          "risk": {
+            "description": "low | medium | high | critical — auth, money, destructive migrations, concurrency and externally visible contracts are high or critical",
+            "type": "string"
+          },
+          "role": {
+            "description": "the work role this agent will perform: supervisor | scout | mechanical | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | judge",
+            "type": "string"
+          },
+          "ticketId": {
+            "description": "your own identifier for the piece of work, echoed back so decisions can be correlated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "type": "object"
+      },
+      "name": "routing_preview"
+    },
+    {
+      "description": "Run an existing approved job now by id. Refused for a proposal the user has not approved yet.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "the target id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "name": "run_job"
+    },
+    {
+      "description": "Run one desktop keyboard action by registry id — the command layer's vocabulary as a tool: pane zoom/swap (zoom-pane, swap-pane-left), tab/agent navigation (next-tab, next-attention, alternate-agent, jump-pinned + digit), panel toggles (toggle-sidebar, toggle-fleet), chat paging (chat-scroll-down). The desktop validates the id and REFUSES the decision verbs (approve/deny) — approvals ride their own scoped tools.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "the registry action id, e.g. zoom-pane, next-tab, toggle-sidebar, chat-scroll-down",
+            "type": "string"
+          },
+          "digit": {
+            "description": "slot for digit-taking actions (jump-pinned, 1-9)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "run_ui_action"
+    },
+    {
+      "description": "Persist a partial config patch (deep-merged into the current config). Pass only the keys to change, e.g. {\"ui\":{\"guiFontScale\":1.3}}. The user-owned MAPS projects, ui.customThemes and claude.budgets are REPLACED, not merged: whatever object you send at one of those is the whole truth, so send every entry you want kept (or {} to empty it). Each must be a real JSON object — a stringified one is refused, not applied.",
+      "inputSchema": {
+        "additionalProperties": true,
+        "description": "A partial workspacer config. Send only the keys you are changing.",
+        "properties": {
+          "claude": {
+            "additionalProperties": true,
+            "properties": {
+              "budgets": {
+                "additionalProperties": true,
+                "description": "REPLACED wholesale, not merged: this object is the whole truth for claude.budgets. Send every entry you want kept, or {} to empty it. Must be a JSON object — a stringified one used to be accepted here and silently deleted the map.",
+                "properties": {},
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "projects": {
+            "additionalProperties": true,
+            "description": "REPLACED wholesale, not merged: this object is the whole truth for projects. Send every entry you want kept, or {} to empty it. Must be a JSON object — a stringified one used to be accepted here and silently deleted the map.",
+            "properties": {},
+            "type": "object"
+          },
+          "ui": {
+            "additionalProperties": true,
+            "properties": {
+              "customThemes": {
+                "additionalProperties": true,
+                "description": "REPLACED wholesale, not merged: this object is the whole truth for ui.customThemes. Send every entry you want kept, or {} to empty it. Must be a JSON object — a stringified one used to be accepted here and silently deleted the map.",
+                "properties": {},
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "name": "save_config"
+    },
+    {
+      "description": "Save a layout template. Pass the layout blob ({ id?, name, ... }).",
+      "inputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "name": "save_layout"
+    },
+    {
+      "description": "Save a library item. Pass the item blob (scope, kind, id, name, body, …).",
+      "inputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "name": "save_library"
+    },
+    {
+      "description": "Save the current workspace arrangement. Pass the session blob ({ name, tabs|agents, ... }).",
+      "inputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "name": "save_saved_session"
+    },
+    {
+      "description": "ripgrep a project directory for a query, returning matches grouped by file. Use for code search across the host project.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "caseSensitive": {
+            "description": "match case (default false)",
+            "type": "boolean"
+          },
+          "cwd": {
+            "description": "the project directory to search",
+            "type": "string"
+          },
+          "query": {
+            "description": "the search query",
+            "type": "string"
+          },
+          "regex": {
+            "description": "treat the query as a regular expression (default false)",
+            "type": "boolean"
+          },
+          "wholeWord": {
+            "description": "match whole words only (default false)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query",
+          "cwd"
+        ],
+        "type": "object"
+      },
+      "name": "search_project"
+    },
+    {
+      "description": "Select global default with workflowId and expectedRevision=selectionRevision; omit cwd.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "description": "required CAS revision for edits/clones/deletes; selectionRevision for selection",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "workflowId": {
+            "description": "enabled workflow id for selection; null means project inherits global",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "name": "select_default_workflow"
+    },
+    {
+      "description": "Select a model using the paired server own providers and readiness. Pass a cwd returned by list_dispatch_targets. Use this for an explicit paired worker, then preserve its provider/model/capability decision.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "description": "the account key the spawn will bill to; omit for the provider's default login",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "the project directory the work happens in — it selects which per-directory routing ceiling applies",
+            "type": "string"
+          },
+          "decisionDensity": {
+            "description": "low | medium | high — how many consequential decisions are NOT already made for the agent. A 1500-line mechanical migration is low; a 20-line authorization change is high",
+            "type": "string"
+          },
+          "difficulty": {
+            "description": "low | medium | high | extreme",
+            "type": "string"
+          },
+          "expectedWork": {
+            "description": "the work still AHEAD before the window resets, as counts per workflow phase — e.g. [{phase: implementation, count: 2}, {phase: review, count: 4}]. Weighted by the matrix's forecast_weights and REPORTED with its arithmetic on the answer (demand.units / demand.phases); it does not become a percentage, so on its own it leaves demand UNKNOWN for the mode rules. Pass forecastDemandBeforeResetPct when you know the actual share — that wins over this",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "description": "how many agent runs of that phase are still expected before the window resets",
+                  "type": "integer"
+                },
+                "phase": {
+                  "description": "the workflow phase, from the matrix's forecast_weights keys: scouting | implementation | review | fixing | validation. A phase the matrix has no weight for is REPORTED back as unweighted rather than counted as free",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "phase",
+                "count"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "forecastDemandBeforeResetPct": {
+            "description": "how much of this provider's allowance you expect the work still ahead to consume before the window resets, as a percentage. 0 is a real answer meaning 'nothing more is coming' and is what unlocks spend-down; omitting it leaves demand UNKNOWN, which keeps routing in normal mode",
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "previousProvider": {
+            "description": "the provider that ran the PREVIOUS agent on this work, so a reviewer can be given a different model family from the implementer",
+            "type": "string"
+          },
+          "profile": {
+            "description": "a routing profile to resolve under (mixed | codex_only | anthropic_only); omit to use whichever the matrix has active",
+            "type": "string"
+          },
+          "profileId": {
+            "description": "a Claude profile id, used as the account key when account is omitted",
+            "type": "string"
+          },
+          "provider": {
+            "description": "ask about ONE provider (claude | codex | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
+            "type": "string"
+          },
+          "requireIndependentFamily": {
+            "description": "true when the answer must be a different model family from previousProvider; the response says plainly if that could not be arranged",
+            "type": "boolean"
+          },
+          "risk": {
+            "description": "low | medium | high | critical — auth, money, destructive migrations, concurrency and externally visible contracts are high or critical",
+            "type": "string"
+          },
+          "role": {
+            "description": "the work role this agent will perform: supervisor | scout | mechanical | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | judge",
+            "type": "string"
+          },
+          "ticketId": {
+            "description": "your own identifier for the piece of work, echoed back so decisions can be correlated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "type": "object"
+      },
+      "name": "select_dispatch_model"
+    },
+    {
+      "description": "Resolve role/cwd to provider, model, effort, capability and decisionId using live capacity and routing ceilings. Pass the decision to spawn_agent; eligible:false forbids substitution. See help topic routing.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "account": {
+            "description": "the account key the spawn will bill to; omit for the provider's default login",
+            "type": "string"
+          },
+          "cwd": {
+            "description": "the project directory the work happens in — it selects which per-directory routing ceiling applies",
+            "type": "string"
+          },
+          "decisionDensity": {
+            "description": "low | medium | high — how many consequential decisions are NOT already made for the agent. A 1500-line mechanical migration is low; a 20-line authorization change is high",
+            "type": "string"
+          },
+          "difficulty": {
+            "description": "low | medium | high | extreme",
+            "type": "string"
+          },
+          "expectedWork": {
+            "description": "the work still AHEAD before the window resets, as counts per workflow phase — e.g. [{phase: implementation, count: 2}, {phase: review, count: 4}]. Weighted by the matrix's forecast_weights and REPORTED with its arithmetic on the answer (demand.units / demand.phases); it does not become a percentage, so on its own it leaves demand UNKNOWN for the mode rules. Pass forecastDemandBeforeResetPct when you know the actual share — that wins over this",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "description": "how many agent runs of that phase are still expected before the window resets",
+                  "type": "integer"
+                },
+                "phase": {
+                  "description": "the workflow phase, from the matrix's forecast_weights keys: scouting | implementation | review | fixing | validation. A phase the matrix has no weight for is REPORTED back as unweighted rather than counted as free",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "phase",
+                "count"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "forecastDemandBeforeResetPct": {
+            "description": "how much of this provider's allowance you expect the work still ahead to consume before the window resets, as a percentage. 0 is a real answer meaning 'nothing more is coming' and is what unlocks spend-down; omitting it leaves demand UNKNOWN, which keeps routing in normal mode",
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "previousProvider": {
+            "description": "the provider that ran the PREVIOUS agent on this work, so a reviewer can be given a different model family from the implementer",
+            "type": "string"
+          },
+          "profile": {
+            "description": "a routing profile to resolve under (mixed | codex_only | anthropic_only); omit to use whichever the matrix has active",
+            "type": "string"
+          },
+          "profileId": {
+            "description": "a Claude profile id, used as the account key when account is omitted",
+            "type": "string"
+          },
+          "provider": {
+            "description": "ask about ONE provider (claude | codex | copilot | opencode | pi): the answer then reports that provider's capacity and refuses rather than silently substituting another one",
+            "type": "string"
+          },
+          "requireIndependentFamily": {
+            "description": "true when the answer must be a different model family from previousProvider; the response says plainly if that could not be arranged",
+            "type": "boolean"
+          },
+          "risk": {
+            "description": "low | medium | high | critical — auth, money, destructive migrations, concurrency and externally visible contracts are high or critical",
+            "type": "string"
+          },
+          "role": {
+            "description": "the work role this agent will perform: supervisor | scout | mechanical | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | judge",
+            "type": "string"
+          },
+          "ticketId": {
+            "description": "your own identifier for the piece of work, echoed back so decisions can be correlated",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "type": "object"
+      },
+      "name": "select_model"
+    },
+    {
+      "description": "Select project workflow with cwd and expectedRevision=selectionRevision; workflowId:null inherits.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "local project directory; omit for global selection",
+            "type": "string"
+          },
+          "expectedRevision": {
+            "description": "required CAS revision for edits/clones/deletes; selectionRevision for selection",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "workflowId": {
+            "description": "enabled workflow id for selection; null means project inherits global",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "cwd",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "name": "select_project_workflow"
+    },
+    {
+      "description": "Send a prompt/message to a running agent session. If you are a dispatched worker messaging your own manager, pass fromSessionId (your own session id) so your message isn't anonymous.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "fromSessionId": {
+            "description": "your own session id — when set, the message is delivered with a header naming you as the sender, so the recipient (e.g. your manager) knows who sent it; omit if sending on your own account is not meaningful (a human operator via chat, a plugin)",
+            "type": "string"
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "text": {
+            "description": "the prompt/message to send to the agent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "text"
+        ],
+        "type": "object"
+      },
+      "name": "send_message"
+    },
+    {
+      "description": "Turn an agent's approval gate on or off — a workspacer-side hold that pauses the session's tool calls for your approval (surfaced via list_agents / get_snapshot). SEPARATE from the session's Claude permission mode: gate off does NOT stop the session's own permission prompts — only its permission mode governs those (a bypass mode never prompts). The response reports the session's current permission mode so the two are distinguishable.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "on": {
+            "description": "true to require approval before tools run, false to let the agent run freely",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "on"
+        ],
+        "type": "object"
+      },
+      "name": "set_approval_gate"
+    },
+    {
+      "description": "Switch a running agent's model without restarting it. Pass the model compatibility spelling; optionally also pass the canonical modelIdentity and contextWindow pair from list_agents. The result is the canonical pair the owning daemon accepted.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contextWindow": {
+            "description": "canonical selected context window in tokens; pair with modelIdentity",
+            "minimum": 0,
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "effort": {
+            "description": "optional reasoning-effort level to apply with the model",
+            "type": "string"
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "model": {
+            "description": "legacy-compatible model spelling, e.g. opus[1m]; retained for mixed-version peers",
+            "type": "string"
+          },
+          "modelIdentity": {
+            "description": "canonical provider model identity without a context marker",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "set_model"
+    },
+    {
+      "description": "Send a POSIX signal to an agent session, e.g. SIGINT to interrupt or SIGTERM to stop it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "signal": {
+            "description": "signal name, e.g. SIGINT or SIGTERM",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "signal"
+        ],
+        "type": "object"
+      },
+      "name": "signal"
+    },
+    {
+      "description": "Start a supported coding-agent session (Claude, Codex, Copilot, or OpenCode) with full Workspacer tools and all enabled plugin tools automatically. Pi is unavailable because it has no MCP bridge. Returns sessionId and any rendered dispatch message; see help topic spawn.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "afterDispatchId": {
+            "description": "dispatchId returned by the preceding attempt in this same task; pass with taskId for continuations",
+            "type": "string"
+          },
+          "capability": {
+            "description": "the model CAPABILITY select_model answered with (cheap | balanced | frontier | frontier_max | reviewer | deep_reviewer | frontier_plus) — copy it, do not raise it. The host CLAMPS this to the ceiling configured for the target directory, and when it clamps it also drops the model and effort you named; the spawn's answer reports what was taken in escalationScrubbed",
+            "type": "string"
+          },
+          "contextWindow": {
+            "description": "spawn-time context request in tokens (Claude: validated model variant; Codex: model_context_window, defaults to the shared contract’s fresh-Codex request). Copilot, OpenCode and Pi reject this field because their installed harnesses expose no validated request mechanism",
+            "minimum": 0,
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "cwd": {
+            "description": "working directory for the new agent (defaults to the user's home)",
+            "type": "string"
+          },
+          "decisionId": {
+            "description": "the decisionId from the select_model answer this dispatch is acting on. It joins the decision and the worker it produced in the host's routing decision log; pass it whenever you routed",
+            "type": "string"
+          },
+          "effort": {
+            "description": "reasoning-effort level: low, medium, high, xhigh, or max (claude/codex)",
+            "type": "string"
+          },
+          "exactModel": {
+            "description": "honor the named model or refuse before launch if a configured model ceiling would replace it; never bypasses permissions",
+            "type": "boolean"
+          },
+          "executionTarget": {
+            "description": "paired to execute the worker on the explicitly enabled paired server while this manager stays local; cwd remains the local task project",
+            "type": "string"
+          },
+          "expectedTaskRevision": {
+            "description": "optional pinned-task revision; refuses a workflow spawn if the task changed",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "hub": {
+            "description": "the peer hub to spawn on (a hub name from list_agents rows); omit for this machine",
+            "type": "string"
+          },
+          "label": {
+            "description": "a short human label for the new agent, shown as its name in the UI",
+            "type": "string"
+          },
+          "mcpFacade": {
+            "description": "accepted and ignored compatibility field; supported agents receive full Workspacer tools automatically",
+            "type": "boolean"
+          },
+          "message": {
+            "description": "the new agent's FIRST MESSAGE — the task itself, sent as soon as it starts, so you do not have to follow the spawn with a separate send_message. Delivered by the host as part of the spawn (it cannot race the agent coming up). Host result and escalation contracts land through a separate instruction channel, not inside this user-visible text, and arrive on the first turn even when message is omitted",
+            "type": "string"
+          },
+          "model": {
+            "description": "provider model ID; honor an explicit user choice with provider and exactModel:true, without stale capability/decisionId. Omit for the configured/provider default. Claude legacy context markers such as opus[1m] remain supported.",
+            "type": "string"
+          },
+          "modelIdentity": {
+            "description": "canonical provider model identity without a Claude [1m] marker. Pair with contextWindow. During mixed-version rollout model is also sent as the legacy executable companion; omit both to use the configured/provider default",
+            "type": "string"
+          },
+          "parentSessionId": {
+            "description": "parent session for static/non-session controllers. Session-authenticated callers are always recorded as the parent by the host; a conflicting value is ignored",
+            "type": "string"
+          },
+          "pluginTools": {
+            "description": "accepted and ignored compatibility field; every enabled plugin tool is included automatically",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "profileId": {
+            "description": "workspacer provider profile id to dispatch under (optional; see list_profiles for ids)",
+            "type": "string"
+          },
+          "provider": {
+            "description": "supported coding-agent backend: claude (default), codex, copilot, or opencode. Pi is rejected because its CLI has no MCP bridge for the required Workspacer tools",
+            "type": "string"
+          },
+          "remoteCwd": {
+            "description": "exact remote repository path returned by list_dispatch_targets; never guess or translate a local path",
+            "type": "string"
+          },
+          "resultSchema": {
+            "additionalProperties": true,
+            "description": "OPTIONAL JSON Schema for a machine-readable result. The worker is instructed to end its final message with a fenced wks-result block matching it, and the finished-wake you receive then carries that object VALIDATED, alongside the prose — e.g. an object with required 'commit' (string) plus 'filesChanged' / 'checksRun' / 'followUps' (arrays of string) and 'caveats' (string). Additive: the worker still writes its prose summary, and a missing or invalid block reports itself instead of failing the dispatch. A valid terminal wks-escalation is the one alternative: it gets its own wake card without a contradictory missing-result error. Desktop-only (the headless brain declines arbitrary resultSchema, while still providing its fixed escalation contract)",
+            "type": "object"
+          },
+          "role": {
+            "description": "the work ROLE this agent will perform, copied from the select_model answer you are acting on (scout | implementer | reviewer | deep_reviewer | fixer | complex_fixer | validator | diagnostician | mechanical | judge). Recorded against the session so a dispatch can be joined to the decision behind it",
+            "type": "string"
+          },
+          "skipPermissions": {
+            "description": "provider permission choice: true starts with the provider's bypass/auto-approve mode, false keeps approvals, and omission uses the Workspacer config default. No separate Workspacer grant is required",
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "stage": {
+            "description": "explicit actual stage: scout, implement, review, fix, validate, land, or other; omitted means unclassified, not skipped",
+            "type": "string"
+          },
+          "taskId": {
+            "description": "reuse the taskId returned by the first dispatch to continue the SAME task under this manager/project; omit for a standalone task",
+            "type": "string"
+          },
+          "template": {
+            "description": "the id of a library DISPATCH TEMPLATE (an item of kind 'dispatch'; list_library shows them) to render as the worker's first message instead of composing 'message' yourself. The template's default resultSchema applies unless this call passes its own resultSchema. Mutually exclusive with 'message'. {{cwd}} is the host-owned actual execution directory; {{projectCwd}} is the host-owned original validated project directory. Desktop-only (the headless brain declines it)",
+            "type": "string"
+          },
+          "templateParams": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "values for the template's named placeholders ({{task}} etc.). {{cwd}} and {{projectCwd}} are host-owned automatic variables and cannot be set here. Placeholders are REQUIRED unless the template marks them optional with a default, and a spawn with an unfilled required placeholder is refused naming the missing param — write the task-specific text yourself; the template only supplies the framing",
+            "type": "object"
+          },
+          "toolScope": {
+            "description": "accepted and ignored compatibility field; supported agents always receive the full operator surface",
+            "type": "string"
+          },
+          "trackTask": {
+            "description": "false for an explicitly requested one-off without a Task; omit all task/workflow/retry links. Parent nesting and completion wakes remain. Omit for normal tracking.",
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "transport": {
+            "description": "claude/codex only: 'stream' runs headless (structured GUI only, no terminal view), 'pty' runs the terminal UI (claude: the classic TUI; codex: the hybrid TUI+GUI). Omit for the workspacer config default for that harness — codex defaults to 'stream'",
+            "type": "string"
+          },
+          "workflowStepId": {
+            "description": "explicit pinned Fleet workflow step; requires taskId and exact next_workflow_step metadata; desktop local only",
+            "type": "string"
+          },
+          "worktree": {
+            "description": "run the new agent in a fresh, ISOLATED git worktree of cwd (its own branch) instead of the checkout itself — use for a ship task that changes code, so parallel work on one repo never collides. The worktree is created for you and used as the agent's cwd; if cwd is not a git repo the spawn falls back to cwd with a note",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "name": "spawn_agent"
+    },
+    {
+      "description": "BEFORE the first worker for each new project task: resolve selected workflow and freeze its definition/templates/result contracts. Requires cwd/title and your authenticated local manager session. Returns taskId and next instructions; never launches automatically.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "compact": {
+            "description": "omit pinned template bodies from task responses; keeps policy, inputs, result schemas and evidence",
+            "type": "boolean"
+          },
+          "cwd": {
+            "description": "local project directory; omit for global selection",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cwd",
+          "title"
+        ],
+        "type": "object"
+      },
+      "name": "start_workflow"
+    },
+    {
+      "description": "On demand: summarize what a visible agent is doing from bounded task and recent text. Uses the source hub's configured CLI provider/model; requires a compatible desktop and daemon there. Availability status is not worker lifecycle. Never poll this tool or substitute it for direct blocked/completion evidence or the final worker report. Include hub from list_agents for remote sessions.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "Session id from list_agents; include its hub for a remote session",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "summarize_agent_status"
+    },
+    {
+      "description": "Type raw bytes into a session's terminal (PTY) — e.g. a command followed by a carriage return (\\r), or Ctrl-C (\\u0003).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "description": "raw bytes to write to the PTY",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "data"
+        ],
+        "type": "object"
+      },
+      "name": "terminal_input"
+    },
+    {
+      "description": "Resize a session's PTY grid (cols × rows). The PTY is shared, so this reflows the desktop pane too.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cols": {
+            "description": "terminal width in columns",
+            "type": "integer"
+          },
+          "rows": {
+            "description": "terminal height in rows",
+            "type": "integer"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "cols",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "name": "terminal_resize"
+    },
+    {
+      "description": "Update a Claude profile. Pass { id, updates: { name?, configDir?, extraArgs? } }.",
+      "inputSchema": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "name": "update_profile"
+    },
+    {
+      "description": "Record a PR, ticket or named link the user gave you on YOUR exact task, as upsert/remove entries under expectedTaskRevision CAS. Stores the supplied id/URL as an unverified reference; never fetches it, guesses a PR number, or edits any other task field. Preserve unmentioned references; ask the user if task attribution is ambiguous. Do not scrape transcripts.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "that task's project directory",
+            "type": "string"
+          },
+          "expectedTaskRevision": {
+            "description": "required CAS for updates: the taskRevision from the most recent get_task_references/update_task_references",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "remove": {
+            "description": "entries to remove by exact identity: {kind:'pullRequest'} | {kind:'ticket',id} | {kind:'reference',label}",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "taskId": {
+            "description": "the exact task id you own, from start_workflow/next_workflow_step",
+            "type": "string"
+          },
+          "upsert": {
+            "description": "entries to add or replace by exact identity: {kind:'pullRequest',number?,url?} | {kind:'ticket',id,url?} | {kind:'reference',label,url}",
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "taskId",
+          "cwd"
+        ],
+        "type": "object"
+      },
+      "name": "update_task_references"
+    },
+    {
+      "description": "Replace a custom definition using expectedRevision CAS. Active tasks remain pinned. Clone immutable starters.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "additionalProperties": true,
+            "description": "strict Fleet definition: id/revision/name/description/enabled/steps only; no privileges or scripts",
+            "type": "object"
+          },
+          "expectedRevision": {
+            "description": "required CAS revision for edits/clones/deletes; selectionRevision for selection",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "id": {
+            "description": "workflow definition id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "expectedRevision",
+          "definition"
+        ],
+        "type": "object"
+      },
+      "name": "update_workflow"
+    },
+    {
+      "description": "Validate a declarative 1–8 step definition; never grants permissions or launches agents.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "definition": {
+            "additionalProperties": true,
+            "description": "strict Fleet definition: id/revision/name/description/enabled/steps only; no privileges or scripts",
+            "type": "object"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "type": "object"
+      },
+      "name": "validate_workflow"
+    },
+    {
+      "description": "Write (create or overwrite) a UTF-8 text file on the workspacer host.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "contents": {
+            "description": "the new file contents",
+            "type": "string"
+          },
+          "path": {
+            "description": "absolute path of the file to write on the host",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "contents"
+        ],
+        "type": "object"
+      },
+      "name": "write_file"
+    }
+  ],
+  "triage": [
+    {
+      "description": "Resolve a pending permission prompt for an agent: 'yes', 'no', or 'always'.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "description": "one of: yes, no, always",
+            "type": "string"
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "reason": {
+            "description": "optional reason to record with the decision",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "name": "approve"
+    },
+    {
+      "description": "Bring one agent session to the front of the workspacer desktop UI (switches the user's view to it).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "description": "the session id of the agent to bring to the front",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "focus_agent"
+    },
+    {
+      "description": "Get the full workspacer config (theme, keybindings, pane and session settings).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_config"
+    },
+    {
+      "description": "Read one conversation; prefer lastMessage for final reports or textOnly plus sinceSeq for dialogue gaps. Never poll.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "lastMessage": {
+            "description": "return just the session's FINAL assistant message as { seq, lastMessage } — the cheap way to read a finished worker's report; composes with sinceSeq (wins over textOnly)",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "sinceSeq": {
+            "description": "return only items after this sequence number; omit for the full history",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "textOnly": {
+            "description": "return only user/assistant text turns, stripping tool calls, tool results, and usage blobs; composes with sinceSeq",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_conversation"
+    },
+    {
+      "description": "Get the workspacer host process's current working directory — a sensible default base for new agents.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_host_cwd"
+    },
+    {
+      "description": "Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_snapshot"
+    },
+    {
+      "description": "Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_transcript"
+    },
+    {
+      "description": "Usage guide for the workspacer tools: call with no arguments for the grouped overview, or with a topic (group name) for detailed guidance. Request only the topic you need; no mandatory overview call.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "topic": {
+            "description": "a tool group to expand (one of the groups the overview lists); omit for the overview",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "help"
+    },
+    {
+      "description": "List live agent state and attention needs across local and federated hubs. Preserve remote rows' hub on subsequent calls.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_agents"
+    },
+    {
+      "description": "Get full snapshots for every session at once, spanning federated peer hubs (verbose — large payload; remote rows carry a hub field). Prefer list_agents for an overview and get_snapshot for one session.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_snapshots"
+    },
+    {
+      "description": "Open workspacer's built-in browser pane on a URL, shown to the user in the desktop UI. A file:// URL works too when it points at a file under the user's home or a configured project directory; a markdown file opens in the preview pane instead.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "description": "the URL to open in the built-in browser pane",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "name": "open_browser"
+    },
+    {
+      "description": "Open the Workspacer Guide pane in the desktop UI — the built-in tour/help chat. Use to hand the user to the in-app guide instead of explaining workspacer yourself.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "open_guide"
+    },
+    {
+      "description": "Open a workspacer pane in the desktop UI by type — e.g. settings, analytics, library, overview, sessions, review, terminal, browser.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "working directory for panes that take one (e.g. terminal)",
+            "type": "string"
+          },
+          "paneType": {
+            "description": "the pane type to open: settings, analytics, library, overview, sessions, review, terminal, or browser",
+            "type": "string"
+          },
+          "url": {
+            "description": "browser pane only: the URL to open",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paneType"
+        ],
+        "type": "object"
+      },
+      "name": "open_pane"
+    },
+    {
+      "description": "Open an installed plugin's pane in the desktop UI by its pane type (e.g. djtouchette.jira).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "description": "the plugin pane type, e.g. djtouchette.jira",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "open_plugin"
+    },
+    {
+      "description": "Open the New Agent dialog in the desktop UI, optionally pre-filled with a directory — shows the user how to start an agent WITHOUT spawning one.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "description": "directory to pre-fill in the dialog",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "open_spawn_dialog"
+    },
+    {
+      "description": "Tell the agent that dispatched you how your task is going, mid-task, in ONE line — a phase landed, the approach you were given is wrong, you are burning context faster than expected. It goes to your manager and nowhere else (you cannot name a recipient, and you have no way to reach any other session with it), it does NOT end your turn or your task, and your final message still reaches your manager in full when you finish. Limited to one per minute and 20 per session; use it when your manager's next decision would change, not to narrate.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "needsDecision": {
+            "description": "true if you are BLOCKED on your manager's answer rather than just keeping it informed; it is marked NEEDS A DECISION. The channel is one-way either way — your manager replies (if it replies) with a message to you, so keep working if you can",
+            "type": "boolean"
+          },
+          "note": {
+            "description": "ONE line, in your own words, about your own run — a phase that landed, an approach that is not working, a budget you are burning faster than expected. Not a report: say what changed for your manager's DECISION and leave the detail for your final message, which it receives in full. Max 500 characters",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "type": "object"
+      },
+      "name": "report_progress"
+    },
+    {
+      "description": "Run one desktop keyboard action by registry id — the command layer's vocabulary as a tool: pane zoom/swap (zoom-pane, swap-pane-left), tab/agent navigation (next-tab, next-attention, alternate-agent, jump-pinned + digit), panel toggles (toggle-sidebar, toggle-fleet), chat paging (chat-scroll-down). The desktop validates the id and REFUSES the decision verbs (approve/deny) — approvals ride their own scoped tools.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "the registry action id, e.g. zoom-pane, next-tab, toggle-sidebar, chat-scroll-down",
+            "type": "string"
+          },
+          "digit": {
+            "description": "slot for digit-taking actions (jump-pinned, 1-9)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "run_ui_action"
+    },
+    {
+      "description": "Send a prompt/message to a running agent session. If you are a dispatched worker messaging your own manager, pass fromSessionId (your own session id) so your message isn't anonymous.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "fromSessionId": {
+            "description": "your own session id — when set, the message is delivered with a header naming you as the sender, so the recipient (e.g. your manager) knows who sent it; omit if sending on your own account is not meaningful (a human operator via chat, a plugin)",
+            "type": "string"
+          },
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "text": {
+            "description": "the prompt/message to send to the agent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "text"
+        ],
+        "type": "object"
+      },
+      "name": "send_message"
+    },
+    {
+      "description": "Send a POSIX signal to an agent session, e.g. SIGINT to interrupt or SIGTERM to stop it.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "signal": {
+            "description": "signal name, e.g. SIGINT or SIGTERM",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "signal"
+        ],
+        "type": "object"
+      },
+      "name": "signal"
+    },
+    {
+      "description": "On demand: summarize what a visible agent is doing from bounded task and recent text. Uses the source hub's configured CLI provider/model; requires a compatible desktop and daemon there. Availability status is not worker lifecycle. Never poll this tool or substitute it for direct blocked/completion evidence or the final worker report. Include hub from list_agents for remote sessions.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "Session id from list_agents; include its hub for a remote session",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "summarize_agent_status"
+    }
+  ],
+  "view": [
+    {
+      "description": "Get the full workspacer config (theme, keybindings, pane and session settings).",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_config"
+    },
+    {
+      "description": "Read one conversation; prefer lastMessage for final reports or textOnly plus sinceSeq for dialogue gaps. Never poll.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "lastMessage": {
+            "description": "return just the session's FINAL assistant message as { seq, lastMessage } — the cheap way to read a finished worker's report; composes with sinceSeq (wins over textOnly)",
+            "type": "boolean"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          },
+          "sinceSeq": {
+            "description": "return only items after this sequence number; omit for the full history",
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "textOnly": {
+            "description": "return only user/assistant text turns, stripping tool calls, tool results, and usage blobs; composes with sinceSeq",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_conversation"
+    },
+    {
+      "description": "Get the workspacer host process's current working directory — a sensible default base for new agents.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "get_host_cwd"
+    },
+    {
+      "description": "Get the full live snapshot for one session: conversation turns, tool calls, usage/cost, subagents, workflow runs, and any pending approval/question. Heavier than list_agents — use it to inspect a single agent in depth.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_snapshot"
+    },
+    {
+      "description": "Fetch a session's transcript so you can see the context behind a pending approval or question before acting.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "the target session id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "get_transcript"
+    },
+    {
+      "description": "Usage guide for the workspacer tools: call with no arguments for the grouped overview, or with a topic (group name) for detailed guidance. Request only the topic you need; no mandatory overview call.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "topic": {
+            "description": "a tool group to expand (one of the groups the overview lists); omit for the overview",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "help"
+    },
+    {
+      "description": "List live agent state and attention needs across local and federated hubs. Preserve remote rows' hub on subsequent calls.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_agents"
+    },
+    {
+      "description": "Get full snapshots for every session at once, spanning federated peer hubs (verbose — large payload; remote rows carry a hub field). Prefer list_agents for an overview and get_snapshot for one session.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "name": "list_snapshots"
+    },
+    {
+      "description": "Tell the agent that dispatched you how your task is going, mid-task, in ONE line — a phase landed, the approach you were given is wrong, you are burning context faster than expected. It goes to your manager and nowhere else (you cannot name a recipient, and you have no way to reach any other session with it), it does NOT end your turn or your task, and your final message still reaches your manager in full when you finish. Limited to one per minute and 20 per session; use it when your manager's next decision would change, not to narrate.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "needsDecision": {
+            "description": "true if you are BLOCKED on your manager's answer rather than just keeping it informed; it is marked NEEDS A DECISION. The channel is one-way either way — your manager replies (if it replies) with a message to you, so keep working if you can",
+            "type": "boolean"
+          },
+          "note": {
+            "description": "ONE line, in your own words, about your own run — a phase that landed, an approach that is not working, a budget you are burning faster than expected. Not a report: say what changed for your manager's DECISION and leave the detail for your final message, which it receives in full. Max 500 characters",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "type": "object"
+      },
+      "name": "report_progress"
+    },
+    {
+      "description": "On demand: summarize what a visible agent is doing from bounded task and recent text. Uses the source hub's configured CLI provider/model; requires a compatible desktop and daemon there. Availability status is not worker lifecycle. Never poll this tool or substitute it for direct blocked/completion evidence or the final worker report. Include hub from list_agents for remote sessions.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "hub": {
+            "description": "the peer hub this session lives on — the hub field on its list_agents row; omit for a local session",
+            "type": "string"
+          },
+          "sessionId": {
+            "description": "Session id from list_agents; include its hub for a remote session",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId"
+        ],
+        "type": "object"
+      },
+      "name": "summarize_agent_status"
+    }
+  ]
+}

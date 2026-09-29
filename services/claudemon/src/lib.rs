@@ -6,6 +6,10 @@
 //! file references.
 
 pub mod cli;
+pub mod child_env;
+#[cfg(windows)]
+#[path = "wrapper/pty_windows_job.rs"]
+pub mod child_job;
 pub mod daemon;
 pub mod execution;
 pub mod protocol;

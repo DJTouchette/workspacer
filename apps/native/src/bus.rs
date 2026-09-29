@@ -62,6 +62,8 @@ impl Config {
 #[derive(Debug)]
 pub enum Event {
     Connected,
+    /// The server requested an intentional pause; reconnecting may wake it.
+    PowerPaused,
     Disconnected(String),
     Data {
         topic: String,
@@ -71,6 +73,7 @@ pub enum Event {
 }
 
 enum Command {
+    ResumePowerPause,
     Call {
         method: String,
         params: Value,
@@ -84,6 +87,7 @@ enum Command {
 pub struct Client {
     commands: mpsc::Sender<Command>,
     connected: Arc<AtomicBool>,
+    power_paused: Arc<AtomicBool>,
     call_timeout: Duration,
 }
 
@@ -94,15 +98,33 @@ impl Client {
         let (commands, rx) = mpsc::channel(64);
         let (events, incoming) = async_channel::bounded(256);
         let connected = Arc::new(AtomicBool::new(false));
+        let power_paused = Arc::new(AtomicBool::new(false));
         let client = Self {
             commands,
             connected: connected.clone(),
+            power_paused: power_paused.clone(),
             call_timeout: config.call_timeout,
         };
-        tokio::spawn(run(config, rx, events, connected));
+        tokio::spawn(run(config, rx, events, connected, power_paused));
         (client, incoming)
     }
 
+    /// Explicit host/UI intent only. Consuming the latch here prevents duplicate
+    /// clicks from leaving a stale resume queued for a later stop episode.
+    pub fn resume_power_pause(&self) -> Result<()> {
+        if self
+            .power_paused
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            bail!("Connection is not awaiting a power resume");
+        }
+        if self.commands.try_send(Command::ResumePowerPause).is_err() {
+            self.power_paused.store(true, Ordering::Release);
+            bail!("Client busy or stopped; reconnect was not requested");
+        }
+        Ok(())
+    }
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
         self.call_with_timeout(method, params, self.call_timeout)
             .await
@@ -147,6 +169,7 @@ type Pending = HashMap<String, (Instant, oneshot::Sender<Result<Value>>)>;
 fn offline_command(cmd: Option<Command>, topics: &mut BTreeSet<String>) -> bool {
     match cmd {
         None => false,
+        Some(Command::ResumePowerPause) => true,
         Some(Command::Topics(new)) => {
             *topics = new;
             true
@@ -163,11 +186,24 @@ async fn run(
     mut commands: mpsc::Receiver<Command>,
     events: async_channel::Sender<Event>,
     connected: Arc<AtomicBool>,
+    power_paused: Arc<AtomicBool>,
 ) {
     let mut topics = BTreeSet::new();
     let mut counter = 0u64;
     let mut backoff = Duration::from_millis(250);
+    let mut paused = false;
     loop {
+        if paused {
+            loop {
+                tokio::select! {
+                    _=events.closed()=>return,
+                    command=commands.recv()=>match command {
+                        Some(Command::ResumePowerPause)=>{paused=false;backoff=Duration::from_millis(250);break;},
+                        other=>if !offline_command(other,&mut topics){return;},
+                    }
+                }
+            }
+        }
         let mut request = match config.url.as_str().into_client_request() {
             Ok(r) => r,
             Err(_) => return,
@@ -241,6 +277,7 @@ async fn run(
                     }
                     cmd = commands.recv() => match cmd {
                         None => return,
+                        Some(Command::ResumePowerPause) => (),
                         Some(Command::Topics(new)) => {
                             topics = new;
                             if ready {
@@ -303,7 +340,17 @@ async fn run(
                             }
                             Some(Ok(Message::Ping(bytes))) => if socket.send(Message::Pong(bytes)).await.is_err() { break; },
                             Some(Ok(Message::Pong(_))) => {}
-                            Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                            Some(Ok(Message::Close(frame))) => {
+                                if frame.is_some_and(|frame|u16::from(frame.code)==4001) {
+                                    paused=true;
+                                    power_paused.store(true,Ordering::Release);
+                                }
+                                // Flush only this socket's close acknowledgement;
+                                // failed draining cannot erase an observed4001.
+                                let _=timeout(Duration::from_secs(1),socket.flush()).await;
+                                break;
+                            },
+                            None | Some(Err(_)) => break,
                             _ => {}
                         }
                     }
@@ -317,8 +364,16 @@ async fn run(
             }
         }
         connected.store(false, Ordering::Release);
-        if events.send(Event::Disconnected(reason)).await.is_err() {
+        let event = if paused {
+            Event::PowerPaused
+        } else {
+            Event::Disconnected(reason)
+        };
+        if events.send(event).await.is_err() {
             return;
+        }
+        if paused {
+            continue;
         }
         let wait = tokio::time::sleep(backoff);
         tokio::pin!(wait);

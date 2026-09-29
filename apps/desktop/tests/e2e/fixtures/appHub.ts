@@ -1,3 +1,5 @@
+import { test } from '@playwright/test';
+import { buildRustHubFixture } from './rustHub';
 import desktopMethods from '../../../src/main/shared/desktopServices.generated';
 /**
  * Test rig for `/app` — the FULL React renderer running in a browser against
@@ -12,7 +14,7 @@ import desktopMethods from '../../../src/main/shared/desktopServices.generated';
  * Three things differ from the mobile rig, and each is deliberate:
  *
  *   1. **It serves the web bundle.** `--webapp-dir dist/web` makes the hub host
- *      `/app/` (`cmd/hub/main.go:733-750`), and the fixture rebuilds that
+ *      `/app/` through the Rust HTTP adapter, and the fixture rebuilds that
  *      bundle first — a stale bundle would mean the suite tests nothing. The
  *      rebuild is ~5s warm.
  *   2. **A much wider method surface.** `/m` calls ~20 bus methods; `/app`
@@ -70,8 +72,7 @@ export const APP_CONFIG = {
 const CONTENT_MARKER = 'PANE-CONTENT-LOADED';
 
 const REPO = path.resolve(__dirname, '../../../../..');
-const HUB_DIR = path.join(REPO, 'services/hub');
-const HUB_BIN = path.join(HUB_DIR, 'hub');
+let HUB_BIN: string;
 const DESKTOP_DIR = path.join(REPO, 'apps/desktop');
 const WEB_DIR = path.join(DESKTOP_DIR, 'dist/web');
 
@@ -184,11 +185,7 @@ async function waitForHealth(url: string, timeoutMs = 20000): Promise<void> {
  */
 function build(): void {
   withBuildLock(() => {
-    const hub = spawnSync('go', ['build', '-o', 'hub', './cmd/hub'], {
-      cwd: HUB_DIR,
-      encoding: 'utf8',
-    });
-    if (hub.status !== 0) throw new Error('failed to build hub: ' + hub.stderr);
+    HUB_BIN = buildRustHubFixture();
 
     if (process.env.WKS_E2E_SKIP_WEB_BUILD !== '1' && webBundleIsStale()) {
       const web = spawnSync('npm', ['run', 'build:renderer:web'], {
@@ -244,6 +241,8 @@ function webBundleIsStale(): boolean {
 }
 
 export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
+  // A clean Rust build belongs to fixture setup, not the 30s browser action budget.
+  test.setTimeout(600_000);
   build();
 
   const dir = makeScratchDir('wks-app-e2e');
@@ -283,7 +282,11 @@ export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
   const proc: ChildProcess = spawn(
     HUB_BIN,
     [
-      '--addr',
+      '--mode',
+      'browser',
+      '--root',
+      dir,
+      '--listen',
       `127.0.0.1:${port}`,
       '--token',
       HOST_TOKEN,
@@ -304,10 +307,6 @@ export async function startAppHub(opts: AppHubOptions = {}): Promise<AppHub> {
       scratch('config', 'workspacer-hub', 'jobs.json'),
       // No brain, so no claudemon: the whole capability surface is the fake
       // provider below, and nothing can dial the developer's :7891.
-      '--brain-scope',
-      'off',
-      '--plugins-dir',
-      '',
     ],
     // stdin must stay OPEN: the hub's parentwatch treats a closed stdin as "my
     // parent died" and shuts down immediately.

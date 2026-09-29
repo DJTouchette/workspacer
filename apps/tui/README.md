@@ -267,20 +267,21 @@ cargo run --release
 
 ### Daemons
 
-On startup the TUI launches whatever it needs that isn't already listening, on
-loopback, and stops it again on exit (a pre-existing one — the Electron app, or a
-daemon you started by hand — is reused and left running):
+For a missing loopback bus, the normal bootstrap starts the standalone
+`workspacer-rust` backend and owns its parent pipe. Existing services are adopted
+and remain externally owned. Build it with `make build-rust-backend`, or set
+`WKS_RUST_BACKEND_BIN`; discovery also checks the TUI executable's directory and
+PATH. No Go hub or brain is launched.
 
-- **claudemon** always (the engine).
-- in the default **bus** mode, the **hub + brain** too (`make build-hub` puts the
-  `hub`/`brain` binaries in-tree; override the hub with `WKS_HUB_BIN`). Point at a
-  remote hub with `--bus ws://host:7895/bus`; auth with `--bus-token` / `HUB_TOKEN`.
+`--direct` starts only standalone claudemon when needed. Build claudemon in-tree
+or set `WKS_CLAUDEMON_BIN`. `--no-spawn` never starts services. Each configured
+endpoint keeps its own loopback ownership check: a remote bus does not implicitly
+change a separately selected local claudemon URL.
 
-So running it standalone Just Works. With `--direct` only claudemon is needed.
-
-claudemon must be built in-tree (`cargo build --release` in `claudemon/`); override
-its location with `WKS_CLAUDEMON_BIN`, or `--no-spawn` to connect only to daemons
-started elsewhere. Auto-spawn is skipped for a non-loopback host.
+If an external claudemon already owns the engine without a hub, the TUI leaves it
+alone and can use its existing direct-mode fallback. Start a complete Rust backend
+through that engine's owner to use shared bus services. Newly created pairing
+credentials are reread after bootstrap before connecting.
 
 By default it talks to `http://127.0.0.1:7891`. Override with:
 
@@ -304,3 +305,11 @@ cargo test
 
 Ignored live tests in `src/claudemon.rs` exercise a real daemon when you need to
 check PTY/list behavior against a running claudemon.
+
+## Rust backend ownership
+
+Rust is the normal local bus bootstrap; `WORKSPACER_RUST_HUB` is no longer a mode
+switch. Explicit remote buses, direct mode, and no-spawn mode retain their
+existing connection intent. On exit the TUI first closes its owned Rust service's
+parent pipe, waits for graceful shutdown, and resorts to killing only that exact
+child if necessary. It does not stop adopted services.

@@ -215,7 +215,11 @@ impl Workspace {
                                 .body(&body)
                                 .appname("Workspacer Native");
                             #[cfg(target_os = "windows")]
-                            notification.app_id("Workspacer.Native");
+                            notification.app_id(if cfg!(feature = "rust-hub") {
+                                "Workspacer.Native.RustPreview"
+                            } else {
+                                "Workspacer.Native"
+                            });
                             if let Err(error) = notification.show() {
                                 eprintln!("Native notification unavailable: {error}");
                             }
@@ -685,11 +689,17 @@ impl Workspace {
     }
     fn render_changes(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
-        let Some(session) = self.selected_session() else {
-            return div().child("Select a session first.");
-        };
-        let cwd = session.cwd.clone();
         let state = self.view.requests.get("changes");
+        let cwd = state
+            .and_then(|state| match &state.request {
+                Request::Changes { cwd } => Some(cwd.clone()),
+                _ => None,
+            })
+            .or_else(|| self.selected_session().map(|s| s.cwd.clone()));
+        let Some(cwd) = cwd else {
+            return div().child("Select a session or request a project review first.");
+        };
+        let refresh_cwd = cwd.clone();
         let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
         let files = value["files"].as_array().cloned().unwrap_or_default();
         let diff = self
@@ -700,7 +710,7 @@ impl Workspace {
         div().flex().flex_col().gap_3()
             .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(format!("{} · {}", cwd, value["branch"].as_str().unwrap_or("Repository"))))
             .child("Working tree changes, including edits made outside this session.")
-            .child(self.button("changes-refresh", "Refresh changes", self.view.connected).on_click(cx.listener(move |this, _, _, cx| this.request(Request::Changes { cwd: cwd.clone() }, cx))))
+            .child(self.button("changes-refresh", "Refresh changes", self.view.connected).on_click(cx.listener(move |this, _, _, cx| this.request(Request::Changes { cwd: refresh_cwd.clone() }, cx))))
             .child(self.feature_message("changes"))
             .when(files.is_empty() && state.is_some_and(|s| !s.loading && s.error.is_none()), |d| d.child("No uncommitted changes."))
             .children(files.into_iter().take(1000).enumerate().map(|(ix, file)| {
@@ -708,7 +718,7 @@ impl Workspace {
                 let staged = file["staged"].as_str().unwrap_or(" ");
                 let unstaged = file["unstaged"].as_str().unwrap_or(" ");
                 let untracked = staged == "?" || unstaged == "?";
-                let c = session.cwd.clone(); let file_path = path.clone(); let c2 = c.clone(); let path2 = path.clone();
+                let c = cwd.clone(); let file_path = path.clone(); let c2 = c.clone(); let path2 = path.clone();
                 div().id(("changed-file", ix)).p_2().rounded_md().bg(rgb(p.surface)).flex().flex_wrap().items_center().gap_2().child(div().flex_1().min_w_0().child(path))
                     .when(untracked || !unstaged.trim().is_empty(), |d| d.child(self.button("diff-working", if untracked { "New file" } else { "Unstaged" }, true).on_click(cx.listener(move |this, _, _, cx| {
                         this.extras.diff_scroll.set_offset(gpui::point(px(0.), px(0.)));

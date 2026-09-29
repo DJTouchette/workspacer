@@ -1,0 +1,66 @@
+[package]
+name = "workspacer-hub"
+version = "0.1.0"
+edition = "2024"
+description = "Workspacer's shared embedded and standalone Rust control plane"
+license = "MIT"
+
+[dependencies]
+json5 = "0.4"
+web-push-native = { version = "0.5", default-features = false, features = ["vapid"] }
+anyhow = "1"
+base64 = "0.22"
+axum = { version = "0.7", features = ["ws"] }
+clap = { version = "4", features = ["derive"] }
+claudemon = { path = "../claudemon" }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+os_pipe = "1.2"
+futures-util = "0.3"
+if-addrs = "0.13"
+flate2 = "1"
+fs2 = "0.4"
+libc = "0.2"
+jsonschema = { version = "0.58", default-features = false }
+tar = "0.4"
+rand = "0.8"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+rmcp = { version = "3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+serde_yaml = "0.9"
+sha2 = "0.10"
+subtle = "2"
+tempfile = "3"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros", "signal", "process", "io-util"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+junction = "=2.0.0"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Pipes", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Memory"] }
+
+
+[[bin]]
+name = "wks-hub"
+path = "src/main.rs"
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[features]
+test-support = []
+
+[[example]]
+name = "hub_contract_fixture"
+path = "examples/hub_contract_fixture.rs"
+required-features = ["test-support"]

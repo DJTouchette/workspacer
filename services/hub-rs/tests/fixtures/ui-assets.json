@@ -1,0 +1,91 @@
+{
+  "fonts": [
+    {
+      "file": "JetBrainsMono-VariableFont[wght].woff2",
+      "family": "JetBrainsMono"
+    },
+    {
+      "file": "Fira_Code-Regular.ttf",
+      "family": "Fira Code"
+    },
+    {
+      "file": "Inter[opsz,wght]-VF.otf",
+      "family": "Inter"
+    },
+    {
+      "file": "IBM.Plex.Variable.woff",
+      "family": "IBM Plex"
+    },
+    {
+      "file": "Regular.ttf",
+      "family": "Regular.ttf"
+    },
+    {
+      "file": "name_with.dots.ttf",
+      "family": "name with dots"
+    },
+    {
+      "file": "Fancy-VariableFont_test.OTF",
+      "family": "Fancy"
+    },
+    {
+      "file": "Sans.ttf",
+      "family": "Sans"
+    }
+  ],
+  "headers": [
+    {
+      "base64": "iVBORw0KGgoAAAAASUhEUgAAAUAAAADI",
+      "dimensions": {
+        "width": 320,
+        "height": 200
+      }
+    },
+    {
+      "base64": "R0lGODlhAgADAA==",
+      "dimensions": {
+        "width": 2,
+        "height": 3
+      }
+    },
+    {
+      "base64": "Qk0AAAAAAAAAAAAAAAAAAAAAZAAAADj///8=",
+      "dimensions": {
+        "width": 100,
+        "height": 200
+      }
+    },
+    {
+      "base64": "UklGRgAAAABXRUJQVlA4IAAAAAAAAAAAAABBAd4A",
+      "dimensions": {
+        "width": 321,
+        "height": 222
+      }
+    },
+    {
+      "base64": "UklGRgAAAABXRUJQVlA4TAAAAAAAQEE3AAAAAAAA",
+      "dimensions": {
+        "width": 321,
+        "height": 222
+      }
+    },
+    {
+      "base64": "UklGRgAAAABXRUJQVlA4WAAAAAAAAAAAQAEA3QAA",
+      "dimensions": {
+        "width": 321,
+        "height": 222
+      }
+    },
+    {
+      "base64": "/9j/wAAAAADeAUEAAAAAAAAAAAAAAA==",
+      "dimensions": {
+        "height": 222,
+        "width": 321
+      }
+    },
+    {
+      "base64": "bm90LWFuLWltYWdl",
+      "dimensions": null
+    }
+  ]
+}

@@ -10,11 +10,14 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Context, Result};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use tokio::sync::mpsc;
+#[path = "pty_owned.rs"]
+mod owned;
 
 pub struct PtyHandle {
     pub master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
+    scope: Arc<owned::Scope>,
 }
 
 /// Spawn a command in a new PTY.
@@ -41,11 +44,24 @@ pub fn spawn(
     // Pass through current env so the child sees the same shell/tool config,
     // then layer the caller-supplied overrides on top.  Both steps are local
     // to this CommandBuilder — no process-global mutation occurs.
-    for (k, v) in std::env::vars() {
-        cmd.env(k, v);
+    for (k, v) in std::env::vars_os() {
+        if crate::child_env::is_host_authority(&k) {
+            cmd.env_remove(k);
+        } else {
+            cmd.env(k, v);
+        }
     }
     for (k, v) in extra_env {
-        cmd.env(k, v);
+        if crate::child_env::is_host_authority(std::ffi::OsStr::new(k)) {
+            cmd.env_remove(k);
+        } else {
+            cmd.env(k, v);
+        }
+    }
+    // Preserve portable-pty's shell/Windows registry defaults while excluding
+    // authority keys that may have entered through that base environment.
+    for key in crate::child_env::HOST_AUTHORITY_KEYS {
+        cmd.env_remove(key);
     }
 
     let child = pair
@@ -55,11 +71,18 @@ pub fn spawn(
     // Once the child has the slave, we don't need it.
     drop(pair.slave);
 
-    let writer = pair.master.take_writer().context("taking PTY writer")?;
+    let master = Arc::new(Mutex::new(pair.master));
+    let (child, scope) = owned::wrap(child, master.clone())?;
+    let writer = {
+        let master = master.lock().expect("PTY master mutex poisoned");
+        master.take_writer()
+    }
+    .context("taking PTY writer")?;
     Ok(PtyHandle {
-        master: Arc::new(Mutex::new(pair.master)),
+        master,
         writer: Arc::new(Mutex::new(writer)),
         child: Arc::new(Mutex::new(child)),
+        scope,
     })
 }
 
@@ -120,43 +143,27 @@ pub fn write_bytes_blocking(handle: &PtyHandle, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Deliver a real process signal to the PTY child.
-///
-/// SIGINT is intentionally NOT handled here — callers send the Ctrl-C byte
-/// (`\x03`) through the tty, which is how an interactive interrupt reaches the
-/// foreground process group. This covers the terminate/kill signals a Ctrl-C
-/// cannot express, so a runaway session can actually be stopped.
-///
-/// On Unix, SIGTERM is sent to the child's pid via `nix`. SIGKILL uses
-/// portable-pty's `kill()` (SIGKILL on Unix). On non-Unix, both fall back to
-/// `kill()` (TerminateProcess), since there is no SIGTERM equivalent.
+/// Signal only the verified owned PTY session/group (or per-child Windows job).
+/// The direct-child mutex excludes concurrent reap before numeric Unix signals.
 pub fn signal_child(handle: &PtyHandle, sig: crate::protocol::Signal) -> Result<()> {
-    use crate::protocol::Signal;
-    let mut child = handle.child.lock().expect("PTY child mutex poisoned");
-    match sig {
-        Signal::Sigkill => {
-            child.kill().context("SIGKILL child")?;
+    let _child = handle.child.lock().expect("PTY child mutex poisoned");
+    handle.scope.signal(sig).context("signal owned PTY")
+}
+
+/// A blocking waiter that releases the child mutex between polls, so an external
+/// wrapper's lifetime wait does not prevent another thread from terminating it.
+pub fn wait_child(handle: &PtyHandle) -> Result<portable_pty::ExitStatus> {
+    loop {
+        if let Some(status) = handle
+            .child
+            .lock()
+            .expect("PTY child mutex poisoned")
+            .try_wait()?
+        {
+            return Ok(status);
         }
-        Signal::Sigterm | Signal::Sigint => {
-            #[cfg(unix)]
-            {
-                let posix = match sig {
-                    Signal::Sigterm => nix::sys::signal::Signal::SIGTERM,
-                    _ => nix::sys::signal::Signal::SIGINT,
-                };
-                if let Some(pid) = child.process_id() {
-                    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid as i32), posix)
-                        .with_context(|| format!("send {posix:?} to pid {pid}"))?;
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                // No SIGTERM on Windows — terminate the process.
-                child.kill().context("terminate child")?;
-            }
-        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    Ok(())
 }
 
 /// Non-blocking check whether the PTY child has already exited. Used by hybrid

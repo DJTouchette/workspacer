@@ -1,10 +1,10 @@
 // GENERATED FILE — do not edit by hand.
-// Source of truth: services/hub/cmd/brain/config_defaults.json (the brain go:embeds it).
+// Source of truth: services/hub-rs/assets/config-defaults.json (embedded by the Rust backend).
 // Regenerate: npm run gen:config-defaults  (apps/desktop/scripts/gen-config-defaults.mjs).
 //
 // The main process (configService.ts) and the renderer (hooks/configDefaults.ts)
 // both build their defaults from this; drift tests assert each generated copy still
-// deep-equals the JSON, so the desktop + brain defaults can never drift.
+// deep-equals the JSON, so the desktop + Rust backend defaults can never drift.
 
 export const CONFIG_DEFAULTS = {
   ui: {

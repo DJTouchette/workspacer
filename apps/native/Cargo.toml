@@ -7,14 +7,17 @@ license = "MIT"
 default-run = "wks-native"
 
 [features]
-default = ["ui", "embedded"]
+default = ["ui", "rust-hub"]
 ui = ["dep:gpui", "dep:gpui-component", "dep:gpui-component-assets"]
 ui-tests = ["ui", "gpui/test-support"]
 
-embedded = ["dep:claudemon", "dep:serde_yaml"]
+# Compatibility feature name: embedded ownership now always uses the Rust hub.
+embedded = ["rust-hub"]
+rust-hub = ["dep:claudemon", "dep:workspacer-hub"]
 
 [dependencies]
 claudemon = { path = "../../services/claudemon", optional = true }
+workspacer-hub = { path = "../../services/hub-rs", optional = true }
 anyhow = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -32,7 +35,6 @@ gpui-component-assets = { version = "=0.5.1", optional = true }
 gpui-component = { version = "=0.5.1", optional = true, default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = { version = "0.9.34", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 url = "2"

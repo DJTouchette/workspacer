@@ -179,3 +179,56 @@ fn preview_image() -> Value {
     }
     json!({"dataUrl":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(encoded.into_inner()))})
 }
+
+/// Exercise the same WebSocket/controller boundary without a GUI or provider.
+/// UI intent receipt is not permission to start an invisible terminal/agent.
+pub async fn ui_intent_probe() -> Result<Value> {
+    use crate::{bus::Config, controller::Controller, ui_requests::Intent};
+    use std::time::Duration;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let config = Config::new(format!("ws://{}/bus", listener.local_addr()?), None)?;
+    let (stop, mut stopping) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut socket = accept_async(stream).await?;
+        socket
+            .send(Message::Text(
+                json!({"op":"hello","scope":"operator"}).to_string(),
+            ))
+            .await?;
+        let mut published = false;
+        loop {
+            tokio::select! {
+             _=&mut stopping=>return anyhow::Ok(published),
+             message=socket.next()=>{let Some(message)=message else{return anyhow::Ok(published)};let message=message?;
+              let Message::Text(text)=message else{continue};let frame:Value=serde_json::from_str(&text)?;
+              match frame["op"].as_str(){
+               Some("subscribe")=>{if !published&&frame["topics"].as_array().is_some_and(|a|a.iter().any(|v|v=="facade.openTerminal")){
+                socket.send(event("facade.openTerminal",json!({"cwd":"/fixture/project","command":"echo request-only","label":"Fixture","parentSessionId":"fixture-parent"}))).await?;
+                socket.send(event("command.open_spawn_dialog",json!({"cwd":"/fixture/project"}))).await?;published=true;
+               }},
+               Some("call")=>{anyhow::ensure!(frame["method"]=="sessions.snapshots","Headless UI intent unexpectedly issued a backend mutation");socket.send(Message::Text(json!({"op":"result","id":frame["id"],"result":[]}).to_string())).await?;},
+               _=>(),
+              }
+             }
+            }
+        }
+    });
+    let controller = Controller::start(config);
+    let mut views = controller.views.clone();
+    let probe=tokio::time::timeout(Duration::from_secs(5),async{
+  loop {let view=views.borrow_and_update().clone();if view.ui_requests.len()==2{
+    anyhow::ensure!(view.ui_requests.iter().any(|r|matches!(&r.intent,Intent::Terminal{cwd,command,label,parent_session_id} if cwd=="/fixture/project"&&command=="echo request-only"&&label=="Fixture"&&parent_session_id=="fixture-parent")),"Terminal request metadata changed");
+    anyhow::ensure!(!view.creating&&view.spawn_receipt.is_none(),"Display request created an agent");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    break anyhow::Ok(json!({"queuedUiRequests":2,"terminalParametersRetained":true,"backendMutations":0,"visiblePaneAcknowledged":false}));
+   }views.changed().await?;
+  }
+ }).await.map_err(|_|anyhow::anyhow!("UI intent probe timed out")).and_then(|r|r);
+    let _ = stop.send(());
+    let published = server.await??;
+    drop(controller);
+    drop(views);
+    anyhow::ensure!(published, "UI topics were not subscribed");
+    probe
+}

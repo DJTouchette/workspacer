@@ -1,0 +1,50 @@
+{
+  "version":1,
+  "vocabulary":{"blocks":{
+    "cases":{"why":"Fleet rest is derived from authoritative session, client, job and peer evidence; unknown is never an empty fleet.","required":["name","sessions","expect"],"optional":["sessionsError","clients","jobs","peers","keepJobsAwake"],"loaders":["services/hub/internal/quiescence/rust_contract_test.go::TestPortableFleetQuiescenceContract","services/hub-rs/tests/quiescence.rs::portable_fleet_quiescence_contract"]},
+    "monitorCases":{"why":"Quiet requires continuous observation through dwell, and sampling gaps or stale reads cannot count as calm.","required":["name","dwellMs","maxGapMs","samples","expect"],"optional":["latestAt"],"loaders":["services/hub/internal/quiescence/rust_contract_test.go::TestPortableFleetQuiescenceContract","services/hub-rs/tests/quiescence.rs::portable_fleet_quiescence_contract"]}
+  }},
+  "cases":[
+    {"name":"authoritative empty fleet is calm now","sessions":[],"expect":[]},
+    {"name":"responding session blocks","sessions":[{"session_id":"a","mode":"responding"}],"expect":["session-working"]},
+    {"name":"raw mode outranks idle overlay","sessions":[{"sessionId":"a","mode":"responding","ambientState":"idle"}],"expect":["session-working"]},
+    {"name":"raw input mode outranks busy overlay","sessions":[{"sessionId":"a","mode":"input","ambientState":"streaming"}],"expect":[]},
+    {"name":"unknown mode cannot be idle","sessions":[{"sessionId":"a","mode":"unknown"}],"expect":["session-unknown"]},
+    {"name":"new daemon mode is conservatively unknown","sessions":[{"sessionId":"a","mode":"compacting"}],"expect":["session-unknown"]},
+    {"name":"idle desktop shape is accepted","sessions":[{"sessionId":"a","ambientState":"idle"}],"expect":[]},
+    {"name":"desktop thinking blocks","sessions":[{"sessionId":"a","ambientState":"thinking"}],"expect":["session-working"]},
+    {"name":"desktop background state blocks","sessions":[{"sessionId":"a","state":"background"}],"expect":["session-working"]},
+    {"name":"stopped row ignores stale pending and background","sessions":[{"session_id":"a","mode":"stopped","background_tasks":4,"pending":{"kind":"approval"}}],"expect":[]},
+    {"name":"ended desktop row blocks nothing","sessions":[{"sessionId":"a","status":"ended"}],"expect":[]},
+    {"name":"background count independently blocks input mode","sessions":[{"session_id":"a","mode":"input","background_tasks":1}],"expect":["background-tasks"]},
+    {"name":"pending approval mode and slot are distinct reasons","sessions":[{"sessionId":"a","mode":"approval","pendingApproval":{}}],"expect":["pending-approval","pending-approval"]},
+    {"name":"pending false presence is conservative legacy evidence","sessions":[{"sessionId":"a","mode":"input","pendingApproval":false}],"expect":["pending-approval"]},
+    {"name":"raw pending question blocks","sessions":[{"session_id":"a","mode":"input","pending":{"kind":"question"}}],"expect":["pending-question"]},
+    {"name":"desktop pending question blocks","sessions":[{"sessionId":"a","ambientState":"idle","pendingQuestions":[{}]}],"expect":["pending-question"]},
+    {"name":"missing identity cannot hide ended row","sessions":[{"status":"ended"}],"expect":["session-unreadable"]},
+    {"name":"missing state cannot be assumed idle","sessions":[{"sessionId":"a"}],"expect":["session-unreadable"]},
+    {"name":"null row is unknown","sessions":[null],"expect":["session-unreadable"]},
+    {"name":"non-object row invalidates fleet read","sessions":[4],"expect":["fleet-unreadable"]},
+    {"name":"null list is not empty fleet","sessions":null,"expect":["fleet-unreadable"]},
+    {"name":"unavailable provider is not empty fleet","sessions":[],"sessionsError":"provider unavailable","expect":["fleet-unreadable"]},
+    {"name":"recent client counts as active","sessions":[],"clients":[{"label":"operator client","idleForMs":599999}],"expect":["client-active"]},
+    {"name":"client idle boundary is inclusive","sessions":[],"clients":[{"label":"operator client","idleForMs":600000}],"expect":[]},
+    {"name":"upcoming job blocks","sessions":[],"jobs":[{"id":"j","kind":"spawn","nextInMs":900000}],"expect":["job-due-soon"]},
+    {"name":"distant job does not block advisory mode","sessions":[],"jobs":[{"id":"j","kind":"call","nextInMs":900001}],"expect":[]},
+    {"name":"running job blocks","sessions":[],"jobs":[{"id":"j","kind":"call","running":true}],"expect":["job-running"]},
+    {"name":"advisory shell poller does not block itself","sessions":[],"jobs":[{"id":"j","kind":"shell","running":true}],"expect":[]},
+    {"name":"self-stop policy protects running shell jobs","sessions":[],"keepJobsAwake":true,"jobs":[{"id":"j","kind":"shell","running":true}],"expect":["job-running"]},
+    {"name":"self-stop policy protects every future schedule","sessions":[],"keepJobsAwake":true,"jobs":[{"id":"j","kind":"shell","nextInMs":86400000}],"expect":["job-scheduled"]},
+    {"name":"unreachable peer is unknown not calm","sessions":[],"peers":[{"name":"other","error":"not connected"}],"expect":["peer-unreachable"]},
+    {"name":"peer busy session blocks without recursive predicate","sessions":[],"peers":[{"name":"other","sessions":[{"session_id":"remote","mode":"responding"}]}],"expect":["session-working"]},
+    {"name":"peer null sessions fail closed","sessions":[],"peers":[{"name":"other","sessions":null}],"expect":["peer-unreachable"]}
+  ],
+  "monitorCases":[
+    {"name":"first calm sample is still dwell","dwellMs":1000,"maxGapMs":600,"samples":[{"at":0,"sessions":[]}],"expect":{"quiescent":false,"since":null,"calmSeconds":0,"kinds":["dwell"]}},
+    {"name":"continuous calm reaches dwell boundary","dwellMs":1000,"maxGapMs":600,"samples":[{"at":0,"sessions":[]},{"at":500,"sessions":[]},{"at":1000,"sessions":[]}],"expect":{"quiescent":true,"since":0,"calmSeconds":1,"kinds":[]}},
+    {"name":"unobserved gap restarts calm clock","dwellMs":1000,"maxGapMs":600,"samples":[{"at":0,"sessions":[]},{"at":1000,"sessions":[]}],"expect":{"quiescent":false,"since":null,"calmSeconds":0,"kinds":["dwell"]}},
+    {"name":"max gap equality remains continuous","dwellMs":1000,"maxGapMs":600,"samples":[{"at":0,"sessions":[]},{"at":600,"sessions":[]},{"at":1200,"sessions":[]}],"latestAt":1800,"expect":{"quiescent":true,"since":0,"calmSeconds":1,"kinds":[]}},
+    {"name":"stale latest never reuses quiet verdict","dwellMs":1000,"maxGapMs":600,"samples":[{"at":0,"sessions":[]},{"at":500,"sessions":[]},{"at":1000,"sessions":[]}],"latestAt":1601,"expect":{"quiescent":false,"since":null,"calmSeconds":0,"kinds":["stale-sample"]}},
+    {"name":"busy observation resets dwell","dwellMs":1000,"maxGapMs":600,"samples":[{"at":0,"sessions":[]},{"at":500,"sessions":[{"sessionId":"a","mode":"responding"}]},{"at":1000,"sessions":[]},{"at":1500,"sessions":[]},{"at":2000,"sessions":[]}],"expect":{"quiescent":true,"since":1000,"calmSeconds":1,"kinds":[]}}
+  ]
+}

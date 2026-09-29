@@ -285,7 +285,9 @@ func isContractTestFile(name, lang string, content []byte) bool {
 	case "ts":
 		return strings.Contains(name, ".test.") || strings.Contains(name, ".spec.")
 	case "rust":
-		return bytes.Contains(content, []byte("#[cfg(test)]"))
+		return bytes.Contains(content, []byte("#[cfg(test)]")) ||
+			bytes.Contains(content, []byte("#[test]")) ||
+			bytes.Contains(content, []byte("#[tokio::test]"))
 	}
 	return false
 }

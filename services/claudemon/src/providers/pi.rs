@@ -24,6 +24,7 @@
 //! The pure `translate(event)` is unit-tested; the live stdio client needs a
 //! real `pi` binary to validate end-to-end.
 
+use crate::child_env::SanitizeChildEnvironment;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -58,6 +59,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
+        .scrub_host_authority()
         .spawn()
         .with_context(|| format!("spawning `{bin} --mode rpc`"))?;
 
@@ -892,6 +894,7 @@ async fn run_session(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
+        .scrub_host_authority()
         .spawn()
         .with_context(|| format!("spawning `{bin} --mode rpc`"))?;
 

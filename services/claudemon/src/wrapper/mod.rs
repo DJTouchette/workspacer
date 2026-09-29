@@ -188,11 +188,8 @@ pub async fn run_with_daemon(argv: Vec<String>, daemon_ws: &str) -> Result<()> {
     });
 
     // Wait on the child. portable-pty's Child::wait is blocking.
-    let child = pty.child.clone();
-    let wait_handle = tokio::task::spawn_blocking(move || {
-        let mut c = child.lock().expect("PTY child mutex poisoned");
-        c.wait().ok()
-    });
+    let child = pty.clone();
+    let wait_handle = tokio::task::spawn_blocking(move || pty::wait_child(&child).ok());
 
     let exit = wait_handle.await.context("waiting on child")?;
     let code = exit.and_then(|s| s.exit_code().try_into().ok());

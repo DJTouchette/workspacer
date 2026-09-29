@@ -1,4 +1,5 @@
-/** Real HTTP MCP auth → Go bus → desktop hubClient → agents.spawn → disk.
+import { buildRustHubFixture } from '../e2e/fixtures/rustHub';
+/** Real HTTP MCP auth → Rust bus → desktop hubClient → agents.spawn → disk.
  * Only provider launch is mocked. Electron is a headless runtime shim; no
  * production capability, identity, config, session or history store is mocked.
  */
@@ -79,8 +80,6 @@ const fixtureEnv = {
   XDG_CONFIG_HOME: configRoot,
   APPDATA: configRoot,
   TMPDIR: scratch,
-  GOCACHE: path.join(cache, 'go-build'),
-  GOMODCACHE: path.join(cache, 'go-mod'),
   WKS_DISPATCH_CHAIN_FIXTURE: '1',
 };
 let child: ChildProcessWithoutNullStreams | undefined;
@@ -103,21 +102,8 @@ const persisted = (): DispatchTask[] =>
   JSON.parse(fs.readFileSync(path.join(configDir, 'dispatch-history.json'), 'utf8')).tasks;
 
 beforeAll(async () => {
-  const binary = path.join(scratch, 'mcp-fixture');
-  const build = spawn('go', ['test', '-c', '-o', binary, './cmd/mcp'], {
-    cwd: path.resolve('../../services/hub'),
-    env: fixtureEnv,
-    stdio: 'pipe',
-    timeout: 120_000,
-  });
-  let buildErrors = '';
-  build.stderr.on('data', (data) => {
-    buildErrors += data;
-  });
-  const [code] = await once(build, 'exit');
-  if (code !== 0) throw new Error(`Go fixture build failed: ${buildErrors}`);
-  child = spawn(binary, ['-test.run=^TestDesktopDispatchChainFixture$', '-test.timeout=300s'], {
-    cwd: path.resolve('../../services/hub'),
+  const binary = buildRustHubFixture();
+  child = spawn(binary, ['--mode', 'mcp', '--root', scratch], {
     env: fixtureEnv,
     stdio: 'pipe',
   });
@@ -128,7 +114,7 @@ beforeAll(async () => {
   const ready = await Promise.race([
     once(lines, 'line').then(([line]) => JSON.parse(line)),
     childExit.then(() => {
-      throw new Error('Go fixture exited before readiness');
+      throw new Error('Rust fixture exited before readiness');
     }),
   ]);
   lines.close();
@@ -210,6 +196,7 @@ afterAll(async () => {
 });
 
 const mcpSessions = new Map<string, string>();
+const mcpInitialized = new Set<string>();
 function decodeMcp(body: string, contentType: string | null) {
   return contentType?.includes('text/event-stream')
     ? JSON.parse(
@@ -234,7 +221,7 @@ async function mcpPost(label: string, message: Record<string, unknown>) {
   });
 }
 async function mcpTool(label: string, name: string, args: Record<string, unknown>) {
-  if (!mcpSessions.has(label)) {
+  if (!mcpInitialized.has(label)) {
     const init = await mcpPost(label, {
       id: ++sequence,
       method: 'initialize',
@@ -248,11 +235,12 @@ async function mcpTool(label: string, name: string, args: Record<string, unknown
     const envelope = decodeMcp(await init.text(), init.headers.get('content-type'));
     expect(envelope.error).toBeUndefined();
     const session = init.headers.get('mcp-session-id');
-    expect(session).toEqual(expect.any(String));
-    mcpSessions.set(label, session!);
+    // Streamable HTTP permits stateless servers; retain session affinity when issued.
+    if (session) mcpSessions.set(label, session);
     const initialized = await mcpPost(label, { method: 'notifications/initialized' });
     expect(initialized.status).toBe(202);
     await initialized.text();
+    mcpInitialized.add(label);
   }
   const response = await mcpPost(label, {
     id: ++sequence,
@@ -1364,22 +1352,8 @@ it('honors explicit models and no-task requests after inbox capture, retaining w
 });
 
 it('handles unknown paired replay idempotently and returns a local task result once', async () => {
-  const binary = path.join(scratch, 'paired-brain-fixture');
-  const build = spawn('go', ['test', '-c', '-o', binary, './cmd/brain'], {
-    cwd: path.resolve('../../services/hub'),
-    env: fixtureEnv,
-    stdio: 'pipe',
-    timeout: 120_000,
-  });
-  let errors = '';
-  build.stderr.on('data', (data) => {
-    errors += data;
-  });
-  build.stdout.resume();
-  const [code] = await once(build, 'exit');
-  if (code !== 0) throw new Error(errors);
-  const peer = spawn(binary, ['-test.run=^TestPairedDispatchHostFixture$', '-test.timeout=120s'], {
-    cwd: path.resolve('../../services/hub'),
+  const binary = buildRustHubFixture();
+  const peer = spawn(binary, ['--mode', 'paired', '--root', scratch], {
     env: { ...fixtureEnv, WKS_PAIRED_CHAIN_FIXTURE: '1' },
     stdio: 'pipe',
   });

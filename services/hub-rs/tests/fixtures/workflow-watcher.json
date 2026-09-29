@@ -1,0 +1,479 @@
+[
+  {
+    "now": 1767225600000,
+    "files": [
+      {
+        "path": "subagents/workflows/wf_a/agent-a.meta.json",
+        "content": "{}"
+      },
+      {
+        "path": "subagents/workflows/wf_a/agent-a.jsonl",
+        "content": "{\"type\":\"user\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"message\":{\"content\":\"Implement safely\"}}\n{\"type\":\"assistant\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"id\":\"one\",\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":20,\"output_tokens\":5},\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/project/file.txt\"}}]}}\n{\"type\":\"assistant\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"id\":\"one\",\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":20,\"output_tokens\":5},\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/project/file.txt\"}}]}}\n{\"type\":"
+      },
+      {
+        "path": "workflows/scripts/example-wf_a.js",
+        "content": "export const meta = { name: 'Literal name', description: 'Purpose', phases: [{title:'Plan', detail:'Inspect',},], };"
+      },
+      {
+        "path": "subagents/agent-plain.meta.json",
+        "content": "{\"agentType\":\"Explore\",\"description\":\"Find code\",\"toolUseId\":\"tool-plain\"}"
+      },
+      {
+        "path": "subagents/agent-plain.jsonl",
+        "content": "{\"type\":\"assistant\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"id\":\"plain\",\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":20,\"output_tokens\":3},\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/project/file.txt\"}}]}}\n"
+      }
+    ],
+    "update": {
+      "runs": [
+        {
+          "runId": "wf_a",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [
+            {
+              "title": "Plan",
+              "detail": "Inspect"
+            }
+          ],
+          "agents": [
+            {
+              "id": "a",
+              "status": "running",
+              "tokens": 5,
+              "toolCalls": 2,
+              "startedAt": 1767225600000,
+              "promptPreview": "Implement safely",
+              "model": "claude-sonnet-4-6",
+              "costUSD": 0.000135,
+              "lastToolName": "Read",
+              "lastToolSummary": "file.txt"
+            }
+          ],
+          "name": "Literal name",
+          "description": "Purpose",
+          "totalCostUSD": 0.000135
+        }
+      ],
+      "subagentActivity": {
+        "plain": {
+          "agentType": "Explore",
+          "description": "Find code",
+          "toolUseId": "tool-plain",
+          "tokens": 3,
+          "toolCalls": 1,
+          "costUSD": 0.000105,
+          "model": "claude-sonnet-4-6",
+          "lastToolName": "Read",
+          "lastToolSummary": "file.txt"
+        }
+      },
+      "workflowAgentIds": [
+        "a"
+      ]
+    },
+    "changed": true,
+    "events": [
+      {
+        "type": "workflow.started",
+        "data": {
+          "sessionId": "session",
+          "cwd": "/project",
+          "runId": "wf_a",
+          "name": "Literal name",
+          "description": "Purpose",
+          "phases": 1,
+          "agents": 1,
+          "startedAt": 1767225600000
+        }
+      }
+    ]
+  },
+  {
+    "now": 1767225602500,
+    "files": [
+      {
+        "path": "subagents/workflows/wf_a/agent-a.jsonl",
+        "append": true,
+        "content": "\"assistant\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"id\":\"two\",\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":20,\"output_tokens\":7},\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"/project/file.txt\"}}]}}\n"
+      },
+      {
+        "path": "subagents/workflows/wf_a/journal.jsonl",
+        "content": "{\"type\":\"result\",\"agentId\":\"agent-a\",\"result\":{\"ok\":true}}\n"
+      },
+      {
+        "path": "workflows/wf_a.json",
+        "content": "{"
+      },
+      {
+        "path": "subagents/agent-plain.jsonl",
+        "append": true,
+        "content": "{\"type\":\"assistant\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"id\":\"plain-next\",\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":20,\"output_tokens\":4},\"content\":[{\"type\":\"tool_use\",\"name\":\"CustomTool\",\"input\":{\"zeta\":\"first\\nrest\",\"alpha\":\"second\"}}]}}\n"
+      }
+    ],
+    "update": {
+      "runs": [
+        {
+          "runId": "wf_a",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [
+            {
+              "title": "Plan",
+              "detail": "Inspect"
+            }
+          ],
+          "agents": [
+            {
+              "id": "a",
+              "status": "done",
+              "tokens": 12,
+              "toolCalls": 3,
+              "startedAt": 1767225600000,
+              "promptPreview": "Implement safely",
+              "model": "claude-sonnet-4-6",
+              "costUSD": 0.00030000000000000003,
+              "lastToolName": "Read",
+              "lastToolSummary": "file.txt",
+              "completedAt": 1767225602500,
+              "durationMs": 2500,
+              "resultPreview": "{\"ok\":true}"
+            }
+          ],
+          "name": "Literal name",
+          "description": "Purpose",
+          "totalCostUSD": 0.00030000000000000003
+        }
+      ],
+      "subagentActivity": {
+        "plain": {
+          "agentType": "Explore",
+          "description": "Find code",
+          "toolUseId": "tool-plain",
+          "tokens": 7,
+          "toolCalls": 2,
+          "costUSD": 0.000225,
+          "model": "claude-sonnet-4-6",
+          "lastToolName": "CustomTool",
+          "lastToolSummary": "first"
+        }
+      },
+      "workflowAgentIds": [
+        "a"
+      ]
+    },
+    "changed": true,
+    "events": [
+      {
+        "type": "workflow.agent.finished",
+        "data": {
+          "sessionId": "session",
+          "cwd": "/project",
+          "runId": "wf_a",
+          "agentId": "a",
+          "model": "claude-sonnet-4-6",
+          "status": "done",
+          "durationMs": 2500,
+          "tokens": 12,
+          "toolCalls": 3
+        }
+      }
+    ]
+  },
+  {
+    "now": 1767225605000,
+    "files": [
+      {
+        "path": "workflows/wf_a.json",
+        "content": "{\"status\":\"completed\",\"workflowName\":\"Final name\",\"startTime\":1767225600000,\"durationMs\":4500,\"totalTokens\":20,\"totalToolCalls\":3,\"phases\":[{\"title\":\"Finish\"}],\"workflowProgress\":[{\"type\":\"workflow_agent\",\"agentId\":\"agent-a\",\"label\":\"A\",\"state\":\"failed\",\"startedAt\":1767225600000,\"durationMs\":4000,\"tokens\":20,\"toolCalls\":3,\"resultPreview\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}]}"
+      },
+      {
+        "path": "subagents/workflows/wf_b/agent-b.meta.json",
+        "content": "{}"
+      }
+    ],
+    "update": {
+      "runs": [
+        {
+          "runId": "wf_a",
+          "status": "completed",
+          "startedAt": 1767225600000,
+          "phases": [
+            {
+              "title": "Finish"
+            }
+          ],
+          "agents": [
+            {
+              "id": "a",
+              "costUSD": 0.00030000000000000003,
+              "label": "A",
+              "status": "failed",
+              "startedAt": 1767225600000,
+              "durationMs": 4000,
+              "completedAt": 1767225604000,
+              "tokens": 20,
+              "toolCalls": 3,
+              "resultPreview": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          ],
+          "name": "Final name",
+          "description": "Purpose",
+          "durationMs": 4500,
+          "completedAt": 1767225604500,
+          "totalTokens": 20,
+          "totalToolCalls": 3,
+          "totalCostUSD": 0.00030000000000000003
+        },
+        {
+          "runId": "wf_b",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [],
+          "agents": [
+            {
+              "id": "b",
+              "status": "queued",
+              "tokens": 0,
+              "toolCalls": 0
+            }
+          ]
+        }
+      ],
+      "subagentActivity": {
+        "plain": {
+          "agentType": "Explore",
+          "description": "Find code",
+          "toolUseId": "tool-plain",
+          "tokens": 7,
+          "toolCalls": 2,
+          "costUSD": 0.000225,
+          "model": "claude-sonnet-4-6",
+          "lastToolName": "CustomTool",
+          "lastToolSummary": "first"
+        }
+      },
+      "workflowAgentIds": [
+        "a",
+        "b"
+      ]
+    },
+    "changed": true,
+    "events": [
+      {
+        "type": "workflow.completed",
+        "data": {
+          "sessionId": "session",
+          "cwd": "/project",
+          "runId": "wf_a",
+          "name": "Final name",
+          "status": "completed",
+          "durationMs": 4500,
+          "totalTokens": 20,
+          "totalToolCalls": 3,
+          "agents": 1
+        }
+      },
+      {
+        "type": "workflow.agent.finished",
+        "data": {
+          "sessionId": "session",
+          "cwd": "/project",
+          "runId": "wf_a",
+          "agentId": "a",
+          "label": "A",
+          "status": "failed",
+          "durationMs": 4000,
+          "tokens": 20,
+          "toolCalls": 3
+        }
+      },
+      {
+        "type": "workflow.started",
+        "data": {
+          "sessionId": "session",
+          "cwd": "/project",
+          "runId": "wf_b",
+          "phases": 0,
+          "agents": 1,
+          "startedAt": 1767225600000
+        }
+      }
+    ]
+  },
+  {
+    "now": 1767225607500,
+    "files": [
+      {
+        "path": "workflows/wf_a.json",
+        "content": "{\"status\":\"failed\",\"workflowName\":\"must not overwrite finalized\"}"
+      },
+      {
+        "path": "subagents/workflows/wf_c/agent-c.meta.json",
+        "content": "{}"
+      },
+      {
+        "path": "subagents/workflows/wf_d/agent-d.meta.json",
+        "content": "{}"
+      }
+    ],
+    "update": {
+      "runs": [
+        {
+          "runId": "wf_b",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [],
+          "agents": [
+            {
+              "id": "b",
+              "status": "queued",
+              "tokens": 0,
+              "toolCalls": 0
+            }
+          ]
+        },
+        {
+          "runId": "wf_c",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [],
+          "agents": [
+            {
+              "id": "c",
+              "status": "queued",
+              "tokens": 0,
+              "toolCalls": 0
+            }
+          ]
+        },
+        {
+          "runId": "wf_d",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [],
+          "agents": [
+            {
+              "id": "d",
+              "status": "queued",
+              "tokens": 0,
+              "toolCalls": 0
+            }
+          ]
+        }
+      ],
+      "subagentActivity": {
+        "plain": {
+          "agentType": "Explore",
+          "description": "Find code",
+          "toolUseId": "tool-plain",
+          "tokens": 7,
+          "toolCalls": 2,
+          "costUSD": 0.000225,
+          "model": "claude-sonnet-4-6",
+          "lastToolName": "CustomTool",
+          "lastToolSummary": "first"
+        }
+      },
+      "workflowAgentIds": [
+        "b",
+        "c",
+        "d"
+      ]
+    },
+    "changed": true,
+    "events": [
+      {
+        "type": "workflow.started",
+        "data": {
+          "sessionId": "session",
+          "cwd": "/project",
+          "runId": "wf_c",
+          "phases": 0,
+          "agents": 1,
+          "startedAt": 1767225600000
+        }
+      },
+      {
+        "type": "workflow.started",
+        "data": {
+          "sessionId": "session",
+          "cwd": "/project",
+          "runId": "wf_d",
+          "phases": 0,
+          "agents": 1,
+          "startedAt": 1767225600000
+        }
+      }
+    ]
+  },
+  {
+    "now": 1767225610000,
+    "files": [],
+    "update": {
+      "runs": [
+        {
+          "runId": "wf_b",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [],
+          "agents": [
+            {
+              "id": "b",
+              "status": "queued",
+              "tokens": 0,
+              "toolCalls": 0
+            }
+          ]
+        },
+        {
+          "runId": "wf_c",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [],
+          "agents": [
+            {
+              "id": "c",
+              "status": "queued",
+              "tokens": 0,
+              "toolCalls": 0
+            }
+          ]
+        },
+        {
+          "runId": "wf_d",
+          "status": "running",
+          "startedAt": 1767225600000,
+          "phases": [],
+          "agents": [
+            {
+              "id": "d",
+              "status": "queued",
+              "tokens": 0,
+              "toolCalls": 0
+            }
+          ]
+        }
+      ],
+      "subagentActivity": {
+        "plain": {
+          "agentType": "Explore",
+          "description": "Find code",
+          "toolUseId": "tool-plain",
+          "tokens": 7,
+          "toolCalls": 2,
+          "costUSD": 0.000225,
+          "model": "claude-sonnet-4-6",
+          "lastToolName": "CustomTool",
+          "lastToolSummary": "first"
+        }
+      },
+      "workflowAgentIds": [
+        "b",
+        "c",
+        "d"
+      ]
+    },
+    "changed": false,
+    "events": []
+  }
+]

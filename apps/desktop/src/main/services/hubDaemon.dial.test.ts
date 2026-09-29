@@ -152,7 +152,7 @@ describe('the address main dials for its own hub follows the bind', () => {
   it('a wildcard bind is dialed on loopback (a wildcard names no host)', async () => {
     const mod = await loadModule('0.0.0.0:7895');
     expect(mod.dialAuthority('0.0.0.0:7895')).toBe('127.0.0.1:7895');
-    expect(mod.dialAuthority('[::]:7895')).toBe('127.0.0.1:7895');
+    expect(mod.dialAuthority('[::]:7895')).toBe('[::1]:7895');
   });
 
   it('a CONCRETE bind is dialed at itself — it does not answer on loopback', async () => {
@@ -168,12 +168,30 @@ describe('the address main dials for its own hub follows the bind', () => {
     await mod.startHub();
 
     const args = spawnMock.mock.calls[0]![1] as unknown as string[];
-    const boundTo = args[args.indexOf('--addr') + 1];
+    const boundTo = `${args[args.indexOf('--host') + 1]}:${args[args.indexOf('--hub-port') + 1]}`;
     expect(boundTo).toBe('100.86.79.73:7895');
 
     const probed = String(waitForHealth.mock.calls[0]![0]);
     expect(probed).toBe(`http://${boundTo}/health`);
   });
+});
+
+describe('initial adoption follows the chosen listener', () => {
+  for (const [bind, authority] of [
+    ['100.86.79.73:7995', '100.86.79.73:7995'],
+    ['[fd7a:115c:a1e0::1]:7995', '[fd7a:115c:a1e0::1]:7995'],
+    ['[::]:7995', '[::1]:7995'],
+  ]) {
+    it(`adopts at ${authority}`, async () => {
+      const mod = await loadModule(bind);
+      probeHealth.mockResolvedValue(true);
+      await mod.startHub();
+      expect(probeHealth.mock.calls[0][0]).toBe(`http://${authority}/health`);
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(mod.isHubAdopted()).toBe(true);
+      await mod.stopHub();
+    });
+  }
 });
 
 describe('the hub (and therefore the brain) can say why it failed', () => {

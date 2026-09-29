@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 // Stage only the explicit native runtime and generate a file-specific uninstall list.
-export function stagePayload({ root, stage, crt, nodeExecutable, version, commit = null, nodeVersion }) {
+export function stagePayload({ root, stage, crt, version, commit = null, backend = 'rust' }) {
+  if (backend !== 'rust') throw new Error('Unknown native backend');
   fs.rmSync(stage, { recursive: true, force: true });
   fs.mkdirSync(stage, { recursive: true });
   const copy = (source, name = path.basename(source)) => {
@@ -10,13 +11,10 @@ export function stagePayload({ root, stage, crt, nodeExecutable, version, commit
     fs.copyFileSync(source, path.join(stage, name));
   };
   copy(path.join(root, 'apps/native/target/release/wks-native.exe'));
-  for (const name of ['workspacer', 'hub', 'brain', 'mcp']) copy(path.join(root, `services/hub/${name}.exe`));
-  copy(path.join(root, 'apps/desktop/dist/headless/desktop-host.cjs'));
-  copy(nodeExecutable, 'node.exe');
-  copy(path.join(path.dirname(nodeExecutable), 'LICENSE'), 'NODE-LICENSE.txt');
+  copy(path.join(root, 'services/hub-rs/target/release/workspacer-rust.exe'));
   copy(path.join(root, 'LICENSE'), 'LICENSE.txt');
   copy(path.join(root, 'apps/desktop/build/icon.ico'));
-  copy(path.join(root, 'apps/native/packaging/windows/README.txt'));
+  copy(path.join(root, 'apps/native/packaging/windows/README-rust.txt'), 'README.txt');
   if (!crt) throw new Error('NATIVE_CRT_DIR is required');
   for (const name of ['vcruntime140.dll', 'msvcp140.dll']) {
     if (!fs.statSync(path.join(crt, name)).isFile()) throw new Error(`Missing CRT: ${name}`);
@@ -25,7 +23,7 @@ export function stagePayload({ root, stage, crt, nodeExecutable, version, commit
   fs.cpSync(path.join(root, 'services/hub/examples'), path.join(stage, 'examples'), { recursive: true });
   fs.writeFileSync(path.join(stage, 'build-stamp.json'), JSON.stringify({
     component: 'native', version, commit,
-    platform: 'windows-x64', node: nodeVersion,
+    platform: 'windows-x64', backend,
   }, null, 2) + '\n');
 
   // Enumerate owned files so uninstall never recursively deletes user-created files.

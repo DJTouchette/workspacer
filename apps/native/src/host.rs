@@ -8,16 +8,16 @@ use anyhow::{Context, Result, anyhow};
 use std::{sync::Arc, thread::JoinHandle};
 use tokio::sync::{mpsc, oneshot, watch};
 
-#[cfg(feature = "embedded")]
-mod local;
-#[cfg(feature = "embedded")]
-pub use local::LocalOptions;
+#[cfg(feature = "rust-hub")]
+mod rust_local;
+#[cfg(feature = "rust-hub")]
+pub use rust_local::RustOptions;
 
 pub enum Mode {
     Remote(Config),
     Demo,
-    #[cfg(feature = "embedded")]
-    Local(LocalOptions),
+    #[cfg(feature = "rust-hub")]
+    Rust(RustOptions),
 }
 
 #[derive(Clone, Debug)]
@@ -25,6 +25,8 @@ pub struct Ready {
     pub bus_url: String,
     pub engine_api: Option<String>,
     pub engine_hook: Option<String>,
+    /// Actual owned bind receipts, used to verify joined listener shutdown.
+    pub owned_listeners: Vec<std::net::SocketAddr>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +35,38 @@ pub enum Status {
     Ready(Ready),
     Failed(String),
     Stopped,
+}
+
+/// Probe the addresses reported by this owner after its joined shutdown.
+/// Reuse-address handles TCP TIME_WAIT, but only after a connection attempt
+/// confirms there is no listening service to accidentally share on Windows.
+pub async fn verify_owned_listeners_released(addresses: &[std::net::SocketAddr]) -> Result<()> {
+    use tokio::net::{TcpSocket, TcpStream};
+    for address in addresses {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            TcpStream::connect(address),
+        )
+        .await
+        {
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => (),
+            Ok(Ok(_)) => {
+                anyhow::bail!("An owned listener remains reachable after shutdown: {address}")
+            }
+            _ => anyhow::bail!("Cannot verify owned listener shutdown: {address}"),
+        }
+        let socket = if address.is_ipv4() {
+            TcpSocket::new_v4()?
+        } else {
+            TcpSocket::new_v6()?
+        };
+        socket.set_reuseaddr(true)?;
+        socket.bind(*address).with_context(|| {
+            format!("Owned listener could not be rebound after shutdown: {address}")
+        })?;
+        drop(socket.listen(1)?);
+    }
+    Ok(())
 }
 
 pub struct NativeHost {
@@ -150,9 +184,9 @@ async fn run(
     mut stopping: oneshot::Receiver<()>,
 ) -> Result<()> {
     let config = match mode {
-        #[cfg(feature = "embedded")]
-        Mode::Local(options) => {
-            return local::run(options, commands, views, status, stopping).await;
+        #[cfg(feature = "rust-hub")]
+        Mode::Rust(options) => {
+            return rust_local::run(options, commands, views, status, stopping).await;
         }
         Mode::Remote(config) => config,
         Mode::Demo => {
@@ -166,6 +200,7 @@ async fn run(
         bus_url: config.url.clone(),
         engine_api: None,
         engine_hook: None,
+        owned_listeners: vec![],
     }));
     let (backend, events) = Backend::connect(config);
     tokio::select! {
@@ -178,17 +213,25 @@ async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "embedded")]
+    #[cfg(feature = "rust-hub")]
     #[test]
-    fn local_startup_failure_is_visible_and_joinable() {
-        let host = NativeHost::start(Mode::Local(LocalOptions {
-            services_dir: Some(std::path::PathBuf::from("/nonexistent/native-services")),
-            database: std::path::PathBuf::from("unused-native-startup.db"),
-            hub_port: 7895,
-            mcp_port: 7897,
-            hook_port: 0,
-            api_port: 0,
-            no_plugins: true,
+    fn rust_startup_failure_is_visible_and_joinable() {
+        let path = std::env::temp_dir().join(format!(
+            "wks-native-config-file-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, "fixture: a file cannot be a config directory").unwrap();
+        let database = path.with_extension("db");
+        let host = NativeHost::start(Mode::Rust(RustOptions {
+            config_dir: path.clone(),
+            database: database.clone(),
+            data_dir: path.with_extension("hub"),
+            home_dir: path.with_extension("home"),
+            usage_poll_on_boot: Some(false),
         }))
         .unwrap();
         let status = host.status();
@@ -196,7 +239,7 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
             if let Status::Failed(message) = &*status.borrow() {
-                assert!(message.contains("Missing"), "{message}");
+                assert!(message.contains("Backend failed"), "{message}");
                 break;
             }
             assert!(
@@ -208,8 +251,13 @@ mod tests {
         let view = controller.views.borrow().clone();
         assert!(!view.connected);
         assert!(!view.busy && !view.creating);
-        assert!(view.notice.contains("Missing"));
+        assert!(view.notice.contains("Backend failed"));
         assert!(host.shutdown_blocking().is_err());
+        assert!(
+            !database.exists(),
+            "invalid host configuration must fail before engine startup"
+        );
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

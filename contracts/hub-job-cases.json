@@ -1,0 +1,20 @@
+{
+  "version":1,
+  "vocabulary":{"blocks":{
+    "scheduleCases":{"why":"The same trigger produces the same next instant in Go and Rust.","required":["name","trigger","after","offsetSeconds","expected"],"loaders":["services/hub/internal/jobs/migration_test.go::TestRustMigrationJobFixtures","services/hub-rs/tests/jobs.rs::shared_job_contract"]},
+    "promptCases":{"why":"Context output substitution and fallback preserve the existing job prompt.","required":["name","prompt","outputs","expected"],"loaders":["services/hub/internal/jobs/migration_test.go::TestRustMigrationJobFixtures","services/hub-rs/tests/jobs.rs::shared_job_contract"]}
+  }},
+  "scheduleCases":[
+    {"name":"interval reanchors from the supplied clock","trigger":{"kind":"interval","everyMinutes":5},"after":"2026-09-28T10:00:00Z","offsetSeconds":0,"expected":"2026-09-28T10:05:00Z"},
+    {"name":"daily is strictly after the current local instant","trigger":{"kind":"daily","at":"12:00"},"after":"2026-09-28T10:00:00Z","offsetSeconds":7200,"expected":"2026-09-29T10:00:00Z"},
+    {"name":"weekday filtering uses hub local time","trigger":{"kind":"daily","at":"12:00","days":[1]},"after":"2026-09-28T10:00:00Z","offsetSeconds":7200,"expected":"2026-10-05T10:00:00Z"},
+    {"name":"past once trigger still fires","trigger":{"kind":"once","once":"2026-09-27T00:00:00Z"},"after":"2026-09-28T10:00:00Z","offsetSeconds":0,"expected":"2026-09-27T00:00:00Z"},
+    {"name":"manual jobs have no next scheduled time","trigger":{"kind":"manual"},"after":"2026-09-28T10:00:00Z","offsetSeconds":0,"expected":null}
+  ],
+  "promptCases":[
+    {"name":"numbered output and last output compose","prompt":"{{output.1}} / {{output}}","outputs":["first","last"],"expected":"first / last"},
+    {"name":"unused outputs append only when no placeholder was used","prompt":"Task","outputs":["one","two"],"expected":"Task\n\n--- context step 1 ---\n```\none\n```\n\n--- context step 2 ---\n```\ntwo\n```"},
+    {"name":"a selected placeholder suppresses unused outputs","prompt":"Only {{output.1}}","outputs":["one","two"],"expected":"Only one"},
+    {"name":"without context the prompt stays intact","prompt":"Task {{output}}","outputs":[],"expected":"Task {{output}}"}
+  ]
+}

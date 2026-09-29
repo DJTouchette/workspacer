@@ -49,11 +49,13 @@ func loadContextHealthContract(t *testing.T) contextHealthContract {
 		"unsupportedProviders": {
 			"apps/desktop/src/main/services/thresholdWatch.test.ts::unsupportedProviders",
 			"services/hub/cmd/brain/contexthealth_contract_test.go::UnsupportedProviders",
+			"services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage",
 		},
 		"cumulativeCodex": {
 			"services/claudemon/src/providers/codex.rs::cumulativeCodex",
 			"apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
 			"services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex",
+			"services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage",
 		},
 	}
 	for block, want := range requiredLoaders {

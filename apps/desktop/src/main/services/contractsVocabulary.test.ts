@@ -53,6 +53,9 @@ const NO_BLOCK_FIXTURES = new Set([
   'config-lock.json',
   // wholesale-config-paths.json came OFF this list when it grew `valueCases`.
   'job-preset-power-down.json',
+  // Registration strings and source hashes, validated by the Rust inventory
+  // generator and actual-handler probe; this file contains no case objects.
+  'backend-capabilities.json',
 ]);
 
 /** How many case-carrying fixtures contracts/ holds today. */

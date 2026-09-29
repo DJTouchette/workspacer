@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RestartBackoff, parseWindowsListenerPids } from './daemonUtils';
+import { RestartBackoff, parseWindowsListenerPids, probeHealth } from './daemonUtils';
 
 describe('parseWindowsListenerPids', () => {
   // Realistic `netstat -ano -p tcp` shape, including every row family that
@@ -79,5 +79,38 @@ describe('RestartBackoff', () => {
     backoff.reset();
 
     expect(backoff.nextDelay()).toBe(100);
+  });
+});
+
+describe('owned one-shot health cancellation', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+  it('forwards external cancellation to fetch and clears its timeout', async () => {
+    vi.useFakeTimers();
+    let observed: AbortSignal | undefined;
+    const fetch = vi.fn(
+      (_url: unknown, options: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          observed = options.signal as AbortSignal;
+          observed.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        }),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const owner = new AbortController();
+    const pending = probeHealth('http://127.0.0.1:7895/health', 60_000, owner.signal);
+    owner.abort();
+    expect(await pending).toBe(false);
+    expect(observed?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it('does not issue a request for an already stopped owner', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const owner = new AbortController();
+    owner.abort();
+    expect(await probeHealth('http://127.0.0.1:7895/health', 1200, owner.signal)).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

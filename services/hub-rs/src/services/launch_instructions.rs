@@ -1,0 +1,131 @@
+//! Immutable project skills and trusted manager doctrine, shared with desktop.
+use anyhow::{Result, bail};
+use serde::Deserialize;
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Write,
+    path::{Component, Path, PathBuf},
+    sync::OnceLock,
+};
+#[derive(Deserialize)]
+struct Assets {
+    version: String,
+    files: BTreeMap<String, String>,
+    manager: String,
+}
+fn assets() -> &'static Assets {
+    static ASSETS: OnceLock<Assets> = OnceLock::new();
+    ASSETS.get_or_init(|| {
+        serde_json::from_str(include_str!("../../assets/launch-instructions.json"))
+            .expect("generated launch assets")
+    })
+}
+pub fn manager_doctrine() -> &'static str {
+    &assets().manager
+}
+pub fn skill_version() -> &'static str {
+    &assets().version
+}
+fn directory(path: &Path) -> Result<()> {
+    match fs::create_dir(path) {
+        Ok(()) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(error) => return Err(error.into()),
+    }
+    let meta = fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        bail!("skill directory is not an owned directory");
+    }
+    Ok(())
+}
+/// A conflict fails the whole preflight, preserving user content. Installation
+/// failure should omit the pointer, as desktop does, rather than block a launch.
+pub fn install_skills(cwd: &Path, home: &Path) -> Result<PathBuf> {
+    if !cwd.is_absolute() || fs::symlink_metadata(cwd)?.file_type().is_symlink() {
+        bail!("unsafe skill cwd");
+    }
+    let cwd = fs::canonicalize(cwd)?;
+    if cwd.parent().is_none() || fs::canonicalize(home).ok().as_ref() == Some(&cwd) {
+        bail!("skills cannot be installed in home or filesystem root");
+    }
+    if !fs::metadata(&cwd)?.is_dir() {
+        bail!("skill cwd is not a directory");
+    }
+    let mut root = cwd.clone();
+    for part in [".workspacer", "skills", skill_version()] {
+        root.push(part);
+        directory(&root)?;
+    }
+    for (relative, content) in &assets().files {
+        let relative = Path::new(relative);
+        if relative
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            bail!("invalid bundled skill path");
+        }
+        let path = root.join(relative);
+        // Validate/create every parent before any content is written.
+        let mut parent = root.clone();
+        if let Some(parts) = relative.parent() {
+            for part in parts.components() {
+                parent.push(part);
+                directory(&parent)?;
+            }
+        }
+        match fs::symlink_metadata(&path) {
+            Ok(meta) => {
+                if !meta.is_file()
+                    || meta.file_type().is_symlink()
+                    || fs::read(&path)? != content.as_bytes()
+                {
+                    bail!("preexisting skill differs from bundled asset");
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    for (relative, content) in &assets().files {
+        let path = root.join(relative);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(content.as_bytes())?;
+                file.sync_all()?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let meta = fs::symlink_metadata(&path)?;
+                if !meta.is_file()
+                    || meta.file_type().is_symlink()
+                    || fs::read(path)? != content.as_bytes()
+                {
+                    bail!("skill changed during installation");
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(root)
+}
+pub fn instructions(
+    session: &str,
+    provider: &str,
+    cwd: &Path,
+    home: &Path,
+    manager: bool,
+) -> String {
+    let mut parts = vec![format!("You are running inside Workspacer session {session} with access to the local workspacer MCP facade."),"Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is operator.".into()];
+    if manager {
+        parts.push(manager_doctrine().into());
+    } else if provider != "pi" {
+        if let Ok(root) = install_skills(cwd, home) {
+            parts.push(format!("Workspacer provides two project skills: read {:?} before spawning child agents, and {:?} before maintaining the project brief.",root.join("spawn-agent/SKILL.md"),root.join("project-brief/SKILL.md")));
+        }
+    }
+    parts.join("\n")
+}

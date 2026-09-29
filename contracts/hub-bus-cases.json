@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "vocabulary": {"blocks":{"cases":{"why":"Identical bus scenarios run against Go, Rust WebSocket and Rust embedded transports.","required":["name","steps"],"loaders":["services/hub/internal/bus/migration_test.go::TestMigrationBusFixtures", "services/hub-rs/tests/compatibility.rs::shared_contracts_embedded"]}}},
+  "description": "Behavioral fixtures shared by the Go reference, Rust WebSocket adapter and embedded Rust core. Deliberately partial: see the migration inventory.",
+  "cases": [
+    {
+      "name":"empty demand prefixes match nothing",
+      "steps":[
+        {"connect":"watcher"},
+        {"connect":"viewer"},
+        {"send":"watcher","frame":{"op":"demand","topics":[""]}},
+        {"send":"watcher","frame":{"op":"subscribe"}},
+        {"expect":"watcher","frame":{"op":"subscribed"}},
+        {"send":"viewer","frame":{"op":"subscribe","topics":["agent.conversation.one"]}},
+        {"expect":"viewer","frame":{"op":"subscribed","topics":["agent.conversation.one"]}},
+        {"send":"watcher","frame":{"op":"call","id":"barrier","method":"test.echo","params":{}}},
+        {"expect":"watcher","frame":{"op":"result","id":"barrier","result":{}}}
+      ]
+    },
+    {
+      "name":"demand releases only after the last distinct subscriber leaves",
+      "steps":[
+        {"connect":"watcher"},
+        {"connect":"first"},
+        {"connect":"second"},
+        {"send":"watcher","frame":{"op":"demand","topics":["agent.conversation."]}},
+        {"send":"watcher","frame":{"op":"subscribe"}},
+        {"expect":"watcher","frame":{"op":"subscribed"}},
+        {"send":"first","frame":{"op":"subscribe","topics":["agent.conversation.one"]}},
+        {"expect":"first","frame":{"op":"subscribed","topics":["agent.conversation.one"]}},
+        {"expect":"watcher","frame":{"op":"demand","topic":"agent.conversation.one","demand":true}},
+        {"send":"second","frame":{"op":"subscribe","topics":["agent.conversation.one","agent.conversation.one"]}},
+        {"expect":"second","frame":{"op":"subscribed","topics":["agent.conversation.one"]}},
+        {"send":"first","frame":{"op":"unsubscribe","topics":["agent.conversation.one"]}},
+        {"expect":"first","frame":{"op":"unsubscribed"}},
+        {"send":"watcher","frame":{"op":"call","id":"barrier","method":"test.echo","params":{}}},
+        {"expect":"watcher","frame":{"op":"result","id":"barrier","result":{}}},
+        {"disconnect":"second"},
+        {"expect":"watcher","frame":{"op":"demand","topic":"agent.conversation.one"}}
+      ]
+    },
+    {
+      "name": "view cannot register providers or call unknown methods",
+      "steps": [
+        {"connect":"viewer","token":"migration-view-only","scope":"view"},
+        {"send":"viewer","frame":{"op":"register","methods":["claude.approve"]}},
+        {"expect":"viewer","frame":{"op":"registered"}},
+        {"send":"viewer","frame":{"op":"call","id":"denied","method":"future.unknown"}},
+        {"expect":"viewer","frame":{"op":"error","id":"denied","error":"not authorized: method \"future.unknown\" is outside this token's \"view\" scope (mint a broader token with `workspacer token create`)"}},
+        {"send":"viewer","frame":{"op":"call","id":"allowed","method":"sessions.snapshots"}},
+        {"expect":"viewer","frame":{"op":"error","id":"allowed","error":"no provider for sessions.snapshots"}}
+      ]
+    },
+    {
+      "name": "provider register star grants no operator calls",
+      "steps": [
+        {"connect":"provider","token":"migration-provider-only","scope":"provider"},
+        {"send":"provider","frame":{"op":"register","methods":["sessions.snapshots"]}},
+        {"expect":"provider","frame":{"op":"registered","methods":["sessions.snapshots"]}},
+        {"send":"provider","frame":{"op":"call","id":"denied","method":"sessions.snapshots"}},
+        {"expect":"provider","frame":{"op":"error","id":"denied","error":"not authorized: method \"sessions.snapshots\" is outside this token's \"provider\" scope (mint a broader token with `workspacer token create`)"}},
+        {"send":"provider","frame":{"op":"call","id":"allowed","method":"layout.get"}},
+        {"expect":"provider","frame":{"op":"error","id":"allowed","error":"no provider for layout.get"}}
+      ]
+    },
+    {
+      "name": "operator scope is not authenticated host provenance",
+      "steps": [
+        {"connect":"operator","token":"migration-operator-only"},
+        {"send":"operator","frame":{"op":"call","id":"denied","method":"desktop.worktreeCreate"}},
+        {"expect":"operator","frame":{"op":"error","id":"denied","error":"desktop services require the authenticated server owner's connection"}}
+      ]
+    },
+    {
+      "name": "subscriptions and literal wildcard semantics",
+      "steps": [
+        {"connect": "client"},
+        {"send": "client", "frame": {"op":"subscribe","topics":["agent.*","git.changed","agent.*"]}},
+        {"expect": "client", "frame": {"op":"subscribed","topics":["agent.*","git.changed"]}},
+        {"send": "client", "frame": {"op":"publish","event":{"id":"known","type":"agent.state.changed","source":"fixture","time":"2026-09-28T00:00:00Z","data":{"state":"ready"}}}},
+        {"expect": "client", "frame": {"op":"event","event":{"id":"known","type":"agent.state.changed","source":"fixture","time":"2026-09-28T00:00:00Z","data":{"state":"ready"}}}},
+        {"send": "client", "frame": {"op":"unsubscribe","topics":["agent.*"]}},
+        {"expect": "client", "frame": {"op":"unsubscribed","topics":["git.changed"]}},
+        {"send": "client", "frame": {"op":"unsubscribe","topics":["git.changed"]}},
+        {"expect": "client", "frame": {"op":"unsubscribed"}}
+      ]
+    },
+    {
+      "name": "first provider owns method and local handlers take precedence",
+      "steps": [
+        {"connect":"owner"},
+        {"connect":"other"},
+        {"send":"owner","frame":{"op":"register","methods":["fixture.echo","test.echo",""]}},
+        {"expect":"owner","frame":{"op":"registered","methods":["fixture.echo"]}},
+        {"send":"other","frame":{"op":"register","methods":["fixture.echo"]}},
+        {"expect":"other","frame":{"op":"registered"}},
+        {"send":"other","frame":{"op":"call","id":"local","method":"test.echo","params":{"hello":"local"}}},
+        {"expect":"other","frame":{"op":"result","id":"local","result":{"hello":"local"}}},
+        {"send":"owner","frame":{"op":"register","methods":["fixture.echo"]}},
+        {"expect":"owner","frame":{"op":"registered","methods":["fixture.echo"]}}
+      ]
+    },
+    {
+      "name": "provider replies require the owning connection",
+      "steps": [
+        {"connect":"caller"},
+        {"connect":"provider"},
+        {"connect":"impostor"},
+        {"send":"provider","frame":{"op":"register","methods":["fixture.answer"]}},
+        {"expect":"provider","frame":{"op":"registered","methods":["fixture.answer"]}},
+        {"send":"caller","frame":{"op":"call","id":"original","method":"fixture.answer","params":{"input":42}}},
+        {"expect":"provider","captureId":"forwarded","frame":{"op":"call","id":"$forwarded","method":"fixture.answer","params":{"input":42}}},
+        {"send":"impostor","frame":{"op":"result","id":"$forwarded","result":"forged"}},
+        {"send":"impostor","frame":{"op":"subscribe"}},
+        {"expect":"impostor","frame":{"op":"subscribed"}},
+        {"send":"provider","frame":{"op":"result","id":"$forwarded","result":"correct"}},
+        {"expect":"caller","frame":{"op":"result","id":"original","result":"correct"}}
+      ]
+    },
+    {
+      "name": "provider disconnect fails pending call",
+      "steps": [
+        {"connect":"caller"},
+        {"connect":"provider"},
+        {"send":"provider","frame":{"op":"register","methods":["fixture.pending"]}},
+        {"expect":"provider","frame":{"op":"registered","methods":["fixture.pending"]}},
+        {"send":"caller","frame":{"op":"call","id":"waiting","method":"fixture.pending"}},
+        {"expect":"provider","captureId":"forwarded","frame":{"op":"call","id":"$forwarded","method":"fixture.pending"}},
+        {"disconnect":"provider"},
+        {"expect":"caller","frame":{"op":"error","id":"waiting","error":"provider for fixture.pending disconnected"}},
+        {"send":"caller","frame":{"op":"register","methods":["fixture.pending"]}},
+        {"expect":"caller","frame":{"op":"registered","methods":["fixture.pending"]}}
+      ]
+    },
+    {
+      "name": "demand counts exact subscriptions and releases on disconnect",
+      "steps": [
+        {"connect":"provider"},
+        {"connect":"viewer"},
+        {"send":"provider","frame":{"op":"demand","topics":["agent.conversation."]}},
+        {"send":"provider","frame":{"op":"subscribe"}},
+        {"expect":"provider","frame":{"op":"subscribed"}},
+        {"send":"viewer","frame":{"op":"subscribe","topics":["*","agent.conversation.one"]}},
+        {"expect":"viewer","frame":{"op":"subscribed","topics":["*","agent.conversation.one"]}},
+        {"expect":"provider","frame":{"op":"demand","topic":"agent.conversation.one","demand":true}},
+        {"send":"viewer","frame":{"op":"subscribe","topics":["agent.conversation.one"]}},
+        {"expect":"viewer","frame":{"op":"subscribed","topics":["*","agent.conversation.one"]}},
+        {"disconnect":"viewer"},
+        {"expect":"provider","frame":{"op":"demand","topic":"agent.conversation.one"}}
+      ]
+    },
+    {
+      "name": "protocol errors and null local results",
+      "steps": [
+        {"connect":"client"},
+        {"send":"client","frame":{"op":"call","id":"missing"}},
+        {"expect":"client","frame":{"op":"error","id":"missing","error":"call missing method"}},
+        {"send":"client","frame":{"op":"call","id":"unknown","method":"fixture.absent"}},
+        {"expect":"client","frame":{"op":"error","id":"unknown","error":"no provider for fixture.absent"}},
+        {"send":"client","frame":{"op":"publish"}},
+        {"expect":"client","frame":{"op":"error","error":"publish missing event"}},
+        {"send":"client","frame":{"op":"mystery"}},
+        {"expect":"client","frame":{"op":"error","error":"unknown op: mystery"}},
+        {"send":"client","frame":{"op":"call","id":"null","method":"test.echo","params":null}},
+        {"expect":"client","frame":{"op":"result","id":"null","result":null}}
+      ]
+    }
+  ]
+}

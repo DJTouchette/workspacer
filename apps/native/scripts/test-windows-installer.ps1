@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Installer)
+param([Parameter(Mandatory)][string]$Installer, [ValidateSet('rust')][string]$Backend = 'rust')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = (Resolve-Path "$PSScriptRoot/../../..").Path
@@ -7,11 +7,13 @@ $stage = Join-Path $root 'apps/native/target/windows-package'
 $harness = Join-Path $root 'apps/native/target/release/native-harness.exe'
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("native-install-" + [guid]::NewGuid())
 # Spaces exercise installer command-line quoting and sibling binary resolution.
-$installDir = Join-Path $testRoot 'Workspacer Native'
-$notificationKey = 'HKCU:\Software\Classes\AppUserModelId\Workspacer.Native'
-$key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Workspacer Native'
+$product = 'Workspacer Native Rust Preview'
+$appId = 'Workspacer.Native.RustPreview'
+$installDir = Join-Path $testRoot $product
+$notificationKey = "HKCU:\Software\Classes\AppUserModelId\$appId"
+$key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$product"
 if (Test-Path $key) { throw 'Smoke test requires a user without Workspacer Native installed' }
-$shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Workspacer Native.lnk'
+$shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) "$product.lnk"
 if (Test-Path $shortcutPath) { throw 'Smoke test refuses to replace an existing shortcut' }
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 $uninstalled = $false
@@ -32,13 +34,6 @@ function Invoke-Uninstaller {
         if ($process.ExitCode -ne 0) { throw "Uninstall failed: $($process.ExitCode)" }
     }
 }
-function Get-FreePort {
-    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    $port = $listener.LocalEndpoint.Port
-    $listener.Stop()
-    return $port
-}
 try {
     Invoke-Installer
     $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcutPath)
@@ -46,7 +41,7 @@ try {
         throw 'Start menu shortcut must launch the installed GUI in local mode'
     }
     if (!(Test-Path $key)) { throw 'Windows uninstall registration missing' }
-    if (!(Test-Path $notificationKey) -or (Get-ItemProperty $notificationKey).DisplayName -ne 'Workspacer Native') { throw 'Native notification identity missing' }
+    if (!(Test-Path $notificationKey) -or (Get-ItemProperty $notificationKey).DisplayName -ne $product) { throw 'Native notification identity missing' }
     $expectedUninstall = '"' + (Join-Path $installDir 'Uninstall.exe') + '"'
     $registration = Get-ItemProperty $key
     if ($registration.UninstallString -ne $expectedUninstall -or $registration.QuietUninstallString -ne "$expectedUninstall /S") {
@@ -71,22 +66,15 @@ try {
     $env:XDG_DATA_HOME = $env:LOCALAPPDATA
     $env:WORKSPACER_USAGE_POLL_ON_BOOT = '0'
     Remove-Item Env:WKS_DESKTOP_HOST -ErrorAction SilentlyContinue
-    # Remove runner Node from PATH: brain must find the packaged sibling runtime.
+    # Verify the installed backend runs with Node absent from PATH.
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-    $node = Join-Path $installDir 'node.exe'
-    & $node -e "const { DatabaseSync } = require('node:sqlite'); new DatabaseSync(':memory:').close()"
-    if ($LASTEXITCODE -ne 0) { throw 'Packaged Node SQLite runtime failed' }
-    $hubPort = Get-FreePort
-    do { $mcpPort = Get-FreePort } while ($mcpPort -eq $hubPort)
-    & $harness embedded-probe --services-dir $installDir --database (Join-Path $testRoot 'state.db') --hub-port $hubPort --mcp-port $mcpPort
-    if ($LASTEXITCODE -ne 0) { throw 'Installed embedded backend probe failed' }
-    # The backend must initialize the pairing token before a service call creates
-    # settings; otherwise the intentional missing-token/state-loss guard fires.
-    $reply = '{"id":"smoke","method":"desktop.pricingGetRates","params":{},"context":{}}' |
-        & $node (Join-Path $installDir 'desktop-host.cjs') | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0 -or $reply.id -ne 'smoke' -or $reply.PSObject.Properties['error'] -or !$reply.result.defaults) {
-        throw 'Installed desktop service bundle failed its protocol check'
+    foreach ($forbidden in @('node.exe','workspacer.exe','hub.exe','brain.exe','mcp.exe','desktop-host.cjs','NODE-LICENSE.txt')) {
+        if (Test-Path (Join-Path $installDir $forbidden)) { throw "Rust payload contains legacy companion: $forbidden" }
     }
+    & (Join-Path $installDir 'workspacer-rust.exe') --help
+    if ($LASTEXITCODE -ne 0) { throw 'Installed Rust standalone CLI failed' }
+    & $harness rust-probe --directory $testRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Installed Rust backend probe failed' }
     # Restore the shell paths before invoking the uninstall machinery.
     foreach ($name in $savedEnv.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
     Invoke-Uninstaller

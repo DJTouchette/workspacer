@@ -42,13 +42,9 @@ asarUnpack:
 electronLanguages:
   - en-US
 
-# Sibling daemons live at <repo>/services/* — built by `npm run build:hub`
-# and `npm run build:claudemon` (both run by `npm run package`).
-#
-# The `workspacer` CLI (headless-server launcher, `npm run build:cli`) resolves
-# its daemons sibling-first, so hub/ carries all four binaries side by side —
-# including a second claudemon copy next to the one the app itself spawns from
-# claudemon/ (a ~12 MB duplication that buys zero-flag `workspacer serve`).
+# Electron retains its owned claudemon and provides UI capabilities to the Rust
+# control plane. The standalone Rust executable also embeds its own engine when
+# started with `serve`; no Go executables or private Node companion are packaged.
 linux:
   icon: build/icon.png
   target:
@@ -57,18 +53,8 @@ linux:
   extraResources:
     - from: ../../services/claudemon/target/release/claudemon
       to: claudemon/claudemon
-    - from: ../../services/hub/hub
-      to: hub/hub
-    - from: ../../services/hub/mcp
-      to: hub/mcp
-    - from: ../../services/hub/brain
-      to: hub/brain
-    - from: ../../services/hub/workspacer
-      to: hub/workspacer
-    - from: ../../services/claudemon/target/release/claudemon
-      to: hub/claudemon
-    - from: dist/headless/desktop-host.cjs
-      to: hub/desktop-host.cjs
+    - from: ../../services/hub-rs/target/release/workspacer-rust
+      to: hub/workspacer-rust
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -82,18 +68,8 @@ win:
   extraResources:
     - from: ../../services/claudemon/target/release/claudemon.exe
       to: claudemon/claudemon.exe
-    - from: ../../services/hub/hub.exe
-      to: hub/hub.exe
-    - from: ../../services/hub/mcp.exe
-      to: hub/mcp.exe
-    - from: ../../services/hub/brain.exe
-      to: hub/brain.exe
-    - from: ../../services/hub/workspacer.exe
-      to: hub/workspacer.exe
-    - from: ../../services/claudemon/target/release/claudemon.exe
-      to: hub/claudemon.exe
-    - from: dist/headless/desktop-host.cjs
-      to: hub/desktop-host.cjs
+    - from: ../../services/hub-rs/target/release/workspacer-rust.exe
+      to: hub/workspacer-rust.exe
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web
@@ -107,18 +83,8 @@ mac:
   extraResources:
     - from: ../../services/claudemon/target/release/claudemon
       to: claudemon/claudemon
-    - from: ../../services/hub/hub
-      to: hub/hub
-    - from: ../../services/hub/mcp
-      to: hub/mcp
-    - from: ../../services/hub/brain
-      to: hub/brain
-    - from: ../../services/hub/workspacer
-      to: hub/workspacer
-    - from: ../../services/claudemon/target/release/claudemon
-      to: hub/claudemon
-    - from: dist/headless/desktop-host.cjs
-      to: hub/desktop-host.cjs
+    - from: ../../services/hub-rs/target/release/workspacer-rust
+      to: hub/workspacer-rust
     - from: ../../services/hub/examples
       to: hub/examples
     - from: dist/web

@@ -1,0 +1,168 @@
+[
+  {
+    "raw": "malformed JSON\n\n{\"role\":\"user\",\"content\":\"  first  \"}\n{\"type\":\"assistant\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"},{\"type\":\"tool_use\",\"id\":\"x\",\"name\":\"Read\",\"input\":{\"path\":\"a\"}},{\"type\":\"tool_use\",\"id\":\"interrupted\",\"name\":\"Bash\"}]}}\n{\"type\":\"user\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"x\",\"content\":[{\"text\":\"line1\"},{\"type\":\"image\"},{\"text\":\"line2\"}],\"is_error\":true},{\"type\":\"text\",\"text\":\" next \"}]}}",
+    "now": 1767225600999,
+    "transcript": [
+      {
+        "role": "user",
+        "text": "first"
+      },
+      {
+        "role": "assistant",
+        "text": "hello\n⚙ Read\n⚙ Bash"
+      },
+      {
+        "role": "user",
+        "text": "↳ line1line2\n next"
+      }
+    ],
+    "conversation": [
+      {
+        "role": "user",
+        "content": "  first  ",
+        "timestamp": 1767225600999
+      },
+      {
+        "role": "assistant",
+        "content": "hello",
+        "timestamp": 1767225600000
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "timestamp": 1767225600000,
+        "toolCalls": [
+          {
+            "id": "x",
+            "name": "Read",
+            "input": {
+              "path": "a"
+            },
+            "status": "failed",
+            "startedAt": 1767225600000,
+            "response": "line1line2",
+            "completedAt": 1767225601000
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "timestamp": 1767225600000,
+        "toolCalls": [
+          {
+            "id": "interrupted",
+            "name": "Bash",
+            "input": {},
+            "status": "running",
+            "startedAt": 1767225600000
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": " next ",
+        "timestamp": 1767225601000
+      }
+    ]
+  },
+  {
+    "raw": "malformed JSON\n\n{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\"},{\"type\":\"tool_result\",\"tool_use_id\":\"missing\",\"content\":\"ignored in rich view\"},{\"type\":\"text\",\"text\":\"   \"}]}",
+    "now": 1767225600999,
+    "transcript": [
+      {
+        "role": "assistant",
+        "text": "⚙ tool\n↳ ignored in rich view"
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "",
+        "timestamp": 1767225600999,
+        "toolCalls": [
+          {
+            "id": "tc-1767225600999-0",
+            "name": "tool",
+            "input": {},
+            "status": "running",
+            "startedAt": 1767225600999
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "raw": "malformed JSON\n\n{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}]}}\n{\"type\":\"assistant\",\"message\":{\"content\":\"🧑‍💻 Unicode\"}}\n{\"type\":\"system\",\"message\":{\"content\":\"not a visible turn\"}}",
+    "now": 1767225600999,
+    "transcript": [
+      {
+        "role": "user",
+        "text": "↳ xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "role": "assistant",
+        "text": "🧑‍💻 Unicode"
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "🧑‍💻 Unicode",
+        "timestamp": 1767225600999
+      }
+    ]
+  },
+  {
+    "raw": "malformed JSON\n\n{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"same\",\"name\":\"One\"},{\"type\":\"tool_use\",\"id\":\"same\",\"name\":\"Two\"}]}}\n{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"same\",\"content\":\"last duplicate wins\"}]}}",
+    "now": 1767225600999,
+    "transcript": [
+      {
+        "role": "assistant",
+        "text": "⚙ One\n⚙ Two"
+      },
+      {
+        "role": "user",
+        "text": "↳ last duplicate wins"
+      }
+    ],
+    "conversation": [
+      {
+        "role": "assistant",
+        "content": "",
+        "timestamp": 1767225600999,
+        "toolCalls": [
+          {
+            "id": "same",
+            "name": "One",
+            "input": {},
+            "status": "running",
+            "startedAt": 1767225600999
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "timestamp": 1767225600999,
+        "toolCalls": [
+          {
+            "id": "same",
+            "name": "Two",
+            "input": {},
+            "status": "complete",
+            "startedAt": 1767225600999,
+            "response": "last duplicate wins",
+            "completedAt": 1767225600999
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "raw": "malformed JSON\n\n",
+    "now": 1767225600999,
+    "transcript": [],
+    "conversation": []
+  }
+]

@@ -1,0 +1,263 @@
+{
+  "ui": {
+    "animations": false,
+    "theme": "everforest",
+    "cornerStyle": "",
+    "borderColor": "",
+    "fontFamily": "hanken",
+    "fontSize": 14,
+    "borderRadius": 8,
+    "navBarHeight": 34,
+    "sidebarWidth": 296,
+    "paneHeaderHeight": 22,
+    "showComposerSend": true,
+    "guiFontScale": 1.15,
+    "uiFontScale": 1.0,
+    "diffView": "stacked",
+    "mode": "fleet"
+  },
+  "terminal": {
+    "shell": "",
+    "shells": [
+      {
+        "name": "default",
+        "path": "",
+        "label": "Default ($SHELL)"
+      },
+      {
+        "name": "bash",
+        "path": "/bin/bash",
+        "label": "Bash"
+      },
+      {
+        "name": "zsh",
+        "path": "/bin/zsh",
+        "label": "Zsh"
+      },
+      {
+        "name": "fish",
+        "path": "/usr/bin/fish",
+        "label": "Fish"
+      }
+    ],
+    "fontFamily": "\"JetBrainsMono Nerd Font Mono\", \"JetBrainsMonoNL Nerd Font Mono\", \"JetBrainsMono NFM\", \"JetBrainsMonoNL NFM\", \"JetBrainsMono NF\", \"CaskaydiaMono Nerd Font Mono\", \"CaskaydiaCove Nerd Font Mono\", \"CaskaydiaMono NF\", \"Cascadia Mono\", monospace",
+    "fontSize": 14,
+    "scrollback": 1500,
+    "cursorBlink": true,
+    "cursorStyle": "block"
+  },
+  "browser": {
+    "homepage": "https://google.com",
+    "bookmarks": [
+      {
+        "name": "Go Docs",
+        "url": "https://pkg.go.dev"
+      },
+      {
+        "name": "MDN",
+        "url": "https://developer.mozilla.org"
+      },
+      {
+        "name": "Localhost 3000",
+        "url": "http://localhost:3000"
+      },
+      {
+        "name": "Localhost 8080",
+        "url": "http://localhost:8080"
+      }
+    ],
+    "hibernateAfter": 300
+  },
+  "panes": {
+    "defaultWidth": 800,
+    "gap": 0,
+    "peek": 0,
+    "insertPosition": "after",
+    "tabPosition": "top",
+    "viewLevel": "piloting",
+    "default": [
+      {
+        "id": "terminal-1",
+        "type": "terminal",
+        "title": "Terminal 1",
+        "width": 800,
+        "order": 0
+      },
+      {
+        "id": "terminal-2",
+        "type": "terminal",
+        "title": "Terminal 2",
+        "width": 800,
+        "order": 1
+      },
+      {
+        "id": "terminal-3",
+        "type": "terminal",
+        "title": "Terminal 3",
+        "width": 800,
+        "order": 2
+      }
+    ]
+  },
+  "keybindings": {
+    "prefix": "ctrl+space",
+    "chordHints": true,
+    "presetId": "vscode",
+    "commandLayer": {
+      "enabled": false,
+      "timeoutMs": 0,
+      "repeatMs": 500,
+      "hudDelayMs": 400,
+      "passthrough": true,
+      "indicator": "strip",
+      "leaderOverride": ""
+    },
+    "shortcuts": {
+      "command-palette": "mod+k",
+      "open-file": "mod+p",
+      "next-agent": "ctrl+tab",
+      "prev-agent": "ctrl+shift+tab",
+      "next-attention": "mod+shift+space",
+      "spawn-agent": "mod+shift+n",
+      "settings": "mod+,",
+      "save-session": "mod+s",
+      "toggle-help": "f1",
+      "text-size-up": "mod+=",
+      "text-size-down": "mod+-",
+      "text-size-reset": "mod+0",
+      "toggle-terminal": "mod+`",
+      "toggle-sidebar": "mod+b",
+      "toggle-inbox": "mod+shift+i",
+      "toggle-fleet": "mod+shift+f",
+      "toggle-ui-mode": "mod+shift+m",
+      "toggle-inspector": "mod+shift+e",
+      "library-picker": "mod+shift+l",
+      "open-review": "mod+shift+g",
+      "new-terminal": "prefix t",
+      "new-claude": "prefix c",
+      "new-browser": "prefix b",
+      "split": "prefix s",
+      "quick-split": "prefix q",
+      "close-pane": "prefix w",
+      "rename-tab": "prefix r",
+      "prev-tab": "prefix [",
+      "next-tab": "prefix ]",
+      "move-tab-left": "prefix ,",
+      "move-tab-right": "prefix .",
+      "nav-left": "prefix h",
+      "nav-down": "prefix j",
+      "nav-up": "prefix k",
+      "nav-right": "prefix l"
+    }
+  },
+  "notifications": {
+    "enabled": true,
+    "notifyDone": true,
+    "onlyWhenUnwatched": true,
+    "sound": false,
+    "inAppToasts": true
+  },
+  "editor": {
+    "engine": "codemirror",
+    "terminalCommand": "nvim"
+  },
+  "claude": {
+    "defaultModel": "opus",
+    "contextWindow": 1000000,
+    "seenModels": [],
+    "skipPermissionsDefault": false,
+    "defaultPermissionMode": "",
+    "defaultView": "terminal",
+    "workLog": "cards",
+    "showTimestamps": false,
+    "showFileReads": true,
+    "transport": "stream",
+    "settingsOverlay": false,
+    "keepWarm": {
+      "enabled": false,
+      "providers": [
+        "claude"
+      ],
+      "mode": "auto",
+      "intervalHours": 5,
+      "dailyAt": "08:00"
+    }
+  },
+  "codex": {
+    "transport": "stream"
+  },
+  "usage": {
+    "pollOnBoot": true
+  },
+  "agents": {
+    "defaultProvider": "claude",
+    "defaultCwd": "",
+    "fleetRoot": "",
+    "managerProvider": "claude",
+    "checkProviderOnStartup": true,
+    "binaries": {
+      "claude": "",
+      "codex": "",
+      "copilot": "",
+      "opencode": "",
+      "pi": ""
+    },
+    "statusSummary": {
+      "enabled": true,
+      "provider": "claude",
+      "model": "haiku"
+    },
+    "autoTitle": {
+      "enabled": true,
+      "model": "haiku"
+    },
+    "worktreeRoot": "",
+    "artifactCleanup": {
+      "enabled": true,
+      "minAgeHours": 1
+    }
+  },
+  "directories": {
+    "recent": [],
+    "favourites": []
+  },
+  "scripts": {},
+  "widgets": {},
+  "projects": {},
+  "updates": {
+    "enabled": true,
+    "channel": "latest"
+  },
+  "apps": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com",
+      "icon": "\ud83d\udcbb"
+    },
+    {
+      "name": "ChatGPT",
+      "url": "https://chat.openai.com",
+      "icon": "\ud83e\udd16"
+    },
+    {
+      "name": "Claude",
+      "url": "https://claude.ai",
+      "icon": "\u2728"
+    },
+    {
+      "name": "Stack Overflow",
+      "url": "https://stackoverflow.com",
+      "icon": "\ud83d\udcda"
+    },
+    {
+      "name": "Localhost 3000",
+      "url": "http://localhost:3000",
+      "icon": "\ud83c\udf10"
+    },
+    {
+      "name": "Localhost 8080",
+      "url": "http://localhost:8080",
+      "icon": "\ud83c\udf10"
+    }
+  ]
+}

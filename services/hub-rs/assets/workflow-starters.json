@@ -1,0 +1,91 @@
+[
+  {
+    "id": "scout-implement-review",
+    "revision": 1,
+    "name": "Scout → implement → independent review",
+    "description": "Scout when material architecture, security or compatibility risk warrants it.",
+    "enabled": true,
+    "steps": [
+      {
+        "id": "scout",
+        "label": "scout",
+        "kind": "research",
+        "stage": "scout",
+        "role": "scout",
+        "template": "scout-task",
+        "when": "material_risk",
+        "instructions": ""
+      },
+      {
+        "id": "implement",
+        "label": "implement",
+        "kind": "implement",
+        "stage": "implement",
+        "role": "implementer",
+        "template": "ship-task",
+        "when": "always",
+        "instructions": ""
+      },
+      {
+        "id": "review",
+        "label": "review",
+        "kind": "review",
+        "stage": "review",
+        "role": "reviewer",
+        "template": "review-task",
+        "when": "always",
+        "instructions": "",
+        "independentOf": "implement"
+      }
+    ]
+  },
+  {
+    "id": "direct-implementation",
+    "revision": 1,
+    "name": "Direct implementation",
+    "description": "Explicit policy: implementation without independent review.",
+    "enabled": true,
+    "steps": [
+      {
+        "id": "implement",
+        "label": "implement",
+        "kind": "implement",
+        "stage": "implement",
+        "role": "implementer",
+        "template": "ship-task",
+        "when": "always",
+        "instructions": ""
+      }
+    ]
+  },
+  {
+    "id": "implement-review",
+    "revision": 1,
+    "name": "Implement → independent review",
+    "description": "Default: the implementer investigates and builds, then a fresh worker reviews.",
+    "enabled": true,
+    "steps": [
+      {
+        "id": "implement",
+        "label": "implement",
+        "kind": "implement",
+        "stage": "implement",
+        "role": "implementer",
+        "template": "ship-task",
+        "when": "always",
+        "instructions": "Do the brief discovery needed to understand the task, then implement and run the relevant checks. Reuse verified findings already provided. Surface consequential unresolved architecture, security or compatibility decisions before committing to an approach."
+      },
+      {
+        "id": "review",
+        "label": "review",
+        "kind": "review",
+        "stage": "review",
+        "role": "reviewer",
+        "template": "review-task",
+        "when": "always",
+        "instructions": "",
+        "independentOf": "implement"
+      }
+    ]
+  }
+]

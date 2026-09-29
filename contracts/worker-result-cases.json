@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "vocabulary": {"blocks": {
+    "validationCases": {"why":"Worker result contracts intentionally ignore unsupported schema keywords.","required":["name","schema","value","errors"],"loaders":["apps/desktop/src/main/shared/structuredResult.test.ts::portableWorkerResultContracts","services/hub-rs/tests/worker_results.rs::shared_worker_result_contracts"]},
+    "resultCases": {"why":"Fence precedence and reporting failures remain visible beside prose.","required":["name","schema","message"],"optional":["value","errorContains"],"loaders":["apps/desktop/src/main/shared/structuredResult.test.ts::portableWorkerResultContracts","services/hub-rs/tests/worker_results.rs::shared_worker_result_contracts"]},
+    "escalationCases": {"why":"A terminal escalation is a distinct, strictly validated alternative to completion.","required":["name","message"],"optional":["value","errorContains","absent"],"loaders":["apps/desktop/src/main/shared/structuredResult.test.ts::portableWorkerResultContracts","services/hub-rs/tests/worker_results.rs::shared_worker_result_contracts"]}
+  }},
+  "validationCases": [
+    {"name":"valid object","schema":{"type":"object","required":["commit"],"properties":{"commit":{"type":"string"}}},"value":{"commit":"abc"},"errors":[]},
+    {"name":"missing required field","schema":{"required":["commit"]},"value":{},"errors":["commit: required property missing"]},
+    {"name":"wrong type stops child cascade","schema":{"type":"object","required":["commit"]},"value":3,"errors":["result: expected object, got integer"]},
+    {"name":"subset ignores string constraints","schema":{"type":"string","minLength":100,"pattern":"^[a-z]+$"},"value":"","errors":[]},
+    {"name":"false schema remains unconstrained legacy subset","schema":false,"value":null,"errors":[]},
+    {"name":"unknown type remains unconstrained","schema":{"type":"future-type"},"value":false,"errors":[]},
+    {"name":"nullable union","schema":{"type":["string","null"]},"value":null,"errors":[]},
+    {"name":"integer differs from number","schema":{"type":"integer"},"value":1.5,"errors":["result: expected integer, got number"]},
+    {"name":"integral float is an integer","schema":{"type":"integer"},"value":2.0,"errors":[]},
+    {"name":"closed object","schema":{"properties":{"a":{"type":"string"}},"additionalProperties":false},"value":{"a":"x","b":1},"errors":["b: unexpected property"]},
+    {"name":"array child paths","schema":{"type":"array","items":{"type":"string"}},"value":[1,"ok"],"errors":["result[0]: expected string, got integer"]},
+    {"name":"scalar enum","schema":{"enum":["yes","no"]},"value":"maybe","errors":["result: \"maybe\" is not one of [\"yes\",\"no\"]"]}
+  ],
+  "resultCases": [
+    {"name":"tag wins over later JSON example","schema":{"type":"object"},"message":"```wks-result\n{\"real\":true}\n```\n```json\n{\"example\":true}\n```","value":{"real":true}},
+    {"name":"last tagged draft wins","schema":{},"message":"```WKS-RESULT\r\n{\"n\":1}\n```\n```wks-result\n{\"n\":2}\n```","value":{"n":2}},
+    {"name":"plain JSON fallback","schema":{},"message":"```json\n{\"ok\":true}\n```","value":{"ok":true}},
+    {"name":"missing report preserves an explicit error","schema":{},"message":"only prose","errorContains":"no `wks-result` block"},
+    {"name":"invalid JSON is not a successful result","schema":{},"message":"```wks-result\n{broken}\n```","errorContains":"not valid JSON"},
+    {"name":"invalid shape includes field path","schema":{"required":["commit"]},"message":"```wks-result\n{}\n```","errorContains":"commit: required property missing"}
+  ],
+  "escalationCases": [
+    {"name":"ordinary refusal has no escalation","message":"I need approval","absent":true},
+    {"name":"JSON tag cannot assert escalation","message":"```json\n{\"type\":\"worker-escalation\"}\n```","absent":true},
+    {"name":"valid terminal escalation trims strings","message":"```wks-escalation\n{\"type\":\"worker-escalation\",\"status\":\"blocked\",\"reason\":\" approval needed \",\"requiredAuthorityOrDecision\":\" release approval \",\"changed\":false,\"nextAction\":\" request approval \"}\n```","value":{"type":"worker-escalation","status":"blocked","reason":"approval needed","requiredAuthorityOrDecision":"release approval","changed":false,"nextAction":"request approval"}},
+    {"name":"extra authority field rejected","message":"```wks-escalation\n{\"type\":\"worker-escalation\",\"grant\":true}\n```","errorContains":"unexpected properties: grant"},
+    {"name":"success is not escalation","message":"```wks-escalation\n{\"type\":\"worker-escalation\",\"status\":\"completed\"}\n```","errorContains":"status: expected \"blocked\""},
+    {"name":"missing changed is not false","message":"```wks-escalation\n{\"type\":\"worker-escalation\",\"status\":\"blocked\",\"reason\":\"approval\",\"requiredAuthorityOrDecision\":\"approval\",\"nextAction\":\"ask\"}\n```","errorContains":"changed: expected boolean"}
+  ]
+}

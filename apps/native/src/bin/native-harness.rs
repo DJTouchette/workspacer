@@ -13,17 +13,14 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// Exercise the embedded engine and owned hub/tool stack without an agent.
-    #[cfg(feature = "embedded")]
-    EmbeddedProbe {
+    /// Prove UI bus requests remain display-only without a visible workspace.
+    UiIntentProbe,
+    /// Own the pure Rust backend using isolated state; no model is launched.
+    #[cfg(feature = "rust-hub")]
+    #[command(alias = "embedded-probe")]
+    RustProbe {
         #[arg(long)]
-        services_dir: std::path::PathBuf,
-        #[arg(long)]
-        database: std::path::PathBuf,
-        #[arg(long)]
-        hub_port: u16,
-        #[arg(long)]
-        mcp_port: u16,
+        directory: std::path::PathBuf,
     },
     /// Launch one real disposable agent, test controller send/reseed, terminate it.
     Live {
@@ -68,15 +65,12 @@ enum Command {
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
     match Args::parse().command {
-        #[cfg(feature = "embedded")]
-        Command::EmbeddedProbe {
-            services_dir,
-            database,
-            hub_port,
-            mcp_port,
-        } => {
-            embedded_probe(services_dir, database, hub_port, mcp_port).await?;
-        }
+        Command::UiIntentProbe => println!(
+            "{}",
+            serde_json::to_string_pretty(&wks_native::harness::ui_intent_probe().await?)?
+        ),
+        #[cfg(feature = "rust-hub")]
+        Command::RustProbe { directory } => rust_probe(directory).await?,
         Command::Live {
             bus,
             token_file,
@@ -104,6 +98,9 @@ async fn main() -> Result<()> {
                     match events.recv().await? {
                         Event::Connected => break,
                         Event::Disconnected(reason) => anyhow::bail!(reason),
+                        Event::PowerPaused => anyhow::bail!(
+                            "Server requested a reconnect pause; probe did not wake it"
+                        ),
                         Event::Data { .. } => {}
                     }
                 }
@@ -218,120 +215,51 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Use fresh XDG_CONFIG_HOME/XDG_DATA_HOME and
-/// WORKSPACER_USAGE_POLL_ON_BOOT=0 for an isolated smoke; leave HOME unchanged.
-#[cfg(feature = "embedded")]
-async fn embedded_probe(
-    services_dir: std::path::PathBuf,
-    database: std::path::PathBuf,
-    hub_port: u16,
-    mcp_port: u16,
-) -> Result<()> {
+#[cfg(feature = "rust-hub")]
+async fn rust_probe(directory: std::path::PathBuf) -> Result<()> {
     use anyhow::Context;
-    use std::{net::SocketAddr, time::Duration};
+    use std::time::Duration;
     use wks_native::{
         controller::Command as BackendCommand,
-        host::{LocalOptions, Mode, NativeHost},
+        host::{Mode, NativeHost, RustOptions},
         launch::CatalogKey,
     };
-
-    anyhow::ensure!(
-        hub_port > 0 && mcp_port > 0 && hub_port != mcp_port,
-        "Choose distinct nonzero hub and MCP ports"
-    );
-    let mut endpoints = vec![
-        SocketAddr::from(([127, 0, 0, 1], hub_port)),
-        SocketAddr::from(([127, 0, 0, 1], mcp_port)),
-    ];
-    let host = NativeHost::start(Mode::Local(LocalOptions {
-        services_dir: Some(services_dir),
-        database,
-        hub_port,
-        mcp_port,
-        hook_port: 0,
-        api_port: 0,
-        no_plugins: true,
-    }))?;
+    let mut options = RustOptions::isolated(directory)?;
+    options.home_dir = options.config_dir.parent().unwrap().join("probe-home");
+    std::fs::create_dir_all(&options.home_dir)?;
+    options.usage_poll_on_boot = Some(false);
+    let host = NativeHost::start(Mode::Rust(options))?;
     let controller = host.controller();
     let mut views = controller.views.clone();
-    let probe = tokio::time::timeout(Duration::from_secs(100), async {
-        let ready = host.ready().await?;
-        for endpoint in [&ready.engine_api, &ready.engine_hook] {
-            let endpoint = endpoint
-                .as_ref()
-                .context("Missing embedded engine endpoint")?;
-            let url = url::Url::parse(endpoint)?;
-            anyhow::ensure!(
-                url.host_str() == Some("127.0.0.1"),
-                "Expected loopback engine endpoint"
-            );
-            endpoints.push(SocketAddr::from((
-                [127, 0, 0, 1],
-                url.port().context("Missing engine port")?,
-            )));
+    let mut owned_listeners = Vec::new();
+    let probe=tokio::time::timeout(Duration::from_secs(100),async {
+        let ready=host.ready().await?;
+        owned_listeners=ready.owned_listeners.clone();
+        anyhow::ensure!(owned_listeners.len()==4,"Missing actual owned listener receipts");
+        anyhow::ensure!(ready.bus_url=="in-process","Rust preview must own its in-process hub");
+        while !views.borrow_and_update().connected {
+            views.changed().await.context("Controller closed before connection")?;
         }
+        let key=CatalogKey{provider:"claude".into(),cwd:String::new()};
+        controller.command(BackendCommand::LoadModels{key:key.clone(),refresh:true})?;
         loop {
-            if views.borrow_and_update().connected {
-                break;
-            }
-            views
-                .changed()
-                .await
-                .context("Controller closed before connection")?;
+            {let view=views.borrow_and_update();if view.catalog.key==key && !view.catalog.loading {
+                anyhow::ensure!(view.catalog.error.is_none() && !view.catalog.models.is_empty(),"Rust catalog failed");
+                return anyhow::Ok(json!({"backend":"rust","connected":true,"bus":"in-process","models":view.catalog.models.len(),"sessions":view.sessions.len(),"agents_launched":0}));
+            }}
+            views.changed().await.context("Controller closed during catalog query")?;
         }
-        let key = CatalogKey {
-            provider: "claude".into(),
-            cwd: String::new(),
-        };
-        controller.command(BackendCommand::LoadModels {
-            key: key.clone(),
-            refresh: true,
-        })?;
-        let (models, sessions) = loop {
-            {
-                let view = views.borrow_and_update();
-                if view.catalog.key == key && !view.catalog.loading {
-                    anyhow::ensure!(view.catalog.error.is_none(), "Claude catalog query failed");
-                    anyhow::ensure!(!view.catalog.models.is_empty(), "Claude catalog is empty");
-                    break (view.catalog.models.len(), view.sessions.len());
-                }
-            }
-            views
-                .changed()
-                .await
-                .context("Controller closed during catalog query")?;
-        };
-        anyhow::Ok(json!({
-            "connected": true,
-            "sessions": sessions,
-            "claude_models": models,
-            "bus_url": ready.bus_url,
-            "engine_api": ready.engine_api,
-            "engine_hook": ready.engine_hook,
-            "mcp_url": format!("http://127.0.0.1:{mcp_port}/mcp"),
-            "agents_launched": 0
-        }))
-    })
-    .await
-    .context("Embedded probe exceeded 100 seconds")
-    .and_then(|result| result);
-
-    // Join on both success and failure so this command never relies on process
-    // exit to clean up its embedded runtime and child service stack.
+    }).await.context("Rust owned backend probe timed out").and_then(|r|r);
     drop(controller);
     drop(views);
-    let shutdown = host.shutdown().await;
-    let released = endpoints
-        .iter()
-        .all(|endpoint| std::net::TcpListener::bind(endpoint).is_ok());
-    shutdown.context("Embedded backend shutdown failed")?;
-    anyhow::ensure!(
-        released,
-        "An owned service listener remained bound after shutdown"
-    );
+    host.shutdown()
+        .await
+        .context("Rust owned backend failed to join shutdown")?;
+    wks_native::host::verify_owned_listeners_released(&owned_listeners).await?;
     let mut report = probe?;
-    report["ports_released"] = json!(released);
-    report["checked_ports"] = json!(endpoints.len());
+    report["ports_released"] = true.into();
+    report["checked_ports"] = owned_listeners.len().into();
+    report["shutdown_joined"] = true.into();
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }

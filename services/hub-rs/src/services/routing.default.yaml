@@ -1,0 +1,150 @@
+version: 1
+active_profile: mixed
+capabilities:
+  - cheap
+  - balanced
+  - frontier
+  - frontier_max
+  - reviewer
+  - deep_reviewer
+  - frontier_plus
+capability_ranks:
+  cheap: 1
+  balanced: 2
+  reviewer: 2
+  frontier: 3
+  deep_reviewer: 3
+  frontier_max: 4
+  frontier_plus: 5
+roles:
+  supervisor: frontier
+  scout: balanced
+  mechanical: cheap
+  implementer: frontier
+  reviewer: reviewer
+  deep_reviewer: deep_reviewer
+  fixer: balanced
+  complex_fixer: frontier
+  validator: balanced
+  diagnostician: frontier
+  judge: frontier_plus
+profiles:
+  mixed:
+    cheap:
+      provider: codex
+      model: gpt-5.6-luna
+      alternatives:
+        - { provider: claude, model: sonnet }
+    balanced:
+      provider: codex
+      model: gpt-5.6-terra
+      effort: high
+      alternatives:
+        - { provider: claude, model: sonnet, effort: high }
+    frontier:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: high
+      alternatives:
+        - { provider: claude, model: opus, effort: high }
+    frontier_max:
+      provider: codex
+      model: gpt-5.6-sol
+      effort: xhigh
+      alternatives:
+        - { provider: claude, model: opus, effort: max }
+    reviewer:
+      provider: claude
+      model: sonnet
+      effort: high
+      min_effort: high
+      fresh: true
+      alternatives:
+        - { provider: codex, model: gpt-5.6-terra, effort: high, min_effort: high, fresh: true }
+    deep_reviewer:
+      provider: claude
+      model: opus
+      effort: high
+      min_effort: high
+      fresh: true
+      alternatives:
+        - { provider: codex, model: gpt-5.6-sol, effort: high, min_effort: high, fresh: true }
+    frontier_plus:
+      provider: claude
+      model: fable
+      min_effort: high
+      fresh: true
+      alternatives:
+        - { provider: codex, model: gpt-5.6-sol, effort: xhigh, min_effort: high, fresh: true }
+  codex_only:
+    cheap: { provider: codex, model: gpt-5.6-luna }
+    balanced: { provider: codex, model: gpt-5.6-terra, effort: high }
+    frontier: { provider: codex, model: gpt-5.6-sol, effort: high }
+    frontier_max: { provider: codex, model: gpt-5.6-sol, effort: xhigh }
+    reviewer: { provider: codex, model: gpt-5.6-terra, effort: high, fresh: true }
+    deep_reviewer: { provider: codex, model: gpt-5.6-sol, effort: high, fresh: true }
+    frontier_plus: { provider: codex, model: gpt-5.6-sol, effort: xhigh, fresh: true }
+  anthropic_only:
+    cheap: { provider: claude, model: sonnet }
+    balanced: { provider: claude, model: sonnet, effort: high }
+    frontier: { provider: claude, model: opus, effort: high }
+    frontier_max: { provider: claude, model: opus, effort: max }
+    reviewer: { provider: claude, model: sonnet, effort: high, min_effort: high, fresh: true }
+    deep_reviewer: { provider: claude, model: opus, effort: high, min_effort: high, fresh: true }
+    frontier_plus: { provider: claude, model: fable, min_effort: high, fresh: true }
+providers:
+  codex: { metered: true, when_unknown: yellow }
+  claude: { metered: true, when_unknown: yellow }
+  copilot: { metered: false, when_unknown: unmetered } # no readable quota, ever
+  opencode: { metered: false, when_unknown: unmetered } # BYO key
+  pi: { metered: false, when_unknown: unmetered } # BYO key
+thresholds:
+  spend_down:
+    time_to_reset_minutes: 90
+    min_remaining_pct: 50
+    max_forecast_pct_of_remaining: 30
+  health:
+    yellow_at_used_pct: 70
+    red_at_used_pct: 90
+  pacing:
+    enabled: true
+    conserve_at_ratio: 1.25
+    block_spend_down_at_ratio: 1.0
+    bootstrap:
+      min_elapsed_pct: 5
+      expected_offset_pct: 2
+    seven_day:
+      curve: calendar
+      timezone: local
+      weekend_weight: 0.5
+      weekend: spend_tail
+      weekend_reserve_pct: 0
+forecast_weights:
+  scouting: 1
+  implementation: 4
+  review: 2
+  fixing: 2
+  validation: 1
+mode_shifts:
+  conserve:
+    scout: cheap
+    validator: cheap
+    judge: deep_reviewer
+    effort_step: -1
+    effort_step_capabilities: [frontier, frontier_max, deep_reviewer, frontier_plus]
+  spend_down:
+    scout: frontier
+    reviewer: deep_reviewer
+    implementer: frontier_max
+    fixer: frontier
+    complex_fixer: frontier_max
+    diagnostician: frontier_max
+    effort_step: 1
+    effort_step_capabilities: [frontier, frontier_max, deep_reviewer, frontier_plus]
+modes:
+  global: auto
+  providers:
+    codex: auto
+    claude: auto
+ceilings:
+  default: { max_capability: frontier, max_tool_scope: operator }

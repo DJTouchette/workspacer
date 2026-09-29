@@ -108,6 +108,11 @@ const BUILTIN: &[(&str, ModelRates)] = &[
     // See `copilot_catalog_pricing_coverage_is_explicit` below.
 ];
 
+/// Expose the same estimates to the native settings editor without a second table.
+pub fn builtin_rates() -> &'static [(&'static str, ModelRates)] {
+    BUILTIN
+}
+
 /// The user's editable overrides file.
 pub fn overrides_path() -> Option<PathBuf> {
     Some(

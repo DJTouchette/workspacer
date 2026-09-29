@@ -1,0 +1,31 @@
+{
+  "headers": {
+    "worker-finished": "[fleet] Worker finished:",
+    "worker-escalated": "[fleet] Worker escalated — blocked and did not complete:",
+    "catch-up": "[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:",
+    "blocked": "[supervisor] An agent is now blocked on a decision:",
+    "threshold": "[fleet] A threshold you asked to be told about has been crossed:",
+    "progress": "[fleet] Progress update from a worker — it is STILL RUNNING; this is NOT a completion:"
+  },
+  "alternateHeaders": {
+    "worker-finished": "[fleet] Worker FAILED — did not complete:"
+  },
+  "tails": {
+    "worker-finished": "A \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough.",
+    "worker-escalated": "This is a terminal escalation, NOT a completed outcome. Read the validated \"worker escalation\" block above and do not record the task as landed in a brief's \"## Recently\". Resolve or obtain the named authority/decision, then either answer the worker with send_message or redispatch the remaining work with respawn_with. Keep the dispatch open until the task actually completes.",
+    "catch-up": "Review each (get_conversation with sinceSeq), update the project brief's \"## Recently\", and report the outcome with session:<id> references. Then STOP again.",
+    "blocked": "Run a /supervise pass: gather the context and notify me with a recommendation.",
+    "threshold": "This is the notify_when you armed, and it has now fired and been DISCARDED — watches are one-shot, so nothing further will arrive unless you arm another. Decide: let it run, send_message it a narrowing instruction, or stop it (signal SIGTERM, then close_session) and redispatch surgically with respawn_with. Then STOP again — do not start polling.",
+    "progress": "The worker sent this ITSELF, mid-task, and is still running: its finish wake will still arrive. Do NOT record it in a brief's \"## Recently\" as work landed, and do not treat its line as a result. If it needs no decision, do NOTHING — a bare acknowledgement costs the worker a turn and tells it nothing. If it flags NEEDS A DECISION, or if the update shows the dispatch going wrong, answer it with send_message, or stop it (signal SIGTERM, then close_session) and redispatch surgically with respawn_with. Then STOP again — do not start polling, and do not ask it for further updates."
+  },
+  "ordinaryTails": {
+    "worker-finished": "Inspect the child's final result and continue your own task. Use project-brief for durable project knowledge, and spawn further work with spawn-agent if useful.",
+    "worker-escalated": "The child is blocked and did not complete. Inspect its escalation, resolve the decision if it is within your task, then continue your own work. Use project-brief for durable knowledge and spawn-agent for any follow-up.",
+    "catch-up": "Inspect each child's result and continue your own task. Use project-brief for durable project knowledge, and spawn further work with spawn-agent if useful.",
+    "blocked": "Inspect your blocked child's context and answer it if the decision is within your task; otherwise surface the exact decision you need. Then continue your own work."
+  },
+  "failedNote": "A \"FAILED\" entry did NOT complete its task — the agent reported an error (an API failure, an out-of-credits refusal, an overload) and stopped there. Its last reply is that error, NOT a result: do not record it in a brief's \"## Recently\" as work landed. Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause to the user if it is an account/quota problem no retry will fix.",
+  "ordinaryFailedNote": "A \"FAILED\" child did not complete its task. Inspect the reported error, then adjust the task or start a focused follow-up with spawn-agent.",
+  "creditBalanceNote": "A FAILED entry's reason names the credit-balance refusal: Claude Code reported \"Credit balance is too low\". On a subscription this usually means the Claude Code CLI is signed in with stale or wrong credentials. Open a terminal, run claude, then type /logout and then /login, and sign in with your subscription account. Then retry this agent. If Claude Code is signed in with an API key or console billing rather than a subscription, this is a real empty balance instead: add credits in the Anthropic Console.",
+  "stoppedNote": "A \"stopped/killed\" entry's session ENDED (killed or exited) rather than going idle — treat its last reply as possibly incomplete, not as a clean finish."
+}

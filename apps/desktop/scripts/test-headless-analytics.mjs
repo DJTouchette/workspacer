@@ -11,17 +11,14 @@ test('headless analytics retains real usage and model splits across process rest
   const transcripts = path.join(home,'.claude','projects','fixture');
   fs.mkdirSync(transcripts,{recursive:true});
   const file = path.join(transcripts,'claude-session.jsonl');
-  const turn = (id,model,input,output) => JSON.stringify({type:'assistant',message:{id,model,usage:{input_tokens:input,output_tokens:output}}});
-  fs.writeFileSync(file,[turn('one','claude-sonnet-4-5',1000,100),turn('one','claude-sonnet-4-5',1000,100)].join('\n'));
+  const fixture = JSON.parse(fs.readFileSync(new URL('../../../contracts/analytics-history-cases.json', import.meta.url), 'utf8')).cases[0];
+  fs.writeFileSync(file,fixture.mainJsonl);
   const subDir = path.join(transcripts,'claude-session','subagents');fs.mkdirSync(subDir,{recursive:true});
-  fs.writeFileSync(path.join(subDir,'agent-sub.jsonl'),turn('two','claude-haiku-4-5',500,50));
+  fs.writeFileSync(path.join(subDir,'agent-sub.jsonl'),fixture.subagentJsonl);
   const env = {...process.env,HOME:home,USERPROFILE:home,XDG_CONFIG_HOME:path.join(root,'config'),APPDATA:path.join(root,'config'),CLAUDE_CONFIG_DIR:path.join(home,'.claude')};
   delete env.HUB_TOKEN;
-  const context = {workspaceRoots:[home],setupRoots:[home],snapshots:[],analyticsSnapshots:[
-    {session_id:'claude-session',cwd:home,provider:'claude',mode:'stopped',started_at:'2026-09-10T00:00:00Z',updated_at:'2026-09-10T01:00:00Z',transcript_path:file},
-    {session_id:'codex-session',cwd:home,provider:'codex',mode:'stopped',started_at:'2026-09-11T00:00:00Z',updated_at:'2026-09-11T01:00:00Z',usage:{costUSD:0},status_line:{model_display:'gpt-5',total_input_tokens:2000,total_output_tokens:200,cost_usd:0.75}},
-    {session_id:'unknown-session',cwd:home,provider:'claude',mode:'stopped',started_at:'2026-09-11T00:00:00Z'},
-  ]};
+  const context = {workspaceRoots:[home],setupRoots:[home],snapshots:[],analyticsSnapshots:Object.values(fixture.snapshots).map(row=>({...row,cwd:home,...(row.session_id==='claude-session'?{transcript_path:file}:{})}))
+  };
   const call = (method,params={}) => {
     // A fresh process per call proves both persistence and idempotent migrations.
     const result = spawnSync(process.execPath,['dist/headless/desktop-host.cjs'],{env,encoding:'utf8',input:JSON.stringify({id:'1',method,params,context})+'\n'});
@@ -32,8 +29,8 @@ test('headless analytics retains real usage and model splits across process rest
   };
   try {
     const first = call('internal.analyticsSummary');
-    assert.equal(first.totals.sessions,3);assert.equal(first.totals.unrecordedSessions,1);
-    assert.equal(first.totals.inputTokens,3500);assert.equal(first.totals.outputTokens,350);
+    assert.equal(first.totals.sessions,fixture.expected.sessions);assert.equal(first.totals.unrecordedSessions,fixture.expected.unrecordedSessions);
+    assert.equal(first.totals.inputTokens,fixture.expected.inputTokens);assert.equal(first.totals.outputTokens,fixture.expected.outputTokens);
     assert.equal(first.byModel.length,4); // two Claude models, managed model, unknown
     assert.equal(first.byModel.find(r=>r.key==='gpt-5').costUSD,0.75);
     const filtered = call('internal.analyticsSummary',{provider:'claude'});

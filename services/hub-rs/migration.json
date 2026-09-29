@@ -1,0 +1,3714 @@
+{
+  "cutover": {
+    "ci-and-generators": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "deployment": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "electron-and-web": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "federation-and-remote-workers": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "legacy-deletion": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "linux-package": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "macos-package": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "mcp-and-plugins": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "native-embedded": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "node-companion-replacement": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "persisted-state-upgrade": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "standalone-service": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "tui": {
+      "evidence": [],
+      "status": "pending"
+    },
+    "windows-package": {
+      "evidence": [],
+      "status": "pending"
+    }
+  },
+  "files": {
+    "services/hub/cmd/brain/agent_collaboration_skills.go": {
+      "replacement": [],
+      "sha256": "24b12841450d4649e94cfbb032565722257b1ad9a597951e23b3e07713b221e5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/agent_collaboration_skills_generated.go": {
+      "replacement": [],
+      "sha256": "2c57a9bad93ccba14ae5744e831fcfca76f892ed59f2465c1f3dcd3105841b24",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/agent_collaboration_skills_test.go": {
+      "replacement": [],
+      "sha256": "eadecb2fd7a169bb1d87dc439b22aefdd2dda5914f002e7ba2ac52f6be5596b3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/agenthandoff.go": {
+      "replacement": [],
+      "sha256": "c74559b0434629fa5ff132a0a6c6bebb86334de2fb25dafb0d730670884cf67c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/agenthandoff_test.go": {
+      "replacement": [],
+      "sha256": "d375f7c0775f49e0a3311a0666b79de1f0df78c6b2dc0482c1df9b1dcd2992b2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/agentops.go": {
+      "replacement": [],
+      "sha256": "bd53cc9d957914c180e7174e5e3fe88211f530ebbca3e1853277b04246f307f3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/agentops_race_test.go": {
+      "replacement": [],
+      "sha256": "951543cb2859e915c54168a5099a73da6fb0dd31eedf89f9c5706092db3533e5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/analytics_test.go": {
+      "replacement": [],
+      "sha256": "89349bd559a50143a8774551fba1d6959ad10f6d66ed94721593b0a3eef6d554",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/blockwake.go": {
+      "replacement": [],
+      "sha256": "bacfdf1e4f71741481d59f90a644d86236f87f1ca48b65cc057e2d69429a56dc",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/blockwake_test.go": {
+      "replacement": [],
+      "sha256": "a71d5402bb3d12c24ae3133b3a0eb4069855d835c83e0cc80bcca7309899cde9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/bootdoc.go": {
+      "replacement": [],
+      "sha256": "5be14c253f2565618cf812bd701960712039698c1600b1dde3461f79b2ae90c3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/bootdoc_test.go": {
+      "replacement": [],
+      "sha256": "1bdd33a5a9e9c70f65c845c89ba97fe4ac2bd9eeec6c4149fee8102f564a16e6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/brief.go": {
+      "replacement": [],
+      "sha256": "1ec76e1c7259071aff820a8bec232a6936bff3744dae5cd2d1b7bb7b30e4fe02",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/brief_windows_test.go": {
+      "replacement": [],
+      "sha256": "7f95896fc096757a895afb764f42109592f7ef480dfed193259bc8c31ec76e83",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/briefboard.go": {
+      "replacement": [],
+      "sha256": "59983b754d03aa1a0f08d11d97d8f96c719173d3260fe4cfaef72f6373b69e6d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/briefboard_test.go": {
+      "replacement": [],
+      "sha256": "796b00429c5b286dcad0938a69fca385f1751566aa0cb1a8a9bfc33c4cba2a8e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/briefcheck.go": {
+      "replacement": [],
+      "sha256": "c8d04a826800e0d9ff8c7ac9ceb141f27866d2e12b8472d0e36efdf863012f89",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/briefconfinement_test.go": {
+      "replacement": [],
+      "sha256": "404b15622dfd58c44488d9036a1245d9845d48aabaf782a29ac79c31bcd10cf6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/briefresult.go": {
+      "replacement": [],
+      "sha256": "dbb9a1e49e820445baac927a89faa7ea70433474ba5400b6cb5b24adf20263f4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/briefresult_test.go": {
+      "replacement": [],
+      "sha256": "155aca69e417eb6178a1de1e85b8755d659257c9e2d94c7815cb9e1c9cbfa788",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/bus.go": {
+      "replacement": [],
+      "sha256": "a6301929ba468caa28e1127a65b12895cbac6d7addd6c2bfa5c2d56d44d93bfd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/busredact_test.go": {
+      "replacement": [],
+      "sha256": "1a9a2dcb9baf1b916754fcee09515fe560ea4e136daf2e229ae6e5814f4b5a20",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/cachepin_test.go": {
+      "replacement": [],
+      "sha256": "bb68024a1d77af10674e62e9a48b8c1d3a422370d7241bab4165e89c4d44d2c3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/capspec_guard_test.go": {
+      "replacement": [],
+      "sha256": "f92d2171a5e2adbd957a0cffdcbba7c7f3d3846b68890338133c170f445bd53e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/capspec_params_test.go": {
+      "replacement": [],
+      "sha256": "17895a08226980104703cb21694a028c406ad6415f9e3902b157189b266f03f5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/claudemon.go": {
+      "replacement": [],
+      "sha256": "4748c24c6b7d02775f146ed70caf214fee3ac5229956996ff9b18a536432a776",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config.go": {
+      "replacement": [],
+      "sha256": "188aa33ac8e0ec096ba9135ecb44b3f4880b92ac1a63269be2d4c51cf36eb9b9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_atomic_test.go": {
+      "replacement": [],
+      "sha256": "dd617c4481060cb89e93a833eca878fc7b319720cfcb5077b2c788383cc72fd1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_orphans.go": {
+      "replacement": [],
+      "sha256": "4f307f5e6a9fbd7853680bcfa1247cf4d1186d909fafd3eacd2a83b76d438a1d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_orphans_test.go": {
+      "replacement": [],
+      "sha256": "98f7efe9d559ca2727635c2d267c717116549e325452457a9feddc19ca7056fe",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_test.go": {
+      "replacement": [],
+      "sha256": "800714c12ec8fde4ffa53bedbb1acfcd61f1fdc1389710a2949c7ff9ae607305",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_vanished_test.go": {
+      "replacement": [],
+      "sha256": "b7868ded12e892bb888e764a30772e9d884c5679f186f90fbc9ff3dc68f60869",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_wholesale_test.go": {
+      "replacement": [],
+      "sha256": "3ad6d5ff94356fc7b47797788fee11724cac579ff140598f5c51f62ad0ce4856",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_wholesale_typeguard_test.go": {
+      "replacement": [],
+      "sha256": "1c0109b003e4c41da8462c0cd548d99b909472a4bfa214ab83ece5502eb1db5c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_wipeguard_test.go": {
+      "replacement": [],
+      "sha256": "bfd958a4c4ed47fce2dc1346958e7e3bd57daa6fb1fa08eba6eedf9d9d7ea51d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/config_writefailure_test.go": {
+      "replacement": [],
+      "sha256": "d00b45e83ad305dd75dfea1209ee5175b1fb44839fe730e057b20e8ae1bfb09b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/configlock.go": {
+      "replacement": [],
+      "sha256": "a637b56066b6a7395d0cffb54eea504c2adff47ccc49989aafd75088996094b1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/configlock_test.go": {
+      "replacement": [],
+      "sha256": "fc2b021cc8f4b364aac4a2fd6d30572a13b53cd310116f1e0c578ccfcaad7f08",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/contexthealth_contract_test.go": {
+      "replacement": [],
+      "sha256": "81a25ddd9d7847aff7913500d6538ba04d5a83c13560f5190d797b4e53fc8d2d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/contracts_test.go": {
+      "replacement": [],
+      "sha256": "4e39d72a2775f1d377f074d5305188902107ac856944c55c9ccfd66998b6bdcb",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/conversation.go": {
+      "replacement": [],
+      "sha256": "c7be955be85a9872d5e491321f8ee00063752d4d3535d08dea5da97f249f72ab",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/conversation_test.go": {
+      "replacement": [],
+      "sha256": "bde7babeb10ebdd2c92d903bc1cb6c22ba2b995934a6154a499e00018c87acd8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/corpusdupkey_test.go": {
+      "replacement": [],
+      "sha256": "8ae33e671ea942dbafa83322bbeefb731f212a8037b1539d463dce98388f853c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/corpusvocab_test.go": {
+      "replacement": [],
+      "sha256": "5ba65924a1045c9775f2e8d887eb99e34d095cfa62bf55121fabe13d1ba9a51a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/delegation_guard_test.go": {
+      "replacement": [],
+      "sha256": "882b6d9cb4ab8181a1d3049e876a50c07a020172928c24d897c5dfe0f5b47e50",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/desktophost.go": {
+      "replacement": [],
+      "sha256": "04911263f55278b347bef41e87bac6feefbfcc165af4540e56e83801f5622eef",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/desktophost_integration_test.go": {
+      "replacement": [],
+      "sha256": "cdd378f6fb478f414c7cf27980b8591cbe2720276ea3e81b2f841eb074c84c48",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/desktopnode_test.go": {
+      "replacement": [],
+      "sha256": "2eac92efc524d402c80fd3072173102e0b47fb8ad07d6ea04562c2ef0d82912c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/desktopruntime.go": {
+      "replacement": [],
+      "sha256": "07ed2ed9246ad4e424335049c8812e86f89e620debdbf634e55ffac5429c251a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/desktopworkflow_test.go": {
+      "replacement": [],
+      "sha256": "7098ae18a6f231d1eb2ab29d12c2f9d95864fc9ce443d41bd5710259511d3ebc",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/discovery.go": {
+      "replacement": [],
+      "sha256": "d1d4275ede795e75bd83aa20f07502a8dbf6871db69e92de4883c7ca8936d837",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/discovery_clip_test.go": {
+      "replacement": [],
+      "sha256": "0ca89e0c0f7d7bb6c6540442f2df62eeec7d4ca9458cc3ae907c38c3d6dc34d2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/dispatchlease.go": {
+      "replacement": [],
+      "sha256": "bdd7ad4dcf8be323f30c366a79683928b875a7b583c1cd8bb8ac43e65753d5e5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/dispatchlease_test.go": {
+      "replacement": [],
+      "sha256": "7add409014e14b779e1b8b793f8c2826a5015b03a3e9f448eff1f9c2d22af0a9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/dispatchparams.go": {
+      "replacement": [],
+      "sha256": "6925459db14c3e8664fa73956c6d063efd8807c7ea95f43d9476011e53b88e52",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/dispatchparams_test.go": {
+      "replacement": [],
+      "sha256": "acc3f116f2a9cbcd9aae6f191557aec08ed1f25624a16a58a524151898cb7dcd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/dispatchreadiness.go": {
+      "replacement": [],
+      "sha256": "009affefc023643a2fa6734a126ddc87237de2edfbbe5f290b5dac66827f0522",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/dispatchreadiness_test.go": {
+      "replacement": [],
+      "sha256": "af1c8c64e66f87424bb0f4df9f21bcca3cc6c470bd3165dfb85483005195ad29",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/enrich.go": {
+      "replacement": [],
+      "sha256": "cf06c74f88c670eba8418c5ecb891344fb7491463023a9119436ee1533e83c11",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/enrich_test.go": {
+      "replacement": [],
+      "sha256": "5b367a6b46c1b76040c061e19149e0b43ac6709d7d0d6d9c3f9c4bd84d45b1c0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/events.go": {
+      "replacement": [],
+      "sha256": "334935299c5461998363f144475d91e1889bc3447622bbadff1e6c485cd38cc6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/events_reseed_test.go": {
+      "replacement": [],
+      "sha256": "581594658c6e222560454570646ddda70e346eaffec94f43498f663a286fd551",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/events_test.go": {
+      "replacement": [],
+      "sha256": "e516bf35c6c9fc87fb4926c30475d786e73c34221a24dfc8ecdfd5c7f90fead9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/exactmodel_test.go": {
+      "replacement": [],
+      "sha256": "9e68527ec394a5927f4fb29908f077069af66cb25024a3d4af765eb6d5b8b392",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/executionengine_test.go": {
+      "replacement": [],
+      "sha256": "859499b9f11715f4c989c7163c6c9ef6fa0feb8f1a964511b60c595c6f3c3dd4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/facade.go": {
+      "replacement": [],
+      "sha256": "34c82fea1ed01932b6b8845d5aebf31fea99fd51f71fbdd370bed8864f3574a1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/facade_test.go": {
+      "replacement": [],
+      "sha256": "90b9113fa7cbc4b1457f8261d6b72c46f0257d1ab9abdec0ea1f7d820dc8db5c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/filewatch.go": {
+      "replacement": [],
+      "sha256": "9701d1e18c1e6d947f500b763990c555504ece7d443f294319cdf74f60fcd8da",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/filewatch_test.go": {
+      "replacement": [],
+      "sha256": "a411db1b690adba4f05163ec2ec64305a205f402e0118d778b9abe5eab710c7c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/final_test.go": {
+      "replacement": [],
+      "sha256": "09dc46d17ae9b9b2309e85d8be5416b9f90bea44368fe7b108ccc221e584d254",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/finishwake.go": {
+      "replacement": [],
+      "sha256": "0b3309eed7571f9e3c4a0f5f33f756a7c07b22f593c4586042d9b1a14ac7eb53",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/finishwake_test.go": {
+      "replacement": [],
+      "sha256": "101e4327fb4c0d69c325ec0016695825fde7b217276464e8dec198c773df6e75",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fleet_workflows.go": {
+      "replacement": [],
+      "sha256": "08be435cc56af5d81b9070afc32dab8cf437c89e688b8ec55d3e72ccd27f7d77",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fleet_workflows_test.go": {
+      "replacement": [],
+      "sha256": "c1bdb98213a393c16a4b01682ebe1b647795ff94a194c8980b9755550818d7a1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fleetmsg.go": {
+      "replacement": [],
+      "sha256": "2837ade8594f7e01f7c586d119ab55a835f78c0f58350b26cadf2c3f71d4bf03",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fleetpermissions.go": {
+      "replacement": [],
+      "sha256": "6d66a5c1c1957f8a2ffd0298d963fd88ebfdc78ec888495c325c2290029698e2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fleetpermissions_test.go": {
+      "replacement": [],
+      "sha256": "3801d118f9f1b09ae3d8bf35b2f95430dcb45beb9bced9b68e115f1c311290fa",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fleetview.go": {
+      "replacement": [],
+      "sha256": "9546561bbca1a77c086149fecbb32c467f4f535646a10ef2f9aec95e6a55147a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fsguard.go": {
+      "replacement": [],
+      "sha256": "e0853619769687946280181aaa096374e4476c52815c4db849b2dc2322feddaa",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fsguard_edges_test.go": {
+      "replacement": [],
+      "sha256": "f6f551f13f1336f26e6db7d808cffa4b52d5f7c2df7316aa35cf9c4a484062a2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fsguard_test.go": {
+      "replacement": [],
+      "sha256": "a3b88a0034332001c5a0c4eb1606d0f04af2231e7701e667ae1f84cdbf078d16",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/fsops.go": {
+      "replacement": [],
+      "sha256": "1db04ef311e80a33f6b3c7f2e9902e2408de37ce4436ea17aeb097c5a6da8801",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/git.go": {
+      "replacement": [],
+      "sha256": "92fc0dbd541857613bcc6b41bbe9ee6c4b5ba61e07debdd5526cffae77a9aaf9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/git_test.go": {
+      "replacement": [],
+      "sha256": "9e677d2286561bb1cbe755eb9d911d9f42518d2f66ec9953cc02a59cd430ce99",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/gitactions.go": {
+      "replacement": [],
+      "sha256": "8a5ae198630b18a96a19b93180edda09f862265f1fffb56389609a1d885d69df",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/gitactions_test.go": {
+      "replacement": [],
+      "sha256": "00163d081118e9b03b66479624912fb5fd3ab1e0e1ee30f32ea7714ecf0e3042",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/gitconfinement_test.go": {
+      "replacement": [],
+      "sha256": "b88be500500a902dd18bd90a407b15b6fabb8ad838235721f1e3c7e561494e46",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/gitexec_test.go": {
+      "replacement": [],
+      "sha256": "62c8f25dfc96efa92e7b0204ec5469d4516b22c201b962c92146e2de5aee5b20",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/handlers.go": {
+      "replacement": [],
+      "sha256": "2506b12a11a361ae4a0200efd6dd152d4b2b6c64b8b12d0bcbda4b60c6779f61",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/handlers_test.go": {
+      "replacement": [],
+      "sha256": "91819f0ff54265c3b8f429d3b96262a0c6d6136ae42fb60036f6ce8edd92cd42",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/headless_completeness_test.go": {
+      "replacement": [],
+      "sha256": "adb8e61238b02903a2b12c1e901ea0ded9b4c7b8e02432a5ae2996748c622ba5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/headlessport_test.go": {
+      "replacement": [],
+      "sha256": "02aa49da51c07430cf7e3e7a8394ff4c000bcf2e91dd8447edc635df80e89b55",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/hostgate_test.go": {
+      "replacement": [],
+      "sha256": "b8c612f60d05c047732f83ef3bf3d79746a4743263e9601c90d523ca559b7095",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/lastexit.go": {
+      "replacement": [],
+      "sha256": "e028f694d95590ee28d8574700e48a35bb29cc8cdb281a4c6cafc57016432e2a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/lastexit_test.go": {
+      "replacement": [],
+      "sha256": "54ebf365d0b51e3ab591104ff5fba60fa14df1e43dd0d8829a483d02aa035a1e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/launchintegration.go": {
+      "replacement": [],
+      "sha256": "a37d5a8ebb50a347a8ca69317e69b53b8931f5cb1c88d900450f7627b031b372",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/launchtruth_test.go": {
+      "replacement": [],
+      "sha256": "3701a88a9f3a9c94771326ffbe0532a4f83d184da5614d1c2b7939fdd9d5c8e8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/library.go": {
+      "replacement": [],
+      "sha256": "6f2b0d28694630f0a64412996a3d08ed16c805d8b54efbd9ce70ecfa8527107d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/library_confinement_test.go": {
+      "replacement": [],
+      "sha256": "5c6a652eeb47cdd43337c64a1c6c30a26d93957d4a338f535b0d2b7226ded1f6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/library_itemdirs_test.go": {
+      "replacement": [],
+      "sha256": "2bd07a7a711bcbc4b6423b3cd5688537a0b030fe56a4b090b1d52e83f5fff4df",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/library_test.go": {
+      "replacement": [],
+      "sha256": "c07f6407eacf414925f02ca9a903de43b1918585559603ad38206625de5a9333",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/librarywatch.go": {
+      "replacement": [],
+      "sha256": "83b26a169af742c77732e3139f8d4992cf6c65755b95ed9d6be8edae301c6f8b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/live_workspace_test.go": {
+      "replacement": [],
+      "sha256": "2e219a6f83bb075e19dd6b78434dfe5341c59b3ef5270c21da767654efeb137e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/livecontrol.go": {
+      "replacement": [],
+      "sha256": "a2246fe3e70d0d610aa0d1a2f568b38013e16271b081017efd19cef96f99eccc",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/livecontrol_test.go": {
+      "replacement": [],
+      "sha256": "2dd9d47c3e35b4732ed7fb85f8d28f6836ba1737ec4d7c5cbfacc8573060d429",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/main.go": {
+      "replacement": [],
+      "sha256": "6ae21437197b86a9fe381272bc2069270f611bd4c124f5788468c32563cc9f7c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/managerrequests.go": {
+      "replacement": [],
+      "sha256": "e90855255f47a2b59a9cf18b06d221f6b5dabe2d07b3951fcdfeabf1679ab6e2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/migration_snapshots_test.go": {
+      "replacement": [],
+      "sha256": "42521389d96eda7cb231d0a214b00e18dd8a609e4dec76f8aa1819b0ed709ddf",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/models.go": {
+      "replacement": [],
+      "sha256": "3ec148fd723b859491026adfb9c08f427d00f7a3c49347111eac093dba817077",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/models_contract_test.go": {
+      "replacement": [],
+      "sha256": "9e3bdafdcfabef88527abc1440e00d918d2f97d00767c12f36ade698f256d60c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/ownerselection_test.go": {
+      "replacement": [],
+      "sha256": "d5791549fa144eec1d6f803aa0b6b179f94b5de2500976c594f6e6a77321d18e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/paired_dispatch_fixture_test.go": {
+      "replacement": [],
+      "sha256": "da060e56461989d0d387dd13c8bfa3f85fe4951debcca64d83c1e6bbf8205db9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/parity_ordering_test.go": {
+      "replacement": [],
+      "sha256": "e8e87065e092a69c36cc5a0cfc85c742965cc310985fab2eef6e9dbb98ca0659",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/parity_test.go": {
+      "replacement": [],
+      "sha256": "a3dd094f8df4adf158723dbfde2e6ba246b3a36105ed249c21078ef21943e3df",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/pathmatch_other.go": {
+      "replacement": [],
+      "sha256": "89f036761914213c1c63e03d90b1cf124f52d5c1912ada6f444e6135354d5d0e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/pathmatch_windows.go": {
+      "replacement": [],
+      "sha256": "c1206b932923b54e9c8d78302fdfb53d912f5c80611d43e661e050032b22e8ac",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/pathmatch_windows_semantics_test.go": {
+      "replacement": [],
+      "sha256": "a03b37ff06fb5b092bb2f11b20959deea0de830f679230370cd4da00a83a8216",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/permissionmode.go": {
+      "replacement": [],
+      "sha256": "a23a239299096189f11f908d4baf824c651215b26805653d3893f17b601f7c47",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/permissionmode_test.go": {
+      "replacement": [],
+      "sha256": "3f89c1c8b0c4e2b407bc01e7fb5ea1a3f783728b3714ba5c52c355ef756d50f2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/profilegrant_test.go": {
+      "replacement": [],
+      "sha256": "589102d173ddd9c00955e2ed3e7f6df6cd5a34875701c3db0f85cf6a4b0b0862",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/profiles.go": {
+      "replacement": [],
+      "sha256": "52641e61217e1e84d025df85793f312f9e211485d16f128b40ceb75a2418b1ad",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/profiles_contract_test.go": {
+      "replacement": [],
+      "sha256": "4e81a64f8204887312a3a4835d61e184204686e90900c204e0d0bf90a9b74dcc",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/profiles_test.go": {
+      "replacement": [],
+      "sha256": "559519ed3d28a443e352829262a62218635cb32b88e86c5508ee9d2248c5393e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/providerparity_test.go": {
+      "replacement": [],
+      "sha256": "21a5131acbf8f2cfb2e09335defdf2b702d0d31c462a9eb9c6996810e891146e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/providers.go": {
+      "replacement": [],
+      "sha256": "7536cb97ba1edfa17cdf4d7f0b4d01d0b9282cec6af81406b1b8c039e97b78b8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/providers_test.go": {
+      "replacement": [],
+      "sha256": "932f2e9501e1d04334a212467591e48edcc020d3ea4b3b50e549c48a9ca86de7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/readimage.go": {
+      "replacement": [],
+      "sha256": "60795e266a3b0e8c57b3a02bde211dcdfe7bca7cf64d2e5279bb7dac24a978ed",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/recent.go": {
+      "replacement": [],
+      "sha256": "dbd1d48920d545564b851bcbb6ae4d90e62254ff81c7bb1a921360f1b66a5a35",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/remotedispatch.go": {
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/model.rs",
+        "services/hub-rs/src/services/remote_dispatch/mod.rs",
+        "services/hub-rs/src/services/remote_dispatch/paired.rs"
+      ],
+      "review": "Reviewed sealed prepare/claim leases, real-directory admission, opaque remote worker identity, credential-bound replay, terminal/progress returns and durable uncertain outcomes; fake execution and real owned backend tests exercise both halves.",
+      "sha256": "256fd076bf30cd4adb59a3cfe9686a5a3eab1bd12126c65f2f5477782611c2df",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts",
+        "services/hub-rs/examples/support/paired.rs"
+      ]
+    },
+    "services/hub/cmd/brain/replacement_integration_test.go": {
+      "replacement": [],
+      "sha256": "a4727fa2bb51527d4437c028643463d45d4142d8eb8b19734c98845149196f6e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/replacementhost.go": {
+      "replacement": [],
+      "sha256": "fb71b1e0207aa47ef2390e93d6b0737d437712204f90e09eeea3081132336eab",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/repofile_test.go": {
+      "replacement": [],
+      "sha256": "f10b85acd41d8bbe700a394b827cb0221f36fb7047a1d724bde2bcfe8c662bb0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/reregister_test.go": {
+      "replacement": [],
+      "sha256": "0e89e4420d38396b03c65c3b143e9feb40677d144535cbd8d3062a93dcccd9c0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/routingwire_test.go": {
+      "replacement": [],
+      "sha256": "b470a30489378973bc2d56dc51dc597dff87bbee3e2e5f3a42c966cd007090ba",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/scope_test.go": {
+      "replacement": [],
+      "sha256": "3234cf33d6d19eca7c75ffc260780e2ee5de8a2177696811edac214c5909b7b6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/search.go": {
+      "replacement": [],
+      "sha256": "68eeb64360b20bf08e84a885d9eea64b4ac6e5487e386426307afb17dc352542",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/search_test.go": {
+      "replacement": [],
+      "sha256": "6f8244cf2ff6d564c4a2404c0628106e6dc01a6b9950df0ab335c83e18787490",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/shellallow.go": {
+      "replacement": [],
+      "sha256": "4aaafbde64f377a50f0fc0a598881936207d8a20839523c40193c724ae1b503c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/shellallow_test.go": {
+      "replacement": [],
+      "sha256": "4efa77c8ecdce4318fbe2c8aa54f6b82c498301908cec21b307299b625eabe42",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/slug.go": {
+      "replacement": [
+        "services/hub-rs/src/services/stores.rs"
+      ],
+      "sha256": "27a5463c6dc165557c1056a4115b42cfd699f4dbbd5dacc4fb7d581e040ca8e9",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/stores.rs"
+      ]
+    },
+    "services/hub/cmd/brain/slug_test.go": {
+      "replacement": [],
+      "sha256": "bf13563c2655291a016dd7d3f3a194c83573f49ef87832b54f8b63c77b048450",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_browse_test.go": {
+      "replacement": [],
+      "sha256": "df1d036cbbf3df46e2045071e082245ece204c7f53ecf0a4e022bff9bb228f47",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_bypass_test.go": {
+      "replacement": [],
+      "sha256": "9782093251656806175e150db2d8ebe23e462373071992475e4941838be6eddd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_context_test.go": {
+      "replacement": [],
+      "sha256": "983492b50ec0c0b537040d57b99fef27927f9ca43bba735994f8322b9f3340b5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_firstmessage_test.go": {
+      "replacement": [],
+      "sha256": "2ec51d1662e4993db8e25e57c3b6a95f766fb41bbe5cab70d4c5f2074c469f78",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_manager_test.go": {
+      "replacement": [],
+      "sha256": "d6bdf705c7447dde10960ad28301a7f126af17e28f4791ba79c36a098eb6a152",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_roleprovider_test.go": {
+      "replacement": [],
+      "sha256": "c90e3e0010681093b2c46ea99cc9d4b90c72b4edd284f9c4fb60e241703182a5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_skipdefault_test.go": {
+      "replacement": [],
+      "sha256": "b13f21845b8ce2ab96b0fe7b8bc85aa64e19add3f2c2348b306aa44cc8460c4d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawn_transport_test.go": {
+      "replacement": [],
+      "sha256": "5c088637354ff1ca3687e3e83bdc3eecdfa424eb7ee00b209fcc185bc5c7907b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawncwd_test.go": {
+      "replacement": [],
+      "sha256": "7389648acb16cc183931409ac499cdf8a76c12c20ed72775c7d7b3ecba40b6d9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/spawnkeydrift_test.go": {
+      "replacement": [],
+      "sha256": "224267e3533905bdcb635bb1cc6d292c97b5bedfd332cc6040a550880d1d754b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/sse_failure_test.go": {
+      "replacement": [],
+      "sha256": "317f8abb31655b8f7fba7be98826968d948a6581c3da64684dd5a8240b914d03",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/statusline_test.go": {
+      "replacement": [],
+      "sha256": "2823e64d973e6b75b18561c873793c8d20fa2939c7b9a77ff0b0f8b90e5c8dc6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/statuslinepublish_test.go": {
+      "replacement": [],
+      "sha256": "f272d79867fff5c1fa6a1a188a1d5523e7eff487330498798734eb959fc2fbbe",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/store.go": {
+      "replacement": [],
+      "sha256": "5c26e7c0d864e03b0f8f642e4ecb1af37ab62478782a6088ffc902c572b7adf4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/store_test.go": {
+      "replacement": [],
+      "sha256": "2d1fb074db7bdd59f47310bdaee0cc56122a329667b927cf76abe1d3eccf481c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/stores.go": {
+      "replacement": [],
+      "sha256": "1d8f639241c09033664975e831acdc208338a6bf64b216a169ac6401595de73e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/stores_test.go": {
+      "replacement": [],
+      "sha256": "4d4053e2b7c0d45209271de194a86f7bfb9b245d628406e1ecaa1d193401e88e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/sweepmeta_test.go": {
+      "replacement": [],
+      "sha256": "72f55b07d312d2a5ff3e3f374e03bbd458a6af74b9a122a96f8135df1f24ab17",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/terminal.go": {
+      "replacement": [],
+      "sha256": "13de5dcc29aa4875503d63280772cfb1c5f6b93a71c4dc3b4f99cffab03a525c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/terminal_test.go": {
+      "replacement": [],
+      "sha256": "7bb0e7c55e01a27b83e34c1e5133d15f8a17c2db136405922fb79b7590d4fea2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/terminput_test.go": {
+      "replacement": [],
+      "sha256": "1282bdec6d0309365dbb2907502bd5af59937d8ea3567e765f3b1b2914943a37",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/testenv_test.go": {
+      "replacement": [],
+      "sha256": "874736bf7607248d59cd9c4dbaad8c3186918fc1fea9f38221553b490b21c093",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/unpinnedguards_test.go": {
+      "replacement": [],
+      "sha256": "a22b8d8aec4eb41c4766eb81a4168b72ebad539500fb308614cd32452f6aeb59",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/visibility.go": {
+      "replacement": [],
+      "sha256": "7b3928428f64b70634d23d11ab896623b89317c3f10a720ded4a1f48639537e5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/visibility_test.go": {
+      "replacement": [],
+      "sha256": "8b1294d03693ef909e279d66a908bbee5f35b1aa600ffba109a0501fb05aaf59",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/visibleterm.go": {
+      "replacement": [],
+      "sha256": "13cbebe2265f3ecbe890ee2d1cfb3896fe2bed89761f09df4d46edb14a6cff7a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/windows.go": {
+      "replacement": [],
+      "sha256": "43b646c18fb324d19a21b470547eb8e851185b700ca443d9bd914127954cdd41",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/windows_test.go": {
+      "replacement": [],
+      "sha256": "eac95f2873ecea2591a5eb1dacd7f7f5bb170a59c8f9268e4b08eedc38a27bcf",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/workerescalation.go": {
+      "replacement": [],
+      "sha256": "78ec9ad8a0d7e6d0423cff4bee51258976e81e140e462755fe60615264791a3d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/workerescalation_test.go": {
+      "replacement": [],
+      "sha256": "f8b27524b371763bd4566b1bb1c624b08d7bcdf8cedef8b71d72bf01aeb40999",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/workerfailure.go": {
+      "replacement": [],
+      "sha256": "d3694593926c7ccf59c55feefe04e1c94c04cd6623e196fe66e2811f09548b47",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/workerfailure_test.go": {
+      "replacement": [],
+      "sha256": "701509910b66b4f3c64545368b9bc9d8c1e8e3c559eff02000ff112dfde9adf2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/brain/yologrant_test.go": {
+      "replacement": [],
+      "sha256": "0c3882cff8c7c6b4fa2488702d6a4d2cbc33bf2b3ac7eb9880ebcfe28586732e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/brain.go": {
+      "replacement": [],
+      "sha256": "8b64c7eadbbb1d0d7949f90a5078d6539cb23d36ccf0888e6e1f37084b15d5f5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/brain_test.go": {
+      "replacement": [],
+      "sha256": "2e8b05a1d611c94ebbe3a04856570e2a9c071994f311dd1619aed3a49b630c37",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/bundledplugins.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ],
+      "review": "Reviewed bundled seed behavior, host-only reload/mutations, SDK/UI serving and independent plugin origin policy with actual socket fixtures.",
+      "sha256": "b89e2b633b8ae2d315df6cb88a6bce95432b98e707e424e6029792ceb2054709",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/cmd/hub/hostonly.go": {
+      "replacement": [],
+      "sha256": "4166383d2d7a880843a7b17f05a472ad4343398b0eb6b6a172fbabd8ba00947e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/hostonly_test.go": {
+      "replacement": [],
+      "sha256": "fc8f6f8e5c47e5554bfc7b8665333edcdf84bc572490e158d5f76cbc16a3f3aa",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/launchintegration.go": {
+      "replacement": [],
+      "sha256": "83b00c652ccebf1f330ff7112062035db243d3b122543d96e5d487599e1d4e1c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/machinepower.go": {
+      "replacement": [],
+      "sha256": "c4780a48bb4f3b705f37748c9dc5f9e3ad76140eaf73d8d2eaf4bbf320782799",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/machinepower_test.go": {
+      "replacement": [],
+      "sha256": "cbc99c8b89ea262bca4cee26c17cf3db21997fd27c7992869e527b4d898206f8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/main.go": {
+      "replacement": [],
+      "sha256": "49318d2997c332f2593efed3b58bae5672019634298c30b47ca08ba6d981ee3d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/manifestroutes.go": {
+      "replacement": [],
+      "sha256": "87a9d95efe7f59f224d3dc2ff0efb6648b677f9dadcee82ac1e79825a0aef701",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/manifestroutes_test.go": {
+      "replacement": [],
+      "sha256": "7cec2c702201da005e74826f2902e66351a654d7e752c6cc03562a099b058a6e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/mobile_capabilities_test.go": {
+      "replacement": [],
+      "sha256": "46d8577cb0c92e3d86161580dee355d62a17d6ee5858f5f0435b0e875a724d31",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/networkadmin.go": {
+      "replacement": [],
+      "sha256": "c7f1308fff662da6ddccca87026a9a226bba87036b7b658c6d66fc235f8f0553",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/networkadmin_test.go": {
+      "replacement": [],
+      "sha256": "70d2b6199a35e0b21fd132e3c146912d4fea1648682792df7ff38d60c998606b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/nodes.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/mod.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs"
+      ],
+      "review": "Reviewed node handler registration and scope enforcement with a real broker plus named external provider liveness.",
+      "sha256": "86e9b4c7a8273f6800889883650c7ce26733942c15bbb73a4ef94f0b68e71194",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/cmd/hub/nodes_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/mod.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs"
+      ],
+      "review": "Reviewed node handler registration and scope enforcement with a real broker plus named external provider liveness.",
+      "sha256": "ae5f4a9510f51f6dc4947a3fa78ef1a2671eb7cdefcbf7bcff41ef726ee09caa",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/cmd/hub/peersconfig.go": {
+      "replacement": [],
+      "sha256": "381d990a67e543d9773532c8fbd76336909a39960162a899a09581ad1beefb64",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/peersconfig_test.go": {
+      "replacement": [],
+      "sha256": "e6aa7ce6092a4bc17678973e8eab93440581311e5e5267a7a05641fe2dc1ebb4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/pluginorigin_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ],
+      "review": "Reviewed bundled seed behavior, host-only reload/mutations, SDK/UI serving and independent plugin origin policy with actual socket fixtures.",
+      "sha256": "67d72c732816b8d586cf34cad2886c7bb27594c353f7a846b60eefa4fc05cbc7",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/cmd/hub/pluginreload_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ],
+      "review": "Reviewed bundled seed behavior, host-only reload/mutations, SDK/UI serving and independent plugin origin policy with actual socket fixtures.",
+      "sha256": "ae000f08898ae05f711423f64168a5a42e64c508180ef5938d4664723403cf4e",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/cmd/hub/pluginui_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/server/policy.rs"
+      ],
+      "review": "Reviewed bundled seed behavior, host-only reload/mutations, SDK/UI serving and independent plugin origin policy with actual socket fixtures.",
+      "sha256": "7dbc821e2f7dbc896bd1be0d3c197b86bb34f52078549c374f1dfe5fb3d048ad",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/cmd/hub/push_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/push/mod.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": "Reviewed push RPC auth scopes and server-stamped subscription identity on the owned broker.",
+      "sha256": "f1a8fe578f95fcb6aec8255cd6d8436480cc95d4b2ff856f349131b0b91b9ae4",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/push/tests.rs",
+        "services/hub-rs/tests/http.rs"
+      ]
+    },
+    "services/hub/cmd/hub/quiescence.go": {
+      "replacement": [],
+      "sha256": "f4c57d769621b37cd961953409a61a560842b31c3e93c8edc0358ca2b40bc400",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/quiescence_test.go": {
+      "replacement": [],
+      "sha256": "8821eace1c8d2ec59fcaccd5ff62580f31999e94eabe756f35ed651b8c278da7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/remote.go": {
+      "replacement": [],
+      "sha256": "afe94b857f1449b9f4e278d424110dc6924f667ac6c82025b8500514ef5cc497",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/remotepairing.go": {
+      "replacement": [],
+      "sha256": "4966df63eaf98e8fffc15a2d695dbb096d0411350a8a86fb27468b21338062b0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/remotepairing_test.go": {
+      "replacement": [],
+      "sha256": "418996b4c02a4dfe4a8871cd97518ca18530821a96ac8c5129e25b0ee58e2123",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/routing.go": {
+      "replacement": [],
+      "sha256": "662b2dbb3e6cac9db714ed14d32fa2b1a4dbe14b22dc044776d7f915e08a2438",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/routing_test.go": {
+      "replacement": [],
+      "sha256": "8774add6b26b322c905c871c664fe8582cfa494b2f548c3a4bc657d1055c1f93",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/routingceiling.go": {
+      "replacement": [],
+      "sha256": "54d8f98b0e337243d7f37e2611ff2b766bb9e72ca4f7591051899885eefaac00",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/routingpreferences.go": {
+      "replacement": [],
+      "sha256": "17572a666a9bb56733bbeba80ba2e0712bdc449bd9c9a871a369c8ce07221e71",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/routingpreferences_test.go": {
+      "replacement": [],
+      "sha256": "eff436e9da25b45d2c180997ed5009b19b1e9c2c25f0cba61a4a52daa38be5f8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/routingselect.go": {
+      "replacement": [],
+      "sha256": "656fec0661a97aa58561714634276d61c0451f0f08a706a70b26b86fdc02a993",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/sdk_test.go": {
+      "replacement": [],
+      "sha256": "925a2fbc6b01e908b0e4b56650233c6f040c79433b8ce98e98b10e10ef02fc8d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/trustedhost_wiring_test.go": {
+      "replacement": [],
+      "sha256": "b720afa569817013d3ed5ebf3c702f55f23573547298d1319bb98672bc467d61",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/upload.go": {
+      "replacement": [],
+      "sha256": "ef9578a1b86ae0ac1f5560fa2181170abf7cd993308e43d9e7778667acb485f1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/upload_test.go": {
+      "replacement": [],
+      "sha256": "0bafe34c6c03545eed3427d3c9bf490ff588f1df030ff8eab4be27a1712f4301",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/usageprefs.go": {
+      "replacement": [],
+      "sha256": "8609d40e9895a0fe3d1657dabc00394fe35a2a2309ed4c52b5e32647bec6a59b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/usageprefs_test.go": {
+      "replacement": [],
+      "sha256": "b30353c9dc7cc85d911c04f683c52332f63f9f030404330419ef586e5adc8c35",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/usagereport.go": {
+      "replacement": [],
+      "sha256": "71b29e45b32903eb38c7000bcefa57f9f5dad18ef8e4b3066b13a57b21cf2cf6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/hub/usagereport_test.go": {
+      "replacement": [],
+      "sha256": "c65038f0db3de16173bee6a7ceb86bf120da24000a769eea481707fc22fbbc16",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/adopt_test.go": {
+      "replacement": [],
+      "sha256": "3fda6ebdf5758240c666f3ec23bfccabf201487207585489aefc49d6811d9268",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/auth_test.go": {
+      "replacement": [],
+      "sha256": "937c6259ddb4599e347686dc81a99fd3e63b5f0c3d8f73c69bda5fe4c3e7c31c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/configsave_test.go": {
+      "replacement": [],
+      "sha256": "91e5e1462fe496c86ea09058ed7f0191d2be8f8518f4fd6b8227cc13445e7d15",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/conversation.go": {
+      "replacement": [],
+      "sha256": "aad4048c18383d23da4218b95a8623034036ac5e856b3a35a687903089d8a447",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/conversation_test.go": {
+      "replacement": [],
+      "sha256": "abcf04b300481543be90ac85c6dc8eb6364325a96526d99cfaf7e98fcb8b1e60",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/dispatch_chain_fixture_test.go": {
+      "replacement": [],
+      "sha256": "5d06e9e66df2cc539030faafaf7ff0e1409e39e572ac69b5bda99b454ff58667",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/federated.go": {
+      "replacement": [],
+      "sha256": "1b09f7d5638cbd73ea600db4f7edc70c5a6f77c903496bb17009498789d7edad",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/federated_test.go": {
+      "replacement": [],
+      "sha256": "5893b60d1bf166aa7c021856610e777932d6ba123c4353e5145dfa2f9b1fcce6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/fleet_workflows.go": {
+      "replacement": [],
+      "sha256": "6e77f9bd04561367ee82c498fbe1af1893f2ffa398de83dc1c4f25176433281e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/gatetool_test.go": {
+      "replacement": [],
+      "sha256": "4489d92601cb855420698dc73a9eb9bec2154b9a927f939748444b5ed194dc1d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/help.go": {
+      "replacement": [],
+      "sha256": "e87c4f0e006da86ebf389936f861e94cd6c072d9236109e5a6355e70572ec126",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/hostguard_test.go": {
+      "replacement": [],
+      "sha256": "98c0cd2f5a1bbe367330d5787e59773e80b47df6c6393c07c37223dc9a80b149",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/main.go": {
+      "replacement": [],
+      "sha256": "871bc06f19aeffedadc6135a31c57bac4ddfbad747021bdecdffa8a4b82ec6ad",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/main_test.go": {
+      "replacement": [],
+      "sha256": "78abdff386630e4d8003b873722891dbe2098a7c9325e4de627bc0ffa55828b9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/manager_context.go": {
+      "replacement": [],
+      "sha256": "11aec6d63319ff73b0a70e7ede649982aa0fc17833e6745fa854a6f99dc1b9f3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/manager_requests.go": {
+      "replacement": [],
+      "sha256": "3fd6a85f5a2567f7e7b92f263fd373cfa674d6be9e80a2c7b83eaeb24aab4a56",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/manager_requests_test.go": {
+      "replacement": [],
+      "sha256": "ed882c7a9a020c717db9b6d11be3d9f10dceb0904b76083a1ea2bb359441690e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/migration_catalog_test.go": {
+      "replacement": [],
+      "sha256": "c4472b3d5c1dc95491c968cec0d607823e4630cb1ac6840a15fdd8f0c5869831",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/notify_test.go": {
+      "replacement": [],
+      "sha256": "56c4fbf8c48b45061f4c3c744d713a11f7da71fbe791b62b967bf990b649676d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/notifywhen_test.go": {
+      "replacement": [],
+      "sha256": "06c66776050d37abbd5d0103f8760a77d57e658ade0c81e80a2d33737df11446",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/openterminal_test.go": {
+      "replacement": [],
+      "sha256": "f4b516ba0b300812e741a62bce36c92c10d8e90053f29c4776d73942ead9b47b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/operation_schema.go": {
+      "replacement": [],
+      "sha256": "126a6f84b19f314151dbfab90ad3f719c60948376d9388909d3527589308b7f1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/operation_schema_test.go": {
+      "replacement": [],
+      "sha256": "1e34a639992cbf55888ed0902f862ecb3ed5cde7c599cd57f29e528a3ce41c03",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/ownerselection_test.go": {
+      "replacement": [],
+      "sha256": "f8d1c9dea7be91fc929e8251325d1479ed509928b4f10a511c514d3b05fd5d30",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/plugins.go": {
+      "replacement": [],
+      "sha256": "8e651accb2c1539d3be473e4dcafd62fd01a45953d5210db6867c88ca9bad1fd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/plugins_test.go": {
+      "replacement": [],
+      "sha256": "7f00ac52c28d4f98e105d6a1a9427709a8fea9e237fab0fc415838281358935f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/profilegrant_test.go": {
+      "replacement": [],
+      "sha256": "717b23bcea9c95fcc0c9ea27c61f788533218da3756a4df82ee3eb129972f63a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/progress.go": {
+      "replacement": [],
+      "sha256": "02247f86b0506afa7a79f5d6f528d3e3d86e650757198e1a5ae483d268401fbd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/progress_test.go": {
+      "replacement": [],
+      "sha256": "26cbce934ed4c50c0e643af223f170b97e733f2f45b164d8d9cf4ce46cd2e4e3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/projectstatus.go": {
+      "replacement": [],
+      "sha256": "34c7601a28b1dfb2b9dd439670f9eeb06b01767484d2c320d141299a707c5ec6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/projectstatus_test.go": {
+      "replacement": [],
+      "sha256": "6697c1d84bc25a7b6c004ed9cfdf3b22362c84afb651189e439f50ee42b1dd8f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/respawn.go": {
+      "replacement": [],
+      "sha256": "8a2ce5db4dda6a9b9718e4d7bc290afe5b442e831c64f45a2a49102ec3fcb0ad",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/respawn_test.go": {
+      "replacement": [],
+      "sha256": "75b2607dd329bb380d75ffd7152a496dbd10b61c3d95bceda365f778234df86e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/routingpreferences_test.go": {
+      "replacement": [],
+      "sha256": "1c7e212f983e38797643ec50f1bc00e29b1968cde478447e45ff8ec26beb024b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/routingselect_test.go": {
+      "replacement": [],
+      "sha256": "0ebf4299af840fe80ae45744fa9b2546f4986d42b1cb56d9b3955e98046f7f7d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/sendmessage_test.go": {
+      "replacement": [],
+      "sha256": "08129da981a0767b90a7f913280c465935bdf012c56bf830e325e3d614f6eba4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/spawn_firstmessage_test.go": {
+      "replacement": [],
+      "sha256": "ef39c14169e132b126b127087bf7df6c5c1c1df45714f7c972e2faa85e31a6f8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/spawn_parent_test.go": {
+      "replacement": [],
+      "sha256": "965265623e01f8eaff9798dc0b99d5af3d30e7735023e450579b220b736f4a5b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/spawndefaults_test.go": {
+      "replacement": [],
+      "sha256": "e53309e99b32d7330275691e94873c66ee1514eb97aa3a812a1ffdde08522ae0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/status_summary.go": {
+      "replacement": [],
+      "sha256": "9aca610d34c1d172139713062a9bb50dca0b70257075e84780dd1a78db5dfe97",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/status_summary_test.go": {
+      "replacement": [],
+      "sha256": "322222e2c617290ce9fcc37669b66445bae3a0acadc189d3c68d03feb79ccd1f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/task_references.go": {
+      "replacement": [],
+      "sha256": "8cd5788b82d088f224564eefe7dc416c52ae435428984b158da0a344e690b902",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/taskrefs_test.go": {
+      "replacement": [],
+      "sha256": "ac25a8267bfcbb24355cd92bccb4c1f32f21aa7522f3373f6d43adce5ececa90",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/tiers_test.go": {
+      "replacement": [],
+      "sha256": "ac61186a856cc7ccb1a9b3eafadffa1e528bc11615d8ffe2a7b1fa230e6319a8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/ui.go": {
+      "replacement": [],
+      "sha256": "f1f24b944f52dcbf2b37b8b26acb3cb01199600905436990c8423ad08e504e8b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/ui_test.go": {
+      "replacement": [],
+      "sha256": "851701022a245921c94a40dafec99322e929f3afac7b277b296fde7c82dca644",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/workflow_dispatch.go": {
+      "replacement": [],
+      "sha256": "e700b3381d789078a2c209b4b5af8d99aba7ff618a6cdc013988354f77773996",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/workflow_dispatch_test.go": {
+      "replacement": [],
+      "sha256": "4c162f313593e71c153689a32d7beed3df59c317c51504b48c8cf155cec9023c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/mcp/yologrant_test.go": {
+      "replacement": [],
+      "sha256": "80463c8713022a38ef1398348173218bb346fa048b0b2ce921dcf282afac7485",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/backoff.go": {
+      "reason": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/parent.rs"
+      ],
+      "review": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "sha256": "688cfc50133195244dee45e5d3be176519bd069118f7159d96f90a9830127e92",
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/shutdown.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/backoff_test.go": {
+      "reason": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/parent.rs"
+      ],
+      "review": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "sha256": "067f3c9393c298c62f562a39ebdcd38d2abea046b04cf9c31355f490cdcb8f51",
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/shutdown.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/child.go": {
+      "reason": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/parent.rs"
+      ],
+      "review": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "sha256": "1730a3d97fa5a395a1320dcf0f716c465d72d8b584c7417c3a4c5cf6c4a7048f",
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/shutdown.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/child_test.go": {
+      "reason": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/parent.rs"
+      ],
+      "review": "Separate Go hub/brain/MCP child restart loops no longer apply: one owned Rust backend graph replaces those processes. Owned task failure, explicit shutdown, signal and parent-pipe cleanup are tested instead of spawning replacement Go binaries.",
+      "sha256": "fb59c346eb95b8f77fd74f3771b63f58e5f32ac72e6236cce1319b7231060fac",
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/shutdown.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/dialhost_test.go": {
+      "replacement": [],
+      "sha256": "5995fc4a2f9fb0c6bceb0eb7ca5a0009fbc8fd9f2c91de6b5c52ae4c539a1099",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/external_claudemon_test.go": {
+      "replacement": [],
+      "sha256": "21f437648ae986c962bf407f582fea722be8ad8f0824b2283b6ef653b64695a2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/fleetcmd.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/admin.rs",
+        "services/hub-rs/src/cli/mod.rs"
+      ],
+      "review": "Reviewed positional/flag parsing, job approval without implicit enablement, exact host authority and fleet exit codes for busy/rest/unreachable.",
+      "sha256": "9d94e22847200cf30456afc9fefd3ea5c44cf138d05872767af22af312d8b944",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/install.go": {
+      "replacement": [],
+      "sha256": "42c68fb22beaa17806dd0e468801fd966e799561f77d91d529b350f461f29632",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/install_test.go": {
+      "replacement": [],
+      "sha256": "0dd7a2708b567e26bacdc8e6df92464bdffa27414b19dbf721bd1ba07d998ba8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/jobscmd.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/admin.rs",
+        "services/hub-rs/src/cli/mod.rs"
+      ],
+      "review": "Reviewed positional/flag parsing, job approval without implicit enablement, exact host authority and fleet exit codes for busy/rest/unreachable.",
+      "sha256": "47ec40f2851b3cf64dd9329e4eeb5b362794f00d1d289d487599ba05a90a7e9c",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/jobscmd_test.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/admin.rs",
+        "services/hub-rs/src/cli/mod.rs"
+      ],
+      "review": "Reviewed positional/flag parsing, job approval without implicit enablement, exact host authority and fleet exit codes for busy/rest/unreachable.",
+      "sha256": "004db71bb76d48200b1ae7ff00d7b24c8564c972e6350e2267f2ed482794e58f",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/main.go": {
+      "replacement": [],
+      "sha256": "feffb5a51771b8be2e4e12ae1b37f68a9db8e5732997d0086add9df8c5c62d90",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/plan.go": {
+      "replacement": [],
+      "sha256": "e93d28c4ebe3acacf8e76c99511ab60d2dcb6219eda100634bf7e242b7ebe5b2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/plan_test.go": {
+      "replacement": [],
+      "sha256": "157716e6d0cb51b302e0136841c10e05e187eb5030955ab7c250599ef91825ee",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/plugindev.go": {
+      "replacement": [],
+      "sha256": "ea7ef72aca299c346dd86006d8e44d5f823b26e727eb7de88b48dd024c670ad4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/plugindev_test.go": {
+      "replacement": [],
+      "sha256": "2ab74a4230dc7a21f66a194303005591c7a1a6d7d51604c62bac2a0bbfca96e0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/resolve.go": {
+      "replacement": [],
+      "sha256": "c0424b8bfd63711ec1b83d493c24e46cbf89376a3e8ed44053c2e39f15c469fe",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/resolve_test.go": {
+      "replacement": [],
+      "sha256": "f8e1d48facf609524df82ff8c1383533701bed99f3498b374044056160bc2e79",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/serve.go": {
+      "replacement": [],
+      "sha256": "8c61b9f72e34fac10a8282f53e7c811221477306a04306a0ca95db9df63e085d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/servedb_test.go": {
+      "replacement": [],
+      "sha256": "7403a6c0f2c9c4db8746aac4f0e5c6ce014f1d876b45be281c0d3351f59c0a94",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/serveinit_test.go": {
+      "replacement": [],
+      "sha256": "598c535f3b8b4063fd215f5f643acba356a106bf3dd92685e93d1224e80e7a1a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/status.go": {
+      "replacement": [],
+      "sha256": "17ce9490f9235bf944dfd1a08111a5ec1bfe15a443cd787d9e96a409c28ae085",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/status_test.go": {
+      "replacement": [],
+      "sha256": "6cc0e73ef234cdb243393027f064883b0ea959974aae1a4ea26189a681a1bcce",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/token.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": "Reviewed first-run identity creation, full persisted-state loss refusal, explicit reset, cross-process writer serialization and create/list/revoke/facade-authority commands with redacted output.",
+      "sha256": "cca63d27e0b134bc98d8d10b6d069ff743fb55894a56e787f611e97a2cf8cb52",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/token_test.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": "Reviewed first-run identity creation, full persisted-state loss refusal, explicit reset, cross-process writer serialization and create/list/revoke/facade-authority commands with redacted output.",
+      "sha256": "33c58479432d9be29b02fd161767eb53a66196096b0736f8b4fd0d9b84e785f0",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/tokencmd.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": "Reviewed first-run identity creation, full persisted-state loss refusal, explicit reset, cross-process writer serialization and create/list/revoke/facade-authority commands with redacted output.",
+      "sha256": "69bfc19f56d1d071ad517a22fd491d29b4d1b7da0cecafa8e02272960e37aec7",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/tokencmd_test.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "review": "Reviewed first-run identity creation, full persisted-state loss refusal, explicit reset, cross-process writer serialization and create/list/revoke/facade-authority commands with redacted output.",
+      "sha256": "0b54e37f17217b912d9c2b73caaeeeb94c397df0b9c9045b995e51f6cd0761ed",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
+    },
+    "services/hub/cmd/workspacer/usagecfg.go": {
+      "replacement": [],
+      "sha256": "d0b0e2d99d9431300092b8430747d8598d15f512781a3ef6ac37821722292d15",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/cmd/workspacer/usagecfg_test.go": {
+      "replacement": [],
+      "sha256": "316c8729dfc1a897c21493267c551e992a36405972dda720ca207b993078ff70",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/authtoken.go": {
+      "replacement": [],
+      "sha256": "95b7efe4b7eb3e6a01af7c8d31285b4418cfa20fbad0c8a2c1a0d7bb8cf01945",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/authtoken_test.go": {
+      "replacement": [],
+      "sha256": "2953609e6958db396ecc3558914a6f0fe4eab3c495f8787aef8a5f7db95c7ecb",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/composition_test.go": {
+      "replacement": [],
+      "sha256": "bf95bba8540955cfd2d4721459f0779cb0f6028212dd8d0ad7fdc9931e6491f2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/profilegrant_test.go": {
+      "replacement": [],
+      "sha256": "c8d65e8f71d175f6a9d1161ffe421042869a6be9bc897a1dedd75a4d8b566fc3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/providertier_test.go": {
+      "replacement": [],
+      "sha256": "821f1faf359d32456c993e8c9c032925bfd89af8065574740ecec7d224c9796f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/role_test.go": {
+      "replacement": [],
+      "sha256": "9e26510f6794b284a0f8df64017d843c9b567be534ef5591a58a40e0c2b43023",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/runbookpin_test.go": {
+      "replacement": [],
+      "sha256": "b2530aa59fe29d81771614a751fc7bf37e4aedda64318cc2d62e5b808da4574d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/authtoken/yologrant_test.go": {
+      "replacement": [],
+      "sha256": "0ca976a431c1ff5db41e5ac2f1a240b5e2a39285f8a85717c94afcb0072664e8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/broker/admit_test.go": {
+      "replacement": [],
+      "sha256": "ee194fc0a4610318a6ff896da411949b90b16ea0ce33c419f33ae8834eab8a4a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/broker/broker.go": {
+      "replacement": [],
+      "sha256": "fc71556e0de0c62c7beaf0523730b84c1b189265204e51769f316a71aca9a262",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/broker/broker_test.go": {
+      "replacement": [],
+      "sha256": "7c27dbe75fb96bbcfed9ab2c49a7fa06f279c1a639cf58820e43b430559786e7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/activity.go": {
+      "replacement": [],
+      "sha256": "312109ac7af1413452d18ef132c9b7738b4f4b4f0ff55783f673b8d77a4cc484",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/activity_test.go": {
+      "replacement": [],
+      "sha256": "a417a3b9d41390fdf1d193b3a8489aeee3dd1a5999d055315f3451e4259fe20d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/authorize_edges_test.go": {
+      "replacement": [],
+      "sha256": "1533c247f8418a2a4845568c2a57f09b91b79657500ee4e16fffc7489504f005",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/authorize_test.go": {
+      "replacement": [],
+      "sha256": "f6ff0c0441767249868df2ad88fccb61d6ec89c5ace0912d1422399fec919477",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/bench_test.go": {
+      "replacement": [],
+      "sha256": "cb1e57f91710b43bfda3d1d4a7612a3981e5469a5e8139c97eecd2982f55021a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/bus.go": {
+      "replacement": [],
+      "sha256": "d88bc1ee2c81d5245e987770d65dd2001e01f6dea38d7fe3227577453b48c6a4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/bus_test.go": {
+      "replacement": [],
+      "sha256": "3d31c0974fe6b5d6e1cb365eb583972ff55b4f98f3b8cb63133297cc68af41f8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/clients.go": {
+      "replacement": [],
+      "sha256": "c2e2bbc5bf76a41a24d686048a41acb8a0d988b75eebc3cb1fac7d36ac7dd3e7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/clients_test.go": {
+      "replacement": [],
+      "sha256": "5f5b2ab11a610e75b38b95e72dc087907231ecf8331b076b3f023aded53388b4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/delivery_layers_test.go": {
+      "replacement": [],
+      "sha256": "476597da40877f4a0caf5e63870ceac5c3d43fd697d60b91c2efdde674a3f664",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/demand.go": {
+      "replacement": [],
+      "sha256": "ebcb086565dceefa42f77da310babaa53c62f8a87fcc0e3c7eb0947e2421761a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/demand_test.go": {
+      "replacement": [],
+      "sha256": "4d74e1a0a3d4b8e4710db509de4920ba1a44740e72ef1900e99b4337b77f1ca3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/desktop.go": {
+      "replacement": [],
+      "sha256": "56bfaa28cac3ff51e2ed6787705dc51bf498845b435e3429bec41d886eb83a97",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/desktop_test.go": {
+      "replacement": [],
+      "sha256": "c8dd883165801a5b3aaf968857b752db3358034aa0811bd5a459a32189efea4a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/desktopactivity_test.go": {
+      "replacement": [],
+      "sha256": "4eed43e84518b7a7565a570498affd29a645fa860e17d0d3a56ce1498735bccd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/evictconn_test.go": {
+      "replacement": [],
+      "sha256": "79ff36221ae57006b1ae7ce3222a6162372d4fce5b85ebe3925ff5f42269721d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/facadeauthority.go": {
+      "replacement": [],
+      "sha256": "11ee0250d3a0738baf36f73cfe8c88e1fcc20ee3dd340f5e7a6e095c8041b45f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/facadeauthority_test.go": {
+      "replacement": [],
+      "sha256": "ce6b30d74365793ec57820435d541ae14d0978be09b3b6280013d762d2c53941",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/headofline_test.go": {
+      "replacement": [],
+      "sha256": "83dd87cae14fb71f8fd7104295700dfe2f53dfb4757125e4528ca7c070cf3bb9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/hostauthority_test.go": {
+      "replacement": [],
+      "sha256": "6e7265b28c5e6e45d713e543398c857ff60b50f8ef67613675122d82fe2147ac",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/hostgate_test.go": {
+      "replacement": [],
+      "sha256": "3a16fb52d8532ee1bd6f21b277b453b5f52439f1073280447d6e63489aa45840",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/hostpin_test.go": {
+      "replacement": [],
+      "sha256": "caee5fea0e31d0822786c61b14adb03852a13f3a034c852dd1bd0b732ddae77b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/launchintegration.go": {
+      "replacement": [],
+      "sha256": "f99a18e6bfd25e770f55995e333d93ac46ba304c014b443236d5ef6c61c6f1f7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/launchintegration_test.go": {
+      "replacement": [],
+      "sha256": "11a5514921d14b7feb803b67c3e4695936b0484d82bb830f0f8053ee85afa064",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/local_test.go": {
+      "replacement": [],
+      "sha256": "1fb68cd4a907e8ce196bef7384c9f0aa0063d4ba88bb1deea7514e3178b0debd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/localident_test.go": {
+      "replacement": [],
+      "sha256": "cf637ee8d768ad67855165e0178d9279d943d684fb547e855902ab3f36ffd589",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/machine_stop_test.go": {
+      "replacement": [],
+      "sha256": "1c3d5d9d23c3abbfef7db259025a8f89f59e075d82afa7aa39657f15498ccb7d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/migration_test.go": {
+      "replacement": [],
+      "sha256": "66f480ad7e857a4cf5a840bef9e977edda078dee2e075a5fc6a9479068ff7e69",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/origin_test.go": {
+      "replacement": [],
+      "sha256": "6d522a18c813eae33da85a08f5e1934210f89189b5e4f23862ce7dc344de271f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/pluginambient_test.go": {
+      "replacement": [],
+      "sha256": "8feb36bde1063bd8cfc47f28a5796ed5fb94855db7266c9bbcf93a768da50119",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/policy.go": {
+      "replacement": [],
+      "sha256": "c4fc7d39a0a34e7b5a0e99c49e0b385d55b3658a58ac2b2263f8da5425ae00e9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/policy_test.go": {
+      "replacement": [],
+      "sha256": "3ed8aefc72f9b59b5943e5f6f8aabfbf72ac847ad09bda2329111a07e4c54d21",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/profilegrant_revalidate_test.go": {
+      "replacement": [],
+      "sha256": "c60be3c90d99b26813e2b33bc1b6140cfadffe29dbb677c5d43aab33c1ac724b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/profilegrant_test.go": {
+      "replacement": [],
+      "sha256": "9f91a01e02ebe7b1ca704a439e34d3b1322ac882e922b0859519889422793e81",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/providertier_test.go": {
+      "replacement": [],
+      "sha256": "1ecf4c915e71923e83f2ea3a49d86d6ef64a6c9590b648907d8019b89305240d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/raceflag_norace_test.go": {
+      "replacement": [],
+      "sha256": "62f90db41e379010071e389ddf59329fe57a6fef8aa1eb03f13778e9a048d32f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/raceflag_race_test.go": {
+      "replacement": [],
+      "sha256": "6b244fd096d9a8b6ae0699b68916f5fcff909f6cd8d99737cd43aebda10e71a7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/rebinding_test.go": {
+      "replacement": [],
+      "sha256": "27c641b99935c16b860786e1df3c69253914aa9280f0aef5f5887d6e809886f7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/register_hijack_test.go": {
+      "replacement": [],
+      "sha256": "5e04aa72e6f9008061dcd4789e21e8c456ef04fc9979c6b91fedf0cf6a6223af",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/remotedispatch.go": {
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs"
+      ],
+      "review": "Reviewed origin-only provenance minting, dispatch-enabled peer routes, credential ceiling, exact callback source and durable replay/no-repeat semantics across real hubs.",
+      "sha256": "d8752036ecd86d98476734c07f223d3b56915de950b55a6cd7dd8c813c90f08c",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ]
+    },
+    "services/hub/internal/bus/remotedispatch_events_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs"
+      ],
+      "review": "Reviewed origin-only provenance minting, dispatch-enabled peer routes, credential ceiling, exact callback source and durable replay/no-repeat semantics across real hubs.",
+      "sha256": "4429c7b6a4871dc222d93060679d3928c7ee601397e387adf0b48bc1d424f3ef",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ]
+    },
+    "services/hub/internal/bus/reportprogress_test.go": {
+      "replacement": [],
+      "sha256": "bfc63c1d4c5133d50ae9118c59a33334a1b01112c978aa7d5ad57dd5b3537ed4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/revoke_e2e_test.go": {
+      "replacement": [],
+      "sha256": "f25d9fb0fbe57f811c6fc35ddffc9cb4917f5ca46805e5d4864ad3a16ec40163",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/revoke_scoped_test.go": {
+      "replacement": [],
+      "sha256": "98e146f9b809839d25aca0c8d63ebfd67986ff6878e57269188f19656be411e8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/routinghost_test.go": {
+      "replacement": [],
+      "sha256": "fa7e5ab11d6bef8373b0b4224eddc29d8e8c76f13a53c29882724a279f920288",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/rpc.go": {
+      "replacement": [],
+      "sha256": "1daac8ee740e6a1ee7da7160bc97c1bbb737c67e6c3003d15f1da1e799ac0bce",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/rpc_ownership_test.go": {
+      "replacement": [],
+      "sha256": "0162f4055f23bcc236658dec5d0694d92f7767aad3b2415ad654f55dff237cf6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/rpc_test.go": {
+      "replacement": [],
+      "sha256": "657686f6e8f8723352d7d72e68149c133d1601a67ed1a8dd95d3464839b0b940",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/sanitizerdrift_test.go": {
+      "replacement": [],
+      "sha256": "f7c6e290f1dbdc8c92df1417244520e61e6173c9c630fa9247cf05979d7d5a8c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/scoped_token_test.go": {
+      "replacement": [],
+      "sha256": "cb4f926d919d1c940d01ba96fde874dbbe9060d4b12aebac45e9f9a9fcd65a76",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/spawn_capabilities_test.go": {
+      "replacement": [],
+      "sha256": "b2e5f727426303fd48056b05a0fd95cc5e753c3a3d78704d9dd751ad4f8246e3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/spawnceiling_test.go": {
+      "replacement": [],
+      "sha256": "21b05fb1f3e6ed088114f16d49df5042a1c50ed124bc50db78e7388e1d259c97",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/spawnfresh_test.go": {
+      "replacement": [],
+      "sha256": "40252dd21e130c2a75b88eb193dc9040d0717c5c4acdbc8adaa0490db4c5350d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/spawnkeys.go": {
+      "replacement": [],
+      "sha256": "22c7b834054c821d137dbafca9ca8cf585fe6040468cbbf7d581f77958c268cd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/spawnkeys_test.go": {
+      "replacement": [],
+      "sha256": "6a33d6e539d439f00f729d6a7b2984953dcface09ea4a0765838fefd68089816",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/topiccap_test.go": {
+      "replacement": [],
+      "sha256": "d0a25e459cee4e2818b17cfbd406b7226f1ffa6c4c07f6dbbc2b998fbcaa92a5",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/trustedhost_test.go": {
+      "replacement": [],
+      "sha256": "0f09773a5197f659c33b3494fe7fa8298085a121939cdb760f6a1ef90b8a303b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/bus/yologrant_test.go": {
+      "replacement": [],
+      "sha256": "0ff556fcf1452cb5911dffb68d3142490b2869e9e918aca292b174b638bef123",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/busclient/client.go": {
+      "replacement": [],
+      "sha256": "2d87b7b6e9657c35797bccb983b09a37bd75aab0cc841e721240528d640d46e1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/busclient/client_test.go": {
+      "replacement": [],
+      "sha256": "3f935892cabe3633567a81093e34167f04600b89fcdffc6a8d31b28ed38e6967",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/busclient/subscribe_test.go": {
+      "replacement": [],
+      "sha256": "db35cb7811db3a92358df687e7e4c1c9579f7ee60a3d3dc4091519ae1a730f51",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/capspec.go": {
+      "replacement": [],
+      "sha256": "05a5d88eb20e619326fe9185de40822b05fe17da73f5413c7e0851efc9528328",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/capspec_test.go": {
+      "replacement": [],
+      "sha256": "b826239866bfa9d969ae4c42c40e05f37f8baca89d10a72efcecb0b1151e776f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/claudemoncallers_test.go": {
+      "replacement": [],
+      "sha256": "13f4562c6aed15af83c6870a80e55ae154e8f92d8d38184f12d558bceae8eb35",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/composition.go": {
+      "replacement": [],
+      "sha256": "343d3b52342d1e158ae7e8047a90a1fd37dce81982855822b9bcdfac92f0d078",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/composition_test.go": {
+      "replacement": [],
+      "sha256": "367dba14b2fbc572342ff19f58f1a10717fb139f03493f80f73d4ee728d90cd6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/desktop.go": {
+      "replacement": [],
+      "sha256": "fe7d1c0f348706d01bb2503554217348c3981e6c1f3c74109e5cf1d4fdb50625",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/eventtopics.go": {
+      "replacement": [],
+      "sha256": "d2dcf84c08328e78da26aa626fee0f17927d54d810d779f10fb2b6c7c5c79888",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/eventtopics_test.go": {
+      "replacement": [],
+      "sha256": "137ca99a763d344f7eb0fda3a28479398f9c9b361119a82de538252800b7b9f2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/httproutes.go": {
+      "replacement": [],
+      "sha256": "75eea4bcd471facd874459d6fa8015e9b2c5e702eee8fd136d1ada53cbbe3f4e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/httproutes_test.go": {
+      "replacement": [],
+      "sha256": "0eaf4cecdff232e1db2887cdc4cb484216471fbc243eac28f61da357f625bdd9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/hubnative_test.go": {
+      "replacement": [],
+      "sha256": "c7a7cd0eca71f8cb221e91bddadbc686cab7a04fd6f4e9645340651e717f2db7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/publisher_test.go": {
+      "replacement": [],
+      "sha256": "3f8bbf89163d912bed926053cd603e3bbe91217bed502f24597bd329a4387253",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/repofile_test.go": {
+      "replacement": [],
+      "sha256": "3dbdd1b35ffc6ab4957d378df90d5eaec827414c182bba4a98cddba9573e6bd7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/serveradmin.go": {
+      "replacement": [],
+      "sha256": "5761824ac8e36da0945b8fc60aad050dec7d619ebfec7bbdd67ee0e18fc613f6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/capspec/timeouts.go": {
+      "replacement": [
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "sha256": "25cd3b5a23657a8731b7b0745026700fa8446d2ecbd37d7f0ab30399dcf7700a",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/lifecycle.rs"
+      ]
+    },
+    "services/hub/internal/claudemon/bridge.go": {
+      "replacement": [],
+      "sha256": "cc1eae8c400f848eca2b8af97333c5525f8008864cc71d9f0369ede9639871e2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/claudemon/bridge_test.go": {
+      "replacement": [],
+      "sha256": "1fa5ca83cc6faa286ded35f4756ea56839a9aab596e6c31a014df35b9ff341dc",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/event/event.go": {
+      "replacement": [],
+      "sha256": "5b0754bc4cab5d7a59dc2e13943fdb6d03e35442ebe3b84913253f08b488e5c0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/event/event_test.go": {
+      "replacement": [],
+      "sha256": "02b10220a2cd52fa3bf3f911b7a58f6a264e37efbbc362bcb105435dea5a33e2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/extinput/extinput.go": {
+      "replacement": [],
+      "sha256": "910d23b67b5bd0690191c02a5f9e38bc3d89d93b0d99b60d596d41fb7b24b3ae",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/extinput/extinput_test.go": {
+      "replacement": [],
+      "sha256": "76b55a0f3e87ae9b62d6a541cabb92bcee0a2eb923510c378770eef6d55eddef",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/federation/controller.go": {
+      "replacement": [],
+      "sha256": "848f135e35555d464d177f52d24f08e43816cf6a1c6c2f10d3fae6ae7b1da6eb",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/federation/controller_test.go": {
+      "replacement": [],
+      "sha256": "21f1cc4e32d2dc9067cf381a88c0ee6bf3465dc8bc78e3326caf6d757482c1af",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/federation/federation.go": {
+      "replacement": [],
+      "sha256": "195f2d19a49ccc7d6970ab159e633704bfa823e7cf7bc3a6e87917068b0436b4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/federation/federation_test.go": {
+      "replacement": [],
+      "sha256": "a8be468f77251ec08391785ee4bccead374d9bfa0aa09136092342cafb1befe6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/federation/ownerselection_test.go": {
+      "replacement": [],
+      "sha256": "e289c734e2f4043d45c4002b731821a84bf12e9fbf3494e796513e63ad6d81a8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/federation/spawnsanitizer_test.go": {
+      "replacement": [],
+      "sha256": "4f3a550a56ca37b97e526f1ec37dfb34ea6013b8869eac882b9b9168b548fda3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/flyapi/flyapi.go": {
+      "replacement": [],
+      "sha256": "5b4a806567fb877734006e3f70bd867dd9e638e0b2ff9257bca0e05460a6b9cb",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/flyapi/flyapi_test.go": {
+      "replacement": [],
+      "sha256": "f34aef777c45567deff26ad25ff4409a3909daf2e5c4619856698918d2c000d2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/integration/editor_sandbox_test.go": {
+      "replacement": [],
+      "sha256": "816bf428920274f35840912cb599213242cd0d6cb741d52e7942f40c3ab3d312",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/integration/spine_test.go": {
+      "replacement": [],
+      "sha256": "8e62f45ed144ba59256ace98356427ef059507f48468321e4c2a277b3ec2a360",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobobject/jobobject.go": {
+      "replacement": [],
+      "sha256": "907a7de6dd7523c4ac74aa9a63c675138ae7febe011e3fcf266e9e1657486468",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobobject/jobobject_unix.go": {
+      "replacement": [],
+      "sha256": "fb2c25488c035b7adc116adb38b4ebb1b0ab83b0935dcd47e0e5099c5059ddc1",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobobject/jobobject_windows.go": {
+      "replacement": [],
+      "sha256": "e42e644e88dc5ef1eb532238fd6772b684077c4a288f158a24fa57fe3d70feed",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/context_test.go": {
+      "replacement": [],
+      "sha256": "8d036459af9fe504d59286be2e23b86dda8b79098644e5a859ab64b36313111f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/docs_test.go": {
+      "replacement": [],
+      "sha256": "8508224eabd3aa034f6091ab1278933bdd875275747a1746d40547b8a3f14ae8",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/handedit_e2e_test.go": {
+      "replacement": [],
+      "sha256": "e77483f27fa5eb966a28bf48be2fd641e64497adcc74dd8a59a1c2c9acf2bac4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/handedit_test.go": {
+      "replacement": [],
+      "sha256": "667989cde861be51b2a1dcd7a70e78dadb7d385c39fe2d080622271228220c09",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/jobs.go": {
+      "replacement": [],
+      "sha256": "e05b6a9d0c119ff1fedd5718ba2d82a332c711b122e5467055f623df975b4546",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/jobs_test.go": {
+      "replacement": [],
+      "sha256": "e8758c58cdff4ce6b918fe72eee9a7f837644ee586b009bc3ca698af17f3dee9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/migration_test.go": {
+      "replacement": [],
+      "sha256": "79f53912df2464a816c57e8e5d6c3312b194b07d8d7b8e6d841a0f76897c9ece",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/preset_test.go": {
+      "replacement": [],
+      "sha256": "3662b023dfefdb5cc41faf01fdfa5482f61927deac7c9e346fca278ecd12c893",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/jobs/scheduler.go": {
+      "replacement": [],
+      "sha256": "8f9dee061afa51b23423fed3aaf4545b8a66d45a9bdc794bb8cba830dbe1e2c7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/layout/layout.go": {
+      "replacement": [],
+      "sha256": "52d2d77916de51584c5d537f7171bf767e6f8243318af692aa1db44bee0b3493",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/layout/layout_concurrent_test.go": {
+      "replacement": [],
+      "sha256": "16f55886e88a5a123ff8a379f18b36e64a5a5e93037f8733a0a6a9a982d954df",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/layout/layout_test.go": {
+      "replacement": [],
+      "sha256": "8cfc806f00f760040aec7d203021a755fbb715dd756d5634805fc6b0ee09ef39",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/layout/persist_failure_test.go": {
+      "replacement": [],
+      "sha256": "eaba882adeeeb62996a91a1b9fada20836a878a21d398de101a3cbdc589d6d2f",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/bucket.go": {
+      "replacement": [],
+      "sha256": "42771ee3d4bc22be347817450cd325484dc3f0350b36bb22863d2ba4c9a32c50",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/bucket_test.go": {
+      "replacement": [],
+      "sha256": "01c6745c35da6389de426f5bac876c30157664c6616db587ac60b448a7b88e0c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/forecast.go": {
+      "replacement": [],
+      "sha256": "6bb8eb94a3911e3210db4a8c3189577b38f12f05bcb397225c4c4e4bc9fed330",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/forecast_test.go": {
+      "replacement": [],
+      "sha256": "bc9ea9770e1376dcbe35143460df40739a91d734e674055b0df6b22ed4483d7d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/health.go": {
+      "replacement": [],
+      "sha256": "2ebb4a5d77cfdf633dc7e417db532ab84b2bee91f75c1aaf42bb3d3fa9fec8c0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/health_test.go": {
+      "replacement": [],
+      "sha256": "244a853547be2e1e62ff1015ba0bcb30ab208f0270573faf90b0f26191ec74f2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/pace.go": {
+      "replacement": [],
+      "sha256": "7c7afcebe2706132dbdbb81cb0e867e4308525d011acc06f96fbbd4f1908b498",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/pace_test.go": {
+      "replacement": [],
+      "sha256": "bca13c4f5e54c70a92feea8c8fe910ee1543ecc3288a75f7f7db1c1b9284f084",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/paceweek_test.go": {
+      "replacement": [],
+      "sha256": "efed90e68e2d677e223b960308e0d4e1c17644aa46b7f9e6b2d4365d628e4450",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/report.go": {
+      "replacement": [],
+      "sha256": "b54a9abd321d145e608ba3334f92ad8ea545a1f5ecc56a7adfe14d82d0846fc7",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/report_test.go": {
+      "replacement": [],
+      "sha256": "6573f70787110b97fadfbab49db473ee931d3431c884e7832fc32e36267b6932",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/rust_contract_test.go": {
+      "replacement": [],
+      "sha256": "c1de99ef34e0231ebf9186b05fe7217ce7ff86e284cc2a93a7933eacaf584b26",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/window.go": {
+      "replacement": [],
+      "sha256": "cea8791656213cfdf086a74fdb8bcd7ba158e84ead80fae715b95d7a5fb72aba",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/limits/window_test.go": {
+      "replacement": [],
+      "sha256": "cecab78e12e23cddd92a9b89e96f8e233bd719b957e8648a3ac273f149f95ffd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/modelselection/manager.go": {
+      "replacement": [],
+      "sha256": "8360b75c45346ca2e10d86de460c1a91e002446b3056553542495e9e772a7f11",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/modelselection/manager_test.go": {
+      "replacement": [],
+      "sha256": "b95c93e6e944eb58201d155a7c3a950e59d16ca6b609d705d6e83fd9a9417335",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/modelselection/modelselection.go": {
+      "replacement": [],
+      "sha256": "725c0f43e86ca8e3721b06f14d6160f90e1081c362c7167622fe6bb1ad946b94",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/modelselection/modelselection_test.go": {
+      "replacement": [],
+      "sha256": "da3a5b9063a7718bae6b4cbc94546b9b9c7be1e5336afb955f6154da7449e2e3",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/nodes/deployid_test.go": {
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/provider_relay/mod.rs"
+      ],
+      "review": "Deployment launch fixtures preserve the configured node ID and relay brain.info attribution without any Go brain process.",
+      "sha256": "bff4cae1c253d2c335441609f3ae9ce97d424d7a710bcf6a69d44739afbc44ef",
+      "status": "ported",
+      "tests": [
+        "deploy/fly/rust/test-launch.sh",
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/exposure.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/exposure.rs"
+      ],
+      "review": "Reviewed owner-only/loose/unknown distinction using actual mode bits; unexaminable files cannot be reported safe.",
+      "sha256": "066aed811c28f75ec8131224bf7857f49fd4ce6190d41bbe6b93d5bd2890f4a8",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/exposure.rs",
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/exposure_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/exposure.rs"
+      ],
+      "review": "Reviewed owner-only/loose/unknown distinction using actual mode bits; unexaminable files cannot be reported safe.",
+      "sha256": "691a07f727c66c0a70e3033d3f88e2f6b98b3e08dc3f5c5adb096be99ca652cd",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/exposure.rs",
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/exposure_unix.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/exposure.rs"
+      ],
+      "review": "Reviewed owner-only/loose/unknown distinction using actual mode bits; unexaminable files cannot be reported safe.",
+      "sha256": "d1d63ba0a3184b66d289eb74c9e0b2ac854e0c85530a826605598abba4338ca7",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/exposure.rs",
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/exposure_unix_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/exposure.rs"
+      ],
+      "review": "Reviewed owner-only/loose/unknown distinction using actual mode bits; unexaminable files cannot be reported safe.",
+      "sha256": "6b686e4825f3e978be5e75c6d95756142762fa2f8f5e5153974fb0f97705b8cf",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/exposure.rs",
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/exposure_windows.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/exposure_windows.rs"
+      ],
+      "review": "Reviewed Windows DACL owner exposure implementation and actual-source cross-typecheck including cfg tests; Windows test execution remains an explicit platform cutover gate.",
+      "sha256": "badb62dca5b3a301cb7d905e724d3530dc423dcc38c8e7c1002fff4a7c7f8a2a",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/exposure_windows.rs",
+        "tools/windows-contract-check/src/lib.rs"
+      ]
+    },
+    "services/hub/internal/nodes/exposure_windows_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/exposure_windows.rs"
+      ],
+      "review": "Reviewed Windows DACL owner exposure implementation and actual-source cross-typecheck including cfg tests; Windows test execution remains an explicit platform cutover gate.",
+      "sha256": "a9a363937208e5ace65d32498e50a614ceb95b5fee2678e27392432570099ac9",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/exposure_windows.rs",
+        "tools/windows-contract-check/src/lib.rs"
+      ]
+    },
+    "services/hub/internal/nodes/lastexit.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/provider_relay/mod.rs"
+      ],
+      "review": "Reviewed previous exit signal/code classification, omission before first availability, crash notices and removal on deliberate sleep; relay carries the sanitized exit observation.",
+      "sha256": "61b70f6b749bde0ff0332f7c0d8e02de020fd20814e2b1388c39e25ca94760b9",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs",
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/lastexit_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/provider_relay/mod.rs"
+      ],
+      "review": "Reviewed previous exit signal/code classification, omission before first availability, crash notices and removal on deliberate sleep; relay carries the sanitized exit observation.",
+      "sha256": "ef78422334f6cac1774e05334d0e6f0b37b20ad0c522b5c9214c798b3a629612",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs",
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/loadfile_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs"
+      ],
+      "review": "Reviewed registry parsing and token precedence, explicit no-cloud entries, five-state vocabulary, allowlist public views and host-only cloud identifiers.",
+      "sha256": "f96aa8a032a353b422a6e305a3cc771c425ee26bebd131a6d34e6de6cfbc2ae9",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/nodes.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs"
+      ],
+      "review": "Reviewed registry parsing and token precedence, explicit no-cloud entries, five-state vocabulary, allowlist public views and host-only cloud identifiers.",
+      "sha256": "e10eb73c16207737c434235333d0bc0b831d8659a1f09cc5be94cd5cb0440aae",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/reconcile.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/nodes/mod.rs"
+      ],
+      "review": "Reviewed named/ambiguous provider attribution, generation-bound eviction strikes, bounded wake retry, concurrent wake/sleep single ownership, failed-wake cleanup, explicit drain signal and uncertain billing status. Transport tests use a loopback fake cloud; no cloud mutation performed.",
+      "sha256": "7d75c1e7fc9846759f9c931c05c455754c248087ddd271fc71dd96baa20629f6",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/secret_helper_test.go": {
+      "reason": "Legacy test-only secret assertion helper is replaced by public projection and fake-cloud error-body non-disclosure assertions.",
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/cloud.rs"
+      ],
+      "review": "Legacy test-only secret assertion helper is replaced by public projection and fake-cloud error-body non-disclosure assertions.",
+      "sha256": "c3c9fed51e3a9fbcedb021056db7a060dfa8463c3f3b62598ffff7db3901ea6c",
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/sleep.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/nodes/mod.rs"
+      ],
+      "review": "Reviewed named/ambiguous provider attribution, generation-bound eviction strikes, bounded wake retry, concurrent wake/sleep single ownership, failed-wake cleanup, explicit drain signal and uncertain billing status. Transport tests use a loopback fake cloud; no cloud mutation performed.",
+      "sha256": "173b1ec366efec1d86b4f76ae627c1aa40dcb5784af9073c769bd4e1e308c6b9",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/sleep_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/nodes/mod.rs"
+      ],
+      "review": "Reviewed named/ambiguous provider attribution, generation-bound eviction strikes, bounded wake retry, concurrent wake/sleep single ownership, failed-wake cleanup, explicit drain signal and uncertain billing status. Transport tests use a loopback fake cloud; no cloud mutation performed.",
+      "sha256": "63c94e3f334ec6eaab18b357948e1a4ad9699ac105c0f02446ad1f742e5bc4f7",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/supervisor.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/nodes/mod.rs"
+      ],
+      "review": "Reviewed named/ambiguous provider attribution, generation-bound eviction strikes, bounded wake retry, concurrent wake/sleep single ownership, failed-wake cleanup, explicit drain signal and uncertain billing status. Transport tests use a loopback fake cloud; no cloud mutation performed.",
+      "sha256": "c2d37cc9c9f7c3fd2b4995179c2f33023281d7872a811ea6f1cef432b10a7fd6",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/supervisor_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/nodes/mod.rs"
+      ],
+      "review": "Reviewed named/ambiguous provider attribution, generation-bound eviction strikes, bounded wake retry, concurrent wake/sleep single ownership, failed-wake cleanup, explicit drain signal and uncertain billing status. Transport tests use a loopback fake cloud; no cloud mutation performed.",
+      "sha256": "d355235bb5575bf981c824eb467093142e2886b8beb41a6b32a5ac6274beb616",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/tokenconfinement_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs"
+      ],
+      "review": "Reviewed registry parsing and token precedence, explicit no-cloud entries, five-state vocabulary, allowlist public views and host-only cloud identifiers.",
+      "sha256": "e54d6f8f21f11de4251982b41806666f65fbe840edcdc05fa40e8028fad7d6b4",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/view.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs"
+      ],
+      "review": "Reviewed registry parsing and token precedence, explicit no-cloud entries, five-state vocabulary, allowlist public views and host-only cloud identifiers.",
+      "sha256": "bff17b92fefbffbfdfd92957cb6b45bf16584aba4caa25e1c4c6a35cb8b5979b",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/view_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/model.rs",
+        "services/hub-rs/src/services/nodes/supervisor.rs"
+      ],
+      "review": "Reviewed registry parsing and token precedence, explicit no-cloud entries, five-state vocabulary, allowlist public views and host-only cloud identifiers.",
+      "sha256": "de82001aed1a9045014f20bf3a7ed25f44899078e321acf0ef7e4c48c691eb6c",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/nodes/wake.go": {
+      "replacement": [
+        "services/hub-rs/src/services/nodes/supervisor.rs",
+        "services/hub-rs/src/services/nodes/cloud.rs",
+        "services/hub-rs/src/services/nodes/mod.rs"
+      ],
+      "review": "Reviewed named/ambiguous provider attribution, generation-bound eviction strikes, bounded wake retry, concurrent wake/sleep single ownership, failed-wake cleanup, explicit drain signal and uncertain billing status. Transport tests use a loopback fake cloud; no cloud mutation performed.",
+      "sha256": "d6ed2b750976de88bdc4a79ae28f71caa6feaf83b7fb48f02c2569ae4005b9e3",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/nodes/tests.rs"
+      ]
+    },
+    "services/hub/internal/parentwatch/parentwatch.go": {
+      "replacement": [],
+      "sha256": "58ab43f64a1bda3b90397756b8752bf536e2af78bb564fbf980bc33f8b23618d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/parentwatch/parentwatch_unix.go": {
+      "replacement": [],
+      "sha256": "c72fc173d49a4a91adda932e04bd07319c75ca6a61335842e7aa78a5ecda9539",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/parentwatch/parentwatch_windows.go": {
+      "replacement": [],
+      "sha256": "0d4fbb1503662f367e1fa81a7a13c8ceeec4ef72af811d23d7fe208dd4520492",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/plugin/install.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/mod.rs"
+      ],
+      "review": "Reviewed GitHub/archive and bundled-directory installs, exact build consent, staging/whole-directory swap, bounded extraction, traversal/link refusal, host-owned sidecar stripping, cancellation cleanup and explicit Node runtime substitution.",
+      "sha256": "fe448460c5a2a79fd2aff65fc323da3dc42f7d05d5d5b2a5807dc4d8e3f81f35",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/install_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/mod.rs"
+      ],
+      "review": "Reviewed GitHub/archive and bundled-directory installs, exact build consent, staging/whole-directory swap, bounded extraction, traversal/link refusal, host-owned sidecar stripping, cancellation cleanup and explicit Node runtime substitution.",
+      "sha256": "34ee02f3c3a5cb2799fc822fb93d48a72e981eb338278df3f5637dfbf6b96ea5",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/manager.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/process_logs.rs",
+        "services/hub-rs/src/plugins/windows_job.rs"
+      ],
+      "review": "Reviewed stable static credentials, pane-token creation/revocation and reload cleanup, public allowlist, process ownership, retries, health events and log streaming. Windows job APIs are cross-typechecked; Windows runtime packaging gate remains pending.",
+      "sha256": "5e2aedd9bc5a917b2eec4d4b5e70d8b00e0c4c85246ec8cec267db2a6da77a9d",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/plugin/manager_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/process_logs.rs",
+        "services/hub-rs/src/plugins/windows_job.rs"
+      ],
+      "review": "Reviewed stable static credentials, pane-token creation/revocation and reload cleanup, public allowlist, process ownership, retries, health events and log streaming. Windows job APIs are cross-typechecked; Windows runtime packaging gate remains pending.",
+      "sha256": "0bbd4b2d3da22ac237009d1ed54c475ab85beb226b48539b682d2f15409b122b",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/plugin/manifest.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/manifest.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
+      "review": "Reviewed namespace ownership, manifest/schema validation, webview-only credentials, safe UI paths and symlink confinement; actual broker/HTTP fixtures exercise these boundaries.",
+      "sha256": "e71715fa54d1704ec0f4e17ce3336586ea385acf8c870eb30d6b5e5b9d0bd246",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/plugin/manifest_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/manifest.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
+      "review": "Reviewed namespace ownership, manifest/schema validation, webview-only credentials, safe UI paths and symlink confinement; actual broker/HTTP fixtures exercise these boundaries.",
+      "sha256": "1403798a66a34325d7c3fbd220dfd419738f66fe5b11cc958d834dc7fc3df829",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/plugin/panetoken_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/process_logs.rs",
+        "services/hub-rs/src/plugins/windows_job.rs"
+      ],
+      "review": "Reviewed stable static credentials, pane-token creation/revocation and reload cleanup, public allowlist, process ownership, retries, health events and log streaming. Windows job APIs are cross-typechecked; Windows runtime packaging gate remains pending.",
+      "sha256": "7e2b50efb0cb38f0ee4e242099d8b4462a280b154324ee898587a1d2f02431d1",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/plugin/publicview.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/plugins/process_logs.rs",
+        "services/hub-rs/src/plugins/windows_job.rs"
+      ],
+      "review": "Reviewed stable static credentials, pane-token creation/revocation and reload cleanup, public allowlist, process ownership, retries, health events and log streaming. Windows job APIs are cross-typechecked; Windows runtime packaging gate remains pending.",
+      "sha256": "81fb23439c8bc492d21f8da685acc8ef53f43576e38e22d34d4147668e38852f",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/plugin/settings.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/settings.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "review": "Reviewed typed partial updates, null reset, atomic rejection, default overlay, secret redaction/sentinel echo and restart environment propagation.",
+      "sha256": "d877855d2704e134b3056779861eb8522dd5fed0b00e48dd251de0f278213ddc",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/settings_env_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/settings.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "review": "Reviewed typed partial updates, null reset, atomic rejection, default overlay, secret redaction/sentinel echo and restart environment propagation.",
+      "sha256": "f1c3bfa2e16e7c48e2fe3aace40e1bb3b1e8d7bcd529aa632ff7ec28247cd986",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/settings_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/settings.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "review": "Reviewed typed partial updates, null reset, atomic rejection, default overlay, secret redaction/sentinel echo and restart environment propagation.",
+      "sha256": "996d3fe8061d5e11d19566d348d032628962eb928092c279dcb4b410ade6f644",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/testabs_test.go": {
+      "reason": "Legacy test-only absolute-path helper is replaced by tempfile fixture roots and Rust path confinement assertions.",
+      "replacement": [
+        "services/hub-rs/src/plugins/manifest.rs"
+      ],
+      "review": "Legacy test-only absolute-path helper is replaced by tempfile fixture roots and Rust path confinement assertions.",
+      "sha256": "dab2e06580e5aa518fcaeb6b482bee4890347770cbb28f9f04ec4a3235ad0066",
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/uiescape_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/manifest.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
+      "review": "Reviewed namespace ownership, manifest/schema validation, webview-only credentials, safe UI paths and symlink confinement; actual broker/HTTP fixtures exercise these boundaries.",
+      "sha256": "45c7158f0a0c84a269befb580a9099c606831ee23cd1ac3f17829bda94c9b386",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/plugin/version.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs"
+      ],
+      "review": "Reviewed version comparison, no-source updates and downgrade suppression in update discovery.",
+      "sha256": "61334a2c7a8422c688fca4c3769c0d1f2c1a6fe1400d4556b3a779e926d98601",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/version_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/install.rs"
+      ],
+      "review": "Reviewed version comparison, no-source updates and downgrade suppression in update discovery.",
+      "sha256": "fbffbbfbe2046ab3ff52676e59e9494f15ae45ce4a3870e8cff088fe8240b186",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
+    },
+    "services/hub/internal/plugin/webview_test.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/manifest.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
+      "review": "Reviewed namespace ownership, manifest/schema validation, webview-only credentials, safe UI paths and symlink confinement; actual broker/HTTP fixtures exercise these boundaries.",
+      "sha256": "3ab3a8011a962acb29dc69ff8929df9d1f5eb17b169b32dc2ece9774c07450bb",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/plugins.rs"
+      ]
+    },
+    "services/hub/internal/push/endpoint.go": {
+      "replacement": [
+        "services/hub-rs/src/services/push/crypto.rs"
+      ],
+      "review": "Reviewed HTTPS/public endpoint validation, IPv4/IPv6 non-routable rejection and mapped-address forms; encryption/VAPID request tested without live network sends.",
+      "sha256": "4ff2b5c9e065a59d28f64621c7e4912d1e5687ecc05e4114b1ed61f21b0e346e",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/push/tests.rs"
+      ]
+    },
+    "services/hub/internal/push/endpoint_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/push/crypto.rs"
+      ],
+      "review": "Reviewed HTTPS/public endpoint validation, IPv4/IPv6 non-routable rejection and mapped-address forms; encryption/VAPID request tested without live network sends.",
+      "sha256": "f5296fbee7704ffabc1f5d00bc7166a610711ad71621a98192adce9fb00a1e4d",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/push/tests.rs"
+      ]
+    },
+    "services/hub/internal/push/push.go": {
+      "replacement": [
+        "services/hub-rs/src/services/push/mod.rs",
+        "services/hub-rs/src/services/push/watch.rs",
+        "services/hub-rs/src/services/push/crypto.rs"
+      ],
+      "review": "Reviewed VAPID/subscription persistence and key loss, proof-of-possession unsubscribe, credential revocation, device preferences, bounded delivery accounting and observed needs/finished/checkpoint/ended edges. No live push delivery is claimed.",
+      "sha256": "7a857a4c8849707d8d4ede5944f614b54b7757aef2e950ab7e0eab0cd7db412f",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/push/tests.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
+    },
+    "services/hub/internal/push/push_test.go": {
+      "replacement": [
+        "services/hub-rs/src/services/push/mod.rs",
+        "services/hub-rs/src/services/push/watch.rs",
+        "services/hub-rs/src/services/push/crypto.rs"
+      ],
+      "review": "Reviewed VAPID/subscription persistence and key loss, proof-of-possession unsubscribe, credential revocation, device preferences, bounded delivery accounting and observed needs/finished/checkpoint/ended edges. No live push delivery is claimed.",
+      "sha256": "3170135cebff8534a1f9a1d9639c170600662940979442a1464d01053cc05a1b",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/push/tests.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
+    },
+    "services/hub/internal/quiescence/parse.go": {
+      "replacement": [],
+      "sha256": "98dc02f074e1db75b89fccbed7b15f4295d117e13f54a2b8e6d9e3a39a5ff9d0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/quiescence/quiescence.go": {
+      "replacement": [],
+      "sha256": "cf0d1961c16450b48a5592491ecfaa8e2b8c94ca2c33aaab0151794888399ad2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/quiescence/quiescence_test.go": {
+      "replacement": [],
+      "sha256": "1ea9fe30995d38e5816657f7812312727ed2f2614f404f984de451449e29700a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/quiescence/rust_contract_test.go": {
+      "replacement": [],
+      "sha256": "fcd9a829ff589b5c7bc36e31e3dc83a27529b0e642813b54cadd0f8a1c73c695",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/redact/redact.go": {
+      "replacement": [],
+      "sha256": "ab93cbb75a42919153288d74c1e73cdb529195a816ff07d2ea415e44757a3403",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/redact/redact_test.go": {
+      "replacement": [],
+      "sha256": "a0d12f047a991c0e23871f9cce1eb1ed61b2aa04b242fad9bca201950079731c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/alternatives.go": {
+      "replacement": [],
+      "sha256": "4b4880ed59229521728a17745de436acadbadc15ac3bd4b283bf5bb536ce5ac4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/availability.go": {
+      "replacement": [],
+      "sha256": "2f51fdf7030457d87def183ba83346cf5fc58cc6a56eb88c44b769d0d896f995",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/availability_test.go": {
+      "replacement": [],
+      "sha256": "39513c1d64e5c1c935a7a6474ee0964230de6eecc985a6e7432c0576946745e6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/ceiling.go": {
+      "replacement": [],
+      "sha256": "a885251b0e88ade0012aab169f95d8479b968dd6afd79e7f7b23a16e1a50e3e4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/ceiling_test.go": {
+      "replacement": [],
+      "sha256": "50aa9527f8f52d4630a8a9bc809d1ff06e4f340b06aa021ba790909265e6a28e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/decisionlog.go": {
+      "replacement": [],
+      "sha256": "924f21c3c774451e6166e7d87ee12a7232f59278fd0d3faa7b6146ed6302d19d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/decisionlog_private_unix.go": {
+      "replacement": [],
+      "sha256": "ff5c3ebb6d512f996b307fbd657416593c5a9fe302b8be1bff828a61c4e0d301",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/decisionlog_private_windows.go": {
+      "replacement": [],
+      "sha256": "84d0ced5390c7816a1040f13e5c972fc40ae756552e94befd1d8e6ba9a3c5dd0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/decisionlog_test.go": {
+      "replacement": [],
+      "sha256": "446ea34272b2b83883e77eae3d6468d83ae3ea3438a98c8b34454de3fc106eeb",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/decisionlog_unix_test.go": {
+      "replacement": [],
+      "sha256": "10e8c32a2638b06d4efaa81638e7f584d976737ca0baa9bcc68fdee5a8a738a2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/decisionlog_windows_contract_test.go": {
+      "replacement": [],
+      "sha256": "78d4aa603f6d35bdd2ce1ff127458b191179b12068ec9c97b91983a8b241980d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/decisionlog_windows_test.go": {
+      "replacement": [],
+      "sha256": "0f8cb8ddc797c5d0f2ea554922191a82ba6cafa07a51765b8d5d27900a32b5c2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/effort.go": {
+      "replacement": [],
+      "sha256": "d2f4e4cb7c347e4415ae58c1798b28bfbde0fc62e2240ebf8bd60a8d167f2f5d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/effort_test.go": {
+      "replacement": [],
+      "sha256": "2057249b280748194f2d4be87bc935ec0bd072cb5e454de8bfb42df1ec623b7e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/fresh.go": {
+      "replacement": [],
+      "sha256": "96804a2e9e1dbf0e31be5398d8f811466517484d741a11d598d4adaebb6621c0",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/fresh_test.go": {
+      "replacement": [],
+      "sha256": "32e3a5ddec38d05f0ae6f31861eee4b83f1ae57d44b1a944f81149e548b68400",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/load.go": {
+      "replacement": [],
+      "sha256": "dd48c43e6dbed004ae0339888092e506a669150ff86518cc5f7875daf669cf1a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/matrix.go": {
+      "replacement": [],
+      "sha256": "2f201b86e89d21033ec9ee0936097f3c7ed1b2a0c480f8f503fc100750c22080",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/matrix_test.go": {
+      "replacement": [],
+      "sha256": "13ab1e0aed293490145ba5129c021c0c33b58257ac78cf84f64379a386f7b0bd",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/matrix_windows_test.go": {
+      "replacement": [],
+      "sha256": "a9e5e7280f034d79ba3a792f36e6c3096bd6c69a3a2ab7cd1883151300b2d14c",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/modelid.go": {
+      "replacement": [],
+      "sha256": "d8430494a47a16f98818764d3a0b3bf5002a89281e385ed501d638857d61781b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/modelid_test.go": {
+      "replacement": [],
+      "sha256": "1f2e970a1b3c102ef45c39889bf79e362ab0e070eb83aa226b1fea3a8280f29d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/pacing.go": {
+      "replacement": [],
+      "sha256": "93518eb0c3605a6064a532747102a49159f51a5bacee4853eb7a1c8ed4582077",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/pacing_test.go": {
+      "replacement": [],
+      "sha256": "573a285399f0dc8670324e884062b8b4906531c3581ace503d61a616f6aeadc2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/pathmatch_unix.go": {
+      "replacement": [],
+      "sha256": "84531abb59cbb1e192257db88eeca17507ca27d19090d9ff6816b544c4f28398",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/pathmatch_windows.go": {
+      "replacement": [],
+      "sha256": "be255626c652a3ab9d85e8d8a7dcf8d015f239f84e5abb298d449eeded41393e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/pathmatch_windows_semantics_test.go": {
+      "replacement": [],
+      "sha256": "9635defae074ddefb421cdf1849a541cf82b5b93bac23a5e57c6cc11706c1ed2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/policy.go": {
+      "replacement": [],
+      "sha256": "61fe10f7ab4638e87d482cfb509a39b0860f505d3a7c38a46344df9017ec6e3b",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/policy_test.go": {
+      "replacement": [],
+      "sha256": "0d6c929cde32bd16483e9799f8511e24b889f4ed8b2bd1396e495a094755100a",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/preferences.go": {
+      "replacement": [],
+      "sha256": "905f3e18ed7cd32356d3d805b103b803dfeff5bc07c99a29d43d127fcae00133",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/preferences_private_unix.go": {
+      "replacement": [],
+      "sha256": "2b7c766a70bd948b4f29b1089a052398e0c992827811f343cace5e6f8d09bf80",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/preferences_private_windows.go": {
+      "replacement": [],
+      "sha256": "084581eaa4a6525e5b6013b8aef9818a049a94f26e11f9dc1744f71082ca5778",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/preferences_test.go": {
+      "replacement": [],
+      "sha256": "4ec3963e2be98894a52646c096812c87123c0ef0de95fa465835224bc673470d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/rust_contract_test.go": {
+      "replacement": [],
+      "sha256": "1e83c92a2bd95fe576f1b5816d6919d04a9b6c7ed7c94281aca990f09e27e732",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/service.go": {
+      "replacement": [],
+      "sha256": "66eb4976028c6f72d09af16d48b5581a20b55b16d621664c7154169232a8e7b9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/service_catalog_test.go": {
+      "replacement": [],
+      "sha256": "c08d1a9675581f9e21e64b7f2288bf0436095e2a68a0333f09f6c556f280fadc",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/routing/service_test.go": {
+      "replacement": [],
+      "sha256": "34698eafef288d320b96bffa31ba4068943f29509bc8555cef5e22131dbbde52",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/statelost/statelost.go": {
+      "replacement": [],
+      "sha256": "cccbc8dc34ea7c4eb1c8b165449efd2e4ba31c20a920bd3eeb537530cbfc37e9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/statelost/statelost_test.go": {
+      "replacement": [],
+      "sha256": "f6c5bad605630c969aef467f12fa1e03f88e61fbf95545c51286fd0026cf3190",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/supervisor/inheritoutput_test.go": {
+      "replacement": [],
+      "sha256": "6da98243154196d40e7e7adccfb6d97ee8596aa4bc6fb946d00cf0552da26e9d",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/supervisor/logwriter.go": {
+      "replacement": [],
+      "sha256": "8d27ba6a317cb196936abc3f31f4967625b2884589ca0d5f5174c895ef562275",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/supervisor/supervisor.go": {
+      "replacement": [],
+      "sha256": "5074c5e83a5137b00283ef12bad3bdf3d284220f9c1796738bd6889df49686d2",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/supervisor/supervisor_test.go": {
+      "replacement": [],
+      "sha256": "4f897bc9a48d8b920320ecb09f44d7091924a49e024bba3dc85a81f755e19877",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/supervisor/terminate_unix.go": {
+      "replacement": [],
+      "sha256": "d8b2557c9491ce46cf37b5124f4bb0046c76fc732d6f6cf75bc91aee76f7dc97",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/supervisor/terminate_windows.go": {
+      "replacement": [],
+      "sha256": "eb7e3fe0eac82894beed7a1e17162d114d3eba44a86af285760cdd8a7b041fa9",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/sweepguard/gate_test.go": {
+      "replacement": [],
+      "sha256": "dc42a1d4d9e8299941905b61a8aeea661742c9667922f688cd60b2ad14cc65e6",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/sweepguard/sweepguard.go": {
+      "replacement": [],
+      "sha256": "dba00b4cea75f501ad278a84417e69df42d1e829579f0de0b283d40a3cd0008e",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/sweepguard/sweepguard_test.go": {
+      "replacement": [],
+      "sha256": "f2a788beae6152f607d259e6c3b014e87868dd886876ecf38ae346df0a4ab642",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/uploads/store.go": {
+      "replacement": [],
+      "sha256": "75149f1d517ca3ebc674960d3f5b10a02f5bb6a834e3b6952b389e178ba992c4",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/usageprefs/usageprefs.go": {
+      "replacement": [],
+      "sha256": "60bee000b426e2018656bb81efbb7a60b60db44d18bfb23343d54cbecb2f0dce",
+      "status": "pending",
+      "tests": []
+    },
+    "services/hub/internal/usageprefs/usageprefs_test.go": {
+      "replacement": [],
+      "sha256": "ea65c2e6f939676bc1b17a600d1645400eac4c8d29c6096dbba7051c53cfd1f9",
+      "status": "pending",
+      "tests": []
+    }
+  },
+  "version": 1
+}

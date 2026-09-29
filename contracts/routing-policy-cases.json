@@ -1,0 +1,557 @@
+{
+  "schemaVersion": 1,
+  "description": "Portable policy cases extracted from Go routing policy, ceiling, freshness and effort tests. Capacity fixture entries produce identical five_hour and seven_day wire windows, plus structurally unavailable monthly usage. Missing capacity means unknown, never zero.",
+  "now": 1788126404,
+  "cases": [
+    {
+      "name": "default implementer with unknown quota",
+      "request": {
+        "role": "implementer"
+      },
+      "expect": {
+        "provider": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "mode": "normal",
+        "capability": "frontier",
+        "eligible": true,
+        "independentFamily": true
+      }
+    },
+    {
+      "name": "unknown role is ineligible",
+      "request": {
+        "role": "made_up"
+      },
+      "expect": {
+        "eligible": false,
+        "mode": "normal"
+      }
+    },
+    {
+      "name": "unknown profile falls back to active",
+      "request": {
+        "role": "scout",
+        "profile": "made_up"
+      },
+      "expect": {
+        "profile": "mixed",
+        "capability": "balanced",
+        "provider": "codex",
+        "eligible": true
+      }
+    },
+    {
+      "name": "preferred provider spelling is honored",
+      "request": {
+        "role": "implementer",
+        "preferredProvider": "anthropic"
+      },
+      "expect": {
+        "provider": "claude",
+        "model": "opus",
+        "eligible": true
+      }
+    },
+    {
+      "name": "unknown pinned pairing never swaps provider",
+      "request": {
+        "role": "implementer",
+        "provider": "copilot"
+      },
+      "expect": {
+        "provider": "copilot",
+        "eligible": false
+      }
+    },
+    {
+      "name": "judge is concretely capped",
+      "request": {
+        "role": "judge"
+      },
+      "expect": {
+        "capability": "frontier",
+        "model": "gpt-5.6-sol",
+        "provider": "codex",
+        "eligible": true
+      }
+    },
+    {
+      "name": "pinned judge stays on provider under cap",
+      "request": {
+        "role": "judge",
+        "provider": "claude"
+      },
+      "expect": {
+        "capability": "frontier",
+        "model": "opus",
+        "provider": "claude",
+        "eligible": true
+      }
+    },
+    {
+      "name": "role reviewer is fresh",
+      "request": {
+        "role": "reviewer"
+      },
+      "expect": {
+        "capability": "reviewer",
+        "fresh": true,
+        "provider": "claude"
+      }
+    },
+    {
+      "name": "provider disablement is binding",
+      "patch": {
+        "providers": {
+          "codex": {
+            "enabled": false
+          }
+        }
+      },
+      "request": {
+        "role": "implementer"
+      },
+      "expect": {
+        "eligible": false,
+        "provider": "codex"
+      }
+    },
+    {
+      "name": "row disablement can fall over",
+      "patch": {
+        "profiles": {
+          "mixed": {
+            "frontier": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "request": {
+        "role": "implementer"
+      },
+      "expect": {
+        "provider": "claude",
+        "eligible": true
+      }
+    },
+    {
+      "name": "red capacity conserves scout",
+      "capacity": {
+        "codex": {
+          "used": 95,
+          "resetIn": 9000,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout"
+      },
+      "expect": {
+        "mode": "conserve",
+        "capability": "cheap",
+        "provider": "claude",
+        "eligible": true
+      }
+    },
+    {
+      "name": "expired red sample cannot conserve",
+      "capacity": {
+        "codex": {
+          "used": 95,
+          "resetIn": -60,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout"
+      },
+      "expect": {
+        "mode": "normal",
+        "capability": "balanced",
+        "provider": "codex"
+      }
+    },
+    {
+      "name": "reset equality is expired",
+      "capacity": {
+        "codex": {
+          "used": 95,
+          "resetIn": 0,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout"
+      },
+      "expect": {
+        "mode": "normal",
+        "capability": "balanced"
+      }
+    },
+    {
+      "name": "yellow with pacing disabled stays normal",
+      "patch": {
+        "thresholds": {
+          "pacing": {
+            "enabled": false
+          }
+        }
+      },
+      "capacity": {
+        "codex": {
+          "used": 70,
+          "resetIn": 9000,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout"
+      },
+      "expect": {
+        "mode": "normal",
+        "capability": "balanced"
+      }
+    },
+    {
+      "name": "explicit zero demand can spend down",
+      "capacity": {
+        "codex": {
+          "used": 10,
+          "resetIn": 3600,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout",
+        "forecastDemandBeforeResetPct": 0
+      },
+      "expect": {
+        "mode": "spend_down",
+        "capability": "frontier",
+        "effort": "high"
+      }
+    },
+    {
+      "name": "omitted demand cannot spend down",
+      "capacity": {
+        "codex": {
+          "used": 10,
+          "resetIn": 3600,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout"
+      },
+      "expect": {
+        "mode": "normal",
+        "capability": "balanced"
+      }
+    },
+    {
+      "name": "weighted units never masquerade as percent",
+      "capacity": {
+        "codex": {
+          "used": 10,
+          "resetIn": 3600,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout",
+        "expectedWork": [
+          {
+            "phase": "implementation",
+            "count": 2
+          }
+        ]
+      },
+      "expect": {
+        "mode": "normal",
+        "capability": "balanced",
+        "demand": {
+          "known": false,
+          "units": 8
+        }
+      }
+    },
+    {
+      "name": "negative demand cannot authorize spend down",
+      "capacity": {
+        "codex": {
+          "used": 10,
+          "resetIn": 3600,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout",
+        "forecastDemandBeforeResetPct": -1
+      },
+      "expect": {
+        "mode": "normal",
+        "demand": {
+          "known": false
+        }
+      }
+    },
+    {
+      "name": "known demand beyond remaining conserves",
+      "capacity": {
+        "codex": {
+          "used": 50,
+          "resetIn": 3600,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout",
+        "forecastDemandBeforeResetPct": 51
+      },
+      "expect": {
+        "mode": "conserve",
+        "capability": "cheap"
+      }
+    },
+    {
+      "name": "pace scarcity precedes health scarcity",
+      "capacity": {
+        "codex": {
+          "used": 60,
+          "resetIn": 10800,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout"
+      },
+      "expect": {
+        "mode": "conserve",
+        "capability": "cheap"
+      }
+    },
+    {
+      "name": "lower pace band trims effort without capability shift",
+      "capacity": {
+        "codex": {
+          "used": 50,
+          "resetIn": 10800,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "implementer"
+      },
+      "expect": {
+        "mode": "normal",
+        "capability": "frontier",
+        "effort": "medium",
+        "provider": "codex"
+      }
+    },
+    {
+      "name": "stale observed sample cannot pace",
+      "capacity": {
+        "codex": {
+          "used": 60,
+          "resetIn": 10800,
+          "minutes": 300,
+          "fresh": false
+        }
+      },
+      "request": {
+        "role": "scout"
+      },
+      "expect": {
+        "mode": "normal",
+        "capability": "balanced"
+      }
+    },
+    {
+      "name": "manual normal overrides red quota",
+      "patch": {
+        "modes": {
+          "global": "normal"
+        }
+      },
+      "capacity": {
+        "codex": {
+          "used": 95,
+          "resetIn": 9000,
+          "minutes": 300
+        }
+      },
+      "request": {
+        "role": "scout",
+        "provider": "codex"
+      },
+      "expect": {
+        "mode": "normal",
+        "modeManual": true,
+        "capability": "balanced",
+        "provider": "codex"
+      }
+    },
+    {
+      "name": "provider manual mode overrides global",
+      "patch": {
+        "modes": {
+          "global": "normal",
+          "providers": {
+            "codex": "conserve"
+          }
+        }
+      },
+      "request": {
+        "role": "scout",
+        "provider": "codex"
+      },
+      "expect": {
+        "mode": "conserve",
+        "modeManual": true,
+        "capability": "cheap"
+      }
+    },
+    {
+      "name": "independence preference selects other family",
+      "request": {
+        "role": "reviewer",
+        "previousProvider": "claude",
+        "requireIndependentFamily": true
+      },
+      "expect": {
+        "provider": "codex",
+        "independentFamily": true,
+        "fresh": true
+      }
+    },
+    {
+      "name": "provider pin can defeat independence honestly",
+      "request": {
+        "role": "reviewer",
+        "provider": "claude",
+        "previousProvider": "claude",
+        "requireIndependentFamily": true
+      },
+      "expect": {
+        "provider": "claude",
+        "independentFamily": false,
+        "fresh": true
+      }
+    },
+    {
+      "name": "profile account spelling selects matching quota",
+      "capacity": {
+        "claude": {
+          "used": 95,
+          "resetIn": 9000,
+          "minutes": 300,
+          "account": "/accounts/work"
+        }
+      },
+      "request": {
+        "role": "scout",
+        "provider": "claude",
+        "profileId": "/accounts/work"
+      },
+      "expect": {
+        "provider": "claude",
+        "mode": "conserve",
+        "capacity": {
+          "accountKnown": true,
+          "account": "/accounts/work"
+        }
+      }
+    },
+    {
+      "name": "unattributed quota cannot masquerade as default account",
+      "capacity": {
+        "codex": {
+          "used": 99,
+          "resetIn": 9000,
+          "minutes": 300,
+          "account": null
+        }
+      },
+      "request": {
+        "role": "scout",
+        "provider": "codex"
+      },
+      "expect": {
+        "mode": "normal",
+        "capacity": {
+          "accountKnown": false,
+          "health": "unknown"
+        }
+      }
+    },
+    {
+      "name": "invalid active profile falls back to compiled profile",
+      "patch": {
+        "active_profile": "missing"
+      },
+      "request": {
+        "role": "implementer"
+      },
+      "expect": {
+        "profile": "mixed",
+        "eligible": true,
+        "model": "gpt-5.6-sol"
+      }
+    },
+    {
+      "name": "unresolvable role edge falls back to shipped edge",
+      "patch": {
+        "roles": {
+          "implementer": "missing"
+        }
+      },
+      "request": {
+        "role": "implementer"
+      },
+      "expect": {
+        "baseCapability": "frontier",
+        "capability": "frontier",
+        "eligible": true
+      }
+    },
+    {
+      "name": "empty role edge falls back to shipped edge",
+      "patch": {
+        "roles": {
+          "implementer": ""
+        }
+      },
+      "request": {
+        "role": "implementer"
+      },
+      "expect": {
+        "baseCapability": "frontier",
+        "capability": "frontier",
+        "eligible": true
+      }
+    }
+  ],
+  "vocabulary": {
+    "blocks": {
+      "cases": {
+        "why": "Portable policy cases extracted from Go routing policy, ceiling, freshness and effort tests. Capacity fixture entries produce identical five_hour and seven_day wire windows, plus structurally unavailable monthly usage. Missing capacity means unknown, never zero.",
+        "required": [
+          "name",
+          "request",
+          "expect"
+        ],
+        "optional": [
+          "patch",
+          "capacity"
+        ],
+        "loaders": [
+          "services/hub/internal/routing/rust_contract_test.go::TestPortableRustRoutingContract",
+          "services/hub-rs/src/services/routing.rs::portable_routing_contract"
+        ]
+      }
+    }
+  }
+}

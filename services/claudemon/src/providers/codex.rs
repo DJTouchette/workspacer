@@ -26,6 +26,7 @@
 //! The pure `translate(method, params)` is unit-tested; the live ws client
 //! needs a real `codex` binary to validate end-to-end.
 
+use crate::child_env::SanitizeChildEnvironment;
 use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -862,6 +863,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
+        .scrub_host_authority()
         .spawn()
         .with_context(|| format!("spawning `{bin} app-server`"))?;
 
@@ -922,6 +924,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
             .args(["debug", "models", "--bundled"])
             .current_dir(cwd)
             .kill_on_drop(true)
+            .scrub_host_authority()
             .output(),
     )
     .await
@@ -1074,7 +1077,7 @@ impl OwnedAppServer {
     fn spawn(cmd: &mut Command, evidence: &DriverEvidence) -> std::io::Result<Self> {
         #[cfg(unix)]
         cmd.process_group(0);
-        let child = cmd.kill_on_drop(true).spawn()?;
+        let child = cmd.kill_on_drop(true).scrub_host_authority().spawn()?;
         let pid = child.id().expect("newly spawned app-server has a PID");
         Ok(Self {
             child,
@@ -4113,7 +4116,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             json!([
                 "services/claudemon/src/providers/codex.rs::cumulativeCodex",
                 "apps/desktop/src/main/services/thresholdWatch.test.ts::cumulativeCodex",
-                "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex"
+                "services/hub/cmd/brain/contexthealth_contract_test.go::CumulativeCodex",
+                "services/hub-rs/src/services/thresholds.rs::shared_context_contract_does_not_launder_cumulative_usage"
             ]),
             "every Rust/TypeScript/Go cumulativeCodex consumer must stay declared"
         );

@@ -11,8 +11,6 @@ import os
 from pathlib import Path
 import socket
 import signal
-import shlex
-import shutil
 import subprocess
 import tempfile
 import time
@@ -41,6 +39,7 @@ def stop(process):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--backend", default="workspacer-rust", help="Rust standalone backend executable")
     parser.add_argument("--harness", type=Path, required=True)
     parser.add_argument("--native", type=Path, help="Also render the live session in an X11 window")
     parser.add_argument("--provider", default="claude")
@@ -61,35 +60,21 @@ def main():
         env["XDG_DATA_HOME"] = str(root / "data")
         env.pop("HUB_TOKEN", None)
         env.pop("WORKSPACER_ALLOW_NEW_TOKEN", None)
-        launcher_help = subprocess.run(["workspacer", "serve", "--help"], env=env,
-                                       capture_output=True, text=True, timeout=10)
-        # New launchers own a facade child as well. Older deployed launchers
-        # have no flag/service; don't break their otherwise usable test path.
-        facade_flags = (["--mcp-port", str(facade)]
-                        if "-mcp-port" in launcher_help.stdout + launcher_help.stderr else [])
         url = f"ws://127.0.0.1:{hub}/bus"
         token_file = root / "config/workspacer/remote-token"
-        # Older installed brains default to the shared facade on port 7897.
-        # Explicitly disable it for this no-tool test instead of accidentally
-        # probing the existing stack. No credentials are written to this wrapper.
-        brain = shutil.which("brain")
-        if not brain:
-            raise RuntimeError("brain executable is required")
-        brain_wrapper = root / "isolated-brain"
-        brain_wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(brain) + ' "$@" --mcp-facade ""\n')
-        brain_wrapper.chmod(0o700)
         stack = native = None
         # The ready banner contains the test stack's token. Keep it private,
         # never relay it to terminal logs or report artifacts.
         with (root / "ready.log").open("w+") as ready, (root / "backend.log").open("w+") as logs:
             try:
                 stack = subprocess.Popen([
-                    "workspacer", "serve", "--json", "--no-claudemon-init",
+                    args.backend, "--config-dir", str(root / "config/workspacer"),
+                    "serve", "--json", "--no-claudemon-init",
+                    "--mcp-port", str(facade), "--data-dir", str(root / "data"),
                     "--claudemon-api-port", str(api), "--claudemon-hook-port", str(hooks),
                     "--hub-port", str(hub), "--claudemon-db-path", str(root / "sessions.db"),
-                    "--brain-bin", str(brain_wrapper),
                     "--plugins-dir", str(root / "plugins")
-                ] + facade_flags, env=env, stdout=ready, stderr=logs, start_new_session=True)
+                ], env=env, stdout=ready, stderr=logs, start_new_session=True)
                 deadline = time.monotonic() + 45
                 while time.monotonic() < deadline:
                     if stack.poll() is not None:
@@ -100,7 +85,7 @@ def main():
                     time.sleep(0.2)
                 else:
                     raise RuntimeError("Isolated backend did not become ready")
-                # A healthy hub can precede the brain's capability registration.
+                # Verify the complete backend capability graph before spawning.
                 # Retry only a read here; never retry an uncertain spawn.
                 deadline = time.monotonic() + 60
                 last_probe = "No provider response"

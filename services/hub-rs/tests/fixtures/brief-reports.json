@@ -1,0 +1,252 @@
+[
+  {
+    "name": "a live reference is silent and a forgotten one is stale",
+    "brief": "## Now\n- 🚧 Dispatched the migration (session:1a2b3c4d) — still running.\n- ✅ Dispatched the docs pass (session:deadbeef) — landed?\n\n## Recently\n- 2026-08-01  something (session:cafebabe)\n",
+    "sessions": [
+      {
+        "sessionId": "1a2b3c4d-1111-2222-3333-444455556666",
+        "mode": "input",
+        "status": "active"
+      }
+    ],
+    "expect": {
+      "entriesChecked": 2,
+      "entriesLive": 1,
+      "liveSessions": 1,
+      "findings": [
+        {
+          "line": 2,
+          "text": "- ✅ Dispatched the docs pass (session:deadbeef) — landed?",
+          "reason": "stale",
+          "refs": [
+            "deadbeef"
+          ]
+        }
+      ]
+    },
+    "why": "The whole verb in one case: a brief writes SHORT references and the store holds full UUIDs, so matching is by prefix in whichever direction is longer; and only `## Now` is checked — `Recently` is a dated log that is SUPPOSED to name dead sessions, so flagging its entries would make the report unreadable.",
+    "expected": {
+      "path": "fixture",
+      "section": "Now",
+      "entriesChecked": 2,
+      "entriesLive": 1,
+      "findings": [
+        {
+          "line": 2,
+          "text": "- ✅ Dispatched the docs pass (session:deadbeef) — landed?",
+          "reason": "stale",
+          "refs": [
+            "deadbeef"
+          ],
+          "detail": "session:deadbeef is not a session this host still knows about, so this Now line has outlived its dispatch. If the work landed, move the entry to Recently (or archive it); if it is still yours, re-dispatch and write the new session id. Nothing was changed."
+        }
+      ],
+      "liveSessions": 1,
+      "note": "1 of 2 ## Now entries need YOUR judgement (1 name sessions that are gone). This check only reports: it never edits, moves or deletes a line, because the user's own brief edits are authoritative. Act on them with a board move or an explicit edit."
+    }
+  },
+  {
+    "name": "a finished session counts as gone, and so does an archived one",
+    "brief": "## Now\n- Dispatched the port (session:1a2b3c4d) — waiting on it.\n",
+    "sessions": [
+      {
+        "sessionId": "1a2b3c4d",
+        "mode": "stopped",
+        "status": "ended"
+      },
+      {
+        "sessionId": "99887766",
+        "mode": "input",
+        "status": "active",
+        "archived": true
+      },
+      {
+        "sessionId": "55443322",
+        "mode": "responding",
+        "status": "active"
+      }
+    ],
+    "expect": {
+      "entriesChecked": 1,
+      "entriesLive": 0,
+      "liveSessions": 1,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched the port (session:1a2b3c4d) — waiting on it.",
+          "reason": "stale",
+          "refs": [
+            "1a2b3c4d"
+          ]
+        }
+      ]
+    },
+    "why": "The question a Now line answers is 'is this dispatch still running', not 'did this session ever exist' — a worker that finished cleanly is PRECISELY the case that leaves the line behind, so a copy that counted it as live would be blind to the checker's main quarry. `liveSessions: 1` is the control: the predicate is not simply refusing everything.",
+    "expected": {
+      "path": "fixture",
+      "section": "Now",
+      "entriesChecked": 1,
+      "entriesLive": 0,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched the port (session:1a2b3c4d) — waiting on it.",
+          "reason": "stale",
+          "refs": [
+            "1a2b3c4d"
+          ],
+          "detail": "session:1a2b3c4d is not a session this host still knows about, so this Now line has outlived its dispatch. If the work landed, move the entry to Recently (or archive it); if it is still yours, re-dispatch and write the new session id. Nothing was changed."
+        }
+      ],
+      "liveSessions": 1,
+      "note": "1 of 1 ## Now entries need YOUR judgement (1 name sessions that are gone). This check only reports: it never edits, moves or deletes a line, because the user's own brief edits are authoritative. Act on them with a board move or an explicit edit."
+    }
+  },
+  {
+    "name": "a malformed reference is flagged even beside a good one",
+    "brief": "## Now\n- Dispatched round 2 (session:6a-round2, session:1a2b3c4d) — running.\n",
+    "sessions": [
+      {
+        "sessionId": "1a2b3c4d-1111-2222-3333-444455556666",
+        "status": "active"
+      }
+    ],
+    "expect": {
+      "entriesChecked": 1,
+      "entriesLive": 1,
+      "liveSessions": 1,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched round 2 (session:6a-round2, session:1a2b3c4d) — running.",
+          "reason": "malformed",
+          "refs": [
+            "6a-round2"
+          ]
+        }
+      ]
+    },
+    "why": "`session:6a-round2` is a real transcription bug from a live manager — a nickname where a session id belongs — and half a broken line is still a broken link in the user's brief, so it is reported even though the entry ALSO names a session that resolves. The entry still counts as live, because it is.",
+    "expected": {
+      "path": "fixture",
+      "section": "Now",
+      "entriesChecked": 1,
+      "entriesLive": 1,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched round 2 (session:6a-round2, session:1a2b3c4d) — running.",
+          "reason": "malformed",
+          "refs": [
+            "6a-round2"
+          ],
+          "detail": "session:6a-round2 is not a session id, so it links to nothing. Fix the reference by hand (or re-append the line with brief_append's sessionId param, which validates it) — this check does not edit the brief."
+        }
+      ],
+      "liveSessions": 1,
+      "note": "1 of 1 ## Now entries need YOUR judgement. This check only reports: it never edits, moves or deletes a line, because the user's own brief edits are authoritative. Act on them with a board move or an explicit edit."
+    }
+  },
+  {
+    "name": "a dispatch-shaped line with no reference is flagged and ordinary prose is not",
+    "brief": "## Now\n- Dispatched a worker to fix the flake, no id written down.\n- A standing note the user wrote themselves.\n",
+    "sessions": [],
+    "expect": {
+      "entriesChecked": 2,
+      "entriesLive": 0,
+      "liveSessions": 0,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched a worker to fix the flake, no id written down.",
+          "reason": "unreferenced",
+          "refs": []
+        }
+      ]
+    },
+    "why": "Precision over recall: a checker that cries wolf is one a manager stops reading, and an ignored checker is worse than none because it still costs a tool call. So a reference-less entry is flagged ONLY when the wording leaves no doubt, and the user's own standing note is left alone.",
+    "expected": {
+      "path": "fixture",
+      "section": "Now",
+      "entriesChecked": 2,
+      "entriesLive": 0,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched a worker to fix the flake, no id written down.",
+          "reason": "unreferenced",
+          "refs": [],
+          "detail": "this reads like a dispatch but names no session:<id>, so nothing can tell you whether its worker is still alive. Add the reference when you next touch the line."
+        }
+      ],
+      "liveSessions": 0,
+      "note": "1 of 2 ## Now entries need YOUR judgement. This check only reports: it never edits, moves or deletes a line, because the user's own brief edits are authoritative. Act on them with a board move or an explicit edit."
+    }
+  },
+  {
+    "name": "a reference on a continuation line anchors the finding to the entry's first line",
+    "brief": "## Now\n- Dispatched the audit\n  (session:deadbeef) — kicked off yesterday.\n",
+    "sessions": [],
+    "expect": {
+      "entriesChecked": 1,
+      "entriesLive": 0,
+      "liveSessions": 0,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched the audit",
+          "reason": "stale",
+          "refs": [
+            "deadbeef"
+          ]
+        }
+      ]
+    },
+    "why": "The report is what a manager acts on, so a finding must point at the ENTRY, not at the line the reference happened to sit on — `line` is the bullet and `text` is that bullet as written. Both copies scan the entry's whole text for references.",
+    "expected": {
+      "path": "fixture",
+      "section": "Now",
+      "entriesChecked": 1,
+      "entriesLive": 0,
+      "findings": [
+        {
+          "line": 1,
+          "text": "- Dispatched the audit",
+          "reason": "stale",
+          "refs": [
+            "deadbeef"
+          ],
+          "detail": "session:deadbeef is not a session this host still knows about, so this Now line has outlived its dispatch. If the work landed, move the entry to Recently (or archive it); if it is still yours, re-dispatch and write the new session id. Nothing was changed."
+        }
+      ],
+      "liveSessions": 0,
+      "note": "1 of 1 ## Now entries need YOUR judgement (1 name sessions that are gone). This check only reports: it never edits, moves or deletes a line, because the user's own brief edits are authoritative. Act on them with a board move or an explicit edit."
+    }
+  },
+  {
+    "name": "an upper-case reference is normalized and a long one matches by prefix",
+    "brief": "## Now\n- Dispatched (session:1A2B3C4D5E) — running.\n",
+    "sessions": [
+      {
+        "sessionId": "1a2b3c4d",
+        "status": "active"
+      }
+    ],
+    "expect": {
+      "entriesChecked": 1,
+      "entriesLive": 1,
+      "liveSessions": 1,
+      "findings": []
+    },
+    "why": "References are canonicalized to the short form (a UUID's first group, lower-cased) before matching, and the prefix comparison runs in whichever direction is longer — so a manager that wrote more of the id than the store holds still resolves, rather than being told its own live worker is gone.",
+    "expected": {
+      "path": "fixture",
+      "section": "Now",
+      "entriesChecked": 1,
+      "entriesLive": 1,
+      "findings": [],
+      "liveSessions": 1,
+      "note": "Every ## Now entry (1) either names a session this host still knows about or is not a dispatch line. Nothing to prune."
+    }
+  }
+]

@@ -1,0 +1,305 @@
+{
+  "schemaVersion": 1,
+  "vocabulary": {
+    "blocks": {
+      "cases": {
+        "why": "Wake text is a stored wire format shared with renderer cards.",
+        "required": [
+          "name",
+          "kind",
+          "audience",
+          "entries",
+          "expected"
+        ],
+        "loaders": [
+          "apps/desktop/src/main/shared/fleetMessages.test.ts::portableFleetMessageContracts",
+          "services/hub-rs/tests/fleet_messages.rs::shared_fleet_message_contracts"
+        ]
+      },
+      "excerpts": {
+        "why": "Single-line UTF16 excerpt limits remain compatible.",
+        "required": [
+          "input",
+          "expected"
+        ],
+        "loaders": [
+          "apps/desktop/src/main/shared/fleetMessages.test.ts::portableFleetMessageContracts",
+          "services/hub-rs/tests/fleet_messages.rs::shared_fleet_message_contracts"
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "worker-finished for manager",
+      "kind": "worker-finished",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "lastReply": "done"
+        }
+      ],
+      "expected": "[fleet] Worker finished:\n- Worker (session:worker-1, cwd /project) — last reply: done\nA \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough."
+    },
+    {
+      "name": "worker-finished for ordinary-parent",
+      "kind": "worker-finished",
+      "audience": "ordinary-parent",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "lastReply": "done"
+        }
+      ],
+      "expected": "[fleet] Worker finished:\n- Worker (session:worker-1, cwd /project) — last reply: done\nInspect the child's final result and continue your own task. Use project-brief for durable project knowledge, and spawn further work with spawn-agent if useful."
+    },
+    {
+      "name": "worker-escalated for manager",
+      "kind": "worker-escalated",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "lastReply": "done"
+        }
+      ],
+      "expected": "[fleet] Worker escalated — blocked and did not complete:\n- Worker (session:worker-1, cwd /project) — last reply: done\nThis is a terminal escalation, NOT a completed outcome. Read the validated \"worker escalation\" block above and do not record the task as landed in a brief's \"## Recently\". Resolve or obtain the named authority/decision, then either answer the worker with send_message or redispatch the remaining work with respawn_with. Keep the dispatch open until the task actually completes."
+    },
+    {
+      "name": "worker-escalated for ordinary-parent",
+      "kind": "worker-escalated",
+      "audience": "ordinary-parent",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "lastReply": "done"
+        }
+      ],
+      "expected": "[fleet] Worker escalated — blocked and did not complete:\n- Worker (session:worker-1, cwd /project) — last reply: done\nThe child is blocked and did not complete. Inspect its escalation, resolve the decision if it is within your task, then continue your own work. Use project-brief for durable knowledge and spawn-agent for any follow-up."
+    },
+    {
+      "name": "catch-up for manager",
+      "kind": "catch-up",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "lastReply": "done"
+        }
+      ],
+      "expected": "[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:\n- Worker (session:worker-1, cwd /project) — last reply: done\nReview each (get_conversation with sinceSeq), update the project brief's \"## Recently\", and report the outcome with session:<id> references. Then STOP again."
+    },
+    {
+      "name": "catch-up for ordinary-parent",
+      "kind": "catch-up",
+      "audience": "ordinary-parent",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "lastReply": "done"
+        }
+      ],
+      "expected": "[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:\n- Worker (session:worker-1, cwd /project) — last reply: done\nInspect each child's result and continue your own task. Use project-brief for durable project knowledge, and spawn further work with spawn-agent if useful."
+    },
+    {
+      "name": "blocked for manager",
+      "kind": "blocked",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "blockedOn": "approval"
+        }
+      ],
+      "expected": "[supervisor] An agent is now blocked on a decision:\n- Worker (session:worker-1, approval)\nRun a /supervise pass: gather the context and notify me with a recommendation."
+    },
+    {
+      "name": "blocked for ordinary-parent",
+      "kind": "blocked",
+      "audience": "ordinary-parent",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "blockedOn": "approval"
+        }
+      ],
+      "expected": "[supervisor] An agent is now blocked on a decision:\n- Worker (session:worker-1, approval)\nInspect your blocked child's context and answer it if the decision is within your task; otherwise surface the exact decision you need. Then continue your own work."
+    },
+    {
+      "name": "threshold for manager",
+      "kind": "threshold",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "crossed": "tokens 1,000 ≥ 900"
+        }
+      ],
+      "expected": "[fleet] A threshold you asked to be told about has been crossed:\n- Worker (session:worker-1, cwd /project) — crossed: tokens 1,000 ≥ 900\nThis is the notify_when you armed, and it has now fired and been DISCARDED — watches are one-shot, so nothing further will arrive unless you arm another. Decide: let it run, send_message it a narrowing instruction, or stop it (signal SIGTERM, then close_session) and redispatch surgically with respawn_with. Then STOP again — do not start polling."
+    },
+    {
+      "name": "threshold for ordinary-parent",
+      "kind": "threshold",
+      "audience": "ordinary-parent",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "crossed": "tokens 1,000 ≥ 900"
+        }
+      ],
+      "expected": "[fleet] A threshold you asked to be told about has been crossed:\n- Worker (session:worker-1, cwd /project) — crossed: tokens 1,000 ≥ 900\nThis is the notify_when you armed, and it has now fired and been DISCARDED — watches are one-shot, so nothing further will arrive unless you arm another. Decide: let it run, send_message it a narrowing instruction, or stop it (signal SIGTERM, then close_session) and redispatch surgically with respawn_with. Then STOP again — do not start polling."
+    },
+    {
+      "name": "progress for manager",
+      "kind": "progress",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "note": "phase landed",
+          "needsDecision": true
+        }
+      ],
+      "expected": "[fleet] Progress update from a worker — it is STILL RUNNING; this is NOT a completion:\n- Worker (session:worker-1, cwd /project) — NEEDS A DECISION — reports: phase landed\nThe worker sent this ITSELF, mid-task, and is still running: its finish wake will still arrive. Do NOT record it in a brief's \"## Recently\" as work landed, and do not treat its line as a result. If it needs no decision, do NOTHING — a bare acknowledgement costs the worker a turn and tells it nothing. If it flags NEEDS A DECISION, or if the update shows the dispatch going wrong, answer it with send_message, or stop it (signal SIGTERM, then close_session) and redispatch surgically with respawn_with. Then STOP again — do not start polling, and do not ask it for further updates."
+    },
+    {
+      "name": "progress for ordinary-parent",
+      "kind": "progress",
+      "audience": "ordinary-parent",
+      "entries": [
+        {
+          "label": "Worker",
+          "sessionId": "worker-1",
+          "cwd": "/project",
+          "note": "phase landed",
+          "needsDecision": true
+        }
+      ],
+      "expected": "[fleet] Progress update from a worker — it is STILL RUNNING; this is NOT a completion:\n- Worker (session:worker-1, cwd /project) — NEEDS A DECISION — reports: phase landed\nThe worker sent this ITSELF, mid-task, and is still running: its finish wake will still arrive. Do NOT record it in a brief's \"## Recently\" as work landed, and do not treat its line as a result. If it needs no decision, do NOTHING — a bare acknowledgement costs the worker a turn and tells it nothing. If it flags NEEDS A DECISION, or if the update shows the dispatch going wrong, answer it with send_message, or stop it (signal SIGTERM, then close_session) and redispatch surgically with respawn_with. Then STOP again — do not start polling, and do not ask it for further updates."
+    },
+    {
+      "name": "all failed",
+      "kind": "worker-finished",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Failed",
+          "sessionId": "one",
+          "failed": "API failed"
+        }
+      ],
+      "expected": "[fleet] Worker FAILED — did not complete:\n- Failed (session:one, cwd ?) — FAILED: API failed\n\nA \"FAILED\" entry did NOT complete its task — the agent reported an error (an API failure, an out-of-credits refusal, an overload) and stopped there. Its last reply is that error, NOT a result: do not record it in a brief's \"## Recently\" as work landed. Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause to the user if it is an account/quota problem no retry will fix.\n\nA \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough."
+    },
+    {
+      "name": "credit balance advice",
+      "kind": "worker-finished",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Failed",
+          "sessionId": "one",
+          "failed": "Credit balance is too low"
+        }
+      ],
+      "expected": "[fleet] Worker FAILED — did not complete:\n- Failed (session:one, cwd ?) — FAILED: Credit balance is too low\n\nA \"FAILED\" entry did NOT complete its task — the agent reported an error (an API failure, an out-of-credits refusal, an overload) and stopped there. Its last reply is that error, NOT a result: do not record it in a brief's \"## Recently\" as work landed. Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause to the user if it is an account/quota problem no retry will fix.\n\nA FAILED entry's reason names the credit-balance refusal: Claude Code reported \"Credit balance is too low\". On a subscription this usually means the Claude Code CLI is signed in with stale or wrong credentials. Open a terminal, run claude, then type /logout and then /login, and sign in with your subscription account. Then retry this agent. If Claude Code is signed in with an API key or console billing rather than a subscription, this is a real empty balance instead: add credits in the Anthropic Console.\n\nA \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough."
+    },
+    {
+      "name": "mixed outcome",
+      "kind": "worker-finished",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Failed",
+          "sessionId": "one",
+          "failed": "API failed"
+        },
+        {
+          "label": "Done",
+          "sessionId": "two",
+          "lastReply": "done"
+        }
+      ],
+      "expected": "[fleet] Worker finished:\n- Failed (session:one, cwd ?) — FAILED: API failed\n- Done (session:two, cwd ?) — last reply: done\n\nA \"FAILED\" entry did NOT complete its task — the agent reported an error (an API failure, an out-of-credits refusal, an overload) and stopped there. Its last reply is that error, NOT a result: do not record it in a brief's \"## Recently\" as work landed. Treat the dispatch as still open — re-dispatch it (respawn_with) or escalate the cause to the user if it is an account/quota problem no retry will fix.\n\nA \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough."
+    },
+    {
+      "name": "structured extras",
+      "kind": "worker-finished",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Done",
+          "sessionId": "one",
+          "result": "{\"commit\":\"abc\"}",
+          "fullReply": "Final summary",
+          "reviewEvidenceId": "review-1"
+        }
+      ],
+      "expected": "[fleet] Worker finished:\n- Done (session:one, cwd ?)\n\nReview evidence — session:one: review-1\n\nStructured result — Done (session:one):\n{\"commit\":\"abc\"}\n\nFull final message — Done (session:one):\nFinal summary\n\nA \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough."
+    },
+    {
+      "name": "missing result and stopped",
+      "kind": "worker-finished",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Stopped",
+          "sessionId": "one",
+          "stopped": true,
+          "resultError": "missing contract",
+          "escalationError": "invalid marker"
+        }
+      ],
+      "expected": "[fleet] Worker finished:\n- Stopped (session:one, cwd ?) — stopped/killed\n\nA \"stopped/killed\" entry's session ENDED (killed or exited) rather than going idle — treat its last reply as possibly incomplete, not as a clean finish.\n\nStructured result MISSING — Stopped (session:one): missing contract. Read the prose report below/above instead.\n\nWorker escalation INVALID — Stopped (session:one): invalid marker. The terminal marker was rejected; treat the prose as an ordinary completion or refusal.\n\nA \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough."
+    },
+    {
+      "name": "validated escalation",
+      "kind": "worker-finished",
+      "audience": "manager",
+      "entries": [
+        {
+          "label": "Blocked",
+          "sessionId": "one",
+          "escalation": "{\"status\":\"blocked\"}"
+        }
+      ],
+      "expected": "[fleet] Worker finished:\n- Blocked (session:one, cwd ?)\n\nWorker escalation — Blocked (session:one):\n{\"status\":\"blocked\"}\n\nA \"structured result\" block below is the worker's own machine-readable report for a dispatch you gave a resultSchema — prefer its fields verbatim over re-deriving them from the prose. The worker's complete final message (when longer than its bullet excerpt) is included above — read it from this wake instead of fetching the conversation; use get_conversation (lastMessage:true for just the final message, or sinceSeq) only if you need more context. Append one line to that project's .workspacer/brief.md \"## Recently\" (and adjust \"## Now\"), then report the outcome briefly with session:<id> references. If it was not one of your dispatches, a one-line acknowledgement is enough."
+    }
+  ],
+  "excerpts": [
+    {
+      "input": "one\n two",
+      "expected": "one two"
+    },
+    {
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    },
+    {
+      "input": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "expected": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+    }
+  ]
+}

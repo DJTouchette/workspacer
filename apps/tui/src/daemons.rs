@@ -1,15 +1,6 @@
-//! Optional daemon bootstrap.
-//!
-//! `wks-tui` reads and controls agents through the **claudemon** daemon. When
-//! run standalone there's no Electron app to start it, so unless told otherwise
-//! we launch claudemon if it isn't already listening — mirroring how the
-//! Electron main process spawns it:
-//!
-//!   claudemon serve --hook-port 7890 --api-port 7891
-//!
-//! An already-running claudemon (Electron, or one you started by hand) is left
-//! untouched — we only spawn what's missing and only kill what we spawned.
-//! Skipped entirely when the URL points at a non-loopback host.
+//! Optional owned Rust backend bootstrap. Bus mode starts `workspacer-rust`
+//! when a loopback stack is missing; direct mode can start standalone
+//! claudemon. Existing and remote services remain externally owned.
 
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -23,18 +14,31 @@ const CLAUDEMON_HOOK_PORT: u16 = 7890;
 /// a daemon we launched doesn't outlive the TUI. A pre-existing one isn't here.
 pub struct Daemons {
     children: Vec<(&'static str, Child)>,
+    rust_backend: Option<Child>,
 }
 
 impl Daemons {
     fn none() -> Self {
         Daemons {
             children: Vec::new(),
+            rust_backend: None,
         }
     }
 }
 
 impl Drop for Daemons {
     fn drop(&mut self) {
+        if let Some(mut backend) = self.rust_backend.take() {
+            drop(backend.stdin.take());
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while matches!(backend.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if matches!(backend.try_wait(), Ok(None)) {
+                let _ = backend.kill();
+            }
+            let _ = backend.wait();
+        }
         for (name, child) in &mut self.children {
             let _ = child.kill();
             let _ = child.wait();
@@ -45,21 +49,104 @@ impl Drop for Daemons {
 
 const HUB_BUS_PORT: u16 = 7895;
 
-/// Ensure the daemons the TUI needs are up, spawning what's missing. Always
-/// ensures claudemon; when `bus_url` is set (the TUI is a bus client), also
-/// ensures the hub + its supervised brain. Returns a guard that stops only what
-/// we started. No-ops when a URL isn't loopback or auto-spawn is off; an
-/// already-running daemon (Electron, or one you started) is left untouched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Bootstrap {
+    None,
+    Direct,
+    Rust,
+}
+fn bootstrap(bus_url: Option<&str>, enabled: bool) -> Bootstrap {
+    if !enabled {
+        Bootstrap::None
+    } else if bus_url.is_some_and(is_loopback) {
+        Bootstrap::Rust
+    } else {
+        Bootstrap::Direct
+    }
+}
+/// Only the returned guard owns new children. A remote bus is never bootstrapped;
+/// the separately configured daemon may still be local, matching direct mode.
 pub fn ensure(claudemon_url: &str, bus_url: Option<&str>, enabled: bool) -> Daemons {
     let mut daemons = Daemons::none();
-    if !enabled {
-        return daemons;
+    match bootstrap(bus_url, enabled) {
+        Bootstrap::None => return daemons,
+        Bootstrap::Rust => ensure_rust_backend(&mut daemons, bus_url.unwrap(), claudemon_url),
+        Bootstrap::Direct => (),
     }
+    // This also supports the established direct fallback if the shared backend
+    // could not start. It never launches the retired Go hub or brain.
     ensure_claudemon(&mut daemons, claudemon_url);
-    if let Some(bus) = bus_url {
-        ensure_hub(&mut daemons, bus, claudemon_url);
-    }
     daemons
+}
+
+fn rust_backend_bin() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("WKS_RUST_BACKEND_BIN") {
+        return Some(path.into());
+    }
+    let name = if cfg!(windows) {
+        "workspacer-rust.exe"
+    } else {
+        "workspacer-rust"
+    };
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+        .filter(|path| path.is_file())
+        .or_else(|| {
+            let path = repo_root()
+                .join("services/hub-rs/target/release")
+                .join(name);
+            path.is_file().then_some(path)
+        })
+        .or_else(|| {
+            std::env::split_paths(&std::env::var_os("PATH")?)
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .map(|dir| dir.join(name))
+                .find(|path| path.is_file())
+        })
+}
+fn ensure_rust_backend(daemons: &mut Daemons, bus_url: &str, claudemon_url: &str) {
+    let (address, port) = parse_bus_addr(bus_url);
+    if port_open(port) || !is_loopback(claudemon_url) {
+        return;
+    }
+    if port_open(CLAUDEMON_API_PORT) {
+        eprintln!(
+            "[wks-tui] claudemon is already owned by another process; start the shared Rust hub through that owner. Using direct mode until it is available."
+        );
+        return;
+    }
+    let Some(bin) = rust_backend_bin() else {
+        eprintln!(
+            "[wks-tui] Rust backend not found; build services/hub-rs or set WKS_RUST_BACKEND_BIN"
+        );
+        return;
+    };
+    let host = address
+        .rsplit_once(':')
+        .map(|(host, _)| host.trim_matches(['[', ']']))
+        .unwrap_or("127.0.0.1");
+    let result = Command::new(&bin)
+        .args([
+            "--host",
+            host,
+            "--hub-port",
+            &port.to_string(),
+            "serve",
+            "--quiet",
+        ])
+        .env("WORKSPACER_PARENT_PID", std::process::id().to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match result {
+        Ok(child) => {
+            daemons.rust_backend = Some(child);
+            wait_for_port(port, Duration::from_secs(10));
+        }
+        Err(error) => eprintln!("[wks-tui] could not start Rust backend: {error}"),
+    }
 }
 
 fn ensure_claudemon(daemons: &mut Daemons, claudemon_url: &str) {
@@ -67,13 +154,16 @@ fn ensure_claudemon(daemons: &mut Daemons, claudemon_url: &str) {
         return; // remote, or already listening
     }
     match claudemon_bin() {
-        Some(bin) => match spawn(&bin, &[
-            "serve",
-            "--hook-port",
-            &CLAUDEMON_HOOK_PORT.to_string(),
-            "--api-port",
-            &CLAUDEMON_API_PORT.to_string(),
-        ]) {
+        Some(bin) => match spawn(
+            &bin,
+            &[
+                "serve",
+                "--hook-port",
+                &CLAUDEMON_HOOK_PORT.to_string(),
+                "--api-port",
+                &CLAUDEMON_API_PORT.to_string(),
+            ],
+        ) {
             Ok(child) => {
                 eprintln!("[wks-tui] started claudemon ({})", bin.display());
                 daemons.children.push(("claudemon", child));
@@ -84,46 +174,6 @@ fn ensure_claudemon(daemons: &mut Daemons, claudemon_url: &str) {
         None => eprintln!(
             "[wks-tui] claudemon not found — build it (cargo build --release in services/claudemon/) \
              or set WKS_CLAUDEMON_BIN. Staying in reconnect until it's reachable."
-        ),
-    }
-}
-
-/// Spawn the hub (with a full-scope brain) when the bus URL is loopback and
-/// nothing is already listening there. The hub auto-detects the sibling brain
-/// binary and bridges the given claudemon.
-fn ensure_hub(daemons: &mut Daemons, bus_url: &str, claudemon_url: &str) {
-    if !is_loopback(bus_url) {
-        return; // someone else owns a remote hub
-    }
-    let (addr, port) = parse_bus_addr(bus_url);
-    if port_open(port) {
-        return; // hub already up — leave it
-    }
-    match hub_bin() {
-        Some(bin) => {
-            let events = format!("{claudemon_url}/events");
-            let args: [&str; 8] = [
-                "--addr",
-                &addr,
-                "--claudemon-events",
-                &events,
-                "--brain-scope",
-                "full",
-                "--claudemon",
-                claudemon_url,
-            ];
-            match spawn(&bin, &args) {
-                Ok(child) => {
-                    eprintln!("[wks-tui] started hub + brain ({})", bin.display());
-                    daemons.children.push(("hub", child));
-                    wait_for_port(port, Duration::from_secs(5));
-                }
-                Err(e) => eprintln!("[wks-tui] could not start hub: {e}"),
-            }
-        }
-        None => eprintln!(
-            "[wks-tui] hub not found — build it (make build-hub) or set WKS_HUB_BIN. \
-             --bus calls will fail until it's reachable."
         ),
     }
 }
@@ -279,21 +329,59 @@ fn claudemon_bin() -> Option<PathBuf> {
     None
 }
 
-/// The hub binary lives at `services/hub/hub` (where `make build-hub` puts it,
-/// alongside the `brain` binary the hub auto-detects). Env override wins.
-fn hub_bin() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("WKS_HUB_BIN") {
-        return Some(PathBuf::from(p));
-    }
-    let name = if cfg!(windows) { "hub.exe" } else { "hub" };
-    let candidate = repo_root().join("services").join("hub").join(name);
-    candidate.exists().then_some(candidate)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn rust_is_the_normal_local_bus_bootstrap_and_explicit_modes_keep_ownership() {
+        assert_eq!(
+            bootstrap(Some("ws://127.0.0.1:7895/bus"), true),
+            Bootstrap::Rust
+        );
+        assert_eq!(
+            bootstrap(Some("ws://localhost:9000/bus"), true),
+            Bootstrap::Rust
+        );
+        assert_eq!(
+            bootstrap(Some("wss://remote.example/bus"), true),
+            Bootstrap::Direct
+        );
+        assert_eq!(bootstrap(None, true), Bootstrap::Direct);
+        assert_eq!(
+            bootstrap(Some("ws://127.0.0.1:7895/bus"), false),
+            Bootstrap::None
+        );
+        assert_eq!(bootstrap(None, false), Bootstrap::None);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn rust_owner_closes_parent_pipe_before_resorting_to_kill() {
+        let directory = std::env::temp_dir().join(format!(
+            "wks-tui-owner-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let marker = directory.join("closed");
+        let child = Command::new("sh")
+            .args(["-c", "cat >/dev/null; printf closed > \"$1\"", "fixture"])
+            .arg(&marker)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut guard = Daemons::none();
+        guard.rust_backend = Some(child);
+        drop(guard);
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "closed");
+        std::fs::remove_file(marker).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
     #[test]
     fn parse_bus_addr_extracts_host_port() {
         assert_eq!(

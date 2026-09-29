@@ -34,6 +34,9 @@
 # machine still has to settle". Read that list rather than assuming green here
 # means green there.
 set -euo pipefail
+if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
+  exec "$(dirname "$0")/rust/preflight.sh" "$@"
+fi
 
 cd "$(dirname "$0")/../.."   # repo root
 

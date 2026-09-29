@@ -12,19 +12,21 @@ if (process.platform !== 'win32' || process.arch !== 'x64') {
 }
 const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
 if (nodeMajor !== 22 || nodeMinor < 13) throw new Error('Packaging requires Node 22.13 or newer in the Node 22 series');
+const backend = process.env.NATIVE_BACKEND || 'rust';
+if (backend !== 'rust') throw new Error('NATIVE_BACKEND must be rust');
 const version = JSON.parse(fs.readFileSync(path.join(root, 'apps/desktop/package.json'))).version;
 if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) throw new Error('Invalid release version');
 const stage = path.join(root, 'apps/native/target/windows-package');
 const out = path.join(root, 'apps/desktop/release');
 fs.mkdirSync(out, { recursive: true });
 const { uninstall } = stagePayload({
-  root, stage, crt: process.env.NATIVE_CRT_DIR, nodeExecutable: process.execPath,
-  version, commit: process.env.GITHUB_SHA || null, nodeVersion: process.version,
+  root, stage, crt: process.env.NATIVE_CRT_DIR,
+  version, commit: process.env.GITHUB_SHA || null, backend,
 });
-const installer = path.join(out, `Workspacer-Native-Setup-${version}-x64.exe`);
+const installer = path.join(out, `Workspacer-Native-Rust-Preview-Setup-${version}-x64.exe`);
 const compiler = process.env.MAKENSIS || path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'NSIS/makensis.exe');
 const result = spawnSync(compiler, [
-  '/V3', '/WX', `/DVERSION=${version}`, `/DSTAGE=${stage}`, `/DOUTPUT=${installer}`,
+  '/V3', '/WX', '/DRUST_PREVIEW', `/DVERSION=${version}`, `/DSTAGE=${stage}`, `/DOUTPUT=${installer}`,
   `/DUNINSTALL_FILES=${uninstall}`, path.join(root, 'apps/native/packaging/windows/installer.nsi'),
 ], { stdio: 'inherit' });
 if (result.error) throw result.error;

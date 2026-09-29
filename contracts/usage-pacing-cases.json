@@ -1,0 +1,446 @@
+{
+  "schemaVersion": 1,
+  "description": "Calendar/workweek quota arithmetic and refusal cases extracted from Go limits health and pace table tests; both implementations must consume this corpus.",
+  "now": 1788126404,
+  "config": {
+    "enabled": true,
+    "conserve_at_ratio": 1.25,
+    "block_spend_down_at_ratio": 1,
+    "bootstrap": {
+      "min_elapsed_pct": 5,
+      "expected_offset_pct": 0
+    },
+    "seven_day": {
+      "curve": "calendar",
+      "timezone": "UTC",
+      "weekend_weight": 0.5,
+      "weekend": "spend_tail",
+      "weekend_reserve_pct": 0
+    }
+  },
+  "cases": [
+    {
+      "name": "equal consumption and elapsed is ahead inclusive",
+      "used": 50,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "ahead",
+        "known": true,
+        "ratio": 1
+      },
+      "health": "green"
+    },
+    {
+      "name": "quarter used at half elapsed is on track",
+      "used": 25,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5
+      },
+      "health": "green"
+    },
+    {
+      "name": "eighty percent at half elapsed overspends",
+      "used": 80,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "overspending",
+        "known": true,
+        "ratio": 1.6
+      },
+      "health": "yellow"
+    },
+    {
+      "name": "conserve threshold inclusive",
+      "used": 62.5,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "overspending",
+        "known": true,
+        "ratio": 1.25
+      }
+    },
+    {
+      "name": "yellow health threshold inclusive",
+      "used": 70,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "overspending",
+        "known": true,
+        "ratio": 1.4
+      },
+      "health": "yellow"
+    },
+    {
+      "name": "red health threshold inclusive",
+      "used": 90,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "overspending",
+        "known": true,
+        "ratio": 1.8
+      },
+      "health": "red"
+    },
+    {
+      "name": "exhausted distinct from red",
+      "used": 100,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "overspending",
+        "known": true,
+        "ratio": 2
+      },
+      "health": "exhausted"
+    },
+    {
+      "name": "genuine measured zero is known",
+      "used": 0,
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0
+      },
+      "health": "green"
+    },
+    {
+      "name": "elapsed reset cannot pace",
+      "used": 95,
+      "resetIn": -1,
+      "minutes": 300,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      },
+      "health": "unknown"
+    },
+    {
+      "name": "reset equality cannot pace",
+      "used": 95,
+      "resetIn": 0,
+      "minutes": 300,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      },
+      "health": "unknown"
+    },
+    {
+      "name": "absent reset cannot pace",
+      "used": 95,
+      "minutes": 300,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      },
+      "health": "unknown"
+    },
+    {
+      "name": "no declared window length",
+      "used": 40,
+      "resetIn": 9000,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      }
+    },
+    {
+      "name": "zero declared window length",
+      "used": 40,
+      "resetIn": 9000,
+      "minutes": 0,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      }
+    },
+    {
+      "name": "absurd declared window length",
+      "used": 40,
+      "resetIn": 9000,
+      "minutes": 999999999,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      }
+    },
+    {
+      "name": "reset beyond declared window contradicts evidence",
+      "used": 40,
+      "resetIn": 18001,
+      "minutes": 300,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      }
+    },
+    {
+      "name": "bootstrap refuses early burst",
+      "used": 20,
+      "resetIn": 17940,
+      "minutes": 300,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      }
+    },
+    {
+      "name": "bootstrap threshold is inclusive",
+      "used": 20,
+      "resetIn": 17100,
+      "minutes": 300,
+      "expect": {
+        "state": "overspending",
+        "known": true,
+        "ratio": 4
+      }
+    },
+    {
+      "name": "source flagged stale",
+      "used": 40,
+      "resetIn": 9000,
+      "minutes": 300,
+      "fresh": false,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      }
+    },
+    {
+      "name": "utilization currently unreadable",
+      "measurement": "unknown",
+      "resetIn": 9000,
+      "minutes": 300,
+      "expect": {
+        "state": "unknown",
+        "known": false
+      },
+      "health": "unknown"
+    },
+    {
+      "name": "unavailable without window is unmetered",
+      "measurement": "unavailable",
+      "expect": {
+        "state": "unknown",
+        "known": false
+      },
+      "health": "unmetered"
+    },
+    {
+      "name": "pacing disabled changes no quota evidence",
+      "used": 80,
+      "resetIn": 9000,
+      "minutes": 300,
+      "patch": {
+        "enabled": false
+      },
+      "expect": {
+        "state": "disabled",
+        "known": false
+      }
+    },
+    {
+      "name": "inverted pace bands are unknown",
+      "used": 80,
+      "resetIn": 9000,
+      "minutes": 300,
+      "patch": {
+        "conserve_at_ratio": 0.5
+      },
+      "expect": {
+        "state": "unknown",
+        "known": false
+      }
+    },
+    {
+      "name": "offset widens denominator",
+      "used": 50,
+      "resetIn": 9000,
+      "minutes": 300,
+      "patch": {
+        "bootstrap": {
+          "expected_offset_pct": 2
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.9615384615384615
+      }
+    },
+    {
+      "name": "five day Friday progress",
+      "now": 1790337600,
+      "window": "seven_day",
+      "used": 50,
+      "resetIn": 216000,
+      "minutes": 10080,
+      "patch": {
+        "seven_day": {
+          "curve": "five_day"
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5555555555555556,
+        "curve": "five_day"
+      }
+    },
+    {
+      "name": "five day Saturday plateau",
+      "now": 1790380800,
+      "window": "seven_day",
+      "used": 50,
+      "resetIn": 172800,
+      "minutes": 10080,
+      "patch": {
+        "seven_day": {
+          "curve": "five_day"
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5,
+        "curve": "five_day"
+      }
+    },
+    {
+      "name": "five day Sunday plateau",
+      "now": 1790467200,
+      "window": "seven_day",
+      "used": 50,
+      "resetIn": 86400,
+      "minutes": 10080,
+      "patch": {
+        "seven_day": {
+          "curve": "five_day"
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5,
+        "curve": "five_day"
+      }
+    },
+    {
+      "name": "five day ignores weekend reserve",
+      "now": 1790467200,
+      "window": "seven_day",
+      "used": 50,
+      "resetIn": 86400,
+      "minutes": 10080,
+      "patch": {
+        "seven_day": {
+          "curve": "five_day",
+          "weekend": "reserve",
+          "weekend_reserve_pct": 30
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5,
+        "curve": "five_day"
+      }
+    },
+    {
+      "name": "weighted Sunday progress",
+      "now": 1790467200,
+      "window": "seven_day",
+      "used": 50,
+      "resetIn": 86400,
+      "minutes": 10080,
+      "patch": {
+        "seven_day": {
+          "curve": "workdays"
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5454545454545455,
+        "curve": "workdays"
+      }
+    },
+    {
+      "name": "unknown timezone falls back to calendar",
+      "now": 1790467200,
+      "window": "seven_day",
+      "used": 50,
+      "resetIn": 86400,
+      "minutes": 10080,
+      "patch": {
+        "seven_day": {
+          "curve": "five_day",
+          "timezone": "Mars/Noon"
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5833333333333334,
+        "curve": "calendar"
+      }
+    },
+    {
+      "name": "zero weight is invalid only for workdays",
+      "now": 1790467200,
+      "window": "seven_day",
+      "used": 50,
+      "resetIn": 86400,
+      "minutes": 10080,
+      "patch": {
+        "seven_day": {
+          "curve": "workdays",
+          "weekend_weight": 0
+        }
+      },
+      "expect": {
+        "state": "on_track",
+        "known": true,
+        "ratio": 0.5833333333333334,
+        "curve": "calendar"
+      }
+    }
+  ],
+  "vocabulary": {
+    "blocks": {
+      "cases": {
+        "why": "Calendar/workweek quota arithmetic and refusal cases extracted from Go limits health and pace table tests; both implementations must consume this corpus.",
+        "required": [
+          "name",
+          "expect"
+        ],
+        "optional": [
+          "used",
+          "resetIn",
+          "minutes",
+          "measurement",
+          "fresh",
+          "patch",
+          "now",
+          "window",
+          "health"
+        ],
+        "loaders": [
+          "services/hub/internal/limits/rust_contract_test.go::TestPortableRustPacingContract",
+          "services/hub-rs/src/services/limits.rs::portable_pacing_contract"
+        ]
+      }
+    }
+  }
+}

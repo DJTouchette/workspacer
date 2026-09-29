@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "vocabulary": {"blocks":{"cases":{"why":"The same raw daemon rows must project identically through Go and Rust.","required":["name","raw","expected"],"loaders":["services/hub/cmd/brain/migration_snapshots_test.go::TestRustMigrationSnapshotFixtures", "services/hub-rs/tests/snapshots.rs::shared_snapshot_projection_matches_go_reference"]}}},
+  "cases": [
+    {
+      "name":"unknown mode makes no idle claim",
+      "raw":{"session_id":"new","mode":"unknown"},
+      "expected":{"session_id":"new","sessionId":"new","mode":"unknown","sparse":true,"status":"active","pendingApproval":null,"pendingQuestions":null}
+    },
+    {
+      "name":"background work and explicit unknown model window",
+      "raw":{"session_id":"a","mode":"input","background_tasks":2,"updated_at":"1970-01-01T00:00:01Z","tool_calls":3,"requested_selection":{"model":"opus","context_window":null},"resolved_context_window":null,"usage":{"model":"opus","context_tokens":20,"cost_usd":0.5}},
+      "expected":{"session_id":"a","sessionId":"a","mode":"input","background_tasks":2,"backgroundTasks":2,"updated_at":"1970-01-01T00:00:01Z","lastActivity":1000,"tool_calls":3,"totalToolCalls":3,"requested_selection":{"model":"opus","context_window":null},"requestedSelection":{"model":"opus","contextWindow":null},"resolved_context_window":null,"usage":{"model":"opus","contextTokens":20,"costUSD":0.5},"sparse":true,"status":"active","ambientState":"background","pendingApproval":null,"pendingQuestions":null}
+    },
+    {
+      "name":"approval unwraps tool arguments",
+      "raw":{"session_id":"a","mode":"approval","pending":{"kind":"approval","tool":"Bash","raw":{"session_id":"a","tool_input":{"command":"pwd"}}}},
+      "expected":{"session_id":"a","sessionId":"a","mode":"approval","pending":{"kind":"approval","tool":"Bash","raw":{"session_id":"a","tool_input":{"command":"pwd"}}},"sparse":true,"status":"active","ambientState":"waiting_approval","pendingApproval":{"toolName":"Bash","toolInput":{"command":"pwd"}},"pendingQuestions":null}
+    },
+    {
+      "name":"desktop shaped rows remain untouched",
+      "raw":{"sessionId":"desktop","status":"active","conversation":[{"text":"preserve"}]},
+      "expected":{"sessionId":"desktop","status":"active","conversation":[{"text":"preserve"}]}
+    }
+  ]
+}

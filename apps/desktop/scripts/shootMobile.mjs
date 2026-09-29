@@ -7,7 +7,7 @@
  * shootFleet.mjs) must run inside `unshare -Urn` because the app's daemon ports
  * are literal constants and its startup SIGTERMs whatever holds them. Nothing
  * here starts the app. It starts ONE hub binary, on a port the OS picked as
- * free, with a scratch tokens/layout/push directory and `--brain-scope off` —
+ * free, with a scratch tokens/layout/push directory and `serve --hub-only` —
  * the same isolation `tests/e2e/fixtures/mobileHub.ts` has used all along. It
  * cannot see, adopt or kill the live instance's daemons.
  *
@@ -31,7 +31,7 @@ import * as path from 'path';
 
 const APP = path.resolve(import.meta.dirname, '..');
 const REPO = path.resolve(APP, '../..');
-const HUB_BIN = path.join(REPO, 'services/hub/hub');
+const HUB_BIN = path.join(REPO, 'services/hub-rs/target/release/workspacer-rust');
 const OUT = process.env.SHOT_OUT || '/tmp/wks-shoot-fleet/out';
 
 // Phone frame — matches the existing mobile-*.webp on the landing page.
@@ -46,7 +46,7 @@ const PHONE_TOKEN = 'shoot-phone-token';
 
 if (!fs.existsSync(HUB_BIN)) {
   console.error(
-    `hub binary not found at ${HUB_BIN} (cd services/hub && go build -o hub ./cmd/hub)`,
+    `hub binary not found at ${HUB_BIN} (make build-rust-backend)`,
   );
   process.exit(1);
 }
@@ -308,22 +308,16 @@ const url = `http://127.0.0.1:${port}`;
 const hub = spawn(
   HUB_BIN,
   [
-    '--addr',
-    `127.0.0.1:${port}`,
-    '--token',
-    HOST_TOKEN,
-    '--tokens-file',
-    tokensFile,
-    '--layout-file',
-    path.join(dir, 'layout.json'),
-    '--push-dir',
-    path.join(dir, 'push'),
-    '--brain-scope',
-    'off',
+    '--config-dir', path.join(dir, 'config'),
+    '--host', '127.0.0.1', '--hub-port', String(port),
+    '--tokens-file', tokensFile,
+    'serve', '--hub-only', '--no-mcp', '--no-jobs', '--quiet',
+    '--data-dir', dir, '--push-dir', path.join(dir, 'push'),
+    '--plugins-dir', path.join(dir, 'plugins'),
   ],
   // stdin stays OPEN: the hub's parentwatch reads a closed stdin as "my parent
   // died" and shuts down at once.
-  { stdio: ['pipe', 'pipe', 'pipe'] },
+  { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, HUB_TOKEN: HOST_TOKEN } },
 );
 hub.stderr?.on('data', (b) => {
   const s = String(b);

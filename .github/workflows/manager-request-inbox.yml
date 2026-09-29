@@ -19,9 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.4'
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install fixture search dependency
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Private dependency installations
@@ -35,7 +33,6 @@ jobs:
         run: |
           git diff --name-only 3a16f4bb HEAD -- '*.ts' '*.tsx' | sed 's#^apps/desktop/##' | xargs -r npx prettier --write
           cd ../..
-          gofmt -w services/hub/cmd/mcp/manager_requests*.go
           git diff --binary > manager-request-format.patch
       - uses: actions/upload-artifact@v4
         with:
@@ -62,8 +59,8 @@ jobs:
         run: npx vitest run --no-file-parallelism
       - name: MCP tool and headless compatibility tests
         if: ${{ !cancelled() }}
-        working-directory: services/hub
-        run: go test ./cmd/mcp ./cmd/brain
+        working-directory: services/hub-rs
+        run: cargo test --locked
       - name: Real authenticated MCP to desktop integration
         if: ${{ !cancelled() }}
         working-directory: apps/desktop

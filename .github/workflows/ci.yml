@@ -2,7 +2,7 @@ name: ci
 
 # Test + typecheck/lint on every PR and every push to main. Complements
 # release.yml (which only smoke-BUILDS the installers). Toolchain setup/versions
-# here mirror release.yml exactly (Node 22, Go 1.25.4, Rust stable, the two
+# here mirror release.yml exactly (Node 22, Rust stable, the two
 # `npm ci`s, and the same caches).
 on:
   pull_request:
@@ -85,7 +85,7 @@ jobs:
 
       # Codegen freshness. The two configDefaults.generated.ts files are
       # generated from the Go-side source of truth
-      # (services/hub/cmd/brain/config_defaults.json) by `gen:config-defaults`.
+      # (services/hub-rs/assets/config-defaults.json) by `gen:config-defaults`.
       # Regenerate and fail if the tree moved — this catches both "edited a
       # default / the JSON but forgot to regenerate" (value drift) and any
       # formatting divergence, in one deterministic check. The generic
@@ -139,14 +139,13 @@ jobs:
       #   mobile    the /m PWA, same shape.
       #   renderer  the chat tail-pin, on its own Vite server.
       #
-      # All three need a Go toolchain (app + mobile build and run the real hub)
-      # and Chromium. None needs claudemon, a built Electron app, or xvfb — the
-      # `electron` project (libraryPane.test.ts) does, and stays opt-in.
-      - name: Set up Go (the e2e fixtures build and run the real hub)
-        uses: actions/setup-go@v5
+      # Browser and dispatch fixtures compile the real Rust backend in an
+      # isolated test-support process; no provider credentials are required.
+      - name: Set up Rust for backend fixtures
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          go-version: '1.25.4'
-          cache-dependency-path: services/hub/go.sum
+          workspaces: services/hub-rs
 
       - name: MCP to desktop dispatch provenance integration
         run: npm run test:dispatch-chain
@@ -220,88 +219,36 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   # ---------------------------------------------------------------------------
-  # hub (Go): go vet + go test. Go version pinned to match release.yml.
-  # ---------------------------------------------------------------------------
+  # Shared Rust backend, standalone CLI, and captured compatibility fixtures.
   hub:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: services/hub
+        working-directory: services/hub-rs
     steps:
       - uses: actions/checkout@v5
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          go-version: '1.25.4'
-          cache-dependency-path: services/hub/go.sum
-
-      # gofmt is not enforced by `go build`, so guard it explicitly: fail if any
-      # file would be reformatted (gofmt -l prints such files; non-empty = fail).
-      - name: Format check
-        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-
-      - name: Vet
-        run: go vet ./...
-
-      # search.project shells out to ripgrep, and the guard test that proves it
-      # searches the path the guard RETURNED (rather than re-deriving one) has to
-      # actually run the search to see where it looked. Without rg on PATH that
-      # case fails on the runner while passing on every developer machine that
-      # has ripgrep installed — which is what happened: it was invisible for as
-      # long as this job stopped at the format check. Installing it is the fix;
-      # skipping the case when rg is absent would leave a containment test
-      # silently not running, which is the one thing this suite exists to stop.
-      - name: Install ripgrep (search.project's engine)
+          workspaces: services/hub-rs
+      - name: Install search engine
         run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Test shared backend and standalone CLI
+        run: cargo test --locked
 
-      # -race -count=1 matches the Makefile's `make test-hub` target, and the
-      # -count=1 is load-bearing HERE in particular: actions/setup-go restores
-      # ~/.cache/go-build, which is where the test result cache lives, so a run
-      # on a tree whose cross-repo inputs changed can otherwise be served from a
-      # previous run's results. cmd/go drops out-of-module inputs from the test
-      # cache key, and every TS<->Go drift guard in this suite reads one
-      # (apps/desktop/src/main/services/hubCapabilities.ts, contracts/*.json,
-      # this file). internal/extinput makes those inputs visible again; this
-      # flag is the belt that does not depend on cmd/go internals staying put.
-      # The whole module runs uncached in ~7s.
-      - name: Test
-        run: go test -race -count=1 ./...
-
-  # ---------------------------------------------------------------------------
-  # WINDOWS. Every job above is ubuntu-latest, and only release.yml touches
-  # windows-latest — where it BUILDS and signs an installer rather than running
-  # a test. So every Windows-only branch of the three path-containment copies
-  # was dead code at test time, on every machine anyone runs:
-  #
-  #   pathConfinement.ts splitAbsolute  — a hand-written drive/UNC regex pair
-  #   fsguard.go         splitPath      — filepath.VolumeName + the drive-relative reject
-  #   bus/policy.go      splitVolume    — a hand-rolled UNC/drive scanner
-  #
-  # Three different volume parsers, and the fixture spends much of its header and
-  # its whole case-flag vocabulary (posixOnly, needsSymlinks "Windows without
-  # developer mode", needsUnreadableDir) on their semantics. All three could be
-  # broken so that a DRIVE-RELATIVE path ("C:foo", which resolves against
-  # whatever directory the process is on ON DRIVE C) is accepted as absolute —
-  # the exact check-path/opened-path split BINDING DECISION 2 exists to close —
-  # with both full suites completely green on Linux.
-  #
-  # This leg runs the two suites that own those branches. It is deliberately not
-  # a full matrix: the Rust crates and the Electron rebuild are a different
-  # (much slower) problem, and nothing about them is what went untested.
-  # contracts_test.go's TestCorpusRunsOnWindowsInCI asserts this job keeps
-  # existing and keeps running both, so deleting it fails the Go suite.
-  # ---------------------------------------------------------------------------
+  # Exercise actual Windows filesystem/process branches, plus the same
+  # TypeScript boundary corpus used by the Electron client.
   containment-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          go-version: '1.25.4'
-          cache-dependency-path: services/hub/go.sum
+          workspaces: |
+            services/hub-rs
+            tools/windows-contract-check
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -310,17 +257,7 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
-      # The containment corpus and its loaders are plain Go — no cgo, no
-      # sidecars — so the hub suite runs as-is. -count=1 for the same reason as
-      # the linux `hub` job: the cached go-build directory plus a cache key that
-      # ignores out-of-module inputs is how a cross-repo guard reports green on
-      # a tree it never read.
-      # internal/bus's symlink-gated tests are the ONLY oracle for what they
-      # cover, and sweepguard.Gate deliberately makes a host that cannot run them
-      # RED rather than green-with-a-skip-count. An unelevated process on Windows
-      # cannot create a symlink unless Developer Mode is on, so turn it on —
-      # same call as installing ripgrep below: give the runner the capability the
-      # test needs instead of teaching the test to skip.
+      # Give symlink tests the required OS capability rather than skipping them.
       - name: Enable Developer Mode (unprivileged symlink creation)
         run: |
           reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
@@ -346,9 +283,12 @@ jobs:
           & (Join-Path $rgBin 'rg.exe') --version
           if ($LASTEXITCODE -ne 0) { throw 'ripgrep is not runnable' }
 
-      - name: hub (Go) test
-        working-directory: services/hub
-        run: go test -count=1 ./...
+      - name: Shared Rust backend tests
+        working-directory: services/hub-rs
+        run: cargo test --locked
+      - name: Windows process and path contracts
+        working-directory: tools/windows-contract-check
+        run: cargo test --locked
 
       # --ignore-scripts skips apps/desktop's postinstall (electron-rebuild
       # against better-sqlite3), which needs an Electron download and a native

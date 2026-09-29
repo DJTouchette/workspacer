@@ -1,3 +1,4 @@
+mod bus_commands;
 mod features;
 mod launch;
 mod navigation;
@@ -221,6 +222,7 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 pub struct Workspace {
+    ui_bus: bus_commands::UiState,
     extras: features::Extras,
     chat: transcript::ChatUi,
     screen: Screen,
@@ -397,6 +399,7 @@ impl Workspace {
         Self {
             extras: features::Extras::new(window, cx),
             chat: transcript::ChatUi::default(),
+            ui_bus: Default::default(),
             screen: Screen::Conversation,
             settings: Settings::default(),
             settings_path: None,
@@ -528,8 +531,11 @@ impl Workspace {
                 };
                 self.view = Arc::new(View {
                     connected: false,
+                    ui_requests: view.ui_requests.clone(),
+                    ui_request_warning: view.ui_request_warning.clone(),
                     ..(*self.view).clone()
                 });
+                self.apply_ui_requests(window, cx);
                 cx.notify();
                 return;
             }
@@ -622,10 +628,16 @@ impl Workspace {
                 self.load_models(true, cx);
             }
         }
+        self.apply_ui_requests(window, cx);
         cx.notify();
     }
 
     fn command(&mut self, command: Command, cx: &mut Context<Self>) {
+        let command = if matches!(command, Command::Refresh) && self.view.power_paused {
+            Command::ResumePowerPause(self.view.power_pause_generation)
+        } else {
+            command
+        };
         if let Command::Select(id) = &command
             && self
                 .requested_session
@@ -972,6 +984,28 @@ impl Render for Workspace {
                         })),
                 ),
             )
+            .when(self.view.power_paused, |d| {
+                d.child(
+                    div()
+                        .px_3()
+                        .pb_3()
+                        .text_size(px(12.))
+                        .text_color(rgb(p.warning))
+                        .child(self.view.notice.clone())
+                        .when(self.view.can_resume_power_pause, |d| {
+                            d.child(
+                                self.button("resume-power-pause", "Reconnect and wake", true)
+                                    .mt_2()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.command(Command::Refresh, cx)
+                                    })),
+                            )
+                        }),
+                )
+            })
+            .when(!self.ui_bus.notice.is_empty(), |d| {
+                d.child(self.render_ui_notice(cx))
+            })
             .child(div().px_3().pb_3().child(Input::new(&self.search)))
             .child(
                 div().px_3().pb_4().child(
@@ -1147,6 +1181,8 @@ impl Render for Workspace {
                     .text_color(rgb(p.muted))
                     .child(if self.view.connected {
                         "Connected to hub"
+                    } else if self.view.power_paused {
+                        "Reconnection paused"
                     } else {
                         "Reconnecting…"
                     }),
@@ -2192,6 +2228,131 @@ mod tests {
         workspace.read_with(&visual, |this, cx| {
             assert_eq!(this.composer.read(cx).value().as_ref(), "ordinary paste")
         });
+        assert!(commands.try_recv().is_err());
+    }
+    #[gpui::test]
+    fn terminal_bus_request_is_visible_unsupported_and_never_creates_hidden_work(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window,cx|workspace.update(cx,|this,cx|{
+            let data=serde_json::json!({"cwd":"/project","command":"echo requested","label":"Checks","parentSessionId":"manager"});
+            let(intent,payload)=wks_native::ui_requests::parse("facade.openTerminal",&data).unwrap().unwrap();
+            let mut next=state("a");next.ui_requests.push(wks_native::ui_requests::Request{number:1,intent,payload});
+            this.update_view(Arc::new(next),window,cx);
+            assert!(this.ui_bus.notice.contains("Terminal panes are unavailable"));
+            assert_eq!(this.screen,Screen::Conversation);
+        }));
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::ConsumeUiRequest(1)
+        ));
+        assert!(commands.try_recv().is_err());
+    }
+    #[gpui::test]
+    fn spawn_dialog_bus_request_only_prefills_and_decision_actions_are_refused(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut next = state("a");
+                next.ui_requests.push(wks_native::ui_requests::Request {
+                    number: 1,
+                    intent: wks_native::ui_requests::Intent::OpenSpawnDialog {
+                        cwd: "/requested/project".into(),
+                    },
+                    payload: serde_json::json!({"cwd":"/requested/project"}),
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert!(this.new_session);
+                assert_eq!(this.project.read(cx).value().as_ref(), "/requested/project");
+                let mut next = state("a");
+                next.ui_requests.push(wks_native::ui_requests::Request {
+                    number: 2,
+                    intent: wks_native::ui_requests::Intent::RunAction {
+                        action: "fleet-approve-yes".into(),
+                        digit: None,
+                    },
+                    payload: serde_json::json!({"action":"fleet-approve-yes"}),
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert!(this.ui_bus.notice.contains("scoped controls"));
+            })
+        });
+        while let Ok(command) = commands.try_recv() {
+            assert!(matches!(
+                command,
+                Command::ConsumeUiRequest(_) | Command::LoadModels { .. }
+            ));
+        }
+    }
+    #[gpui::test]
+    fn focus_bus_request_preserves_pinned_window_and_reviews_keep_explicit_cwd(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.requested_session = Some("a".into());
+                let mut next = state("a");
+                next.ui_requests.push(wks_native::ui_requests::Request {
+                    number: 1,
+                    intent: wks_native::ui_requests::Intent::FocusAgent("b".into()),
+                    payload: serde_json::json!({"sessionId":"b"}),
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert!(this.ui_bus.notice.contains("pinned"));
+                this.requested_session = None;
+                let mut next = state("a");
+                next.ui_requests.push(wks_native::ui_requests::Request {
+                    number: 2,
+                    intent: wks_native::ui_requests::Intent::OpenPane {
+                        pane_type: "review".into(),
+                        cwd: "/different/project".into(),
+                        url: String::new(),
+                    },
+                    payload: serde_json::json!({"paneType":"review","cwd":"/different/project"}),
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert_eq!(this.screen, Screen::Changes);
+            })
+        });
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::ConsumeUiRequest(1)
+        ));
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::ConsumeUiRequest(2)
+        ));
+        assert!(
+            matches!(commands.try_recv().unwrap(),Command::Request(wks_native::features::Request::Changes{cwd}) if cwd=="/different/project")
+        );
+        assert!(commands.try_recv().is_err());
+    }
+    #[gpui::test]
+    fn power_pause_waits_for_an_explicit_connection_control(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.connected = false;
+                next.power_paused = true;
+                next.power_pause_generation = 42;
+                next.can_resume_power_pause = true;
+                next.notice = "Server requested a reconnect pause.".into();
+                this.update_view(Arc::new(next), window, cx);
+                assert!(this.view.power_paused);
+            })
+        });
+        assert!(commands.try_recv().is_err());
+        visual.simulate_keystrokes("ctrl-r");
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::ResumePowerPause(42)
+        ));
         assert!(commands.try_recv().is_err());
     }
 }

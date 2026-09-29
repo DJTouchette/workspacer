@@ -8,6 +8,11 @@ if [ "$#" -ne 5 ]; then
 fi
 base=$1 tag=$2 app=$3 machine=$4 mode=$5
 root=$(cd "$(dirname "$0")/../../.." && pwd)
+# Explicit Rust cutover updates the embedded engine together with the backend;
+# replacing only the claudemon leaf no longer changes the running engine.
+if [ "${WKS_RUST_BACKEND:-0}" = 1 ]; then
+  exec "$root/deploy/fly/rust/build-upgrade.sh" "$base" "$tag" --isolated --power "$app" "$machine" "$mode"
+fi
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/bin"

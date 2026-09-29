@@ -15,23 +15,19 @@ describe('desktop service manifest', () => {
       path.join(root, 'apps/desktop/src/main/headless/desktopHost.ts'),
       'utf8',
     );
-    const brain = readFileSync(path.join(root, 'services/hub/cmd/brain/desktophost.go'), 'utf8');
+    const desktop = readFileSync(path.join(root, 'apps/desktop/src/main/services/nativeDesktopServices.ts'), 'utf8');
+    const rust = JSON.parse(readFileSync(path.join(root, 'services/hub-rs/assets/brain-capabilities.json'), 'utf8'));
     for (const method of [...manifest.ownerMethods, ...manifest.assetMethods]) {
       expect(
-        host.includes(`case '${method}':`) || brain.includes(`method == "${method}"`),
+        host.includes(`case '${method}':`) || desktop.includes(`case '${method}':`),
         method,
       ).toBe(true);
     }
-    const ownerImplementation = readFileSync(
-      path.join(root, 'services/hub/internal/bus/desktop.go'),
-      'utf8',
-    );
-    for (const method of manifest.ownerMethods)
-      expect(ownerImplementation).toContain(`authenticatedDesktopUser("${method}", cn)`);
+    for (const method of [...manifest.ownerMethods, ...manifest.assetMethods])
+      expect(rust.full, method).toContain(method);
     for (const row of manifest.authorityCases) {
       expect(row.owner).toBe(row.identity === 'owner');
       expect(row.why.length).toBeGreaterThan(10);
     }
-    expect(ownerImplementation).toContain('cn.authenticatedHost');
   });
 });

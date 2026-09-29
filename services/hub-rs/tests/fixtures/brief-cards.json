@@ -1,0 +1,390 @@
+[
+  {
+    "content": "# Project — brief\n\n## Now\n- 🚧 **First** dispatch, still running.\n  a continuation line that belongs to it\n\n- second entry after a blank separator\n\n## Recently\n- 2026-08-01  landed something\n",
+    "expected": {
+      "cards": [
+        {
+          "id": "839dfb1c7d3978b1",
+          "column": "Now",
+          "title": "First dispatch, still running.",
+          "status": "in-flight",
+          "summary": "a continuation line that belongs to it",
+          "refs": [],
+          "marker": "🚧",
+          "text": "- 🚧 **First** dispatch, still running.\n  a continuation line that belongs to it",
+          "synthesized": false
+        },
+        {
+          "id": "c9ee0c31bd8b3c88",
+          "column": "Recently",
+          "title": "landed something",
+          "status": "landed",
+          "summary": "",
+          "refs": [],
+          "date": "2026-08-01",
+          "text": "- 2026-08-01  landed something",
+          "synthesized": false
+        },
+        {
+          "id": "a288b5a6687475bf",
+          "column": "Now",
+          "title": "second entry after a blank separator",
+          "summary": "",
+          "refs": [],
+          "text": "- second entry after a blank separator",
+          "synthesized": false
+        }
+      ],
+      "extras": []
+    },
+    "ids": [
+      "839dfb1c7d3978b1",
+      "a288b5a6687475bf",
+      "c9ee0c31bd8b3c88"
+    ]
+  },
+  {
+    "content": "## Now\n\n### Ship\n- a grouped entry\n  with a continuation\n\n### Watch\n- another grouped entry\n\n## Direction\n- durable\n",
+    "expected": {
+      "cards": [
+        {
+          "id": "6acf147b918e872a",
+          "column": "Now",
+          "group": "Ship",
+          "title": "a grouped entry with a continuation",
+          "summary": "",
+          "refs": [],
+          "text": "- a grouped entry\n  with a continuation",
+          "synthesized": false
+        },
+        {
+          "id": "f0790e1903b32e78",
+          "column": "Now",
+          "group": "Watch",
+          "title": "another grouped entry",
+          "summary": "",
+          "refs": [],
+          "text": "- another grouped entry",
+          "synthesized": false
+        },
+        {
+          "id": "4100dc192c654f78",
+          "column": "Direction",
+          "title": "durable",
+          "summary": "",
+          "refs": [],
+          "text": "- durable",
+          "synthesized": false
+        }
+      ],
+      "extras": []
+    },
+    "ids": [
+      "6acf147b918e872a",
+      "f0790e1903b32e78",
+      "4100dc192c654f78"
+    ]
+  },
+  {
+    "content": "## Now\n1. numbered entry\n    four-space indented continuation\n- dash entry\n* star entry\n+ plus entry\n#not a heading and not a bullet\n",
+    "expected": {
+      "cards": [
+        {
+          "id": "51a56985d12f214c",
+          "column": "Now",
+          "title": "numbered entry four-space indented continuation",
+          "summary": "",
+          "refs": [],
+          "text": "1. numbered entry\n    four-space indented continuation",
+          "synthesized": false
+        },
+        {
+          "id": "0478764a7e075933",
+          "column": "Now",
+          "title": "dash entry",
+          "summary": "",
+          "refs": [],
+          "text": "- dash entry",
+          "synthesized": false
+        },
+        {
+          "id": "a02ef32f796f1306",
+          "column": "Now",
+          "title": "star entry",
+          "summary": "",
+          "refs": [],
+          "text": "* star entry",
+          "synthesized": false
+        },
+        {
+          "id": "77c5221caa018615",
+          "column": "Now",
+          "title": "plus entry #not a heading and not a bullet",
+          "summary": "",
+          "refs": [],
+          "text": "+ plus entry\n#not a heading and not a bullet",
+          "synthesized": false
+        }
+      ],
+      "extras": []
+    },
+    "ids": [
+      "51a56985d12f214c",
+      "0478764a7e075933",
+      "a02ef32f796f1306",
+      "77c5221caa018615"
+    ]
+  },
+  {
+    "content": "## Now\n- an entry under it\n",
+    "expected": {
+      "cards": [
+        {
+          "id": "cdedaf763f6b4217",
+          "column": "Now",
+          "title": "an entry under it",
+          "summary": "",
+          "refs": [],
+          "text": "- an entry under it",
+          "synthesized": false
+        }
+      ],
+      "extras": []
+    },
+    "ids": [
+      "cdedaf763f6b4217"
+    ]
+  },
+  {
+    "content": "## Now\n- 🚧 **Fresh implementation** dispatched session:abcdef01 — in flight\n- 2026-08-22 ✅ **Completed implementation** — commit `123abcd`, session:12345678\n- ❌ WRONG **Misleading old headline** — RETRACTED SAME DAY\n- NOT YET DISPATCHED — next up\n- Bug FIXED and merged — discarded an earlier dispatched attempt\n- ✅ RESOLVED but ONE HUMAN ACTION NEEDED\n- ⚠️ Awaiting a decision\n- Design details and `code` only\n",
+    "expected": {
+      "cards": [
+        {
+          "id": "f6923b102fcfa569",
+          "column": "Now",
+          "title": "Awaiting a decision",
+          "status": "waiting-on-you",
+          "summary": "",
+          "refs": [],
+          "marker": "⚠️",
+          "text": "- ⚠️ Awaiting a decision",
+          "synthesized": false
+        },
+        {
+          "id": "7b3352a0bfa38405",
+          "column": "Now",
+          "title": "Fresh implementation",
+          "status": "in-flight",
+          "summary": "dispatched session:abcdef01 — in flight",
+          "refs": [
+            "session:abcdef01"
+          ],
+          "marker": "🚧",
+          "text": "- 🚧 **Fresh implementation** dispatched session:abcdef01 — in flight",
+          "synthesized": false
+        },
+        {
+          "id": "5ad4f0fae1624683",
+          "column": "Now",
+          "title": "NOT YET DISPATCHED",
+          "status": "next-up",
+          "summary": "next up",
+          "refs": [],
+          "text": "- NOT YET DISPATCHED — next up",
+          "synthesized": false
+        },
+        {
+          "id": "dc635c04b976135d",
+          "column": "Now",
+          "title": "Completed implementation",
+          "status": "landed",
+          "summary": "commit 123abcd, session:12345678",
+          "refs": [
+            "123abcd",
+            "session:12345678"
+          ],
+          "date": "2026-08-22",
+          "text": "- 2026-08-22 ✅ **Completed implementation** — commit `123abcd`, session:12345678",
+          "synthesized": false
+        },
+        {
+          "id": "8ef742e90158a4f0",
+          "column": "Now",
+          "title": "Bug FIXED and merged",
+          "status": "landed",
+          "summary": "discarded an earlier dispatched attempt",
+          "refs": [],
+          "text": "- Bug FIXED and merged — discarded an earlier dispatched attempt",
+          "synthesized": false
+        },
+        {
+          "id": "00a803ed68061584",
+          "column": "Now",
+          "title": "RESOLVED but ONE HUMAN ACTION NEEDED",
+          "status": "landed",
+          "summary": "",
+          "refs": [],
+          "marker": "✅",
+          "text": "- ✅ RESOLVED but ONE HUMAN ACTION NEEDED",
+          "synthesized": false
+        },
+        {
+          "id": "4bdf096492916b8d",
+          "column": "Now",
+          "title": "WRONG Misleading old headline",
+          "retracted": true,
+          "summary": "RETRACTED SAME DAY",
+          "refs": [],
+          "marker": "❌",
+          "text": "- ❌ WRONG **Misleading old headline** — RETRACTED SAME DAY",
+          "synthesized": false
+        },
+        {
+          "id": "db43236a48adedf3",
+          "column": "Now",
+          "title": "Design details and code only",
+          "summary": "",
+          "refs": [],
+          "text": "- Design details and `code` only",
+          "synthesized": false
+        }
+      ],
+      "extras": []
+    },
+    "ids": [
+      "7b3352a0bfa38405",
+      "dc635c04b976135d",
+      "4bdf096492916b8d",
+      "5ad4f0fae1624683",
+      "8ef742e90158a4f0",
+      "00a803ed68061584",
+      "f6923b102fcfa569",
+      "db43236a48adedf3"
+    ]
+  },
+  {
+    "content": "## User\n- Personal standing preference\n## Now\n- Here right-click the card → **Terminate** → reopen from Overview\n- Long supplementary 🧑‍💻 headline word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word \n- Keep ``double`` ticks and *emphasis* unchanged in the source\n",
+    "expected": {
+      "cards": [
+        {
+          "id": "13ea2c3b1087121a",
+          "column": "Now",
+          "title": "Here right-click the card → Terminate → reopen from Overview",
+          "summary": "",
+          "refs": [],
+          "text": "- Here right-click the card → **Terminate** → reopen from Overview",
+          "synthesized": false
+        },
+        {
+          "id": "90cab8e83db0ee7d",
+          "column": "Now",
+          "title": "Long supplementary 🧑‍💻 headline word word word word word word word word word word word word…",
+          "summary": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word…",
+          "refs": [],
+          "text": "- Long supplementary 🧑‍💻 headline word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word ",
+          "synthesized": false
+        },
+        {
+          "id": "9cc18b89d17252d0",
+          "column": "Now",
+          "title": "Keep ``double`` ticks and emphasis unchanged in the source",
+          "summary": "",
+          "refs": [],
+          "text": "- Keep ``double`` ticks and *emphasis* unchanged in the source",
+          "synthesized": false
+        }
+      ],
+      "extras": [
+        {
+          "id": "8eba4bffd307bfb6",
+          "column": "Now",
+          "group": "User",
+          "title": "Personal standing preference",
+          "summary": "",
+          "refs": [],
+          "text": "- Personal standing preference",
+          "synthesized": false
+        }
+      ]
+    },
+    "ids": [
+      "8eba4bffd307bfb6",
+      "13ea2c3b1087121a",
+      "90cab8e83db0ee7d",
+      "9cc18b89d17252d0"
+    ]
+  },
+  {
+    "content": "## Now\n- **Bold span with\n  a continuation** is underway\n- session:abcdef123456 and `1234567` plus `7654321` and `3456789` and `abcdef0` and `4567890`\n",
+    "expected": {
+      "cards": [
+        {
+          "id": "5ccf2fec1fdfcb5d",
+          "column": "Now",
+          "title": "Bold span with a continuation",
+          "status": "in-flight",
+          "summary": "**Bold span with a continuation** is underway",
+          "refs": [],
+          "text": "- **Bold span with\n  a continuation** is underway",
+          "synthesized": false
+        },
+        {
+          "id": "744b426297521b53",
+          "column": "Now",
+          "title": "session:abcdef123456 and 1234567 plus 7654321 and 3456789 and abcdef0 and 4567890",
+          "summary": "",
+          "refs": [
+            "1234567",
+            "7654321",
+            "3456789",
+            "abcdef0",
+            "4567890"
+          ],
+          "text": "- session:abcdef123456 and `1234567` plus `7654321` and `3456789` and `abcdef0` and `4567890`",
+          "synthesized": false
+        }
+      ],
+      "extras": []
+    },
+    "ids": [
+      "5ccf2fec1fdfcb5d",
+      "744b426297521b53"
+    ]
+  },
+  {
+    "content": "## Now\n- Fixed the client session:abcdef12\n",
+    "index": {
+      "cards": {
+        "549f1b1ea33eedaf": {
+          "title": " **Indexed replacement** ",
+          "status": "waiting_on_you",
+          "summary": "A clearer description",
+          "refs": [
+            "session:feedface",
+            42
+          ]
+        }
+      }
+    },
+    "expected": {
+      "cards": [
+        {
+          "id": "549f1b1ea33eedaf",
+          "column": "Now",
+          "title": "Indexed replacement",
+          "status": "waiting-on-you",
+          "summary": "A clearer description",
+          "refs": [
+            "session:feedface"
+          ],
+          "text": "- Fixed the client session:abcdef12",
+          "synthesized": true
+        }
+      ],
+      "extras": []
+    },
+    "ids": [
+      "549f1b1ea33eedaf"
+    ]
+  }
+]

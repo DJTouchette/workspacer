@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>workspacer · remote</title>
+<link rel="stylesheet" href="xterm.css">
+<style>
+  :root {
+    --bg: #0c0d10; --panel: #16181d; --panel2: #1d2026; --line: #2a2e37;
+    --fg: #e6e8ec; --dim: #8b919c; --accent: #6ea8fe; --ok: #4ec9a8;
+    --warn: #e0b341; --bad: #e06c75; --radius: 12px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+             env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--bg); z-index: 5;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #back {
+    display: none; flex: 0 0 auto; min-width: 0; padding: 6px 12px;
+    font-size: 18px; line-height: 1; border-radius: 9px;
+  }
+  body.chat-open #back { display: block; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad);
+         box-shadow: 0 0 0 3px rgba(224,108,117,.15); transition: .3s; flex: 0 0 auto; }
+  #dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(78,201,168,.15); }
+  #status { color: var(--dim); font-size: 12px; margin-left: auto; white-space: nowrap; }
+  main { padding: 14px 16px 40px; max-width: 760px; margin: 0 auto; }
+  .empty { color: var(--dim); text-align: center; padding: 48px 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 14px; overflow: hidden;
+    cursor: pointer;
+  }
+  .card.waiting { border-color: var(--warn); }
+  .row { display: flex; align-items: center; gap: 10px; padding: 13px 14px; }
+  .cwd { font-weight: 600; word-break: break-all; }
+  .meta { color: var(--dim); font-size: 12px; margin-top: 2px; }
+  /* Which project a row belongs to, at a glance — a fleet spanning several
+     repos is otherwise a wall of identical cards. Initials on a plate tinted by
+     the project's own colour, or its configured emoji (which carries its own
+     colour and gets no plate). See projectMarkHtml. */
+  .pmark {
+    flex: 0 0 auto; width: 26px; height: 26px; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; letter-spacing: -.02em; line-height: 1;
+  }
+  .pmark.emoji { background: none; font-size: 18px; }
+  .badge {
+    margin-left: auto; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .5px; padding: 4px 9px; border-radius: 999px; white-space: nowrap;
+    background: var(--panel2); color: var(--dim);
+  }
+  .badge.input, .badge.waiting { background: rgba(224,179,65,.16); color: var(--warn); }
+  .badge.thinking, .badge.running { background: rgba(110,168,254,.16); color: var(--accent); }
+  .badge.error { background: rgba(224,108,117,.16); color: var(--bad); }
+  .badge.done, .badge.idle { background: rgba(78,201,168,.14); color: var(--ok); }
+  .preview { padding: 0 14px 12px; color: var(--dim); font-size: 13px;
+             display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+             overflow: hidden; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font: inherit; font-weight: 600; color: var(--fg); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 9px; padding: 11px 14px;
+    flex: 1 1 auto; min-width: 70px; cursor: pointer; transition: .12s;
+  }
+  button:active { transform: scale(.97); }
+  button.yes { background: rgba(78,201,168,.15); border-color: rgba(78,201,168,.4); color: var(--ok); }
+  button.no  { background: rgba(224,108,117,.15); border-color: rgba(224,108,117,.4); color: var(--bad); }
+  button.always { background: rgba(110,168,254,.15); border-color: rgba(110,168,254,.4); color: var(--accent); }
+  .send { display: flex; gap: 8px; }
+  input[type=text] {
+    flex: 1; font: inherit; color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px;
+    min-width: 0;
+    /* >=16px stops iOS WebKit from auto-zooming (and jolting the layout) on focus. */
+    font-size: 16px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .send button { flex: 0 0 auto; }
+  .gate { background: var(--bg); border-top: 1px solid var(--line);
+          padding: 16px; max-width: 420px; margin: 60px auto; border-radius: var(--radius); }
+  .gate h2 { margin: 0 0 6px; font-size: 16px; }
+  .gate p { color: var(--dim); margin: 0 0 16px; font-size: 13px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+    padding: 10px 16px; border-radius: 999px; font-size: 13px; opacity: 0;
+    transition: opacity .25s; pointer-events: none; z-index: 20; max-width: 90vw;
+  }
+  .toast.show { opacity: 1; }
+
+  /* ── chat view ─────────────────────────────────────────────────────── */
+  body.chat-open main { padding-bottom: 12px; }
+  #msgs { display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 88%; border-radius: var(--radius); padding: 10px 13px;
+         font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: rgba(110,168,254,.14);
+              border: 1px solid rgba(110,168,254,.28); }
+  .msg.assistant { align-self: flex-start; background: var(--panel);
+                   border: 1px solid var(--line); }
+  .msg pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+             padding: 8px 10px; overflow-x: auto; font-size: 12.5px; margin: 6px 0;
+             white-space: pre; }
+  .msg code { background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+              padding: 1px 5px; font-size: 12.5px; }
+  .tools { align-self: flex-start; display: flex; flex-direction: column; gap: 5px;
+           max-width: 88%; }
+  .tool {
+    font-size: 12px; color: var(--dim); background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tool b { color: var(--fg); font-weight: 600; }
+  .typing { align-self: flex-start; color: var(--dim); font-size: 13px; padding: 2px 4px; }
+  .typing::after { content: '…'; animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .ask {
+    border: 1px solid var(--warn); border-radius: var(--radius);
+    background: rgba(224,179,65,.08); padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .ask .ask-title { font-weight: 600; font-size: 14px; color: var(--warn); }
+  .ask pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+             padding: 8px 10px; overflow-x: auto; font-size: 12px; margin: 0;
+             max-height: 180px; overflow-y: auto; }
+  .ask .opt { text-align: left; font-weight: 500; }
+  .ask .opt small { display: block; color: var(--dim); font-weight: 400; }
+  #composer {
+    /* bottom:var(--kb) lifts the bar above the iOS keyboard (see keyboardInset). */
+    position: sticky; bottom: var(--kb, 0px); background: var(--bg);
+    border-top: 1px solid var(--line); padding: 10px 0
+      calc(10px + env(safe-area-inset-bottom)); margin-top: 14px;
+    display: none; flex-direction: column; gap: 8px;
+  }
+  body.chat-open #composer { display: flex; }
+  #composer .small button { padding: 8px 12px; font-size: 13px; font-weight: 500;
+                            color: var(--dim); flex: 0 1 auto; }
+
+  /* ── chat / terminal view switch ───────────────────────────────────── */
+  .viewtabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .viewtabs .vt {
+    flex: 0 0 auto; padding: 6px 14px; font-size: 13px; font-weight: 600;
+    color: var(--dim); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+  .viewtabs .vt.on { color: var(--fg); background: var(--panel2); border-color: var(--accent); }
+  /* Terminal mirror: a real xterm.js fed raw PTY bytes from the desktop pane,
+     now interactive — keystrokes are forwarded back to the PTY. */
+  #termwrap { display: none; position: relative; }
+  body.term-mode #termwrap { display: block; }
+  #term { height: 64vh; height: 64dvh; width: 100%; padding: 6px 4px 6px 8px;
+          background: #000; border: 1px solid var(--line); border-radius: var(--radius);
+          overflow: hidden; }
+  @media (orientation: landscape) { #term { height: 80vh; height: 80dvh; } }
+  #term .xterm { height: 100%; }
+  /* Let the terminal own vertical touch-scroll without dragging the page. */
+  #term .xterm-viewport { touch-action: pan-y; }
+  body.term-mode #msgs, body.term-mode #ask { display: none; }
+  /* The composer (send / approve) still applies in terminal mode. */
+
+  /* "reconnecting" veil over the terminal while the socket is down. */
+  #termveil { position: absolute; inset: 0; display: none; align-items: center;
+              justify-content: center; background: rgba(0,0,0,.6); color: var(--dim);
+              font-size: 13px; border-radius: var(--radius); z-index: 3; }
+  body.term-mode.disconnected #termveil { display: flex; }
+  /* jump-to-bottom pill, shown only when scrolled up. */
+  #termBottom { position: absolute; right: 14px; bottom: 14px; display: none;
+                background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+                border-radius: 999px; padding: 7px 14px; font-size: 12px; font-weight: 600;
+                z-index: 4; box-shadow: 0 4px 14px rgba(0,0,0,.4); }
+  #termBottom.show { display: block; }
+  /* On-screen keys for what phone keyboards lack (Esc/Tab/Ctrl/arrows/^C). */
+  #termbar { display: none; flex-direction: column; gap: 6px; margin-top: 8px; }
+  body.term-mode #termbar { display: flex; }
+  .termrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .termrow button { flex: 0 0 auto; padding: 8px 12px; font-size: 13px; font-weight: 600;
+                    background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+                    border-radius: 8px; min-width: 0; }
+  .termrow button.on { border-color: var(--accent); color: var(--accent);
+                       background: rgba(110,168,254,.12); }
+  .termrow .spacer { flex: 1 1 auto; }
+</style>
+</head>
+<body>
+<header>
+  <button id="back">‹</button>
+  <div id="dot"></div>
+  <h1 id="title">workspacer remote</h1>
+  <span id="status">connecting…</span>
+</header>
+<main id="main"></main>
+<div class="toast" id="toast"></div>
+
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  let token = qs.get('token') || sessionStorage.getItem('hubToken') || '';
+  if (token) sessionStorage.setItem('hubToken', token);
+
+  const $ = (id) => document.getElementById(id);
+  const main = $('main'), dot = $('dot'), statusEl = $('status'), toastEl = $('toast');
+  const backBtn = $('back'), titleEl = $('title');
+  let ws = null, backoff = 500, calls = new Map(), callSeq = 0;
+  let reconnectTimer = null;
+  let lastActivity = 0;            // ms of the last inbound frame; drives staleness check
+  const STALE_MS = 30000;
+  const sessions = new Map(); // sessionId -> {sessionId, cwd, state, pendingApproval, ...}
+  let cfg = null;             // config.get — project labels/colours/emoji (optional)
+
+  // View state: list of agents, or the chat for one of them.
+  let view = { name: 'list' };       // | { name: 'chat', sessionId }
+  let chatPoll = null;               // interval while the open agent is busy
+  let lastTranscriptKey = '';        // cheap change detection to avoid re-rendering
+
+  // Live terminal mirror (xterm.js fed PTY bytes over the bus).
+  let termMode = false;              // chat view showing the terminal vs the transcript
+  let term = null, fitAddon = null;  // xterm instance + fit addon
+  let termKeepalive = null;          // interval refreshing the streaming lease
+  let termSessionId = '';            // session the terminal is currently mirroring
+  let termFont = 13;                 // adjustable font size (A− / A+)
+  let ctrlSticky = false;            // Ctrl key armed for the next keystroke
+  let termResizeTimer = null;        // debounce for refit on rotate / keyboard
+
+  function toast(msg) {
+    toastEl.textContent = msg; toastEl.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
+
+  function gate() {
+    main.innerHTML = `<div class="gate">
+      <h2>Token required</h2>
+      <p>Paste the remote-control token from workspacer to connect.</p>
+      <div class="send">
+        <input type="text" id="tok" placeholder="token" autocomplete="off">
+        <button class="always" id="tokGo">Connect</button>
+      </div></div>`;
+    $('tokGo').onclick = () => {
+      const v = $('tok').value.trim();
+      if (!v) return;
+      token = v; sessionStorage.setItem('hubToken', v);
+      connect();
+    };
+    $('tok').addEventListener('keydown', e => { if (e.key === 'Enter') $('tokGo').click(); });
+  }
+
+  function wsURL() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`;
+  }
+
+  function call(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return reject(new Error('offline'));
+      const id = 'c' + (++callSeq);
+      calls.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ op: 'call', id, method, params }));
+      setTimeout(() => { if (calls.has(id)) { calls.delete(id); reject(new Error('timeout')); } }, 12000);
+    });
+  }
+
+  async function refresh() {
+    try {
+      const list = await call('agents.list', {});
+      sessions.clear();
+      for (const s of (list || [])) sessions.set(s.sessionId, s);
+      render();
+    } catch (e) { /* shown via connection state */ }
+  }
+
+  // The hub reports claude's ambient state verbatim: idle | thinking | streaming
+  // | waiting_input | waiting_approval. (Older 'input'/'running'/'waiting'/'error'
+  // aliases are kept so a stale client still colours correctly.)
+  function badgeClass(state) {
+    const s = (state || '').toLowerCase();
+    if (s === 'waiting_approval' || s === 'waiting_input' || s === 'input' || s === 'waiting') return 'waiting';
+    if (s === 'thinking' || s === 'streaming' || s === 'running' || s === 'background') return 'thinking';
+    if (s === 'error') return 'error';
+    return 'done';
+  }
+  function stateLabel(state) {
+    const s = (state || '').toLowerCase();
+    if (s === 'waiting_approval') return 'needs approval';
+    if (s === 'waiting_input' || s === 'input' || s === 'waiting') return 'needs you';
+    if (s === 'streaming') return 'working';
+    if (s === 'background') return 'background work';
+    if (s === 'thinking') return 'thinking';
+    if (s === 'idle' || s === 'done' || !s) return 'idle';
+    return state;
+  }
+  function isWaiting(state) {
+    const s = (state || '').toLowerCase();
+    return s === 'waiting_approval' || s === 'waiting_input' || s === 'input' || s === 'waiting' || s === 'error';
+  }
+  function isBusy(state) {
+    const s = (state || '').toLowerCase();
+    return s === 'thinking' || s === 'streaming' || s === 'running' || s === 'background';
+  }
+
+  // ── project identity ───────────────────────────────────────────────────
+  // Every session belongs to a directory, and until now every card looked the
+  // same — a fleet spanning several repos was a wall of identical rows and the
+  // only way to tell them apart was to read the path.
+  //
+  // Ported from the desktop's lib/projectIdentity.ts + lib/projectKey.ts (and
+  // the same port lives in mobile.html). The palette, the FNV-1a hash and the
+  // initials rules are byte-identical on purpose: one directory must get the
+  // SAME mark in every client, or two views of one fleet stop agreeing.
+  //
+  // It works with NO configuration, which is the point — an unconfigured
+  // project still gets stable initials and a stable colour from its own path,
+  // so `config.projects` only adds the parts a human chose to override.
+  //
+  // Two deliberate divergences from the desktop, both forced by the browser: a
+  // downloaded icon is served as `workspacer-icon://<file>`, a protocol that
+  // exists only inside the Electron app, and a configured `favicon` is a
+  // third-party URL a client reaching the hub over a tailnet often has no route
+  // to — so neither is drawn here; the emoji, else the initials.
+  const PROJECT_PALETTE = ['#6b8afd', '#c084fc', '#f472b6', '#fb923c', '#2dd4bf', '#38bdf8', '#a3a3f5', '#e879a6'];
+
+  /** FNV-1a, 32-bit. Same path → same colour, in every client and across
+   *  restarts, which is the whole reason the colour is derived at all. */
+  function projHash(s) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
+  }
+
+  /** The config key for a directory — normalized the way `scripts`, `widgets`
+   *  and `projects` are all keyed, so one repo can't land under two spellings. */
+  const projectKey = (cwd) => String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const basenameOf = (cwd) => projectKey(cwd).split('/').pop() || '';
+
+  /** One or two characters for a name. Word initials rather than the first two
+   *  letters, so sibling repos sharing a prefix stay distinct: `api-gateway`
+   *  and `api-worker` read AG and AW, not both AP. */
+  function initialsOf(name) {
+    const words = String(name || '').split(/[\s._-]+/).filter(Boolean);
+    if (!words.length) return '?';
+    if (words.length === 1) {
+      // A camelCase single word still has a second word inside it.
+      const camel = words[0].match(/^([a-z]+)([A-Z][a-z]*)/);
+      return camel ? (camel[1][0] + camel[2][0]).toUpperCase() : words[0].slice(0, 2).toUpperCase();
+    }
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+
+  /** The `config.projects` entry for a key, honouring one that differs only by
+   *  case. Windows spells a single directory several ways (`c:/users/me/repo`
+   *  vs `C:/Users/me/repo`) and its filesystem treats them as one; POSIX paths
+   *  that differ by case really are different directories, so the fallback is
+   *  limited to drive-lettered paths. Keyed off the PATH's shape rather than
+   *  navigator, because navigator describes THIS browser and the directory
+   *  belongs to whichever host the agents run on. */
+  function projectEntry(key) {
+    const map = (cfg && cfg.projects) || null;
+    if (!map || typeof map !== 'object') return {};
+    if (Object.prototype.hasOwnProperty.call(map, key)) return map[key] || {};
+    if (!/^[a-z]:\//i.test(key)) return {};
+    const lowered = key.toLowerCase();
+    for (const k of Object.keys(map)) if (k.toLowerCase() === lowered) return map[k] || {};
+    return {};
+  }
+
+  /** A configured colour, only if it is a plain hex or named colour. The
+   *  desktop hands its colours to React, which can't escape a style attribute;
+   *  here they are interpolated into one, so anything that could carry a quote
+   *  out of the attribute is treated as unset and falls back to the derived
+   *  colour rather than being pasted in. */
+  function safeColor(v) {
+    const c = String(v || '').trim();
+    return /^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(c) ? c : '';
+  }
+
+  /** What to draw for a directory. A blank configured value counts as unset. */
+  function resolveProject(dir) {
+    if (!dir) return null;
+    const key = projectKey(dir);
+    const e = projectEntry(key);
+    const label = String(e.label || '').trim() || basenameOf(key);
+    return {
+      label,
+      // Initials follow the LABEL, so renaming a project renames its mark; the
+      // colour follows the KEY, so renaming one must not recolour it.
+      initials: initialsOf(label),
+      color: safeColor(e.color) || PROJECT_PALETTE[projHash(key) % PROJECT_PALETTE.length],
+      icon: String(e.icon || '').trim(),
+    };
+  }
+
+  function projectMarkHtml(dir) {
+    const p = resolveProject(dir);
+    if (!p) return '';
+    // An emoji carries its own colour and needs no tinted plate behind it;
+    // a letter mark does. "Not ASCII" is what an emoji is, here.
+    const emoji = !!p.icon && !/^[\x20-\x7e]+$/.test(p.icon);
+    const tint = emoji ? '' : `color:${p.color};background:color-mix(in srgb, ${p.color} 22%, transparent)`;
+    return `<span class="pmark${emoji ? ' emoji' : ''}" title="${esc(p.label)}" style="${tint}">${esc(p.icon || p.initials)}</span>`;
+  }
+
+  // Optional and best-effort: the marks are fully derived without it, so a hub
+  // that doesn't serve config.get (or a token that may not read it) costs the
+  // custom labels, colours and emoji — never the ability to tell rows apart.
+  async function loadConfig() {
+    try { cfg = await call('config.get', {}); render(); } catch { /* derived marks stand */ }
+  }
+
+  // ── rendering ──────────────────────────────────────────────────────────
+
+  function render() {
+    if (view.name === 'chat') return renderChat();
+    renderList();
+  }
+
+  function renderList() {
+    document.body.classList.remove('chat-open');
+    titleEl.textContent = 'workspacer remote';
+    if (sessions.size === 0) {
+      main.innerHTML = `<div class="empty">No active dispatches.</div>`;
+      return;
+    }
+    const items = [...sessions.values()].sort((a, b) =>
+      Number(isWaiting(b.state)) - Number(isWaiting(a.state)));
+    main.innerHTML = '';
+    for (const s of items) {
+      const waiting = isWaiting(s.state);
+      const card = document.createElement('div');
+      card.className = 'card' + (waiting ? ' waiting' : '');
+      const ctx = s.contextLimit ? ` · ${Math.round((s.contextTokens / s.contextLimit) * 100)}% ctx` : '';
+      const cost = s.costUSD ? ` · $${Number(s.costUSD).toFixed(2)}` : '';
+      const preview = s.pendingApproval
+        ? `Wants to run <b>${esc(s.pendingApproval.toolName)}</b>`
+        : (s.pendingQuestions && s.pendingQuestions.length
+            ? esc(s.pendingQuestions[0].question) : '');
+      // The mark identifies the project; the label only earns its place when a
+      // human named the project something the path doesn't already say.
+      const proj = resolveProject(s.cwd);
+      const named = proj && proj.label !== basenameOf(s.cwd) ? esc(proj.label) + ' · ' : '';
+      card.innerHTML = `
+        <div class="row">
+          ${projectMarkHtml(s.cwd)}
+          <div>
+            <div class="cwd">${esc(shortCwd(s.cwd))}</div>
+            <div class="meta">${named}${esc(s.model || 'claude')}${ctx}${cost}</div>
+          </div>
+          <span class="badge ${badgeClass(s.state)}">${esc(stateLabel(s.state))}</span>
+        </div>
+        ${preview ? `<div class="preview">${preview}</div>` : ''}`;
+      card.onclick = () => openChat(s.sessionId);
+      main.appendChild(card);
+    }
+  }
+
+  // ── chat view ──────────────────────────────────────────────────────────
+
+  function openChat(sessionId) {
+    view = { name: 'chat', sessionId };
+    lastTranscriptKey = '';
+    document.body.classList.add('chat-open');
+    main.innerHTML = `
+      <div class="viewtabs">
+        <button class="vt on" id="tabChat">Chat</button>
+        <button class="vt" id="tabTerm">Terminal</button>
+      </div>
+      <div id="msgs"><div class="empty">Loading transcript…</div></div>
+      <div id="termwrap">
+        <div id="term"></div>
+        <div id="termveil">reconnecting…</div>
+        <button id="termBottom">▾ Jump to bottom</button>
+      </div>
+      <div id="termbar">
+        <div class="termrow">
+          <button data-act="focus" title="Show keyboard">⌨ Keyboard</button>
+          <button data-act="fontdown" title="Smaller">A−</button>
+          <button data-act="fontup" title="Larger">A+</button>
+          <span class="spacer"></span>
+        </div>
+        <div class="termrow">
+          <button data-key="esc">Esc</button>
+          <button data-key="tab">Tab</button>
+          <button data-act="ctrl" id="ctrlKey">Ctrl</button>
+          <button data-key="up">↑</button>
+          <button data-key="down">↓</button>
+          <button data-key="left">←</button>
+          <button data-key="right">→</button>
+          <button data-key="ctrlc">^C</button>
+        </div>
+      </div>
+      <div id="ask"></div>
+      <div id="composer">
+        <div class="send">
+          <input type="text" id="chatInput" placeholder="message / answer…" autocomplete="off">
+          <button class="always" id="chatSend">Send</button>
+        </div>
+        <div class="btns small">
+          <button id="chatInterrupt">Interrupt</button>
+          <button id="chatStop">Stop</button>
+        </div>
+      </div>`;
+    const input = $('chatInput');
+    const send = () => {
+      const text = input.value.trim();
+      if (!text) return;
+      const s = sessions.get(sessionId);
+      // If the agent is asking a question, answer it; otherwise send a message.
+      const answering = !!(s && s.pendingQuestions && s.pendingQuestions.length);
+      const method = answering ? 'claude.answer' : 'agents.sendMessage';
+      echoUser(text); // optimistic bubble — survives until the real turn lands
+      doCall(method, { sessionId, text }, answering ? 'Answered' : 'Sent');
+      input.value = '';
+    };
+    $('chatSend').onclick = send;
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+    $('chatInterrupt').onclick = () => doCall('claude.signal', { sessionId, signal: 'SIGINT' }, 'Interrupted');
+    $('chatStop').onclick      = () => doCall('claude.signal', { sessionId, signal: 'SIGTERM' }, 'Stopped');
+    $('tabChat').onclick = () => setTermMode(false);
+    $('tabTerm').onclick = () => setTermMode(true);
+    wireTermBar();
+    renderChat();
+    loadTranscript();
+    // Events only fire on state *changes*, so poll for new content while busy.
+    clearInterval(chatPoll);
+    chatPoll = setInterval(() => {
+      const s = sessions.get(sessionId);
+      if (view.name === 'chat' && !termMode && s && isBusy(s.state)) loadTranscript();
+    }, 2500);
+  }
+
+  function closeChat() {
+    leaveTerminal();
+    view = { name: 'list' };
+    clearInterval(chatPoll); chatPoll = null;
+    render();
+  }
+  backBtn.onclick = closeChat;
+
+  // ── live terminal mirror ──────────────────────────────────────────────
+  function setTermMode(on) {
+    if (on === termMode) return;
+    if (on) enterTerminal(); else leaveTerminal();
+  }
+
+  function enterTerminal() {
+    if (view.name !== 'chat' || !window.Terminal) return;
+    termMode = true;
+    termSessionId = view.sessionId;
+    document.body.classList.add('term-mode');
+    const ct = $('tabChat'), tt = $('tabTerm');
+    if (ct) ct.classList.remove('on');
+    if (tt) tt.classList.add('on');
+
+    const host = $('term');
+    if (host && !term) {
+      term = new Terminal({
+        convertEol: false, scrollback: 5000, fontSize: termFont,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        theme: { background: '#000000' }, disableStdin: false, cursorBlink: true,
+      });
+      try { fitAddon = new FitAddon.FitAddon(); term.loadAddon(fitAddon); } catch {}
+      term.open(host);
+      // Keystrokes (incl. the soft keyboard) → forward raw to the PTY. A sticky
+      // Ctrl from the key bar rewrites the next letter into its control code.
+      term.onData(d => {
+        if (ctrlSticky) {
+          if (d.length === 1) {
+            const c = d.toLowerCase().charCodeAt(0);
+            if (c >= 97 && c <= 122) d = String.fromCharCode(c - 96);
+            else if (d === ' ') d = '\x00';
+          }
+          ctrlSticky = false;
+          const cb = $('ctrlKey'); if (cb) cb.classList.remove('on');
+        }
+        termSend(d);
+      });
+      term.onScroll(() => updateTermBottom());
+    }
+    // Fit to the screen, push that grid to the PTY, then start the stream.
+    requestAnimationFrame(refitTerm);
+    window.addEventListener('resize', scheduleRefit);
+    window.addEventListener('orientationchange', scheduleRefit);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleRefit);
+    subscribePty(termSessionId, true);
+    call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {});
+    clearInterval(termKeepalive);
+    termKeepalive = setInterval(() => {
+      if (!termMode) return;
+      // If the lease lapsed (e.g. a hiccup), re-attach to restart + re-prime.
+      call('sessions.terminalKeepalive', { sessionId: termSessionId })
+        .then(r => { if (r && r.ok === false) call('sessions.attachTerminal', { sessionId: termSessionId }).catch(() => {}); })
+        .catch(() => {});
+    }, 8000);
+  }
+
+  function leaveTerminal() {
+    if (!termMode) return;
+    termMode = false;
+    document.body.classList.remove('term-mode');
+    const ct = $('tabChat'), tt = $('tabTerm');
+    if (ct) ct.classList.add('on');
+    if (tt) tt.classList.remove('on');
+    window.removeEventListener('resize', scheduleRefit);
+    window.removeEventListener('orientationchange', scheduleRefit);
+    if (window.visualViewport) window.visualViewport.removeEventListener('resize', scheduleRefit);
+    clearTimeout(termResizeTimer); termResizeTimer = null;
+    ctrlSticky = false;
+    clearInterval(termKeepalive); termKeepalive = null;
+    if (termSessionId) {
+      subscribePty(termSessionId, false);
+      call('sessions.detachTerminal', { sessionId: termSessionId }).catch(() => {});
+    }
+    if (term) { try { term.dispose(); } catch {} term = null; fitAddon = null; }
+    termSessionId = '';
+  }
+
+  function subscribePty(sessionId, on) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ op: on ? 'subscribe' : 'unsubscribe', topics: ['pty.bytes.' + sessionId] }));
+  }
+
+  // Decode one base64 PTY chunk and write the raw bytes into xterm.
+  function writePty(b64) {
+    if (!term) return;
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      term.write(bytes, () => updateTermBottom());
+    } catch {}
+  }
+
+  // ── terminal input + sizing helpers ────────────────────────────────────
+  // Ordered PTY input: keystrokes buffer while a call is in flight and flush
+  // as one chunk when it returns. Firing a bus call per character lets fast
+  // typing arrive out of order ("cat -v" landing as "cat v-").
+  let termInputBuf = '', termInputPumping = false;
+  function termSend(data) {
+    if (!termSessionId || !data) return;
+    termInputBuf += data;
+    pumpTermInput();
+  }
+  async function pumpTermInput() {
+    if (termInputPumping) return;
+    termInputPumping = true;
+    while (termInputBuf && termSessionId) {
+      const data = termInputBuf; termInputBuf = '';
+      try { await call('sessions.terminalInput', { sessionId: termSessionId, data }); }
+      catch {}
+    }
+    termInputPumping = false;
+  }
+
+  const KEYSEQ = {
+    esc: '\x1b', tab: '\t', ctrlc: '\x03',
+    up: '\x1b[A', down: '\x1b[B', left: '\x1b[D', right: '\x1b[C',
+  };
+
+  // Wire the on-screen key bar (the keys phone keyboards don't offer) plus the
+  // font / keyboard / jump-to-bottom controls. The bar lives in the DOM the
+  // whole time the chat is open; CSS only reveals it in terminal mode.
+  function wireTermBar() {
+    const bar = $('termbar');
+    if (bar) {
+      bar.querySelectorAll('[data-key]').forEach(btn => {
+        btn.onclick = () => { termSend(KEYSEQ[btn.dataset.key] || ''); if (term) term.focus(); };
+      });
+      bar.querySelectorAll('[data-act]').forEach(btn => {
+        btn.onclick = () => {
+          const a = btn.dataset.act;
+          if (a === 'focus') { if (term) term.focus(); }
+          else if (a === 'fontup') setTermFont(termFont + 1);
+          else if (a === 'fontdown') setTermFont(termFont - 1);
+          else if (a === 'ctrl') { ctrlSticky = !ctrlSticky; btn.classList.toggle('on', ctrlSticky); if (term) term.focus(); }
+        };
+      });
+    }
+    const jb = $('termBottom');
+    if (jb) jb.onclick = () => { if (term) { term.scrollToBottom(); updateTermBottom(); } };
+  }
+
+  function setTermFont(px) {
+    termFont = Math.max(8, Math.min(20, px));
+    if (term) {
+      try { term.options.fontSize = termFont; }
+      catch { try { term.setOption('fontSize', termFont); } catch {} }
+    }
+    refitTerm();
+  }
+
+  // Fit xterm to the container, then resize the shared PTY to that grid so the
+  // remote's wrapping matches the phone instead of the desktop pane.
+  function refitTerm() {
+    if (!term || !fitAddon || !termMode) return;
+    try { fitAddon.fit(); } catch {}
+    const cols = Math.max(20, term.cols || 80);
+    const rows = Math.max(6, term.rows || 24);
+    call('sessions.terminalResize', { sessionId: termSessionId, cols, rows }).catch(() => {});
+  }
+  function scheduleRefit() {
+    clearTimeout(termResizeTimer);
+    termResizeTimer = setTimeout(refitTerm, 160);
+  }
+
+  function updateTermBottom() {
+    const jb = $('termBottom');
+    if (!jb || !term) return;
+    const b = term.buffer.active;
+    jb.classList.toggle('show', b.viewportY < b.baseY);
+  }
+
+  function renderChat() {
+    const s = sessions.get(view.sessionId);
+    titleEl.textContent = s ? shortCwd(s.cwd) : 'dispatch ended';
+    renderAsk(s);
+    // Composer adapts to what the agent needs: answering a question vs chatting.
+    const input = $('chatInput'), sendBtn = $('chatSend');
+    if (input && sendBtn) {
+      const asking = !!(s && s.pendingQuestions && s.pendingQuestions.length);
+      input.placeholder = asking ? 'type your answer…' : 'message…';
+      sendBtn.textContent = asking ? 'Answer' : 'Send';
+    }
+    // Typing indicator lives in #msgs; re-stamp it on every state change.
+    const msgs = $('msgs');
+    if (msgs) {
+      const old = msgs.querySelector('.typing');
+      if (old) old.remove();
+      if (s && isBusy(s.state)) {
+        const t = document.createElement('div');
+        t.className = 'typing'; t.textContent = 'working';
+        msgs.appendChild(t);
+        maybeScroll();
+      }
+    }
+  }
+
+  // The pending approval / question card, pinned between transcript and composer.
+  function renderAsk(s) {
+    const ask = $('ask');
+    if (!ask) return;
+    if (!s || (!s.pendingApproval && !(s.pendingQuestions && s.pendingQuestions.length))) {
+      ask.innerHTML = '';
+      return;
+    }
+    if (s.pendingApproval) {
+      const inputJSON = JSON.stringify(s.pendingApproval.toolInput ?? {}, null, 1);
+      ask.innerHTML = `<div class="ask">
+        <div class="ask-title">Wants to run ${esc(s.pendingApproval.toolName)}</div>
+        <pre>${esc(truncate(inputJSON, 1200))}</pre>
+        <div class="btns">
+          <button class="yes">Approve</button>
+          <button class="no">Deny</button>
+          <button class="always">Always</button>
+        </div></div>`;
+      const [yes, no, always] = ask.querySelectorAll('button');
+      yes.onclick    = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'yes' }, 'Approved');
+      no.onclick     = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'no' }, 'Denied');
+      always.onclick = () => doCall('claude.approve', { sessionId: s.sessionId, decision: 'always' }, 'Approved (always)');
+      maybeScroll();
+      return;
+    }
+    // Question picker: render the first question's options as tappable buttons.
+    // Multi-question / multi-select fall back to the free-text composer.
+    const q = s.pendingQuestions[0];
+    const opts = (s.pendingQuestions.length === 1 && !q.multi_select)
+      ? (q.options || []) : [];
+    ask.innerHTML = `<div class="ask">
+      <div class="ask-title">${esc(q.header || 'Question')}</div>
+      <div>${esc(q.question)}</div>
+      ${opts.map((o, i) => `<button class="opt" data-i="${i}">${esc(o.label)}
+        ${o.description ? `<small>${esc(o.description)}</small>` : ''}</button>`).join('')}
+    </div>`;
+    for (const btn of ask.querySelectorAll('.opt')) {
+      btn.onclick = () => doCall('claude.answer',
+        { sessionId: s.sessionId, option: Number(btn.dataset.i) }, 'Answered');
+    }
+    maybeScroll();
+  }
+
+  // Optimistically show the just-sent text as a user bubble. loadTranscript only
+  // wipes #msgs when the transcript actually changes, so this bubble stays put
+  // until the real turn round-trips through claudemon, then gets replaced.
+  function echoUser(text) {
+    const msgs = $('msgs');
+    if (!msgs) return;
+    const empty = msgs.querySelector('.empty');
+    if (empty) empty.remove();
+    const el = document.createElement('div');
+    el.className = 'msg user';
+    el.innerHTML = mdLite(text);
+    const typing = msgs.querySelector('.typing');
+    if (typing) msgs.insertBefore(el, typing); else msgs.appendChild(el);
+    maybeScroll(true);
+  }
+
+  async function loadTranscript() {
+    if (view.name !== 'chat') return;
+    const sessionId = view.sessionId;
+    let tx;
+    try { tx = await call('sessions.transcript', { sessionId }); }
+    catch { return; }
+    if (view.name !== 'chat' || view.sessionId !== sessionId) return; // navigated away
+    const turns = toTurns((tx && tx.messages) || (tx && tx.entries) || []);
+    // Skip the re-render when nothing changed (polling path).
+    const key = turns.length + ':' + (turns.length ? hashTail(turns[turns.length - 1]) : '');
+    if (key === lastTranscriptKey) return;
+    const firstLoad = lastTranscriptKey === '';
+    lastTranscriptKey = key;
+
+    const msgs = $('msgs');
+    if (!msgs) return;
+    msgs.innerHTML = turns.length ? '' : `<div class="empty">No messages yet.</div>`;
+    for (const t of turns) {
+      const tools = t.parts.filter(p => p.kind === 'tool');
+      const texts = t.parts.filter(p => p.kind === 'text');
+      for (const p of texts) {
+        const el = document.createElement('div');
+        el.className = `msg ${t.role}`;
+        el.innerHTML = mdLite(p.text);
+        msgs.appendChild(el);
+      }
+      if (tools.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'tools';
+        wrap.innerHTML = tools.map(p =>
+          `<div class="tool"><b>${esc(p.name)}</b>${p.summary ? ' · ' + esc(p.summary) : ''}</div>`
+        ).join('');
+        msgs.appendChild(wrap);
+      }
+    }
+    renderChat(); // re-stamp typing indicator + ask card
+    maybeScroll(firstLoad);
+  }
+
+  // Convert raw transcript messages (string or content-block array) into
+  // renderable turns. Tool results, thinking and meta noise are dropped.
+  function toTurns(messages) {
+    const out = [];
+    for (const m of messages) {
+      const role = m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : null);
+      if (!role) continue;
+      const blocks = Array.isArray(m.content)
+        ? m.content
+        : [{ type: 'text', text: String(m.content ?? '') }];
+      const parts = [];
+      for (const b of blocks) {
+        if (!b || typeof b !== 'object') continue;
+        if (b.type === 'text' && typeof b.text === 'string') {
+          const text = b.text.trim();
+          if (!text || /^<(local-command|command-name|command-message|system-reminder)/.test(text)) continue;
+          parts.push({ kind: 'text', text });
+        } else if (b.type === 'tool_use' && role === 'assistant') {
+          parts.push({ kind: 'tool', name: b.name || 'tool', summary: toolSummary(b.input) });
+        }
+        // tool_result / thinking / images: skipped
+      }
+      if (parts.length) out.push({ role, parts });
+    }
+    return out;
+  }
+
+  function toolSummary(input) {
+    if (!input || typeof input !== 'object') return '';
+    for (const k of ['file_path', 'path', 'command', 'pattern', 'query', 'url', 'prompt', 'description']) {
+      if (typeof input[k] === 'string' && input[k]) return truncate(input[k], 64);
+    }
+    return '';
+  }
+
+  function hashTail(turn) {
+    const p = turn.parts[turn.parts.length - 1];
+    const s = p.kind === 'text' ? p.text : p.name + (p.summary || '');
+    return s.length + ':' + s.slice(-48);
+  }
+
+  // Markdown-lite: escape everything, then bring back fences / inline code /
+  // bold. Bubbles use white-space: pre-wrap, so newlines render as-is. The three
+  // passes below measure linear even on adversarial input, so the cap is only
+  // there to stop a multi-megabyte paste rebuilding the whole string three times
+  // on every re-render; it sits far above any real reply, code blocks included.
+  const MAX_MD = 262144;
+  function mdLite(text) {
+    let s = esc(text);
+    if (s.length > MAX_MD) return s;
+    s = s.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (_, _lang, code) => `<pre>${code.replace(/\n$/, '')}</pre>`);
+    s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    return s;
+  }
+
+  // Stick to the bottom unless the user has scrolled up to read history.
+  function maybeScroll(force) {
+    const nearBottom = window.innerHeight + window.scrollY >=
+      document.body.scrollHeight - 160;
+    if (force || nearBottom) {
+      window.scrollTo({ top: document.body.scrollHeight });
+    }
+  }
+
+  async function doCall(method, params, okMsg) {
+    try { await call(method, params); toast(okMsg); refresh(); if (view.name === 'chat') loadTranscript(); }
+    catch (e) { toast('Failed: ' + e.message); }
+  }
+
+  function truncate(s, n) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+  function shortCwd(p) {
+    if (!p) return '(session)';
+    const parts = p.split(/[\\/]/).filter(Boolean);
+    return parts.length <= 2 ? p : '…/' + parts.slice(-2).join('/');
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function setConnected(on) {
+    dot.classList.toggle('on', on);
+    statusEl.textContent = on ? 'connected' : 'reconnecting…';
+    // Drives the terminal "reconnecting…" veil (CSS: body.term-mode.disconnected).
+    document.body.classList.toggle('disconnected', !on);
+  }
+
+  function connect() {
+    if (!token) return gate();
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    setConnected(false);
+    statusEl.textContent = 'connecting…';
+    try { ws = new WebSocket(wsURL()); } catch { return scheduleReconnect(); }
+
+    ws.onopen = () => {
+      backoff = 500;
+      lastActivity = Date.now();
+      setConnected(true);
+      ws.send(JSON.stringify({ op: 'subscribe', topics: ['agent.state_changed', 'workflow.*'] }));
+      refresh();
+      if (!cfg) loadConfig();
+      if (view.name === 'chat' && !termMode) loadTranscript();
+      // Re-establish the PTY stream after a reconnect, and re-assert our size
+      // (the shared PTY may have been resized by the desktop while we were out).
+      if (termMode && termSessionId) {
+        subscribePty(termSessionId, true);
+        call('sessions.attachTerminal', { sessionId: termSessionId })
+          .then(() => refitTerm()).catch(() => {});
+      }
+    };
+    ws.onmessage = (ev) => {
+      lastActivity = Date.now();
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      if (f.op === 'result') {
+        const c = calls.get(f.id); if (c) { calls.delete(f.id); c.resolve(f.result); }
+      } else if (f.op === 'error' && f.id) {
+        const c = calls.get(f.id); if (c) { calls.delete(f.id); c.reject(new Error(f.error || 'error')); }
+      } else if (f.op === 'event') {
+        const evt = f.event;
+        if (!evt) return;
+        // Federation: hub-stamped events belong to a PEER machine; /remote is
+        // local-only (its agents.list refresh and actions are unqualified
+        // calls). Dropped deliberately — see /m's twin comment.
+        if (evt.hub) return;
+        // Live PTY bytes for the terminal we're mirroring → straight to xterm.
+        if (termMode && evt.type === 'pty.bytes.' + termSessionId) {
+          writePty(evt.data);
+          return;
+        }
+        // Any agent state change → re-pull the authoritative list, and the
+        // transcript too if we're looking at a chat (but not the terminal).
+        if (evt.type === 'agent.state_changed') {
+          refresh();
+          if (view.name === 'chat' && !termMode) loadTranscript();
+        }
+      }
+    };
+    ws.onclose = (ev) => {
+      setConnected(false);
+      if (ev.code === 1008 || ev.code === 4401) { token = ''; sessionStorage.removeItem('hubToken'); return gate(); }
+      scheduleReconnect();
+    };
+    ws.onerror = () => { try { ws.close(); } catch {} };
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
+    backoff = Math.min(backoff * 2, 8000);
+  }
+
+  // Mobile/background browsers throttle the reconnect timer and suspend the
+  // socket, so on returning to the page we'd sit on a dead socket — and a frozen
+  // terminal — until a manual refresh. Reconnect immediately when the page is
+  // shown again or the network returns, unless the socket is provably still live.
+  // onopen re-attaches the PTY + re-pulls state, so this fully self-heals.
+  function wake() {
+    if (!token || document.visibilityState === 'hidden') return;
+    const live = ws && ws.readyState === WebSocket.OPEN && Date.now() - lastActivity < STALE_MS;
+    if (live) return;
+    backoff = 500;
+    try { if (ws) { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; ws.close(); } } catch {}
+    ws = null;
+    connect();
+  }
+  document.addEventListener('visibilitychange', wake);
+  window.addEventListener('online', wake);
+
+  // iOS: the software keyboard shrinks the *visual* viewport but not the layout
+  // viewport, so a sticky-bottom composer ends up hidden behind it and focusing
+  // an input scrolls the page oddly. Track the keyboard height as --kb and lift
+  // the composer by it. On Android the layout resizes with the keyboard, so the
+  // delta stays ~0 and this is a no-op there.
+  (function keyboardInset() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      document.documentElement.style.setProperty('--kb', (kb > 80 ? kb : 0) + 'px');
+    };
+    vv.addEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    apply();
+  })();
+
+  // Auth failures over plain HTTP upgrade surface as a close; if the very first
+  // connect is rejected we fall back to the token gate above.
+  connect();
+})();
+</script>
+</body>
+</html>

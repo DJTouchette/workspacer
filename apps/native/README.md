@@ -3,48 +3,51 @@
 Experimental GPUI client with an existing-hub mode and an embedded local backend.
 Rust renders the interface directly; no Electron, browser, or webview is used. GPUI and
 GPUI Component are pinned together; the optional component webview feature is
-disabled. Local mode embeds the claudemon Rust library and retains the hub, brain, and MCP
-facade for shared services and agent tools.
+disabled. Local mode embeds both claudemon and the shared Rust hub/backend library.
+The same backend runs independently through `workspacer-rust serve`.
 
 ## Windows installer
 
-The release workflow builds `Workspacer-Native-Setup-<version>-x64.exe` alongside
-its Electron artifacts. Version tags attach it to the draft release; nightlies
-include it in the rolling prerelease. PR and manual builds upload it as part of
-the Windows workflow artifact. This is an experimental, unsigned installer with
-manual updates, separate from the Electron installer and updater.
+The release workflow now builds
+`Workspacer-Native-Rust-Preview-Setup-<version>-x64.exe` alongside Electron artifacts.
+The unsigned preview has manual updates and a separate Start menu shortcut,
+uninstall registration, notification identity, and data directory. This preserves
+existing installations while the Rust migration is tested.
 
-It installs per user, adds a **Workspacer Native** Start menu shortcut with
-`--local`, and bundles the four Go services, `desktop-host.cjs`, a private Node
-22 runtime, examples and the Visual C++ runtime DLLs. Agent CLIs and Git are
-separate prerequisites. Close other local Workspacer backends using ports 7895
-and 7897 before starting local mode, or use `--bus` to connect to one instead.
-Uninstall preserves session data and shared configuration.
+The package contains the native application, standalone `workspacer-rust.exe`,
+plugin examples and Visual C++ runtime DLLs. It does not bundle Go services,
+`desktop-host.cjs`, or a private Node runtime. Agent CLIs, Git and any runtimes
+required by external providers/plugins remain separate prerequisites.
 
-To reproduce on Windows x64, build the desktop/service artifacts with
-`npm run package -- --publish never` from `apps/desktop`, then from the repo root:
+The shortcut starts `--local`, which owns the backend in process and uses
+`%LOCALAPPDATA%\Workspacer Native Rust Preview`. `--rust-local-dir` selects
+another isolated directory. Bare launches still connect to an existing hub;
+`--bus` explicitly selects one. Uninstall preserves application data.
+
+To reproduce on Windows x64:
 
 ```powershell
-cargo build --manifest-path apps/native/Cargo.toml --locked --release --bin wks-native --bin native-harness
-# Install NSIS 3; point NATIVE_CRT_DIR at Visual Studio's x64 Microsoft.VC*.CRT directory.
+cargo build --locked --release --manifest-path apps/native/Cargo.toml --bin wks-native --bin native-harness
+cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin workspacer-rust
+# Install NSIS 3 and select Visual Studio's redistributable x64 CRT directory.
 $env:NATIVE_CRT_DIR = 'C:\path\to\Microsoft.VC143.CRT'
 node apps/native/scripts/package-windows.mjs
 $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Setup-$version-x64.exe"
+./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
 ```
 
-CI resolves the checksum-verified NSIS compiler from the pinned Electron build
-toolchain using `scripts/resolve-nsis.mjs`, avoiding a separate Chocolatey lookup.
-Manual builds can still set `MAKENSIS`.
+Node 22 is a packaging tool dependency. CI resolves a checksum-verified NSIS
+compiler using `scripts/resolve-nsis.mjs`; manual builds can set `MAKENSIS`.
+The smoke test requires a disposable Windows user. It checks install/upgrade,
+payload hashes, the shortcut, installed standalone CLI, embedded backend readiness,
+joined shutdown and uninstall/data retention with Node absent from PATH. It does
+not launch a provider or verify GPU rendering. The installed `build-stamp.json`
+records the release version and source SHA.
 
-Packaging uses the Node executable running the script (x64 Node 22.13+), and
-expects its adjacent `LICENSE` file from the official Node distribution.
-`MAKENSIS` can override the compiler path. The smoke test requires a disposable
-Windows user without an existing native installation. It checks install/upgrade,
-payload hashes, the local-mode shortcut, backend readiness and shutdown without
-Node on PATH, and uninstall/data retention. It does not launch an agent or
-validate GPU rendering. The release version and source SHA are recorded in the
-installed `build-stamp.json`.
+`.github/workflows/rust-native-preview.yml` also builds an isolated artifact on
+relevant PRs or manual dispatch. That validation workflow does not publish a
+release or update the nightly. A successful preview build alone does not establish
+complete migration parity.
 
 ## Run
 
@@ -124,69 +127,54 @@ Existing-hub mode does not own or stop backend processes on exit. The connected 
 
 ## Embedded local backend
 
-From the repository root, these targets build the required Go services and
-start the native app with its embedded engine:
+The default Cargo build includes `rust-hub`. These repository targets build and
+start the native app with its owned Rust backend:
 
 ```sh
 make dev-native-local       # debug build and launch
 make run-native-local       # release build and launch
-make build-native-local     # build the release GUI and services without launching
+make build-native-local     # build without launching
 make dev-native-local ARGS="--keep-running"
 ```
 
-`--local` starts claudemon inside the native process on a dedicated backend
-thread with its own Tokio runtime. The UI communicates through bounded typed
-commands and a latest-state `watch` channel. Local message, approval, interrupt,
-and stream-answer controls use the embedded engine's channel API. Launches,
-model discovery, enriched snapshots, and conversation events still use the hub
-so Workspacer tools, skills, configuration, and launch ownership stay intact.
-The hub is retained in this phase; local mode is not yet a hub-free client.
+`--local` owns the Rust hub, MCP facade and claudemon engine on a dedicated backend
+thread. UI commands and events use the in-process hub, including session controls,
+launch preparation, configuration and provider projections. There is no separate
+Go supervisor or direct-engine bypass in the native backend adapter.
 
-The app owns `workspacer serve --external-claudemon`, which supervises hub,
-brain, and MCP services while leaving the embedded engine's lifecycle to the
-native host. All four service binaries are required. Startup waits for the
-engine listeners, service readiness, and the session capability provider.
-Startup errors appear in the UI; missing binaries never silently remove agent
-tools. Owned-service failure stops the local stack rather than silently moving
-sessions to a replacement engine.
+Existing-hub connections remain the no-argument default. `--bus` and `--demo`
+do not start a local engine. `--rust-local-dir` selects another isolated owned
+backend; both local spellings exclude a remote bus or token file.
 
-Existing-hub connections remain the default. `--bus` and `--demo` never start a
-local engine, and `--local` cannot be combined with a remote bus or token file.
-Local startup refuses occupied hub/MCP ports; it does not stop an existing
-Workspacer installation. Use `--bus` to attach to that installation instead.
+Local state remains under **Workspacer Native Rust Preview** in the platform's
+local-data directory. The engine, bus and facade use allocated loopback ports.
+Legacy service-bundle/database overrides and nondefault hub/MCP port flags are
+refused; use an isolated directory instead. Cooperating Rust backend owners hold
+an exclusive canonical database lease through joined shutdown. An unconfirmed
+shutdown retains that reservation until its process exits. The standalone
+`claudemon` command does not participate in this sidecar protocol.
 
-The local engine binds loopback on allocated hook/API ports. Hub and MCP default
-to ports 7895 and 7897; `--hub-port` and `--mcp-port` can override them. Alternate
-ports require an explicit `--database` to avoid accidental history sharing.
-The default database is `workspacer/native/state.db` in the platform's local data
-directory, separate from the standalone daemon's store. Native launches use
-stream transport; local startup does not rewrite global Claude hook settings.
+Native startup opts into best-effort manual Claude hook installation/retargeting
+under the chosen home directory. Managed stream launches retain their driver
+telemetry independently. Startup and owned-service failures are shown in the UI.
 
-Closing the window quits by default. `--keep-running` minimizes instead, keeping
-the same backend and agents alive; restore the window from the taskbar/dock.
-Use `Cmd+Q` or `Ctrl+Shift+Q` to quit explicitly. Shutdown first stops owned hub
-services, then shuts down and joins the embedded engine and its owned provider
-processes. External/remote services are never shut down by the native client.
-A native-process crash still shares the embedded backend's failure boundary;
-this is not a separate persistent daemon.
+Closing the window quits by default. `--keep-running` minimizes instead, retaining
+the same owner. Explicit Quit shuts down and joins the hub and engine, including
+owned provider processes. External/remote services remain externally owned.
 
 For a repeatable startup/catalog/shutdown smoke without launching agents:
 
 ```sh
-# Choose fresh config/data directories and unused ports for isolation.
-env -u WKS_DESKTOP_HOST -u HUB_TOKEN \
-  XDG_CONFIG_HOME=/tmp/wks-native-smoke/config \
-  XDG_DATA_HOME=/tmp/wks-native-smoke/data \
-  WORKSPACER_USAGE_POLL_ON_BOOT=0 \
-  cargo run --locked --manifest-path apps/native/Cargo.toml \
-    --no-default-features --features embedded --bin native-harness -- \
-    embedded-probe --services-dir ./services/hub \
-    --database /tmp/wks-native-smoke/state.db --hub-port 17895 --mcp-port 17897
+cargo run --locked --manifest-path apps/native/Cargo.toml \
+  --no-default-features --features rust-hub --bin native-harness -- \
+  rust-probe --directory /tmp/wks-native-smoke
 ```
 
-The probe disables plugins, checks the real service registration and Claude
-catalog, joins shutdown, and verifies that all four listener ports were released.
-It prints no credentials and makes no model calls.
+Use a fresh directory. The probe uses a fixture home and explicitly disables
+account polling, verifies controller/catalog readiness, joins shutdown, and
+checks the four actual listener receipts are released. `embedded-probe` is an
+alias for this Rust probe and takes the same `--directory` argument. It prints no
+credentials, launches no model provider, and does not verify visible GPU output.
 
 ## First slice
 
@@ -538,3 +526,59 @@ composer's Enter binding taking precedence over the send shortcut.
 
 Rivet/Witness may initially report these new files as unmapped. That is not a
 test pass; run the complete native-client suites above.
+
+## UI commands from the hub
+
+The controller subscribes to `facade.openTerminal` and the supported `command.*`
+topics. It retains up to 32 bounded display requests until a visible workspace
+consumes them. A headless controller never turns these events into a process,
+agent launch or claim that a pane opened. Foreign-hub commands are excluded;
+pending requests are discarded on disconnect rather than replayed on reconnect.
+
+The native equivalents use existing screens:
+
+| Request | Native behavior |
+| --- | --- |
+| `command.focus_agent` | Focus an available local session; preserve pinned windows. |
+| `command.open_spawn_dialog` | Prefill the new-session form with `cwd`; user confirmation still creates the session. |
+| `command.open_pane` with `claude` | Open the new-session form with Claude selected. |
+| `settings`, `sessions` / `recentagents` | Open Settings or Session history. |
+| `review` | Open Changes for the requested project directory. |
+| `agents` / `agentwatch`, `inspector` | Open the conversation/session list or selected-session details. |
+| `command.run_action` | Apply supported session navigation, new-session form, settings, review and inspector actions. Decision and session-control verbs are refused. |
+
+Native has no terminal pane, browser pane, plugin renderer, guide pane, library,
+analytics dashboard, board, editor, Ask or context pane. Requests for those
+surfaces show an explicit unsupported notice. The most recent unsupported terminal request retains `cwd`,
+`command`, `label` and `parentSessionId` behind **Copy request**; no hidden shell
+is created and the command is not run. Guide requests offer an explicit link to
+native documentation. These are pre-existing native UI gaps, not substitutes for
+the Rust backend's working terminal or data APIs.
+
+UI commands retain their existing fire-and-forget bus contract. The native
+client does not publish a fabricated visible-pane acknowledgement. Protocol and
+controller tests cover dispatch and refusal; they do not establish visual
+appearance or full browser/desktop pane parity.
+
+A repeatable nonvisual check is:
+
+```sh
+cargo run --locked --manifest-path apps/native/Cargo.toml --no-default-features --bin native-harness -- ui-intent-probe
+```
+
+It uses a local fixture WebSocket, confirms the native subscriptions and retained
+terminal/spawn-dialog intents, and refuses any unexpected backend mutation.
+
+## Intentional server stop
+
+A WebSocket close with code `4001` pauses native reconnection, including when it
+arrives before the hub greeting. Calls and background reconciliation cannot wake
+the server while paused. **Reconnect and wake** (or the existing Refresh command)
+is an explicit user action; pending mutations are never replayed. Reconnect gestures are tied to the pause
+the user saw, so a delayed click cannot override a newer stop request. A pause confirms
+the server's request to disconnect, not that its cloud stop has completed.
+
+An in-process pause retains the owning backend and reports its typed close reason.
+It does not create a replacement hub or stop the embedded engine merely because a
+viewer paused. Restarting that connection remains the embedding host's explicit
+responsibility; the native library does not infer OS shutdown or restart authority.

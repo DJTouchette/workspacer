@@ -1,0 +1,613 @@
+use anyhow::bail;
+use serde_json::{Value, json};
+use std::{
+    path::Path,
+    process::Command,
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+use workspacer_hub::services::{
+    agent_lifecycle::{LaunchEngine, LaunchPreparation, Lifecycle, Operation},
+    agent_spawn::SpawnCoordinator,
+    config::Config,
+    routing::RoutingService,
+    spawn_plan::Plan,
+    task_store::TaskStore,
+    workflow_runtime::WorkflowRuntime,
+    workflows::WorkflowStore,
+    worktrees::Worktrees,
+};
+#[derive(Default)]
+struct Fake {
+    plans: Mutex<Vec<Plan>>,
+    fail_prepare: AtomicBool,
+    fail_spawn: AtomicBool,
+    definitive_rejection: AtomicBool,
+    end_owner: Mutex<Option<Arc<RwLock<Value>>>>,
+}
+impl LaunchPreparation for Fake {
+    fn prepare<'a>(&'a self, _: &'a mut Plan, _: &'a str) -> Operation<'a, ()> {
+        Box::pin(async move {
+            if self.fail_prepare.load(Ordering::SeqCst) {
+                bail!("facade unavailable");
+            }
+            Ok(())
+        })
+    }
+    fn revoke<'a>(&'a self, _: &'a str, _: &'a str) -> Operation<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+impl LaunchEngine for Fake {
+    fn sessions(&self) -> Operation<'_, Value> {
+        Box::pin(async move {
+            Ok(json!(
+                self.plans
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|p| json!({"session_id":p.session_id,"mode":"input"}))
+                    .collect::<Vec<_>>()
+            ))
+        })
+    }
+    fn spawn<'a>(&'a self, plan: &'a Plan) -> Operation<'a, Value> {
+        Box::pin(async move {
+            if self.definitive_rejection.load(Ordering::SeqCst) {
+                return Err(claudemon::daemon::embedded::CommandRejected {
+                    status: 400,
+                    message: "definitive provider refusal".into(),
+                }
+                .into());
+            }
+            if self.fail_spawn.load(Ordering::SeqCst) {
+                bail!("engine acknowledgement lost");
+            }
+            self.plans.lock().unwrap().push(plan.clone());
+            if let Some(owner) = self.end_owner.lock().unwrap().as_ref() {
+                owner.write().unwrap()["status"] = json!("ended");
+            }
+            Ok(json!({"session_id":plan.session_id,"first_message_queued":true}))
+        })
+    }
+    fn stop<'a>(&'a self, _: &'a str) -> Operation<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
+}
+struct Fixture {
+    dir: tempfile::TempDir,
+    project: String,
+    coordinator: Arc<SpawnCoordinator>,
+    fake: Arc<Fake>,
+    owner: Arc<RwLock<Value>>,
+}
+fn git(cwd: &Path, args: &[&str]) {
+    let out = Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+impl Fixture {
+    fn new(ceiling: Option<&str>) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::write(project.join("source.txt"), "fixture").unwrap();
+        git(&project, &["init", "-q"]);
+        git(&project, &["config", "user.email", "fixture@example.test"]);
+        git(&project, &["config", "user.name", "Fixture"]);
+        git(&project, &["add", "."]);
+        git(&project, &["commit", "-qm", "initial"]);
+        let config_dir = dir.path().join("config");
+        std::fs::create_dir(&config_dir).unwrap();
+        if let Some(ceiling) = ceiling {
+            std::fs::write(
+                config_dir.join("routing.yaml"),
+                format!("ceilings:\n  default: {{max_capability: {ceiling}}}\n"),
+            )
+            .unwrap();
+        }
+        let cfg = Arc::new(Config::open(config_dir.join("config.yaml")));
+        cfg.save(
+            json!({"agents":{"worktreeRoot":dir.path().join("trees")}}),
+            true,
+        )
+        .unwrap();
+        let fake = Arc::new(Fake::default());
+        let lifecycle =
+            Lifecycle::open(dir.path().join("launches.json"), fake.clone(), fake.clone()).unwrap();
+        let owner = Arc::new(RwLock::new(
+            json!({"sessionId":"manager","isWakeTarget":true,"status":"active","cwd":project}),
+        ));
+        let observed = owner.clone();
+        let lookup =
+            Arc::new(move |id: &str| (id == "manager").then(|| observed.read().unwrap().clone()));
+        let workflow = Arc::new(WorkflowRuntime::new(
+            Arc::new(WorkflowStore::new(config_dir.clone(), cfg.clone())),
+            Arc::new(TaskStore::open(config_dir.join("dispatch-history.json")).unwrap()),
+            lookup,
+        ));
+        let trees = Worktrees::new(dir.path().join("home"), cfg.clone(), None);
+        let routing = Arc::new(RoutingService::open(config_dir.clone()).unwrap());
+        let coordinator = SpawnCoordinator::new(
+            config_dir,
+            dir.path().join("home"),
+            cfg,
+            lifecycle,
+            workflow,
+            trees,
+            routing,
+        );
+        Self {
+            project: project.to_string_lossy().into_owned(),
+            dir,
+            coordinator,
+            fake,
+            owner,
+        }
+    }
+    fn workflow_params(&self) -> Value {
+        let started = self.coordinator.workflow.request(
+            &json!({"op":"start","cwd":self.project,"title":"Implement fixture"}),
+            "manager",
+        );
+        assert_eq!(started["ok"], true, "{started}");
+        let plan = &started["dispatch"];
+        json!({"cwd":self.project,"parentSessionId":"manager","dispatchOwnerSessionId":"manager","taskId":plan["taskId"],"workflowStepId":plan["stepId"],"expectedTaskRevision":plan["expectedTaskRevision"],"stage":plan["stage"],"role":plan["role"],"template":plan["template"],"provider":"codex","model":"gpt-5.4","templateParams":{"task":"Implement fixture"}})
+    }
+}
+#[tokio::test]
+async fn actual_worktree_template_and_workflow_are_bound_before_engine_admission() {
+    let fixture = Fixture::new(None);
+    let params = fixture.workflow_params();
+    let receipt = fixture
+        .coordinator
+        .spawn_sanitized(params.clone())
+        .await
+        .unwrap();
+    assert_eq!(receipt["messageQueued"], true);
+    assert_eq!(receipt["worktree"]["allocated"], true);
+    assert!(receipt["dispatchId"].is_string());
+    let plans = fixture.fake.plans.lock().unwrap();
+    assert_eq!(plans.len(), 1);
+    let plan = &plans[0];
+    let cwd = plan.request["cwd"].as_str().unwrap();
+    assert_ne!(cwd, fixture.project);
+    assert!(receipt["renderedMessage"].as_str().unwrap().contains(cwd));
+    assert!(
+        plan.request["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("wks-result")
+    );
+    assert!(
+        plan.request["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("wks-escalation")
+    );
+    drop(plans);
+    let task = fixture
+        .coordinator
+        .workflow
+        .tasks
+        .task(params["taskId"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(task["workflow"]["steps"][0]["state"], "dispatched");
+    assert!(task.get("dispatchReservation").is_none());
+    assert_eq!(task["attempts"].as_array().unwrap().len(), 1);
+    fixture.coordinator.close().await;
+    assert!(
+        fixture
+            .coordinator
+            .spawn_sanitized(json!({"cwd":fixture.project}))
+            .await
+            .is_err()
+    );
+}
+#[tokio::test]
+async fn early_failure_releases_workflow_claim_but_uncertain_engine_failure_does_not() {
+    let fixture = Fixture::new(None);
+    let params = fixture.workflow_params();
+    fixture.fake.fail_prepare.store(true, Ordering::SeqCst);
+    assert!(
+        fixture
+            .coordinator
+            .spawn_sanitized(params.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("facade unavailable")
+    );
+    let id = params["taskId"].as_str().unwrap().to_owned();
+    assert!(
+        fixture
+            .coordinator
+            .workflow
+            .tasks
+            .task(&id)
+            .unwrap()
+            .unwrap()
+            .get("dispatchReservation")
+            .is_none()
+    );
+    fixture.fake.fail_prepare.store(false, Ordering::SeqCst);
+    fixture.fake.fail_spawn.store(true, Ordering::SeqCst);
+    let task = fixture
+        .coordinator
+        .workflow
+        .tasks
+        .task(&id)
+        .unwrap()
+        .unwrap();
+    let mut retry = params;
+    retry["expectedTaskRevision"] = task["revision"].clone();
+    assert!(
+        fixture
+            .coordinator
+            .spawn_sanitized(retry)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("do not retry blindly")
+    );
+    assert!(
+        fixture
+            .coordinator
+            .workflow
+            .tasks
+            .task(&id)
+            .unwrap()
+            .unwrap()
+            .get("dispatchReservation")
+            .is_some()
+    );
+}
+#[tokio::test]
+async fn committed_engine_acceptance_remains_a_receipt_when_tracking_becomes_unavailable() {
+    let fixture = Fixture::new(None);
+    let params = fixture.workflow_params();
+    *fixture.fake.end_owner.lock().unwrap() = Some(fixture.owner.clone());
+    let receipt = fixture
+        .coordinator
+        .spawn_sanitized(params.clone())
+        .await
+        .unwrap();
+    assert!(receipt["sessionId"].is_string());
+    assert_eq!(receipt["workflowAdmissionPending"], true);
+    assert_eq!(receipt["dispatchHistoryUnavailable"], true);
+    assert!(
+        fixture
+            .coordinator
+            .workflow
+            .tasks
+            .task(params["taskId"].as_str().unwrap())
+            .unwrap()
+            .unwrap()
+            .get("dispatchReservation")
+            .is_some()
+    );
+}
+#[tokio::test]
+async fn effective_profile_model_cannot_override_ceiling_and_unsupported_adapters_have_no_launch_side_effect()
+ {
+    let fixture = Fixture::new(Some("cheap"));
+    std::fs::write(
+        fixture.dir.path().join("config/claude-profiles.json"),
+        serde_json::to_vec(
+            &json!({"profiles":[{"id":"pinned","name":"Pinned","extraArgs":["--model","opus"]}]}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        fixture
+            .coordinator
+            .spawn_sanitized(json!({"cwd":fixture.project,"profileId":"pinned"}))
+            .await
+            .is_err()
+    );
+    assert!(fixture.fake.plans.lock().unwrap().is_empty());
+    for params in [
+        json!({"cwd":fixture.project,"targetHub":"remote"}),
+        json!({"cwd":fixture.project,"launchIntegrationId":"plugin"}),
+    ] {
+        assert!(fixture.coordinator.spawn_sanitized(params).await.is_err());
+    }
+    assert!(fixture.coordinator.lifecycle.records().is_empty());
+    assert!(!fixture.dir.path().join("trees").exists());
+}
+
+#[tokio::test]
+async fn acknowledged_tracking_can_recover_without_launching_another_process() {
+    let fixture = Fixture::new(None);
+    let params = fixture.workflow_params();
+    *fixture.fake.end_owner.lock().unwrap() = Some(fixture.owner.clone());
+    let receipt = fixture
+        .coordinator
+        .spawn_sanitized(params.clone())
+        .await
+        .unwrap();
+    assert_eq!(receipt["workflowAdmissionPending"], true);
+    fixture.owner.write().unwrap()["status"] = json!("active");
+    fixture.coordinator.recover_tracking().await.unwrap();
+    assert_eq!(fixture.fake.plans.lock().unwrap().len(), 1);
+    let task = fixture
+        .coordinator
+        .workflow
+        .tasks
+        .task(params["taskId"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(task["workflow"]["steps"][0]["state"], "dispatched");
+    assert!(task.get("dispatchReservation").is_none());
+}
+#[tokio::test]
+async fn resume_keeps_provider_parent_label_and_result_contract_when_fields_are_omitted() {
+    let fixture = Fixture::new(None);
+    let first=fixture.coordinator.spawn_sanitized(json!({"cwd":fixture.project,"provider":"codex","label":"Keep me","parentSessionId":"manager","resultSchema":{"type":"object"}})).await.unwrap();
+    let id = first["sessionId"].as_str().unwrap();
+    let generation = fixture.coordinator.lifecycle.records()[id]
+        .generation
+        .clone();
+    fixture.fake.plans.lock().unwrap().clear();
+    fixture
+        .coordinator
+        .lifecycle
+        .stopped(id, &generation)
+        .await
+        .unwrap();
+    fixture
+        .coordinator
+        .spawn_sanitized(json!({"resumeSessionId":id}))
+        .await
+        .unwrap();
+    let plans = fixture.fake.plans.lock().unwrap();
+    let plan = &plans[0];
+    assert_eq!(plan.provider, "codex");
+    assert_eq!(plan.metadata["label"], "Keep me");
+    assert_eq!(plan.metadata["parentSessionId"], "manager");
+    assert!(
+        plan.request["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("wks-result")
+    );
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_interrupts_worktree_setup_and_releases_unexecuted_workflow_claim() {
+    let fixture = Fixture::new(None);
+    Config::open(fixture.dir.path().join("config/config.yaml")).save(json!({"projects":{fixture.project.clone():{"worktreeSetup":["echo $$ > started; exec sleep 120"]}}}),true).unwrap();
+    let params = fixture.workflow_params();
+    let id = params["taskId"].as_str().unwrap().to_owned();
+    let launched = {
+        let coordinator = fixture.coordinator.clone();
+        tokio::spawn(async move { coordinator.spawn_sanitized(params).await })
+    };
+    let marker = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Ok(entries) = std::fs::read_dir(fixture.dir.path().join("trees/project")) {
+                if let Some(path) = entries
+                    .filter_map(std::result::Result::ok)
+                    .map(|e| e.path().join("started"))
+                    .find(|p| {
+                        std::fs::read_to_string(p)
+                            .ok()
+                            .is_some_and(|v| v.trim().parse::<u32>().is_ok())
+                    })
+                {
+                    break path;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        fixture.coordinator.close(),
+    )
+    .await
+    .unwrap();
+    assert!(launched.await.unwrap().is_err());
+    assert!(fixture.fake.plans.lock().unwrap().is_empty());
+    assert!(
+        fixture
+            .coordinator
+            .workflow
+            .tasks
+            .task(&id)
+            .unwrap()
+            .unwrap()
+            .get("dispatchReservation")
+            .is_none()
+    );
+    #[cfg(unix)]
+    {
+        let pid = std::fs::read_to_string(marker)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while unsafe { libc::kill(pid, 0) } == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn explicit_daemon_rejection_releases_claim_without_claiming_unknown_execution() {
+    let fixture = Fixture::new(None);
+    let params = fixture.workflow_params();
+    fixture
+        .fake
+        .definitive_rejection
+        .store(true, Ordering::SeqCst);
+    let error = fixture
+        .coordinator
+        .spawn_sanitized(params.clone())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("definitive provider refusal"));
+    assert!(!error.contains("do not retry blindly"));
+    assert!(
+        fixture
+            .coordinator
+            .workflow
+            .tasks
+            .task(params["taskId"].as_str().unwrap())
+            .unwrap()
+            .unwrap()
+            .get("dispatchReservation")
+            .is_none()
+    );
+}
+
+struct RemoteExecution {
+    coordinator: Arc<SpawnCoordinator>,
+    cwd: String,
+}
+impl workspacer_hub::services::remote_dispatch::Execution for RemoteExecution {
+    fn capabilities(
+        &self,
+    ) -> Operation<'_, workspacer_hub::services::remote_dispatch::Capabilities> {
+        use workspacer_hub::services::remote_dispatch::*;
+        Box::pin(async move {
+            Ok(Capabilities {
+                protocol: PROTOCOL,
+                exact_model: true,
+                executes: true,
+                scope: "local".into(),
+                providers: vec![Provider {
+                    provider: "claude".into(),
+                    found: true,
+                    authenticated: Some(true),
+                    note: String::new(),
+                }],
+                cwds: vec![Directory {
+                    path: self.cwd.clone(),
+                    source: "fixture".into(),
+                    git: true,
+                }],
+                unsupported_reason: None,
+            })
+        })
+    }
+    fn canonical_directory<'a>(&'a self, cwd: &'a str) -> Operation<'a, String> {
+        Box::pin(async move { Ok(std::fs::canonicalize(cwd)?.to_string_lossy().into_owned()) })
+    }
+    fn allocate<'a>(
+        &'a self,
+        _repo: &'a str,
+        _cwd: &'a str,
+        _branch: &'a str,
+    ) -> Operation<'a, ()> {
+        Box::pin(async { bail!("not used") })
+    }
+    fn cleanup<'a>(&'a self, _repo: &'a str, _cwd: &'a str, _branch: &'a str) -> Operation<'a, ()> {
+        Box::pin(async { bail!("not used") })
+    }
+    fn spawn<'a>(
+        &'a self,
+        caller: workspacer_hub::Caller,
+        admission: workspacer_hub::services::remote_dispatch::RemoteAdmission,
+        params: Value,
+    ) -> Operation<'a, Value> {
+        Box::pin(async move {
+            self.coordinator
+                .spawn_remote(caller, admission, params)
+                .await
+        })
+    }
+}
+#[tokio::test]
+async fn consumed_remote_lease_pins_identity_and_never_creates_local_parent_authority() {
+    use workspacer_hub::{Caller, Hub, Options, services::remote_dispatch::Receiver};
+    let fixture = Fixture::new(None);
+    let hub = Hub::start(Options::default()).unwrap();
+    hub.ready().await.unwrap();
+    let receiver = Receiver::open(
+        fixture.dir.path().join("remote"),
+        hub.handle(),
+        Arc::new(RemoteExecution {
+            coordinator: fixture.coordinator.clone(),
+            cwd: fixture.project.clone(),
+        }),
+    )
+    .unwrap();
+    let caller = Caller {
+        call_id: 1,
+        activity_seq: 0,
+        connection_id: 1,
+        federated: true,
+        authenticated_host: false,
+        trusted: false,
+        scope: "operator".into(),
+        plugin_id: String::new(),
+        token_id: "paired-fingerprint".into(),
+    };
+    let origin =
+        json!({"protocol":2,"dispatchId":"abcdefghijklmnop","ownerKey":"paired-fingerprint"});
+    receiver
+        .prepare(
+            caller.clone(),
+            json!({"remoteOrigin":origin,"cwd":fixture.project,"provider":"claude"}),
+        )
+        .await
+        .unwrap();
+    let params = json!({"remoteOrigin":origin,"cwd":fixture.project,"provider":"claude","message":"remote work","parentSessionId":"manager","dispatchOwnerSessionId":"manager","trackTask":true,"worktree":true});
+    let receipt = receiver
+        .spawn(caller.clone(), params.clone())
+        .await
+        .unwrap();
+    assert!(receipt["sessionId"].is_string());
+    let plan = fixture.fake.plans.lock().unwrap()[0].clone();
+    assert_eq!(plan.session_id, receipt["sessionId"].as_str().unwrap());
+    assert!(
+        plan.metadata["parentSessionId"]
+            .as_str()
+            .is_none_or(str::is_empty)
+    );
+    assert_eq!(plan.metadata["isWakeTarget"], false);
+    assert_eq!(
+        plan.metadata["remoteOrigin"],
+        json!({"protocol":2,"dispatchId":"abcdefghijklmnop"})
+    );
+    assert!(
+        plan.request["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("wks-escalation")
+    );
+    assert!(
+        fixture
+            .coordinator
+            .workflow
+            .tasks
+            .list()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(plan.request["cwd"], fixture.project);
+    assert!(receiver.spawn(caller, params).await.is_err());
+    assert_eq!(fixture.fake.plans.lock().unwrap().len(), 1);
+    receiver.close().await;
+    fixture.coordinator.close().await;
+    hub.shutdown().unwrap();
+}
