@@ -2620,6 +2620,10 @@ async fn run(
             }
         }
     }
+    // The actor no longer pumps requests. Cancel queued replies before joining
+    // observers: one may still be awaiting its startup Connect acknowledgement.
+    // Plugin shutdown above deliberately retains the pumping actor until done.
+    close_command_channel(commands);
     if let Some(service) = &core.options.workflow_artifacts {
         service.close().await;
     }
@@ -2698,7 +2702,6 @@ async fn run(
     if let Some(task) = remote_sweeper {
         let _ = task.await;
     }
-    commands.close();
     if let Some(task) = plugin_boot {
         task.abort();
         let _ = task.await;
@@ -2749,6 +2752,54 @@ async fn run(
         let _ = server.await;
     }
     result
+}
+
+fn close_command_channel(mut commands: mpsc::Receiver<Command>) {
+    commands.close();
+    while commands.try_recv().is_ok() {}
+    // Drop the receiver here as well, rather than retaining it during joins.
+}
+
+#[cfg(test)]
+mod shutdown_queue_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn closing_actor_queue_releases_pending_connection_replies() {
+        let (tx, mut commands) = mpsc::channel(4);
+        let (_status, status) = watch::channel(Status::Ready {
+            address: None,
+            mcp_address: None,
+        });
+        let handle = Handle { tx, status };
+        let live = handle.clone();
+        let health = tokio::spawn(async move { live.health().await });
+        let Command::Health(reply) = commands.recv().await.unwrap() else {
+            panic!("wrong live command");
+        };
+        reply.send(json!({"alive":true})).unwrap();
+        assert_eq!(health.await.unwrap().unwrap(), json!({"alive":true}));
+
+        let connecting = handle.clone();
+        let pending = tokio::spawn(async move { connecting.connect().await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while commands.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("connection was not queued");
+        close_command_channel(commands);
+        let error = tokio::time::timeout(Duration::from_secs(2), pending)
+            .await
+            .expect("queued connection was stranded")
+            .unwrap()
+            .err()
+            .expect("closed actor admitted a connection");
+        assert_eq!(error.to_string(), "hub stopped while connecting");
+        assert!(handle.connect().await.is_err());
+        assert!(handle.health().await.is_err());
+    }
 }
 
 #[cfg(test)]
