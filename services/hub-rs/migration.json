@@ -4873,10 +4873,42 @@
       ]
     },
     "services/hub/internal/bus/bench_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/bus_latency.rs",
+        "Makefile",
+        ".github/workflows/ci.yml"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the full retained benchmark/test source, including its real5ms p99-share assertion. Rust measures the same200-turn mature-snapshot fields/text (38005bytes),2000single-flight hub WebSocket roundtrips and500same-size bare text-WebSocket echoes. It uses the same len*99/100 quantile index and strict hubP99-floorP99<=5ms boundary.",
+          "The guard is actually invoked by make test-hub-latency and LinuxCI hub-latency in --release mode. The measured CI run executed1guard with0ignored tests and reported pass, not unmeasurable. The replacement source is byte-identical to the measured candidate.",
+          "Bare echo floor greater than2.5ms is explicitly unmeasurable; Windows scheduler jitter and explicit instrumentation are also unmeasurable. An accidental debug budget invocation fails rather than comparing Rustdebug to optimizedGo. Three ordinarydebug tests verify the workload, threshold decisions, and actual3hub+3echo-frame functional exchange.",
+          "Go testing.B status-only/20-turn/200-turn and16-subscriber informational microbenchmark wrappers are retired with the Go test framework; they asserted no additional pass/fail budget. The normative mature-snapshot budget is retained, and no replacement throughput/fanout performance claim is inferred from it. Real stream reads/writes and the whole measurement have deadlines, preventing dropped-frame hangs."
+        ],
+        "scope": "Transport propagation budget only; not whole-app latency/FPS, throughput, memory, or a Go-versus-Rust speedup.",
+        "verifiedCheckpoint": {
+          "budgetMicros": 5000,
+          "commit": "a271e4ff32d0283ce6c43879014ac5455fe0026e",
+          "floorP99Micros": 165,
+          "floorSamples": 500,
+          "hubP50Micros": 406,
+          "hubP99Micros": 542,
+          "hubSamples": 2000,
+          "hubShareP99Micros": 377,
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36627270467/job/109607363818",
+          "payloadBytes": 38005,
+          "profile": "release",
+          "replacementTestSha256": "b1f608fdb2897ddf2b34245dccb10660ad594f0f6aa830804f966e38b3754f94",
+          "result": "pass",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36627270467",
+          "turns": 200
+        }
+      },
       "sha256": "cb1e57f91710b43bfda3d1d4a7612a3981e5469a5e8139c97eecd2982f55021a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_latency.rs"
+      ]
     },
     "services/hub/internal/bus/bus.go": {
       "replacement": [],
@@ -5428,16 +5460,80 @@
       ]
     },
     "services/hub/internal/bus/raceflag_norace_test.go": {
-      "replacement": [],
+      "reason": "Go race/non-race build-tag plumbing exists solely to tell the old Go latency test when Go race instrumentation makes its budget unmeasurable. There is no Go runtime or go test -race build in the replacement; the Rust guard is explicitly optimized and reports instrumentation/unsupported-platform runs as unmeasurable.",
+      "replacement": [
+        "services/hub-rs/tests/bus_latency.rs",
+        "Makefile",
+        ".github/workflows/ci.yml"
+      ],
+      "review": {
+        "behaviors": [
+          "Retired only this Go-specific raceEnabled constant/build-tag helper, not the latency assertion it guarded.",
+          "Rust requires release-mode measurement and uses WORKSPACER_BUS_LATENCY_INSTRUMENTED=1 for an explicitly instrumented run. This is not a claim to automatically detect every custom Rust sanitizer or profiling flag. LinuxCI invokes the uninstrumented release command; captured receipt passes the real budget.",
+          "Windows and noisy bare-echo floors remain explicit unmeasurable outcomes. A skipped/unmeasurable run is never described as proof of the performance budget."
+        ],
+        "scope": "Transport propagation budget only; not whole-app latency/FPS, throughput, memory, or a Go-versus-Rust speedup.",
+        "verifiedCheckpoint": {
+          "budgetMicros": 5000,
+          "commit": "a271e4ff32d0283ce6c43879014ac5455fe0026e",
+          "floorP99Micros": 165,
+          "floorSamples": 500,
+          "hubP50Micros": 406,
+          "hubP99Micros": 542,
+          "hubSamples": 2000,
+          "hubShareP99Micros": 377,
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36627270467/job/109607363818",
+          "payloadBytes": 38005,
+          "profile": "release",
+          "replacementTestSha256": "b1f608fdb2897ddf2b34245dccb10660ad594f0f6aa830804f966e38b3754f94",
+          "result": "pass",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36627270467",
+          "turns": 200
+        }
+      },
       "sha256": "62f90db41e379010071e389ddf59329fe57a6fef8aa1eb03f13778e9a048d32f",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/bus_latency.rs"
+      ]
     },
     "services/hub/internal/bus/raceflag_race_test.go": {
-      "replacement": [],
+      "reason": "Go race/non-race build-tag plumbing exists solely to tell the old Go latency test when Go race instrumentation makes its budget unmeasurable. There is no Go runtime or go test -race build in the replacement; the Rust guard is explicitly optimized and reports instrumentation/unsupported-platform runs as unmeasurable.",
+      "replacement": [
+        "services/hub-rs/tests/bus_latency.rs",
+        "Makefile",
+        ".github/workflows/ci.yml"
+      ],
+      "review": {
+        "behaviors": [
+          "Retired only this Go-specific raceEnabled constant/build-tag helper, not the latency assertion it guarded.",
+          "Rust requires release-mode measurement and uses WORKSPACER_BUS_LATENCY_INSTRUMENTED=1 for an explicitly instrumented run. This is not a claim to automatically detect every custom Rust sanitizer or profiling flag. LinuxCI invokes the uninstrumented release command; captured receipt passes the real budget.",
+          "Windows and noisy bare-echo floors remain explicit unmeasurable outcomes. A skipped/unmeasurable run is never described as proof of the performance budget."
+        ],
+        "scope": "Transport propagation budget only; not whole-app latency/FPS, throughput, memory, or a Go-versus-Rust speedup.",
+        "verifiedCheckpoint": {
+          "budgetMicros": 5000,
+          "commit": "a271e4ff32d0283ce6c43879014ac5455fe0026e",
+          "floorP99Micros": 165,
+          "floorSamples": 500,
+          "hubP50Micros": 406,
+          "hubP99Micros": 542,
+          "hubSamples": 2000,
+          "hubShareP99Micros": 377,
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36627270467/job/109607363818",
+          "payloadBytes": 38005,
+          "profile": "release",
+          "replacementTestSha256": "b1f608fdb2897ddf2b34245dccb10660ad594f0f6aa830804f966e38b3754f94",
+          "result": "pass",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36627270467",
+          "turns": 200
+        }
+      },
       "sha256": "6b244fd096d9a8b6ae0699b68916f5fcff909f6cd8d99737cd43aebda10e71a7",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/bus_latency.rs"
+      ]
     },
     "services/hub/internal/bus/rebinding_test.go": {
       "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted.",

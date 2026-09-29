@@ -1,6 +1,8 @@
 //! Discovery guards retained from the Go contracts_test.go suite. A mention is
 //! counted only inside a test source; per-block file/needle guards live in the
 //! independent vocabulary suite. Neither is a claim of behavioral completeness.
+#[path = "support/repo.rs"]
+mod repo;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
@@ -9,10 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+    repo::root()
 }
 const SKIP: &[&str] = &[
     "node_modules",
@@ -516,7 +515,11 @@ fn verify_baseline(root: &Path, name: &str, entry: &Value) {
 }
 fn captured_baselines(root: &Path) -> Value {
     let manifest: Value = serde_json::from_slice(
-        &fs::read(root.join("contracts/reference-baselines/manifest.json")).unwrap(),
+        &repo::read(
+            root,
+            Path::new("contracts/reference-baselines/manifest.json"),
+        )
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(manifest["version"], 1);

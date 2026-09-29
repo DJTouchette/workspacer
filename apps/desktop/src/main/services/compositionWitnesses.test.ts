@@ -323,4 +323,34 @@ describe('composition inert witnesses', () => {
       'missing guard edge',
     );
   });
+  it('allows Git validation matches but rejects canonicalization after execution or inside one arm', () => {
+    const base = rustSources(ROOT);
+    const file = 'services/hub-rs/src/services/git.rs';
+    const text = base.get(file)!;
+    const guard = 'let cwd = paths::canonicalize(Path::new(requested))?;';
+    const dispatchArm = '"git.status" => {';
+    expect(text).toContain(guard);
+    expect(text).toContain(dispatchArm);
+    expect(() => guardVerifier(ROOT, base)('git.status', 'canonicalize')).not.toThrow();
+    for (const mutant of [
+      text
+        .replace(guard, 'let cwd = PathBuf::from(requested);')
+        .replace(dispatchArm, dispatchArm + guard),
+      text
+        .replace(guard, '')
+        .replace(
+          'let root = root(&cwd).await?;',
+          'let cwd = PathBuf::from(requested); let root = root(&cwd).await?;' + guard,
+        ),
+      text.replace(
+        'let root = root(&cwd).await?;',
+        'let root = root(Path::new(requested)).await?;',
+      ),
+      text.replace(guard, `let diagnostic = r#"${guard}"#; let cwd = PathBuf::from(requested);`),
+    ]) {
+      const changed = new Map(base);
+      changed.set(file, mutant);
+      expect(() => guardVerifier(ROOT, changed)('git.status', 'canonicalize')).toThrow();
+    }
+  });
 });

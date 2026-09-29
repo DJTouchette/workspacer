@@ -1,5 +1,7 @@
 //! Independent Rust twin of contractsVocabulary.test.ts. Runtime reads deliberately
 //! discover new/deleted corpus files on every cargo test invocation.
+#[path = "support/repo.rs"]
+mod repo;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -29,10 +31,7 @@ const EXEMPT: &[&str] = &[
     "backend-capabilities.json",
 ];
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
+    repo::root()
 }
 fn strings(value: &Value) -> Vec<&str> {
     value
@@ -58,7 +57,10 @@ fn fixtures() -> BTreeMap<String, Value> {
         .map(|e| {
             (
                 e.file_name().into_string().unwrap(),
-                serde_json::from_slice(&fs::read(e.path()).unwrap()).unwrap(),
+                serde_json::from_slice(
+                    &repo::read(&root(), &Path::new("contracts").join(e.file_name())).unwrap(),
+                )
+                .unwrap(),
             )
         })
         .collect()

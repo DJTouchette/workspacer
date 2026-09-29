@@ -1,7 +1,45 @@
 import { hasRustBearing } from './compositionSource';
 import ts from 'typescript';
-import { body, compact, endOf, maskRust } from './rustHttpSource';
+import { body, endOf, maskRust } from './rustHttpSource';
 import { desktopRegistrations, registrations } from './capabilitySource';
+
+function verifyGitExecutionOrder(handler: string): void {
+  const code = maskRust(handler);
+  const topLevel = (at: number): boolean => {
+    let depth = 0;
+    for (const c of code.slice(0, at)) {
+      if ('([{'.includes(c)) depth++;
+      else if (')]}'.includes(c)) depth--;
+    }
+    return depth === 0;
+  };
+  const guards = [
+    ...code.matchAll(
+      /\blet\s+cwd\s*=\s*paths\s*::\s*canonicalize\s*\(\s*Path\s*::\s*new\s*\(\s*requested\s*\)\s*\)\s*\?\s*;/g,
+    ),
+  ];
+  // Validation may match the method before canonicalization. Identify the
+  // execution dispatch by its real run() calls, not the first lexical match.
+  const dispatches = [...code.matchAll(/\bmatch\s+method\s*\{/g)].filter((match) => {
+    if (!topLevel(match.index!)) return false;
+    const open = code.indexOf('{', match.index);
+    return /\brun\s*\(/.test(code.slice(open + 1, endOf(code, open) - 1));
+  });
+  const commands = [...code.matchAll(/\b(?:root|run)\s*\(/g)];
+  if (
+    guards.length !== 1 ||
+    !topLevel(guards[0].index!) ||
+    dispatches.length !== 1 ||
+    commands.length === 0 ||
+    guards[0].index! > dispatches[0].index! ||
+    commands.some((call) => call.index! < guards[0].index!)
+  ) {
+    throw Error('git canonicalization moved behind execution dispatch');
+  }
+  if (!hasRustBearing(handler, 'letroot=root(&cwd).await?;')) {
+    throw Error('git execution root does not use canonical cwd');
+  }
+}
 /** Actual implementation bearings. The legacy symbol is an explicit mapping
  * key, not a claim that a same-named symbol still exists after the rewrite. */
 export function guardVerifier(
@@ -63,8 +101,7 @@ export function guardVerifier(
         registered(method, 'services/git.rs', 'call(method,params).await');
         const handler = body(source('services/git.rs'), 'call');
         has(handler, 'letcwd=paths::canonicalize(Path::new(requested))?;');
-        if (compact(handler).indexOf('canonicalize(') > compact(handler).indexOf('matchmethod{'))
-          throw Error('git canonicalization moved behind dispatch');
+        verifyGitExecutionOrder(handler);
         return;
       }
       case 'jobsTrusted':

@@ -35,3 +35,13 @@ error response or dropped message cannot be recorded as a successful hop.
 This is a local transport budget, not a whole-application rendering, agent latency,
 throughput, memory or cross-language speedup claim. No provider process or user
 state is accessed by the fixture.
+
+## Verified optimized checkpoint
+
+[Linux CI run 36627270467](https://github.com/DJTouchette/workspacer/actions/runs/36627270467/job/109607363818)
+on `a271e4ff32d0283ce6c43879014ac5455fe0026e` executed the guard successfully:
+200 turns, 38,005 payload bytes, 2,000 hub samples and 500 echo samples. Hub p50
+was 406µs, hub p99 was 542µs, the echo p99 was 165µs, and the measured hub share
+was 377µs against the retained 5,000µs budget. The receipt reported `pass`, with
+zero ignored tests in that optimized invocation. This is one source-revision
+checkpoint; the dedicated CI job continues to guard subsequent pushes.
