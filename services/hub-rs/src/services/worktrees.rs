@@ -473,8 +473,13 @@ pub async fn run_setup(
             };
             #[cfg(windows)]
             let mut process = {
+                use std::os::windows::process::CommandExt;
                 let mut p = tokio::process::Command::new("cmd.exe");
-                p.args(["/V:ON", "/C", &text]);
+                // This is an owner-configured shell program, not a CRT argv
+                // value. CRT quoting adds backslashes before its quotes, which
+                // cmd.exe treats literally and breaks quoted path checks.
+                p.args(["/D", "/V:ON", "/S", "/C"]);
+                p.as_std_mut().raw_arg(format!("\"{text}\""));
                 p
             };
             process

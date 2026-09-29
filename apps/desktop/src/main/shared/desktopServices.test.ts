@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import generated from './desktopServices.generated';
@@ -8,6 +8,32 @@ const manifest = JSON.parse(
 );
 
 describe('desktop service manifest', () => {
+  it('retains only the in-process Electron dispatcher, without private lifecycle transport', () => {
+    const host = readFileSync(
+      path.join(root, 'apps/desktop/src/main/headless/desktopHost.ts'),
+      'utf8',
+    );
+    expect(host).not.toMatch(/case 'internal\./);
+    expect(host).not.toMatch(/hostBridge|hostCallId|hostResultId|process\.stdout/);
+    for (const retired of ['stdio.ts', 'hostBridge.ts', 'managerReplacement.ts', 'analytics.ts'])
+      expect(existsSync(path.join(root, 'apps/desktop/src/main/headless', retired)), retired).toBe(
+        false,
+      );
+    for (const retired of [
+      'build-desktop-host.mjs',
+      'test-desktop-host.mjs',
+      'test-headless-analytics.mjs',
+    ])
+      expect(existsSync(path.join(root, 'apps/desktop/scripts', retired)), retired).toBe(false);
+
+    const scripts = JSON.parse(
+      readFileSync(path.join(root, 'apps/desktop/package.json'), 'utf8'),
+    ).scripts;
+    expect(scripts['build:desktop-host']).toBeUndefined();
+    expect(scripts['test:desktop-host']).toBeUndefined();
+    expect(scripts['test:desktop-services']).toBe('node scripts/test-desktop-services.mjs');
+  });
+
   it('matches generated registration and every fixed dispatch implementation', () => {
     expect(generated.ownerMethods).toEqual(manifest.ownerMethods);
     expect(generated.assetMethods).toEqual(manifest.assetMethods);

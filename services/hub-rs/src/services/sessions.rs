@@ -15,6 +15,7 @@ use tokio::sync::broadcast;
 
 struct Sessions {
     dismissals: super::agent_ops::Dismissals,
+    confirmed: Arc<super::live_controls::ConfirmedControls>,
     tokens: Option<std::path::PathBuf>,
     config_dir: Option<std::path::PathBuf>,
     mutations: tokio::sync::Mutex<()>,
@@ -45,6 +46,7 @@ pub(crate) async fn install(
     let service = Arc::new(Sessions {
         workflow_artifacts: options.workflow_artifacts.clone(),
         dismissals: Default::default(),
+        confirmed: options.confirmed_controls.clone(),
         tokens: options.scoped_tokens.clone(),
         config_dir: options.config_dir.clone(),
         mutations: tokio::sync::Mutex::new(()),
@@ -177,7 +179,9 @@ impl Sessions {
                     continue;
                 }
                 if self.dismissals.allows(id, &self.generation(id)) {
-                    rows.insert(id.into(), snapshots::compat(row.clone()));
+                    let row = snapshots::compat(row.clone());
+                    self.confirmed.observe(&row);
+                    rows.insert(id.into(), self.confirmed.enrich(row));
                 }
             }
         }
@@ -194,6 +198,7 @@ impl Sessions {
             }
         }
         self.dismissals.retain_inventory(&retained);
+        self.confirmed.retain(&rows.keys().cloned().collect());
         let old = std::mem::replace(&mut *self.rows.write().unwrap(), rows.clone());
         let mut observations: Vec<_> = rows.values().cloned().collect();
         for (id, row) in &old {
@@ -239,6 +244,7 @@ impl Sessions {
         Ok(())
     }
     fn enrich(&self, row: Value) -> Value {
+        let row = self.confirmed.enrich(row);
         let row = super::snapshots::with_host_metadata(
             row,
             self.lifecycle.as_deref(),
@@ -357,6 +363,7 @@ impl Sessions {
                 }
                 update=updates.recv()=>match update {
                     Ok(update)=>{
+                        if update.event == "SessionStart" { self.confirmed.forget(&update.session_id); }
                         let path=format!("/sessions/{}",segment(&update.session_id)?);
                         match self.request("GET",path,None).await {
                             Ok(row)=>{
@@ -369,7 +376,7 @@ impl Sessions {
                                 }
                                 let _mutation = self.mutations.lock().await;
                                 if !self.dismissals.allows(&update.session_id, &self.generation(&update.session_id)) { continue; }
-                                let row=snapshots::compat(row);self.rows.write().unwrap().insert(update.session_id,row.clone());self.record_history(vec![row.clone()]).await;self.publish(row).await?;}
+                                let row=snapshots::compat(row);self.confirmed.observe(&row);let row=self.confirmed.enrich(row);self.rows.write().unwrap().insert(update.session_id,row.clone());self.record_history(vec![row.clone()]).await;self.publish(row).await?;}
                             Err(error)=>{eprintln!("session projection refresh failed: {error}");self.seed(true).await?;}
                         }
                     }
@@ -423,6 +430,7 @@ impl Sessions {
             self.dismissals
                 .dismiss(id, generation.clone(), self.enrich(known));
             self.rows.write().unwrap().remove(id);
+            self.confirmed.forget(id);
             if let Some(wakes) = &self.wakes {
                 wakes.forget(id);
             }
@@ -849,6 +857,7 @@ mod projection_tests {
         )?;
         let service = Arc::new(Sessions {
             dismissals: Default::default(),
+            confirmed: Default::default(),
             tokens: None,
             config_dir: None,
             mutations: tokio::sync::Mutex::new(()),

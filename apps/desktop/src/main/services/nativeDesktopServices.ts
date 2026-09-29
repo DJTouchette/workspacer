@@ -1,5 +1,5 @@
-/** Browser owner requests hosted by a running native desktop. The headless
- * process uses the same service implementations with its own lifecycle source.
+/** Browser owner requests hosted by a running Electron desktop.
+ * Shared implementations execute in this process; no private companion is used.
  */
 import { requestManagerReplacement } from './managerReplacement';
 import { setManagerViewerBindings } from './managerViewerBindings';

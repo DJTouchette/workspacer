@@ -6,9 +6,9 @@
 // throw "useConfig must be used inside <ConfigProvider>".
 //
 // The persisted defaults come from the SINGLE SOURCE OF TRUTH shared with the
-// headless brain (Go): services/hub/cmd/brain/config_defaults.json, surfaced
+// Rust backend: services/hub-rs/assets/config-defaults.json, surfaced
 // here as CONFIG_DEFAULTS via the generated leaf. So the renderer's fallback
-// values can no longer drift from the desktop main / brain defaults. Only two
+// values can no longer drift from the desktop main / backend defaults. Only two
 // things stay hand-maintained here, because they are genuinely renderer-only:
 //   1. UI-surface keybindings (Fleet Deck, Inbox drawer, digit jumps) — not part
 //      of the persisted config schema, so they don't belong in the shared JSON.

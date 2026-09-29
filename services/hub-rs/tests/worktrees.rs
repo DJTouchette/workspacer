@@ -118,7 +118,12 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
         .unwrap();
     assert_eq!(created.result["ok"], true);
     assert_eq!(created.result["branch"], "wks/review-me");
-    assert_eq!(created.result["setup"]["ran"], json!([check]));
+    assert_eq!(
+        created.result["setup"]["ran"],
+        json!([check]),
+        "{}",
+        created.result
+    );
     assert_eq!(created.result["setup"]["failed"]["command"], fail);
     let cwd = std::path::PathBuf::from(created.result["path"].as_str().unwrap());
     assert!(

@@ -44,10 +44,23 @@ fn shared_wholesale_contract_refuses_malformed_values_without_partial_applicatio
     ))
     .unwrap();
     assert!(fixture["valueCases"].as_array().unwrap().len() >= 11);
+    assert_eq!(
+        fixture["paths"],
+        json!(["ui.customThemes", "claude.budgets", "projects"])
+    );
+    let mut covered = std::collections::BTreeSet::new();
+    let mut refusals = 0;
     for case in fixture["valueCases"].as_array().unwrap() {
         let path = case["path"].as_str().unwrap();
+        covered.insert(path);
+        assert!(case["expect"] == "refuse" || case["expect"] == "accept");
+        if case["expect"] == "refuse" {
+            refusals += 1;
+        }
         let mut partial = json!({});
         let mut current = defaults();
+        // Keep the whole-document wipe guard distinct from wholesale-map rules.
+        current["ui"]["theme"] = "contract-fixture".into();
         let keys: Vec<_> = path.split('.').collect();
         if keys.len() == 1 {
             partial[keys[0]] = case["value"].clone();
@@ -56,7 +69,7 @@ fn shared_wholesale_contract_refuses_malformed_values_without_partial_applicatio
             partial[keys[0]] = json!({keys[1]:case["value"]});
             current[keys[0]][keys[1]] = case["current"].clone();
         }
-        let result = merge_patch(&current, partial, false);
+        let result = merge_patch(&current, partial.clone(), false);
         if case["expect"] == "refuse" {
             assert!(result.is_err(), "{}", case["name"]);
         } else {
@@ -69,7 +82,32 @@ fn shared_wholesale_contract_refuses_malformed_values_without_partial_applicatio
                 case["name"]
             );
         }
+        let directory = tempfile::tempdir().unwrap();
+        let path_on_disk = directory.path().join("config.yaml");
+        std::fs::write(&path_on_disk, serde_yaml::to_string(&current).unwrap()).unwrap();
+        let config = Config::open(path_on_disk.clone());
+        let before = std::fs::read(&path_on_disk).unwrap();
+        let saved = config.save(partial, false);
+        if case["expect"] == "refuse" {
+            assert!(saved.is_err(), "{}", case["name"]);
+            assert_eq!(std::fs::read(&path_on_disk).unwrap(), before);
+        } else {
+            let saved = saved.unwrap();
+            let pointer = format!("/{}", path.replace('.', "/"));
+            assert_eq!(saved.pointer(&pointer).unwrap(), &case["expected"]);
+            assert_eq!(
+                Config::open(path_on_disk).get().pointer(&pointer).unwrap(),
+                &case["expected"]
+            );
+        }
     }
+    assert_eq!(
+        covered,
+        ["ui.customThemes", "claude.budgets", "projects"]
+            .into_iter()
+            .collect()
+    );
+    assert!(refusals >= 7, "wholesale refusal cases disappeared");
 }
 
 #[test]
@@ -181,6 +219,48 @@ fn unreadable_config_stays_recoverable_and_missing_loaded_config_is_not_reseeded
 }
 
 #[test]
+fn invalid_document_shapes_keep_original_bytes_and_quarantine_only_recoverable_documents() {
+    for (raw, backups) in [
+        ("", 0),
+        ("# still editing\n", 0),
+        ("null\n", 0),
+        ("[one, two]\n", 1),
+        ("scalar\n", 1),
+        ("ui: [broken\n", 1),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, raw).unwrap();
+        let config = Config::open(path.clone());
+        for _ in 0..3 {
+            config
+                .save(json!({"ui":{"theme":"memory-only"}}), false)
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+        let copies: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("config.yaml.broken-")
+            })
+            .collect();
+        assert_eq!(copies.len(), backups, "{raw:?}");
+        for copy in copies {
+            assert_eq!(std::fs::read_to_string(copy.path()).unwrap(), raw);
+        }
+        std::fs::write(&path, "ui:\n  theme: repaired\n").unwrap();
+        assert_eq!(config.reload()["ui"]["theme"], "repaired");
+        config.save(json!({"ui":{"fontSize":20}}), false).unwrap();
+        assert_eq!(Config::open(path).get()["ui"]["fontSize"], 20);
+    }
+}
+
+#[test]
 fn two_writers_refresh_before_merge_and_explicit_context_null_survives_restart() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.yaml");
@@ -212,6 +292,185 @@ fn retired_block_pruning_preserves_unrelated_comments_and_quoted_keys() {
     );
     let text = "'supervisor': { old: true }\nui: {}\n";
     assert_eq!(strip_top_level_block(text, "supervisor"), text);
+}
+
+#[test]
+fn retired_key_cleanup_preserves_disk_bytes_and_unknown_keys_across_reload() {
+    for (raw, expected) in [
+        (
+            "ui:\n  theme: nord\nsupervisor:\n  provider: claude\n",
+            "ui:\n  theme: nord\n",
+        ),
+        (
+            "ui:\n  theme: nord\nsupervisor:\n  provider: claude",
+            "ui:\n  theme: nord",
+        ),
+        (
+            "supervisor: {provider: claude}\nui:\n  theme: nord\n",
+            "ui:\n  theme: nord\n",
+        ),
+        ("supervisor:\nui:\n  theme: nord\n", "ui:\n  theme: nord\n"),
+        (
+            "ui:\r\n  theme: nord\r\nsupervisor:\r\n  provider: claude\r\n",
+            "ui:\r\n  theme: nord\r\n",
+        ),
+        (
+            "\"supervisor\": {provider: claude}\nui: {}\n",
+            "\"supervisor\": {provider: claude}\nui: {}\n",
+        ),
+        (
+            "supervisor:\n  provider: claude\n",
+            "supervisor:\n  provider: claude\n",
+        ),
+        (
+            "# keep above\nui:\n  theme: 'nord' # inline\n\n# keep below\nsupervisor:\n  # remove inside\n  models:\n    coordinator: opus\n\nplugin: {custom: true}\n",
+            "# keep above\nui:\n  theme: 'nord' # inline\n\n# keep below\nplugin: {custom: true}\n",
+        ),
+        (
+            "agents:\n  supervisor: {custom: true}\nsupervisorLoop: {enabled: true}\n",
+            "agents:\n  supervisor: {custom: true}\nsupervisorLoop: {enabled: true}\n",
+        ),
+        ("# only a comment\n", "# only a comment\n"),
+        ("", ""),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, raw).unwrap();
+        let config = Config::open(path.clone());
+        let loaded = config.get();
+        assert!(loaded.get("supervisor").is_none(), "{raw}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected, "{raw}");
+        if raw.contains("supervisorLoop") {
+            assert_eq!(loaded["supervisorLoop"]["enabled"], true);
+            assert_eq!(loaded["agents"]["supervisor"]["custom"], true);
+        }
+        if raw.contains("plugin:") {
+            assert_eq!(loaded["plugin"]["custom"], true);
+        }
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+        config.reload();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), stamp);
+    }
+}
+
+#[test]
+fn malformed_wholesale_save_refuses_all_changes_and_preserves_disk() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../contracts/wholesale-config-paths.json"
+    ))
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    let config = Config::open(path.clone());
+    config
+        .save(
+            json!({"ui":{"theme":"before"},"projects":{"existing":{"label":"Keep"}}}),
+            false,
+        )
+        .unwrap();
+    let before = std::fs::read(&path).unwrap();
+    for case in fixture["valueCases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["expect"] == "refuse")
+    {
+        let mut patch = json!({"ui":{"theme":"must-not-apply"}});
+        let parts: Vec<_> = case["path"].as_str().unwrap().split('.').collect();
+        if parts.len() == 1 {
+            patch[parts[0]] = case["value"].clone();
+        } else {
+            if !patch[parts[0]].is_object() {
+                patch[parts[0]] = json!({});
+            }
+            patch[parts[0]][parts[1]] = case["value"].clone();
+        }
+        assert!(config.save(patch, false).is_err(), "{}", case["name"]);
+        assert_eq!(config.get()["ui"]["theme"], "before");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn config_bus_reports_refused_maps_and_roundtrips_unknown_object_settings() {
+    use workspacer_hub::{Hub, Options, client::Client};
+    let dir = tempfile::tempdir().unwrap();
+    let mut options = Options::default();
+    options.config_dir = Some(dir.path().join("config"));
+    options.data_dir = Some(dir.path().join("data"));
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    let saved = client.call("config.save", json!({"ui":{"theme":"before"},"pluginSettings":{"fullAccess":true,"provider":"claude"},"projects":{"a":{"label":"A","yolo":true},"b":{"label":"B"}}})).await.unwrap();
+    assert_eq!(
+        saved["pluginSettings"],
+        json!({"fullAccess":true,"provider":"claude"})
+    );
+    let path = dir.path().join("config/config.yaml");
+    let before = std::fs::read(&path).unwrap();
+    let error = client
+        .call(
+            "config.save",
+            json!({"ui":{"theme":"must-not-apply"},"projects":"{}"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("projects"), "{error:#}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let surviving = client.call("config.get", json!({})).await.unwrap();
+    assert_eq!(surviving["ui"]["theme"], "before");
+    assert_eq!(surviving["projects"].as_object().unwrap().len(), 2);
+    client
+        .call(
+            "config.save",
+            json!({"projects":{"a":{"label":"A","yolo":true}}}),
+        )
+        .await
+        .unwrap();
+    let restored = Config::open(path).get();
+    assert_eq!(restored["projects"], json!({"a":{"label":"A","yolo":true}}));
+    assert_eq!(restored["pluginSettings"], saved["pluginSettings"]);
+    client.close();
+    hub.shutdown().unwrap();
+}
+
+#[test]
+fn first_load_warns_about_missing_established_config_but_seeds_both_cases() {
+    const CHILD: &str = "WORKSPACER_CONFIG_LOSS_TEST_PATH";
+    if let Some(path) = std::env::var_os(CHILD) {
+        let path = std::path::PathBuf::from(path);
+        let config = Config::open(path.clone());
+        assert!(path.is_file());
+        assert!(config.get().is_object());
+        assert_eq!(
+            config.save(json!({"ui":{"theme":"saved"}}), false).unwrap()["ui"]["theme"],
+            "saved"
+        );
+        return;
+    }
+    for established in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        if established {
+            std::fs::write(dir.path().join("remote-token"), "fixture").unwrap();
+            std::fs::write(dir.path().join("tokens.json"), "[]").unwrap();
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "first_load_warns_about_missing_established_config_but_seeds_both_cases",
+                "--nocapture",
+            ])
+            .env(CHILD, dir.path().join("config.yaml"))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stderr}");
+        assert_eq!(stderr.contains("STATE LOSS"), established, "{stderr}");
+        if established {
+            assert!(stderr.contains("config.yaml"));
+        }
+    }
 }
 
 #[test]

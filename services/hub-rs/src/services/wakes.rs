@@ -512,6 +512,7 @@ impl Wakes {
             let mut outcome = None;
             if let Some(escalation) = worker_results::read_escalation(&reply) {
                 if let Some(json) = escalation.json {
+                    outcome = Some(json.clone().into());
                     entry["escalation"] = json.into();
                     contract = "escalated";
                 }
@@ -530,9 +531,6 @@ impl Wakes {
                     entry["resultError"] = error.into();
                     contract = "invalid";
                 }
-            }
-            if !text(&entry, "failed").is_empty() {
-                contract = "invalid";
             }
             let signature = format!(
                 "{reply} {} {} {}",
@@ -628,6 +626,7 @@ impl Wakes {
                 completed.push(item);
             }
         }
+        let mut delivery_error = None;
         for (kind, items) in [
             ("worker-escalated", escalated),
             (action.kind.as_str(), completed),
@@ -739,7 +738,12 @@ impl Wakes {
                 }
             }
             let message = fleet_messages::build(kind, &entries, ordinary)?;
-            (self.delivery)(action.parent.clone(), message, signatures.clone()).await?;
+            if let Err(error) =
+                (self.delivery)(action.parent.clone(), message, signatures.clone()).await
+            {
+                delivery_error.get_or_insert(error);
+                continue;
+            }
             if kind != "catch-up" && kind != "blocked" {
                 for (entry, signature, reply) in items {
                     let id = text(&entry, "sessionId");
@@ -765,7 +769,10 @@ impl Wakes {
                 }
             }
         }
-        Ok(())
+        match delivery_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
     pub async fn tick(&self, now: i64) -> Result<()> {
         let mut first_error = None;

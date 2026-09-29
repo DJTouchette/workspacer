@@ -61,23 +61,162 @@ fn colliding_session_names_keep_identity_and_saved_agents_are_scrubbed() {
 
 #[test]
 fn bad_yaml_is_quarantined_once_with_literal_filename_prefix() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("sessions");
-    std::fs::create_dir_all(&path).unwrap();
-    std::fs::write(path.join("broken[.yaml"), "unreadable: [\n").unwrap();
-    let stores = Stores::new(dir.path().into());
-    for _ in 0..3 {
-        assert_eq!(stores.call("sessions.list", json!({})).unwrap(), json!([]));
+    for kind in ["sessions", "layouts"] {
+        for name in ["default.yaml", "broken[.yaml", "a*.yaml", "q?.yaml"] {
+            if cfg!(windows) && name.contains(['*', '?']) {
+                continue;
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(kind);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join(name), "unreadable: [\n").unwrap();
+            std::fs::write(path.join("zzz.yaml.broken-decoy"), "decoy").unwrap();
+            let stores = Stores::new(dir.path().into());
+            for _ in 0..3 {
+                assert_eq!(
+                    stores.call(&format!("{kind}.list"), json!({})).unwrap(),
+                    json!([])
+                );
+                // Millisecond backup names must not hide repeated copies.
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            let prefix = format!("{name}.broken-");
+            let copies: Vec<_> = std::fs::read_dir(&path)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+                .collect();
+            assert_eq!(copies.len(), 1, "{kind}/{name}");
+            assert_eq!(std::fs::read(copies[0].path()).unwrap(), b"unreadable: [\n");
+            assert_eq!(std::fs::read(path.join(name)).unwrap(), b"unreadable: [\n");
+        }
     }
-    assert_eq!(std::fs::read_dir(&path).unwrap().count(), 2);
-    assert_eq!(
-        std::fs::read(path.join("broken[.yaml")).unwrap(),
-        b"unreadable: [\n"
-    );
+}
+
+#[cfg(unix)]
+#[test]
+fn saved_sessions_and_layouts_replace_inodes_without_leaving_temporary_files() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::new(dir.path().into());
+    for (kind, name) in [("sessions", "Work"), ("layouts", "My Layout")] {
+        let method = format!("{kind}.save");
+        let input = json!({"name":name,"agents":[]});
+        let first = stores.call(&method, input.clone()).unwrap();
+        let filename = if kind == "sessions" {
+            first.as_str().unwrap().to_owned()
+        } else {
+            format!("{}.yaml", first["id"].as_str().unwrap())
+        };
+        let folder = dir.path().join(kind);
+        let path = folder.join(filename);
+        let inode = std::fs::metadata(&path).unwrap().ino();
+        stores.call(&method, input).unwrap();
+        assert_ne!(std::fs::metadata(&path).unwrap().ino(), inode);
+        assert_eq!(std::fs::read_dir(folder).unwrap().count(), 1);
+    }
 }
 
 #[test]
-#[cfg(unix)]
+fn saved_state_crud_counts_sorting_and_unidentified_files_match_legacy() {
+    let dir = tempfile::tempdir().unwrap();
+    let stores = Stores::new(dir.path().into());
+    let saved = stores
+        .call("layouts.save", json!({"name":"My Layout","agents":[]}))
+        .unwrap();
+    assert_eq!(saved["id"], "my-layout");
+    assert!(!saved["createdAt"].as_str().unwrap().is_empty());
+    std::fs::write(dir.path().join("layouts/junk.yaml"), "name: junk\n").unwrap();
+    assert_eq!(
+        stores
+            .call("layouts.list", json!({}))
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    stores
+        .call("layouts.delete", json!({"id":"My Layout"}))
+        .unwrap();
+    assert_eq!(stores.call("layouts.list", json!({})).unwrap(), json!([]));
+    for (id, year) in [("old", 2020), ("new", 2024)] {
+        std::fs::write(
+            dir.path().join(format!("layouts/{id}.yaml")),
+            format!("id: {id}\ncreatedAt: '{year}-01-01T00:00:00.000Z'\nagents: []\n"),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        stores.call("layouts.list", json!({})).unwrap()[0]["id"],
+        "new"
+    );
+    let filename = stores.call("sessions.save", json!({"name":"Work","activeAgentId":"a","agents":[{"id":"a","tabs":[{"panes":[{},{}]}]},{"id":"global","global":true,"tabs":[{"panes":[{}]}]}]})).unwrap();
+    let list = stores.call("sessions.list", json!({})).unwrap();
+    assert_eq!(list[0]["paneCount"], 3);
+    assert_eq!(list[0]["agentCount"], 1);
+    assert!(!list[0]["timestamp"].as_str().unwrap().is_empty());
+    assert_eq!(
+        stores
+            .call("sessions.load", json!({"filename":filename}))
+            .unwrap()["activeAgentId"],
+        "a"
+    );
+    stores
+        .call("sessions.delete", json!({"filename":filename}))
+        .unwrap();
+    assert!(
+        stores
+            .call("sessions.load", json!({"filename":filename}))
+            .unwrap()
+            .is_null()
+    );
+    assert_eq!(stores.call("sessions.list", json!({})).unwrap(), json!([]));
+    for (name, document, count) in [
+        (
+            "legacy",
+            json!({"tabs":[{"panes":[{}]},{"panes":[{},{}]}]}),
+            3,
+        ),
+        ("flat", json!({"panes":[{},{}]}), 2),
+    ] {
+        std::fs::write(
+            dir.path().join(format!("sessions/{name}.yaml")),
+            serde_yaml::to_string(&document).unwrap(),
+        )
+        .unwrap();
+        let list = stores.call("sessions.list", json!({})).unwrap();
+        let row = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .unwrap();
+        assert_eq!(row["paneCount"], count);
+    }
+    let unknown = dir.path().join("sessions/default.yaml");
+    std::fs::write(&unknown, "{{{ not yaml").unwrap();
+    assert_ne!(
+        stores
+            .call("sessions.save", json!({"name":"Default"}))
+            .unwrap(),
+        "default.yaml"
+    );
+    assert_eq!(std::fs::read_to_string(unknown).unwrap(), "{{{ not yaml");
+    let config = dir.path().join("config.yaml");
+    std::fs::write(&config, "retained").unwrap();
+    assert!(
+        stores
+            .call("layouts.save", json!({"id":"../config","agents":[]}))
+            .is_err()
+    );
+    stores
+        .call("layouts.delete", json!({"id":"../config"}))
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(config).unwrap(), "retained");
+}
+
+#[test]
 fn collision_at_a_symlink_slot_never_falls_back_to_overwriting_the_first_session() {
     let dir = tempfile::tempdir().unwrap();
     let stores = Stores::new(dir.path().into());
@@ -88,7 +227,11 @@ fn collision_at_a_symlink_slot_never_falls_back_to_overwriting_the_first_session
     let before = std::fs::read(&path).unwrap();
     let outside = dir.path().join("outside");
     std::fs::write(&outside, "untouched").unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, dir.path().join("sessions/feature-auth-2.yaml")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&outside, dir.path().join("sessions/feature-auth-2.yaml"))
+        .unwrap();
     assert!(
         stores
             .call("sessions.save", json!({"name":"Feature Auth","agents":[]}))
@@ -108,34 +251,38 @@ fn selected_session_filename_shared_contract() {
     let rows = corpus["sessionFilenames"]["cases"].as_array().unwrap();
     assert!(rows.len() >= 12);
     for row in rows {
-        #[cfg(windows)]
-        if row["needsSymlinks"] == true {
-            continue;
-        }
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
-        let sessions = root.join("config/workspacer/sessions");
+        let at = |name: &str| root.join(name.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let sessions = at("config/workspacer/sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         std::fs::create_dir_all(root.join("outside")).unwrap();
         for sub in row["tree"]["dirs"].as_array().into_iter().flatten() {
-            std::fs::create_dir_all(root.join(sub.as_str().unwrap())).unwrap();
+            std::fs::create_dir_all(at(sub.as_str().unwrap())).unwrap();
         }
         for (name, text) in row["tree"]["files"].as_object().into_iter().flatten() {
-            let path = root.join(name);
+            let path = at(name);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text.as_str().unwrap()).unwrap();
         }
-        #[cfg(unix)]
         for (name, target) in row["tree"]["symlinks"].as_object().into_iter().flatten() {
-            let link = root.join(name);
+            let link = at(name);
+            let target = at(target.as_str().unwrap());
             std::fs::create_dir_all(link.parent().unwrap()).unwrap();
-            std::os::unix::fs::symlink(root.join(target.as_str().unwrap()), link).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(target, link).unwrap();
+            #[cfg(windows)]
+            if target.is_dir() {
+                std::os::windows::fs::symlink_dir(target, link).unwrap();
+            } else {
+                std::os::windows::fs::symlink_file(target, link).unwrap();
+            }
         }
         let result = paths::selected_path(&sessions, row["filename"].as_str().unwrap());
         if row["expect"] == "accept" {
             assert_eq!(
                 result.unwrap(),
-                root.join(row["resolvesTo"].as_str().unwrap()),
+                at(row["resolvesTo"].as_str().unwrap()),
                 "{}",
                 row["name"]
             );
@@ -147,6 +294,21 @@ fn selected_session_filename_shared_contract() {
                 other => panic!("unknown refusal {other}"),
             };
             assert!(error.contains(expected), "{}: {error}", row["name"]);
+            let stores = Stores::new(at("config/workspacer"));
+            let params = json!({"filename":row["filename"]});
+            assert!(
+                stores
+                    .call("sessions.load", params.clone())
+                    .unwrap()
+                    .is_null()
+            );
+            stores.call("sessions.delete", params).unwrap();
+            for (name, text) in row["tree"]["files"].as_object().into_iter().flatten() {
+                assert_eq!(
+                    std::fs::read_to_string(at(name)).unwrap(),
+                    text.as_str().unwrap()
+                );
+            }
         }
     }
 }

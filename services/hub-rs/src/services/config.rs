@@ -313,12 +313,13 @@ impl Config {
         bail!("Configuration changed during workflow selection")
     }
     pub fn save(&self, partial: Value, owner: bool) -> Result<Value> {
-        self.save_using(partial, owner, write_config)
+        self.save_using(partial, owner, || {}, write_config)
     }
     fn save_using(
         &self,
         partial: Value,
         owner: bool,
+        before_stamp_check: impl Fn(),
         write: impl Fn(&Path, &Value) -> Result<()>,
     ) -> Result<Value> {
         let mut state = self.state.lock().unwrap();
@@ -336,6 +337,7 @@ impl Config {
                 state.current = merged;
                 return Ok(state.current.clone());
             }
+            before_stamp_check();
             if stamp(&self.path) != state.stamp {
                 continue;
             }
@@ -368,6 +370,7 @@ mod failure_tests {
             .save_using(
                 serde_json::json!({"ui":{"theme":"after"}}),
                 false,
+                || {},
                 |_, _| {
                     called.set(true);
                     bail!("fixture atomic write failure")
@@ -385,6 +388,93 @@ mod failure_tests {
                 .unwrap()["ui"]["theme"],
             "recovered"
         );
+    }
+
+    #[test]
+    fn stamp_retry_merges_an_outside_write_and_bounds_continuous_churn() {
+        for continuous in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config.yaml");
+            let config = Config::open(path.clone());
+            config
+                .save(json!({"projects":{"existing":{"label":"Keep"}}}), false)
+                .unwrap();
+            let attempts = std::cell::Cell::new(0);
+            let writes = std::cell::Cell::new(0);
+            let result = config
+                .save_using(
+                    json!({"ui":{"theme":"requested"}}),
+                    false,
+                    || {
+                        let attempt = attempts.get();
+                        attempts.set(attempt + 1);
+                        if attempt == 0 || continuous {
+                            let mut outside: Value =
+                                serde_yaml::from_slice(&fs::read(&path).unwrap()).unwrap();
+                            outside["projects"]["outsider"] =
+                                json!({"label":"x".repeat(attempt + 1)});
+                            // Different length guarantees a changed stamp even on coarse filesystems.
+                            write_config(&path, &outside).unwrap();
+                        }
+                    },
+                    |path, next| {
+                        writes.set(writes.get() + 1);
+                        write_config(path, next)
+                    },
+                )
+                .unwrap();
+            let disk = Config::open(path).get();
+            assert_eq!(disk["projects"]["existing"]["label"], "Keep");
+            assert!(disk["projects"].get("outsider").is_some());
+            assert!(!dir.path().join("config.yaml.lock").exists());
+            if continuous {
+                assert_eq!(attempts.get(), 5);
+                assert_eq!(writes.get(), 0);
+                assert_ne!(result["ui"]["theme"], "requested");
+                assert_ne!(disk["ui"]["theme"], "requested");
+                assert_eq!(
+                    config
+                        .save(json!({"ui":{"theme":"recovered"}}), false)
+                        .unwrap()["ui"]["theme"],
+                    "recovered"
+                );
+            } else {
+                assert_eq!(attempts.get(), 2);
+                assert_eq!(writes.get(), 1);
+                assert_eq!(result["ui"]["theme"], "requested");
+                assert_eq!(disk["ui"]["theme"], "requested");
+            }
+        }
+    }
+
+    #[test]
+    fn bare_defaults_cannot_replace_populated_state_but_seed_and_normal_saves_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        write_config(&path, &defaults()).unwrap();
+        write_config(&path, &defaults()).unwrap();
+        let original = "ui:\n  theme: custom\nclaude:\n  skipPermissionsDefault: true\nprojects:\n  custom: {name: Keep}\nonboardingDismissed: true\n";
+        fs::write(&path, original).unwrap();
+        let mut migrated = defaults();
+        migrated["keybindings"] = json!({"mode":"vim","leader":"space"});
+        migrate_keys(&mut migrated);
+        assert_eq!(migrated, defaults());
+        assert!(
+            write_config(&path, &migrated)
+                .unwrap_err()
+                .to_string()
+                .contains("bare defaults")
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        let config = Config::open(path.clone());
+        config
+            .save(json!({"ui":{"theme":"changed"}}), false)
+            .unwrap();
+        let restored = Config::open(path).get();
+        assert_eq!(restored["ui"]["theme"], "changed");
+        assert_eq!(restored["claude"]["skipPermissionsDefault"], true);
+        assert_eq!(restored["projects"]["custom"]["name"], "Keep");
+        assert_eq!(restored["onboardingDismissed"], true);
     }
 }
 
@@ -427,7 +517,14 @@ fn refresh(path: &Path, state: &mut State) {
     let mut parsed = match parsed {
         Ok(value) if value.is_object() => value,
         result => {
-            if result.is_err() && state.broken != bytes {
+            // YAML scalars/arrays are also malformed configuration documents.
+            // Empty/comment-only YAML decodes as null and is protected without
+            // creating a meaningless backup, matching the existing writers.
+            let backup_needed = match &result {
+                Err(_) => true,
+                Ok(value) => !value.is_null(),
+            };
+            if backup_needed && state.broken != bytes {
                 let backup = PathBuf::from(format!(
                     "{}.broken-{}",
                     path.display(),

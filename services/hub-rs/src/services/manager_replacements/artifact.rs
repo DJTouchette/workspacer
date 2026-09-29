@@ -191,7 +191,10 @@ fn verify(path: &Path) -> Result<Verified> {
             bail!("Path changed before inspection");
         }
     }
-    let canonical = std::fs::canonicalize(path)?;
+    // Keep the host's canonical DOS spelling on Windows. std canonicalize
+    // returns a verbatim \?\ prefix that our caller-path grammar rightly
+    // refuses, and propagating it makes a verified path fail its next check.
+    let canonical = super::super::paths::canonicalize(path)?;
     let final_file = open_nofollow(&canonical)?;
     let final_id = identity(&final_file)?;
     if before.1 == 0 || before != final_id {
@@ -418,6 +421,19 @@ pub fn preparation_prompt(op: &Value) -> String {
 
 #[cfg(all(test, windows))]
 mod windows_tests {
+    #[test]
+    fn verified_canonical_path_stays_plain_on_reinspection() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = super::super::super::paths::canonicalize(dir.path()).unwrap();
+        let path = root.join("brief.md");
+        std::fs::write(&path, b"brief").unwrap();
+        let first = super::verify(&path).unwrap();
+        assert!(super::plain(&first.canonical));
+        let second = super::verify(&first.canonical).unwrap();
+        assert_eq!(first.identity, second.identity);
+        assert!(super::same_spelling(&path, &second.canonical));
+    }
+
     use super::*;
     #[test]
     fn only_plain_local_windows_spellings_can_be_checkpoint_candidates() {

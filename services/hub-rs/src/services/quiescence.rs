@@ -474,26 +474,63 @@ impl Monitor {
 }
 
 /// Background-safe reads are a fixed host vocabulary, never a caller flag.
+// Go's request structs accept case-insensitive field names and reject malformed
+// known fields. Ambiguous aliases are conservatively activity: Value no longer
+// retains their original wire order.
+fn activity_field<'a>(value: &'a Value, name: &str) -> Result<Option<&'a Value>, ()> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let object = value.as_object().ok_or(())?;
+    let mut fields = object
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(name));
+    let field = fields.next().map(|(_, value)| value);
+    if fields.next().is_some() {
+        return Err(());
+    }
+    Ok(field)
+}
+fn activity_string(value: Option<&Value>) -> Result<&str, ()> {
+    match value {
+        None | Some(Value::Null) => Ok(""),
+        Some(Value::String(value)) => Ok(value),
+        _ => Err(()),
+    }
+}
 pub fn passive_call(method: &str, params: &Value) -> bool {
+    passive_request(method, Some(params))
+}
+pub(crate) fn passive_request(method: &str, params: Option<&Value>) -> bool {
     let method = if method.starts_with("hub:") {
         method.split_once('/').map(|(_, m)| m).unwrap_or(method)
     } else {
         method
     };
-    match method {
-        "desktop.managerReplacement" => return params["request"]["action"] == "list",
-        "desktop.providerReadiness" => {
-            return params.is_object() && (params["check"].is_null() || params["check"] == false);
-        }
-        "desktop.fleetWorkflowRequest" | "fleetWorkflows.request" => {
-            let op = if method == "desktop.fleetWorkflowRequest" {
-                params["request"]["op"].as_str()
-            } else {
-                params["op"].as_str()
-            };
-            return matches!(
-                op,
-                Some(
+    let parameter_read = || -> Result<bool, ()> {
+        let params = params.ok_or(())?;
+        match method {
+            "desktop.managerReplacement" => {
+                let request = activity_field(params, "request")?.unwrap_or(&Value::Null);
+                Ok(activity_string(activity_field(request, "action")?)? == "list")
+            }
+            "desktop.providerReadiness" => match activity_field(params, "check")? {
+                None | Some(Value::Null) => Ok(true),
+                Some(Value::Bool(check)) => Ok(!check),
+                _ => Err(()),
+            },
+            _ => {
+                let op = activity_string(activity_field(params, "op")?)?;
+                let request = activity_field(params, "request")?;
+                let nested =
+                    activity_string(activity_field(request.unwrap_or(&Value::Null), "op")?)?;
+                let op = if method == "desktop.fleetWorkflowRequest" {
+                    nested
+                } else {
+                    op
+                };
+                Ok(matches!(
+                    op,
                     "list"
                         | "get"
                         | "validate"
@@ -501,10 +538,18 @@ pub fn passive_call(method: &str, params: &Value) -> bool {
                         | "requestContent"
                         | "next"
                         | "taskReferences"
-                )
-            );
+                ))
+            }
         }
-        _ => {}
+    };
+    if matches!(
+        method,
+        "desktop.managerReplacement"
+            | "desktop.providerReadiness"
+            | "desktop.fleetWorkflowRequest"
+            | "fleetWorkflows.request"
+    ) {
+        return parameter_read().unwrap_or(false);
     }
     matches!(
         method,

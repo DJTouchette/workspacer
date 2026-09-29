@@ -2347,8 +2347,11 @@ impl SessionStore {
             );
             return;
         }
+        // A closed byte stream makes viewers inspect canonical state. Publish
+        // that state first; otherwise EOF can race a still-live row forever.
+        let removed = self.states.remove(session_id);
         self.release_spawn_plumbing(session_id, cwd);
-        if let Some((_, mut state)) = self.states.remove(session_id) {
+        if let Some((_, mut state)) = removed {
             // A plain shell never sends SessionEnd hooks. Publish authoritative
             // removal after deleting the row so observers re-fetch/reseed rather
             // than retain its original active snapshot forever.
@@ -2386,13 +2389,15 @@ impl SessionStore {
             );
             return;
         }
-        self.release_spawn_plumbing(session_id, cwd);
         if let Some(mut st) = self.states.get_mut(session_id) {
             if st.mode != SessionMode::Stopped {
                 st.mode = SessionMode::Stopped;
                 st.updated_at = OffsetDateTime::now_utc();
             }
         }
+        // Closing bytes is the viewer's EOF notification; it must never race
+        // an authoritative live state left behind by this same teardown.
+        self.release_spawn_plumbing(session_id, cwd);
     }
 
     /// The live-process plumbing shared by both teardown paths. Deliberately
@@ -4994,6 +4999,50 @@ mod tests {
         assert!(!store.is_resumable("ghost"));
         store.drop_pending_spawn("ghost", "/work", 1);
         assert!(store.get("ghost").is_none(), "nothing to resume, so no row");
+    }
+
+    #[test]
+    fn terminal_state_precedes_byte_stream_closure_for_both_teardowns() {
+        for retain in [false, true] {
+            let store = Arc::new(SessionStore::new());
+            store.register_spawn("shell", "/work", handle());
+            let generation = store.claim_generation("shell");
+            // Hold the byte-sender map entry so teardown cannot pass its EOF
+            // boundary. Canonical state must already be terminal at that point.
+            let sender_guard = store.bytes_tx.get("shell").unwrap();
+            let mut bytes = sender_guard.subscribe();
+            let owned = store.clone();
+            let task = std::thread::spawn(move || {
+                if retain {
+                    owned.release_spawn("shell", "/work", generation);
+                } else {
+                    owned.drop_pending_spawn("shell", "/work", generation);
+                }
+            });
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let transitioned = loop {
+                if store
+                    .get("shell")
+                    .is_none_or(|row| row.mode == SessionMode::Stopped)
+                {
+                    break true;
+                }
+                if std::time::Instant::now() >= deadline {
+                    break false;
+                }
+                std::thread::yield_now();
+            };
+            drop(sender_guard); // Always release before asserting, even on failure.
+            task.join().unwrap();
+            assert!(
+                transitioned,
+                "canonical state must change before releasing the byte sender (retain={retain})"
+            );
+            assert!(matches!(
+                bytes.try_recv(),
+                Err(broadcast::error::TryRecvError::Closed)
+            ));
+        }
     }
 
     #[test]

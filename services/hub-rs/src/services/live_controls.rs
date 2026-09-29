@@ -1,8 +1,10 @@
 //! Live switches and handoff/history adapters over the owned daemon.
+mod confirmation;
 use super::agent_lifecycle::Lifecycle;
 use crate::{Handle, Options, protocol::Event};
 use anyhow::{Result, bail};
 use claudemon::daemon::embedded::{Command, EmbeddedClient};
+pub(crate) use confirmation::ConfirmedControls;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -36,6 +38,7 @@ fn acknowledged(mut receipt: Value, bookkeeping: Result<()>) -> Value {
 }
 struct Controls {
     engine: EmbeddedClient,
+    confirmed: Arc<ConfirmedControls>,
     lifecycle: Option<Arc<Lifecycle>>,
     rows: Arc<RwLock<BTreeMap<String, Value>>>,
     hub: Handle,
@@ -58,7 +61,13 @@ impl Controls {
             .and_then(|l| l.records().get(id).map(|r| r.generation.clone()))
             .unwrap_or_default()
     }
-    async fn note(&self, id: &str, generation: &str, patch: Value) -> Result<()> {
+    async fn note(
+        &self,
+        id: &str,
+        generation: &str,
+        stamp: Option<u64>,
+        patch: Value,
+    ) -> Result<()> {
         if let Some(lifecycle) = &self.lifecycle {
             if !generation.is_empty() {
                 if !lifecycle.note_live_control(id, generation, &patch).await? {
@@ -76,18 +85,8 @@ impl Controls {
             if row["status"] == "ended" || row["hub"].as_str().is_some_and(|s| !s.is_empty()) {
                 return Ok(());
             }
-            if let Some(settings) = patch["settings"].as_object() {
-                if !row["settings"].is_object() {
-                    row["settings"] = json!({});
-                }
-                for (key, value) in settings {
-                    row["settings"][key] = value.clone();
-                }
-            }
-            for key in ["livePermissionMode", "requestedSelection"] {
-                if let Some(value) = patch.get(key) {
-                    row[key] = value.clone();
-                }
+            if !self.confirmed.confirm(row, stamp, &patch) {
+                return Ok(());
             }
             row.clone()
         };
@@ -144,8 +143,25 @@ impl Controls {
             }));
         }
         let id = text(&p, "sessionId");
+        if method == "claude.setEffort" && (id.is_empty() || text(&p, "effort").trim().is_empty()) {
+            return Ok(failed("requires a session and an effort level"));
+        }
+        if method == "claude.setModel"
+            && text(&p, "model").is_empty()
+            && text(&p, "modelIdentity").is_empty()
+            && p["contextWindow"].is_null()
+            && text(&p, "effort").trim().is_empty()
+        {
+            bail!("claude.setModel requires {{ sessionId, model and/or effort }}");
+        }
         segment(id)?;
         let generation = self.generation(id);
+        let stamp = self
+            .rows
+            .read()
+            .unwrap()
+            .get(id)
+            .and_then(|row| self.confirmed.observe(row));
         match method {
             "claude.setPermissionMode" => {
                 let mode = text(&p, "mode");
@@ -167,7 +183,7 @@ impl Controls {
                             .as_str()
                             .filter(|s| !s.is_empty())
                             .unwrap_or(mode);
-                        let bookkeeping=self.note(id,&generation,json!({"settings":{"permissionMode":mode},"livePermissionMode":mode})).await;
+                        let bookkeeping=self.note(id,&generation,stamp,json!({"settings":{"permissionMode":mode},"livePermissionMode":mode})).await;
                         Ok(acknowledged(json!({"ok":true,"mode":mode}), bookkeeping))
                     }
                 }
@@ -199,7 +215,12 @@ impl Controls {
                     }
                     Ok(_) => {
                         let bookkeeping = self
-                            .note(id, &generation, json!({"settings":{"effort":effort}}))
+                            .note(
+                                id,
+                                &generation,
+                                stamp,
+                                json!({"settings":{"effort":effort}}),
+                            )
                             .await;
                         Ok(acknowledged(
                             json!({"ok":true,"effort":effort}),
@@ -228,7 +249,7 @@ impl Controls {
                             .as_str()
                             .filter(|s| !s.is_empty())
                             .unwrap_or_else(|| text(&payload, "model"));
-                        let selection=reply.get("requested_selection").filter(|v|v.is_object()).map(|v|json!({"model":v["model"],"contextWindow":v["context_window"]})).or_else(||payload["model_identity"].as_str().map(|model|json!({"model":model,"contextWindow":payload["context_window"]})));
+                        let selection = owner_selection(&reply, &payload);
                         let mut result = json!({"ok":true});
                         if !model.is_empty() {
                             result["model"] = model.into();
@@ -249,7 +270,10 @@ impl Controls {
                             if let Some(selection) = selection {
                                 patch["requestedSelection"] = selection;
                             }
-                            result = acknowledged(result, self.note(id, &generation, patch).await);
+                            result = acknowledged(
+                                result,
+                                self.note(id, &generation, stamp, patch).await,
+                            );
                         }
                         if !text(&reply, "disposition").is_empty() {
                             result["disposition"] = reply["disposition"].clone();
@@ -327,6 +351,21 @@ impl Controls {
         )
     }
 }
+fn owner_selection(reply: &Value, payload: &Value) -> Option<Value> {
+    let (source, model_key) = match reply.get("requested_selection").filter(|v| v.is_object()) {
+        Some(source) => (source, "model"),
+        None if payload["model_identity"].is_string() => (payload, "model_identity"),
+        None => return None,
+    };
+    let mut selection = json!({});
+    if let Some(model) = source.get(model_key) {
+        selection["model"] = model.clone();
+    }
+    if let Some(window) = source.get("context_window") {
+        selection["contextWindow"] = window.clone();
+    }
+    Some(selection)
+}
 fn model_payload(provider: &str, p: &Value) -> Result<Value> {
     let model = text(p, "model");
     let identity = text(p, "modelIdentity");
@@ -391,6 +430,7 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
     };
     let service = Arc::new(Controls {
         engine,
+        confirmed: options.confirmed_controls.clone(),
         lifecycle: options.launch_lifecycle.clone(),
         rows: options.session_snapshots.clone(),
         hub,
@@ -432,6 +472,34 @@ mod tests {
         );
     }
     #[test]
+    fn accepted_owner_selection_preserves_unknown_window_absence_and_explicit_null() {
+        assert_eq!(
+            owner_selection(
+                &json!({"requested_selection":{"model":"owner"}}),
+                &json!({"model_identity":"request","context_window":1000000})
+            ),
+            Some(json!({"model":"owner"}))
+        );
+        assert_eq!(
+            owner_selection(
+                &json!({"requested_selection":{"model":"owner","context_window":null}}),
+                &json!({})
+            ),
+            Some(json!({"model":"owner","contextWindow":null}))
+        );
+        assert_eq!(
+            owner_selection(&json!({}), &json!({"model_identity":"request"})),
+            Some(json!({"model":"request"}))
+        );
+        for invalid in ["opus\n/help", "opus\u{001b}[201~/help"] {
+            assert!(model_payload("claude", &json!({"model":invalid})).is_err());
+        }
+        assert_eq!(
+            model_payload("claude", &json!({"model":"opus","effort":"  \t "})).unwrap(),
+            json!({"model":"opus","model_identity":"opus"})
+        );
+    }
+    #[test]
     fn recents_preserve_archived_history_and_unknown_cost() {
         let rows = recent(
             &json!([{"session_id":"old","archived":true},{"session_id":"new","updated_at":"2026-09-28T12:00:00Z","cwd":"/repo"},{"session_id":"agent-pending"}]),
@@ -443,5 +511,146 @@ mod tests {
         assert_eq!(rows[1]["archived"], true);
         assert!(rows[0].get("costUSD").is_none());
         assert_eq!(rows[0]["title"], "");
+    }
+    #[tokio::test]
+    async fn manual_hook_rows_keep_confirmed_controls_until_the_observed_life_ends() -> Result<()> {
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        let _single_engine = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        let dir = tempfile::tempdir()?;
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: dir.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )?;
+        let ready = engine.ready().await?;
+        let mut options = Options::default();
+        options.engine = Some(engine.client());
+        let confirmed = options.confirmed_controls.clone();
+        let rows = options.session_snapshots.clone();
+        let hub = crate::Hub::start(options)?;
+        hub.ready().await?;
+        let client = crate::client::Client::connect(&hub.handle()).await?;
+        let mut events = client.events();
+        client.topics(["agent.snapshot".into()].into()).await?;
+        let controls = Controls {
+            engine: engine.client(),
+            confirmed,
+            lifecycle: None,
+            rows: rows.clone(),
+            hub: hub.handle(),
+            home: dir.path().into(),
+            config: dir.path().into(),
+        };
+        assert_eq!(
+            controls.call("claude.setEffort", json!({})).await?["ok"],
+            false
+        );
+        assert!(
+            controls
+                .call("claude.setModel", json!({"sessionId":"manual"}))
+                .await
+                .is_err()
+        );
+        let http = reqwest::Client::new();
+        for event in ["SessionStart", "Stop"] {
+            http.post(format!("http://{}/hook", ready.hook_addr))
+                .json(&json!({"hook_event_name":event,"session_id":"manual","cwd":dir.path()}))
+                .send()
+                .await?
+                .error_for_status()?;
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while rows
+                .read()
+                .unwrap()
+                .get("manual")
+                .is_none_or(|r| r["ambientState"] != "idle")
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        // The engine has no paid provider. Exercise the exact bookkeeping seam
+        // reached after an accepted control ACK against its real manual row.
+        let stamp = controls.confirmed.observe(&rows.read().unwrap()["manual"]);
+        controls
+            .note(
+                "manual",
+                "",
+                stamp,
+                json!({"settings":{"effort":"high","model":"opus"},"livePermissionMode":"plan"}),
+            )
+            .await?;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if events
+                    .recv()
+                    .await?
+                    .data
+                    .is_some_and(|r| r["liveEffort"] == "high")
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+            }
+        })
+        .await??;
+        let previous_update = rows.read().unwrap()["manual"]["updated_at"].clone();
+        for event in ["UserPromptSubmit", "Stop"] {
+            http.post(format!("http://{}/hook", ready.hook_addr))
+                .json(&json!({"hook_event_name":event,"session_id":"manual","cwd":dir.path()}))
+                .send()
+                .await?
+                .error_for_status()?;
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let row = client
+                    .call("sessions.snapshot", json!({"sessionId":"manual"}))
+                    .await?;
+                if row["ambientState"] == "idle"
+                    && row["liveEffort"] == "high"
+                    && row["updated_at"] != previous_update
+                {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await??;
+        http.post(format!("http://{}/hook", ready.hook_addr))
+            .json(&json!({"hook_event_name":"SessionStart","session_id":"manual","cwd":dir.path()}))
+            .send()
+            .await?
+            .error_for_status()?;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while rows
+                .read()
+                .unwrap()
+                .get("manual")
+                .is_none_or(|r| r.get("liveEffort").is_some())
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        controls
+            .note("manual", "", stamp, json!({"settings":{"effort":"low"}}))
+            .await?;
+        assert!(
+            rows.read().unwrap()["manual"].get("liveEffort").is_none(),
+            "late ACK cannot bind a restarted manual session"
+        );
+        hub.shutdown()?;
+        engine.shutdown().await?;
+        Ok(())
     }
 }

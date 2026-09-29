@@ -88,3 +88,82 @@ async fn owned_startup_preserves_retired_intent_database_and_refuses_its_method(
         assert_untouched(&database, &bytes, &artifact);
     }
 }
+
+#[test]
+fn account_creation_is_visible_through_the_public_account_list() {
+    // Profile root selection intentionally supports process environment in
+    // production. Exercise it in a child so no test changes global HOME/PATH.
+    const FIXTURE: &str = "WKS_ACCOUNT_LIST_FIXTURE";
+    if let Some(root) = std::env::var_os(FIXTURE) {
+        let root = std::path::PathBuf::from(root);
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let mut options = Options::default();
+            options.home_dir = Some(root.join("home"));
+            options.config_dir = Some(root.join("config"));
+            options.data_dir = Some(root.join("data"));
+            let backend = Backend::start(
+                ServeConfig {
+                    host: "127.0.0.1".into(),
+                    hook_port: 0,
+                    api_port: 0,
+                    db_path: root.join("sessions.db"),
+                },
+                EngineOptions {
+                    usage_poll_on_boot: Some(false),
+                },
+                options,
+            )
+            .await
+            .unwrap();
+            let client = Client::connect(&backend.handle()).await.unwrap();
+            let added = client
+                .call("desktop.claudeProfilesAddAccount", json!({"name":"Second"}))
+                .await
+                .unwrap();
+            let id = added["profile"]["id"].as_str().unwrap();
+            assert!(!id.is_empty());
+            assert_eq!(added["profile"]["name"], "Second");
+            let accounts = client
+                .call("desktop.claudeProfilesAccounts", json!({}))
+                .await
+                .unwrap();
+            assert!(accounts.get(id).is_some_and(|row| row.is_object()));
+            let dir = Path::new(added["profile"]["configDir"].as_str().unwrap());
+            assert!(
+                dir.canonicalize()
+                    .unwrap()
+                    .starts_with(root.join("home/.claude/accounts").canonicalize().unwrap())
+            );
+            assert!(!dir.join(".credentials.json").exists());
+            client.close();
+            backend.shutdown().await.unwrap();
+        });
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("home/.claude")).unwrap();
+    std::fs::create_dir(root.path().join("config")).unwrap();
+    std::fs::write(
+        root.path().join("config/config.yaml"),
+        "agents:\n  checkProviderOnStartup: false\nusage:\n  pollOnBoot: false\n",
+    )
+    .unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "account_creation_is_visible_through_the_public_account_list",
+            "--nocapture",
+        ])
+        .env(FIXTURE, root.path())
+        .env("CLAUDE_CONFIG_DIR", root.path().join("home/.claude"))
+        .env("HOME", root.path().join("home"))
+        .env("USERPROFILE", root.path().join("home"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

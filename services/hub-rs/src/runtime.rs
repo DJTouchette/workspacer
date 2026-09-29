@@ -95,6 +95,7 @@ pub struct Options {
     pub(crate) launch_lifecycle: Option<Arc<crate::services::agent_lifecycle::Lifecycle>>,
     pub(crate) routing: Option<Arc<crate::services::routing::RoutingService>>,
     pub(crate) session_snapshots: Arc<std::sync::RwLock<BTreeMap<String, Value>>>,
+    pub(crate) confirmed_controls: Arc<services::live_controls::ConfirmedControls>,
     pub(crate) workflow_runtime: Option<Arc<crate::services::workflow_runtime::WorkflowRuntime>>,
     pub(crate) replacements: Option<Arc<crate::services::manager_replacements::ReplacementState>>,
     pub(crate) worktrees: Option<Arc<crate::services::worktrees::Worktrees>>,
@@ -171,6 +172,7 @@ impl Default for Options {
             launch_lifecycle: None,
             routing: None,
             session_snapshots: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+            confirmed_controls: Default::default(),
             workflow_runtime: None,
             replacements: None,
             worktrees: None,
@@ -1212,6 +1214,7 @@ struct Core {
     federation: crate::federation::Routes,
     peers: HashMap<u64, Peer>,
     providers: BTreeMap<String, u64>,
+    missing_reported: BTreeSet<String>,
     pending: HashMap<u64, Pending>,
     demand_counts: BTreeMap<String, usize>,
     seq: u64,
@@ -1555,9 +1558,9 @@ impl Core {
                 peer.reports_interaction = true;
             }
             if frame.op != "call"
-                || !crate::services::quiescence::passive_call(
+                || !crate::services::quiescence::passive_request(
                     &frame.method,
-                    frame.params.as_ref().unwrap_or(&Value::Null),
+                    frame.params.as_ref(),
                 )
             {
                 peer.last_interaction_ms = now;
@@ -1583,6 +1586,7 @@ impl Core {
                         continue;
                     }
                     self.providers.insert(method.clone(), id);
+                    self.missing_reported.remove(&method);
                     accepted.push(method);
                 }
                 if frame.wants_caller_context {
@@ -1961,6 +1965,15 @@ impl Core {
             self.providers.get(&frame.method).copied()
         };
         if handler.is_none() && provider.is_none() {
+            // One diagnostic per ordinary method per outage, reset by an
+            // accepted registration. Never log request params or credentials.
+            // Bound retained diagnostic keys independently of RPC admission.
+            if frame.method.len() <= 512
+                && self.missing_reported.len() < 4096
+                && self.missing_reported.insert(frame.method.clone())
+            {
+                eprintln!("hub: NO PROVIDER for {:?}", frame.method);
+            }
             self.send(
                 caller,
                 Frame::error(frame.id, format!("no provider for {}", frame.method)),
@@ -2367,6 +2380,7 @@ async fn run(
         federation: federation.routes(),
         peers: HashMap::new(),
         providers: BTreeMap::new(),
+        missing_reported: BTreeSet::new(),
         pending: HashMap::new(),
         demand_counts: BTreeMap::new(),
         seq: 0,
@@ -2734,6 +2748,7 @@ mod launch_proof_tests {
             federation: Default::default(),
             peers: HashMap::from([(1, peer)]),
             providers: BTreeMap::new(),
+            missing_reported: BTreeSet::new(),
             pending: HashMap::from([(7, pending)]),
             demand_counts: BTreeMap::new(),
             seq: 7,
@@ -2996,3 +3011,7 @@ mod conversation_overflow_tests {
             .unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "runtime/bus_audit_tests.rs"]
+mod bus_audit_tests;

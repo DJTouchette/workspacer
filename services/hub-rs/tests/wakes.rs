@@ -20,6 +20,7 @@ struct Fixture {
     resume: Arc<AtomicBool>,
     capture_fail: Arc<AtomicBool>,
     fail_recipients: Arc<Mutex<BTreeSet<String>>>,
+    fail_escalations: Arc<AtomicBool>,
 }
 impl Fixture {
     fn new(manager: bool) -> Self {
@@ -85,10 +86,18 @@ impl Fixture {
         let delivery_fail = fail.clone();
         let fail_recipients = Arc::new(Mutex::new(BTreeSet::new()));
         let recipients = fail_recipients.clone();
+        let fail_escalations = Arc::new(AtomicBool::new(false));
+        let escalations = fail_escalations.clone();
         let delivery: Delivery = Arc::new(move |id, message, _| {
             let (sent, fail) = (deliver_sent.clone(), delivery_fail.clone());
             let recipients = recipients.clone();
+            let escalations = escalations.clone();
             Box::pin(async move {
+                anyhow::ensure!(
+                    !escalations.load(Ordering::SeqCst)
+                        || !message.contains("[fleet] Worker escalated"),
+                    "escalation delivery refused"
+                );
                 anyhow::ensure!(
                     !fail.load(Ordering::SeqCst) && !recipients.lock().unwrap().contains(&id),
                     "explicit delivery refusal"
@@ -108,6 +117,7 @@ impl Fixture {
             resume,
             capture_fail,
             fail_recipients,
+            fail_escalations,
         }
     }
     fn mode(&self, id: &str, mode: &str, now: i64) {
@@ -513,6 +523,206 @@ async fn manager_finish_wake_uses_committed_workflow_state_and_current_owner() -
             expected
         );
         assert!(!sent[0].1.contains("Step implement is dispatched"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_escalation_group_does_not_silence_completed_workers() -> Result<()> {
+    let f = Fixture::new(true);
+    f.fail_escalations.store(true, Ordering::SeqCst);
+    f.replies.lock().unwrap().insert("one".into(), json!({"items":[
+        {"kind":"user_message","text":"task"},
+        {"kind":"assistant_text","text":"Need approval\n```wks-escalation\n{\"type\":\"worker-escalation\",\"status\":\"blocked\",\"reason\":\"needs write authority\",\"requiredAuthorityOrDecision\":\"approve publish\",\"changed\":false,\"nextAction\":\"review then decide\"}\n```"}]}));
+    f.mode("one", "idle", 100);
+    f.mode("two", "idle", 110);
+    assert!(f.wakes.tick(1610).await.is_err());
+    {
+        let sent = f.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].1.contains("session:two"));
+        assert!(!sent[0].1.contains("session:one"));
+    }
+    f.fail_escalations.store(false, Ordering::SeqCst);
+    for id in ["one", "two"] {
+        f.mode(id, "streaming", 2000);
+        f.mode(id, "idle", 2100);
+    }
+    f.wakes.tick(3600).await?;
+    let sent = f.sent.lock().unwrap();
+    assert_eq!(
+        sent.len(),
+        2,
+        "only the rejected escalation may need another wake"
+    );
+    assert!(sent[1].1.contains("[fleet] Worker escalated"));
+    assert!(sent[1].1.contains("session:one"));
+    assert!(!sent[1].1.contains("session:two"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn failure_marker_is_separate_from_valid_terminal_contract_and_outcome() -> Result<()> {
+    use workspacer_hub::services::task_store::TaskStore;
+    for escalation in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let history = Arc::new(TaskStore::open(dir.path().join("history.json"))?);
+        history.transaction(|state| {
+            state.tasks.push(
+                json!({"taskId":"task","ownerSessionId":"parent","projectCwd":"/project",
+                "attempts":[{"dispatchId":"dispatch","sessionId":"one","metrics":{}}],
+                "workflow":{"hash":"pin","definition":{"id":"flow","name":"Flow","revision":1,
+                    "steps":[{"id":"work","kind":"implementation"}]},
+                    "steps":[{"id":"work","sessionId":"one","state":"dispatched"}]}}),
+            );
+            Ok(())
+        })?;
+        let f = Fixture::with_history(true, Some(history.clone()));
+        f.rows.lock().unwrap().get_mut("one").unwrap()["resultSchema"] = json!({"type":"object"});
+        let (fence, body) = if escalation {
+            (
+                "wks-escalation",
+                json!({"type":"worker-escalation","status":"blocked","reason":"No authority","requiredAuthorityOrDecision":"Approve writing","changed":false,"nextAction":"Review decision"}),
+            )
+        } else {
+            (
+                "wks-result",
+                json!({"ok":false,"reason":"Provider refused"}),
+            )
+        };
+        f.replies.lock().unwrap().insert("one".into(),json!({"items":[{"kind":"user_message","text":"task"},
+            {"kind":"assistant_text","text":format!("⚠️ Error: Provider refused\n```{fence}\n{body}\n```")}]}));
+        f.mode("one", "idle", 100);
+        f.wakes.tick(1600).await?;
+        let task = history.task("task")?.unwrap();
+        let step = &task["workflow"]["steps"][0];
+        assert_eq!(
+            task["attempts"][0]["resultContract"],
+            if escalation { "escalated" } else { "valid" }
+        );
+        assert_eq!(
+            step["state"],
+            if escalation { "blocked" } else { "completed" }
+        );
+        if escalation {
+            assert_eq!(
+                serde_json::from_str::<Value>(step["outcome"].as_str().unwrap())?,
+                body
+            );
+        } else {
+            assert_eq!(step["outcome"], body);
+        }
+        let sent = f.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].1.contains("FAILED: Provider refused"));
+        assert_eq!(sent[0].1.contains("[fleet] Worker escalated"), escalation);
+        assert!(!sent[0].1.contains("Structured result MISSING"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocked_manager_excludes_self_and_unparented_blocks_coalesce_by_recipient() -> Result<()> {
+    let f = Fixture::new(true);
+    f.rows.lock().unwrap().insert(
+        "other".into(),
+        json!({"sessionId":"other","isWakeTarget":true,"status":"active","ambientState":"idle"}),
+    );
+    f.mode("parent", "waiting_input", 100);
+    f.wakes.tick(20100).await?;
+    f.wakes.tick(21600).await?;
+    let sent = f.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "other");
+    assert!(sent[0].1.contains("(session:parent, question)"));
+    let f = Fixture::new(true);
+    {
+        let mut rows = f.rows.lock().unwrap();
+        for id in ["one", "two"] {
+            rows.get_mut(id)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove("parentSessionId");
+        }
+        rows.get_mut("one").unwrap()["cwd"] = "/work/unlabelled-worker".into();
+    }
+    f.mode("one", "waiting_approval", 100);
+    f.mode("two", "waiting_input", 100);
+    f.wakes.tick(20099).await?;
+    assert!(f.sent.lock().unwrap().is_empty());
+    f.wakes.tick(20100).await?;
+    f.wakes.tick(21599).await?;
+    assert!(f.sent.lock().unwrap().is_empty());
+    f.wakes.tick(21600).await?;
+    let sent = f.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0]
+            .1
+            .contains("- unlabelled-worker (session:one, approval)")
+    );
+    assert!(sent[0].1.contains("(session:two, question)"));
+    assert!(sent[0].1.ends_with(
+        "Run a /supervise pass: gather the context and notify me with a recommendation."
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn terminal_wire_distinguishes_stopped_failed_long_and_invalid_escalation() -> Result<()> {
+    for (reply, stopped, full, failed, invalid) in [
+        ("short reply".to_owned(), false, false, false, false),
+        ("long report ".repeat(80), false, true, false, false),
+        ("short reply".to_owned(), true, false, false, false),
+        (
+            "⚠️ Error: Credit balance is too low".to_owned(),
+            false,
+            false,
+            true,
+            false,
+        ),
+        (
+            "Cannot publish\n```wks-escalation\n{}\n```".to_owned(),
+            false,
+            true,
+            false,
+            true,
+        ),
+        (
+            "I cannot publish with this authority".to_owned(),
+            false,
+            false,
+            false,
+            false,
+        ),
+    ] {
+        let f = Fixture::new(true);
+        f.replies.lock().unwrap().insert("one".into(),json!({"items":[{"kind":"user_message","text":"task"},{"kind":"assistant_text","text":reply}]}));
+        if stopped {
+            f.rows.lock().unwrap().get_mut("one").unwrap()["status"] = "ended".into();
+        }
+        f.mode("one", "idle", 100);
+        f.wakes.tick(1600).await?;
+        let sent = f.sent.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let message = &sent[0].1;
+        assert_eq!(message.contains("Full final message —"), full, "{message}");
+        assert_eq!(message.contains("stopped/killed"), stopped, "{message}");
+        assert_eq!(
+            message.starts_with("[fleet] Worker FAILED"),
+            failed,
+            "{message}"
+        );
+        assert_eq!(
+            message.contains("Worker escalation INVALID"),
+            invalid,
+            "{message}"
+        );
+        if failed {
+            assert!(message.contains("then type /logout and then /login"));
+        }
+        assert!(!message.starts_with("[fleet] Worker escalated"));
     }
     Ok(())
 }

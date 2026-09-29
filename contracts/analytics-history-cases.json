@@ -1,6 +1,6 @@
 {
  "version":1,
- "vocabulary":{"blocks":{"cases":{"why":"Persistent headless analytics must deduplicate repeated turns, attribute sidechain models, preserve managed native cost and expose unrecorded rows.","required":["name","mainJsonl","subagentJsonl","snapshots","expected"],"loaders":["services/hub-rs/tests/analytics.rs::persistent_headless_analytics_retains_deduplicated_model_splits_and_filters","apps/desktop/scripts/test-headless-analytics.mjs::headless analytics retains real usage and model splits across process restarts"]}}},
+ "vocabulary":{"blocks":{"cases":{"why":"Persistent headless analytics must deduplicate repeated turns, attribute sidechain models, preserve managed native cost and expose unrecorded rows.","required":["name","mainJsonl","subagentJsonl","snapshots","expected"],"loaders":["services/hub-rs/tests/analytics.rs::persistent_headless_analytics_retains_deduplicated_model_splits_and_filters","apps/desktop/src/main/services/analyticsHistoryContract.test.ts::persistent analytics corpus uses the retained Electron store and transcript parser"]}}},
  "cases":[{
   "name":"mixed provider history survives transcript cleanup",
   "mainJsonl":"{\"type\":\"assistant\",\"message\":{\"id\":\"one\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":100}}}\n{\"type\":\"assistant\",\"message\":{\"id\":\"one\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":1000,\"output_tokens\":100}}}\n",
