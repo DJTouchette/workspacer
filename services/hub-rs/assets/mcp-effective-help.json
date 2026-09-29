@@ -1,0 +1,285 @@
+{
+  "groups": {
+    "operator": [
+      {
+        "name": "observe",
+        "tools": [
+          "list_agents",
+          "get_transcript",
+          "summarize_agent_status",
+          "get_conversation",
+          "get_snapshot",
+          "list_snapshots",
+          "list_models",
+          "list_providers",
+          "project_status",
+          "get_host_cwd",
+          "list_resumable_sessions"
+        ]
+      },
+      {
+        "name": "report",
+        "tools": [
+          "report_progress"
+        ]
+      },
+      {
+        "name": "spawn",
+        "tools": [
+          "spawn_agent",
+          "respawn_with",
+          "create_terminal",
+          "open_terminal"
+        ]
+      },
+      {
+        "name": "routing",
+        "tools": [
+          "select_model",
+          "list_dispatches",
+          "list_dispatch_targets",
+          "select_dispatch_model",
+          "routing_preferences_get",
+          "routing_preferences_validate",
+          "routing_preferences_save",
+          "routing_preferences_reset",
+          "routing_preview"
+        ]
+      },
+      {
+        "name": "drive",
+        "tools": [
+          "send_message",
+          "approve",
+          "answer",
+          "set_model",
+          "signal",
+          "set_approval_gate",
+          "terminal_input",
+          "terminal_resize",
+          "adopt_workers",
+          "list_orphans"
+        ]
+      },
+      {
+        "name": "files",
+        "tools": [
+          "list_dir",
+          "list_entries",
+          "read_file",
+          "write_file",
+          "search_project"
+        ]
+      },
+      {
+        "name": "workflows",
+        "tools": [
+          "list_workflows",
+          "get_workflow",
+          "validate_workflow",
+          "create_workflow",
+          "update_workflow",
+          "clone_workflow",
+          "disable_workflow",
+          "delete_workflow",
+          "select_default_workflow",
+          "select_project_workflow",
+          "start_workflow",
+          "next_workflow_step",
+          "decide_workflow_step",
+          "dispatch_workflow_step",
+          "manager_context",
+          "get_task_references",
+          "update_task_references",
+          "list_manager_requests",
+          "get_manager_request",
+          "resolve_manager_request",
+          "accept_task_outcome"
+        ]
+      },
+      {
+        "name": "config",
+        "tools": [
+          "get_config",
+          "get_config_path",
+          "reload_config",
+          "save_config"
+        ]
+      },
+      {
+        "name": "profiles",
+        "tools": [
+          "list_profiles",
+          "add_profile",
+          "update_profile",
+          "remove_profile"
+        ]
+      },
+      {
+        "name": "sessions",
+        "tools": [
+          "list_saved_sessions",
+          "load_saved_session",
+          "save_saved_session",
+          "delete_saved_session"
+        ]
+      },
+      {
+        "name": "layouts",
+        "tools": [
+          "list_layouts",
+          "save_layout",
+          "delete_layout"
+        ]
+      },
+      {
+        "name": "library",
+        "tools": [
+          "list_library",
+          "save_library",
+          "remove_library"
+        ]
+      },
+      {
+        "name": "analytics",
+        "tools": [
+          "analytics_summary",
+          "analytics_recent"
+        ]
+      },
+      {
+        "name": "notify",
+        "tools": [
+          "notify"
+        ]
+      },
+      {
+        "name": "jobs",
+        "tools": [
+          "list_jobs",
+          "job_history",
+          "propose_job",
+          "run_job",
+          "remove_job",
+          "close_session",
+          "notify_when"
+        ]
+      },
+      {
+        "name": "brief",
+        "tools": [
+          "brief_append",
+          "brief_check",
+          "brief_archive"
+        ]
+      },
+      {
+        "name": "ui",
+        "tools": [
+          "focus_agent",
+          "open_pane",
+          "open_browser",
+          "open_plugin",
+          "open_spawn_dialog",
+          "open_guide",
+          "run_ui_action"
+        ]
+      }
+    ],
+    "triage": [
+      {
+        "name": "observe",
+        "tools": [
+          "list_agents",
+          "get_transcript",
+          "summarize_agent_status",
+          "get_conversation",
+          "get_snapshot",
+          "list_snapshots",
+          "get_host_cwd"
+        ]
+      },
+      {
+        "name": "report",
+        "tools": [
+          "report_progress"
+        ]
+      },
+      {
+        "name": "drive",
+        "tools": [
+          "send_message",
+          "approve",
+          "signal"
+        ]
+      },
+      {
+        "name": "config",
+        "tools": [
+          "get_config"
+        ]
+      },
+      {
+        "name": "ui",
+        "tools": [
+          "focus_agent",
+          "open_pane",
+          "open_browser",
+          "open_plugin",
+          "open_spawn_dialog",
+          "open_guide",
+          "run_ui_action"
+        ]
+      }
+    ],
+    "view": [
+      {
+        "name": "observe",
+        "tools": [
+          "list_agents",
+          "get_transcript",
+          "summarize_agent_status",
+          "get_conversation",
+          "get_snapshot",
+          "list_snapshots",
+          "get_host_cwd"
+        ]
+      },
+      {
+        "name": "report",
+        "tools": [
+          "report_progress"
+        ]
+      },
+      {
+        "name": "config",
+        "tools": [
+          "get_config"
+        ]
+      }
+    ]
+  },
+  "guidance": {
+    "analytics": "analytics_summary aggregates usage/cost across sessions; analytics_recent\nreturns the latest finished sessions with per-session usage.",
+    "brief": "brief_append({project, section, line}) adds ONE line to a project's\n.workspacer/brief.md. Use it instead of read_file + write_file: it is\ninspect-then-edit under a lock, so it cannot clobber a line a worker or the user\nwrote while you were composing yours, and it is strictly additive — it never\nrewrites, reorders or reformats anything already in the file.\n- project is the project DIRECTORY (your own cwd for your fleet brief); the\n  .workspacer/brief.md path under it is composed for you.\n- section is Now | Direction | Recently | User. A typo is refused, not guessed.\n- Recently PREPENDS (a dated log, newest first); the rest append.\n- The brief is created, with all four sections, if the project has none.\n- A line over 4000 characters is REFUSED and nothing is written, rather than cut\n  at the limit. Split it into separate entries and append each one.\n- The result carries entriesInSection, bytesInSection and bytesInBrief: the\n  state AFTER your write. That is how you notice a brief going over budget\n  without reading it. Past roughly 20 entries in a section, trim it.\n- LOGGING A FINISHED WORKER: pass sessionId and the worker's parsed wks-result\n  object, and write only your ONE SENTENCE of significance in 'line'. The host\n  adds the date, renders the facts (commit, files, checks, caveats, follow-ups)\n  compactly, and appends a VALIDATED session:<id>. You stop retyping mechanical\n  detail, and you stop mistyping the reference — a malformed id is refused with\n  nothing written rather than left in the brief as a dead link. The sentence is\n  required: a result object alone is never a brief line, because the judgement\n  is the half only you can write.\nbrief_check({project}) reports which ## Now lines have outlived their dispatch:\nreferences to sessions this host no longer knows about (a FINISHED worker counts\nas gone — that is exactly the case that strands a line), malformed references,\nand dispatch-shaped lines that name no session at all. It is READ-ONLY and never\nprunes anything: the user's brief edits are authoritative, so it hands you the\nlist and you decide. Worth a call when you inherit a fleet or run /checkpoint.\nbrief_archive({project, section, keep|count}) is the other half, and the way to\ntrim: it moves the OLDEST entries of one section out to\n.workspacer/brief.archive.md in a single call, byte for byte, under the same\nlock. Give keep (leave this many newest, archive the rest; idempotent) or count\n(archive this many oldest), never both. Recently is newest-first, so its oldest\nentries are its last. It returns how many moved plus the same three counts.\nBetween the two, do not edit a brief with read_file + write_file.",
+    "config": "get_config returns the full workspacer config; save_config deep-merges a\npartial patch (pass ONLY the keys you change). reload_config re-reads disk.",
+    "drive": "send_message queues a prompt for an agent (delivered when it can accept input).\napprove resolves a pending permission prompt (yes/no/always — \"always\" persists\na standing allow, so use it deliberately). answer resolves an AskUserQuestion\npicker. signal sends SIGINT (interrupt) / SIGTERM (stop). set_approval_gate\nparks every tool call for approval — useful before letting an agent continue\nunattended. The gate is a workspacer-side hold, SEPARATE from the session's\nClaude permission mode: gate off does not stop the session's own permission\nprompts (only its permission mode governs those; the gate response reports the\ncurrent mode). terminal_input types raw bytes into a PTY session (shells from\ncreate_terminal); prefer send_message for agents. For a session on a federated\npeer (its list_agents row has a \"hub\" field), pass that hub value on\nsend_message / approve / answer / signal / set_approval_gate.\nadopt_workers is for SUCCESSION, and you need it once, on your first turn as a\nreplacement manager. Fleet wakes are parent-keyed: a worker's finished report\nand its report_progress notes go to the session that dispatched it, so when a\nmanager is replaced its dispatches are talking to a session that is gone.\nadopt_workers({fromSessionId: <the manager you replaced>, toSessionId: <your\nown session id>}) re-points them at you — after it, every one of those workers\nwakes YOU when it finishes, with no polling and no reconciliation by hand. The\npredecessor's id is on the first line of its handoff file. If it CRASHED and\nwrote no handoff, call list_orphans: it returns every DEAD parent that still has\nlive children — the label it ran under, its directory, when it died, whether it\nwas confirmed to be a manager (the host keeps a record of a manager's death that\noutlives its session row), and the workers still pointing at it. The confirmed\nmanager whose label and directory match what you were told to take over is your\nfromSessionId. It reports candidates and never picks one, on purpose: with two\nof them, adopting the wrong group re-points ANOTHER manager's workers onto you\nand nothing says so — read a worker of each group first (its cwd, and\nget_snapshot for what it was dispatched to do). A candidate marked\nconfirmedManager:false is only a dangling parent id, which could equally be a\nworker that spawned agents of its own: a lead, not an answer. It is refused if you\nare not a live manager session (re-pointing workers at a parent no wake can\nreach would silence them, which is worse than leaving them), and \"0 moved\" is a\nreal answer: the predecessor had nothing left in flight.",
+    "files": "Host-filesystem access (the machine workspacer runs on): list_dir / list_entries\nto explore, read_file / write_file for file IO, search_project for ripgrep\nacross a project. Use these to inspect or brief work, not to do the coding\nyourself — spawn an agent in the directory instead.",
+    "jobs": "Jobs are recurring or one-off tasks the HUB runs unattended: spawn an agent\nwith a prompt, run a shell command, or call a capability, on an interval, at a\ndaily time, once, or manually. They keep firing with the app closed.\nYou can read them (list_jobs, job_history), run or delete an existing one, and\nPROPOSE new ones. You cannot arm one. A proposal is saved disabled with your\nname on it and never runs until the user approves it in Settings -> Jobs, so\ntell the user it is waiting for review; do not report it as scheduled.\npropose_job forces enabled:false and mints a fresh id whatever you send, so do\nnot bother setting either and do not tell the user that a value you sent for\nthem took effect.\n\nTHE SPEC. A job is {\"name\",\"enabled\",\"trigger\",\"action\"}; leave \"id\" out or\nblank to create. The hub validates on save and refuses with a message naming\nthe problem, so the constraints below are hard, not style.\n- name: required, and blank after trimming counts as missing.\n- trigger, exactly one kind, and there are only these four. There is no event\n  trigger and no bus-topic trigger; do not invent one.\n    {\"kind\":\"interval\",\"everyMinutes\":60}   everyMinutes >= 1\n    {\"kind\":\"daily\",\"at\":\"09:00\",\"days\":[1,2,3,4,5]}\n        at is 24-hour HH:MM in the HUB's local time. days are 0=Sunday through\n        6=Saturday, and omitting days means every day.\n    {\"kind\":\"once\",\"once\":\"2026-09-01T09:00:00Z\"}   RFC3339\n    {\"kind\":\"manual\"}                       fires only when someone runs it\n- action, exactly one kind:\n    {\"kind\":\"spawn\",\"spawn\":{\"cwd\",\"prompt\",\"provider\",\"model\",\"effort\",\n                             \"permissionMode\",\"context\"}}\n        cwd and prompt are both REQUIRED and both refused when blank. cwd is\n        an absolute path. provider is claude | codex | copilot | opencode | pi; blank\n        model or effort means the provider's default. permissionMode is\n        clamped for jobs whatever you ask for: an unattended agent gets no\n        permission bypass, no pre-approved MCP servers and no account-profile\n        config dir.\n    {\"kind\":\"shell\",\"shell\":{\"command\",\"cwd\"}}\n        command required; runs through /bin/sh -c (cmd /C on Windows). cwd\n        optional.\n    {\"kind\":\"call\",\"call\":{\"method\",\"params\"}}\n        method required. It may NOT start with jobs. (that recurses into this\n        surface) or hub: (that would run the call on another machine; job\n        state is host-local and deliberately does not federate).\nRuns are capped at 15 minutes. A fire that lands while the previous run is\nstill going is skipped, never queued. A once job disables itself when it\nfires. A failed run raises a notification carrying the output tail.\n\nCONTEXT STEPS are the part worth reaching for. A spawn action may run up to\nFOUR steps first: code whose output is fed to the agent, and whose guards can\ncancel the run so no model is woken at all.\n  \"context\":[{\"kind\":\"shell\",\"shell\":{\"command\":\"go test ./...\",\"cwd\":\"\"},\n              \"skipIfEmpty\":true,\"skipUnlessMatch\":\"FAIL\",\"ignoreExitCode\":true}]\nA step is kind shell or call, and a call step obeys the same jobs. / hub: rule\nas a call action. Output is substituted into the prompt at {{output}}, or at\n{{output.1}}, {{output.2}} and so on when several steps run; a prompt naming\nneither gets the outputs appended as fenced blocks rather than dropped. Each\nstep's output is capped at 12000 characters and elided in the MIDDLE, so both\nwhat ran and how it ended survive. The guards:\n  skipIfEmpty      nothing came back, so skip the run. For a call step, {},\n                   [], null and \"\" all count as nothing.\n  skipUnlessMatch  RE2, compiled when the job is SAVED, so a bad pattern is\n                   refused then rather than silently never matching at 3am.\n  ignoreExitCode   a nonzero exit code is data, not failure (grep finding\n                   nothing, a test runner reporting failures). Only an exit\n                   CODE is forgiven: a timeout or an unstartable command still\n                   fails the run.\nA guarded run records as skipped and, unlike a failure, stays silent. Prefer a\nguarded spawn over an unguarded one: a job that wakes a model nightly to\nanswer \"nothing to do\" is waste the user pays for.\n\nIS THE MACHINE IDLE? The hub answers fleet.quiescence, a read-only signal for\nwhether this machine's fleet is genuinely at rest, and the CLI over it is\n\"workspacer fleet quiescence\" (exit 0 at rest, 1 not at rest, 2 could not ask;\n2 is not a no). It refuses when unsure, so a session that is spawning, a live\nbackground shell, an open terminal, a pending approval, a job due soon and an\nunreachable federated peer all count as busy. It is what a shell job should\nask before doing anything that assumes nothing is happening, powering the\nmachine down being the obvious one:\n  trigger {\"kind\":\"interval\",\"everyMinutes\":5}\n  action  {\"kind\":\"shell\",\"shell\":{\"command\":\n             \"workspacer fleet quiescence --quiet && /path/to/their/script.sh\"}}\nA shell action does not count as a job due soon, because a shell action is how\nthis check gets run and a poller that counted itself would block forever.\nDo not write the shutdown half for the user. work{spacer} powers nothing down\nitself, the script is theirs, and Settings -> Jobs ships this as a template\nthat arrives switched off with the script path left blank. Send them there\nrather than proposing a job that runs a script nobody has written.",
+    "layouts": "Layout templates are saved pane-geometry presets. list/save/delete.",
+    "library": "The library holds reusable prompts, skills, agent definitions and Fleet Manager\nDISPATCH TEMPLATES, global or per-project (pass cwd). list/save/remove.\nlist_library takes optional kind and id filters — use them: an unfiltered\nlisting returns every item's full body, while list_library({kind:\"dispatch\"})\nis the cheap way to see the templates you can spawn with. Every kind\n'dispatch' row carries \"params\", the placeholders parsed out of its body\n({name, required, default?}), which is what spawn_agent's templateParams\nexpects.",
+    "lifecycle": "Stopping a worker is TWO steps, and both are verbs now:\n1. signal({sessionId, signal:\"SIGTERM\"}) stops the process. (SIGINT just\n   interrupts the current turn.)\n2. close_session({sessionId}) DISMISSES the row: it leaves list_agents and the\n   fleet stops counting it. Before this existed, the only confirmation a worker\n   had really died was sending it another signal and reading a 404.\nrespawn_with({sessionId, amendment}) is the OTHER half of that move: it clones\nthe stopped worker's ORIGINAL task and its cwd/model/provider/effort/parent,\nappends your correction under a heading that supersedes anything above it, and\nstarts a fresh agent with both — so you state the DIAGNOSIS, not the whole task\nagain. Override model/effort/label/cwd as needed; pass worktree:true\nto start clean instead of continuing in the original's worktree. It refuses\nwithout an amendment (a clone with no correction just repeats itself), and the\nsuccessor's provider permission mode is copied explicitly; Workspacer applies\nno separate grant or clamp.\n\nclose_session refuses while the session is still working — hiding a running\nagent from list_agents while it keeps spending is worse than a stale row — and\nis idempotent, so closing an already-forgotten session succeeds. It stops the\ndaemon side too for a session that had not already ended, so \"dismissed\" is not\na lie. The user's desktop PANE is theirs to close; this is the fleet's view.",
+    "notify": "notify shows a desktop notification on the workspacer machine — use it to\nsurface something that needs the user's attention.\n\nGIVE IT A CLICK TARGET whenever there is somewhere to go. A notification that\ndescribes the route in prose (\"review it in Settings\") makes the user navigate\nby hand; one that carries a target takes them there.\n- sessionId: select that agent. Highest priority — use it for anything about\n  one agent.\n- paneType (+ paneSection): open a pane. With paneType \"settings\", paneSection\n  names the section, e.g. {\"paneType\":\"settings\",\"paneSection\":\"jobs\"} for a\n  job you just proposed. Without the section the Settings pane opens wherever\n  the user last left it.\n- url: opened in their browser. http(s) only; anything else is dropped.\n\nOther fields: level (info/success/warn/error), key (a later notification with\nthe same key REPLACES this one instead of stacking), silent (record it in the\nnotification center without interrupting), inAppOnly (no OS notification).",
+    "observe": "Use evidence already supplied in a fleet wake first; do not reread its report.\nFor an explicit status request, list_agents is the cheap overview; inspect only the needed session.\nThe fleet may span machines: when hubs are federated, list_agents and\nlist_snapshots include every connected peer hub's sessions, and each remote\nrow carries a \"hub\" field naming its machine (local rows have none). That hub\nvalue must round-trip: pass it as the hub input on the per-session tools\n(get_snapshot, get_conversation, get_transcript, send_message, approve,\nanswer, signal, set_approval_gate) to reach the remote session; omit it for\nlocal sessions.\nReading another agent's activity:\n- summarize_agent_status {sessionId, hub?}: on-demand compact interpretation of\n  bounded task and recent text, using the source hub's configured CLI model.\n  Requires a compatible desktop and daemon on that hub; headless/old peers\n  return unavailable. Never poll summaries. Availability is not worker lifecycle;\n  use direct blocker/escalation/final reports as evidence, not a summary.\n- get_conversation with lastMessage:true: returns { seq, lastMessage } — just\n  the session's final assistant message. The right way to read a finished\n  worker's report without paying for its whole conversation.\n- get_conversation with textOnly:true: only the user/assistant text turns\n  (tool calls, tool results, and usage blobs stripped) — the dialogue without\n  the machinery. Both reductions compose with sinceSeq; lastMessage wins when\n  both are set.\n- get_conversation with sinceSeq: track the returned seq per session and pass\n  it back next time, so you only ever digest new turns. This is the right tool\n  for an explicit follow-up inspection, never an automatic polling loop.\n- get_snapshot: full live detail for one session (turns, tools, usage, pending\n  approval/question). Heavier; use when you need everything at once.\n- get_transcript: the raw transcript. Largest payload — prefer the two above,\n  or spawn a cheap worker whose whole job\n  is to read it and reply with a digest, so it never enters your own context.\nWhen you reference a session in an answer, write its id as session:<sessionId>\nso the UI renders a clickable link.",
+    "plugins": "Plugin tools are contributed by installed workspacer plugins and forwarded to\nthe plugin's own sidecar. Tools from every enabled plugin appear automatically;\ndisabled or uninstalled plugins disappear after the catalog refresh. Errors\nlike \"no provider\" mean the plugin is not running.",
+    "profiles": "Claude profiles are named CLAUDE_CONFIG_DIR + extra-args presets applied at\nspawn (spawn_agent's profileId). list/add/update/remove.",
+    "projects": "project_status({}) returns the git state of EVERY configured project in one\ncall: branch, upstream, unpushed (commits ahead), behind, and whether the tree\nis dirty. Use it for a standup instead of shelling out per repo. Pass dirs to\nlimit it. A directory that is not a repo comes back as a row carrying an error,\nso one bad path never costs you the other rows. \"unpushed\" is ABSENT (not 0)\nwhen a branch has no upstream — that is \"nowhere to push\", not \"nothing to\npush\".",
+    "report": "report_progress({note, needsDecision?}) is how you talk to whoever dispatched\nyou, WITHOUT finishing. You cannot address it: it goes to your manager, derived\nfrom your own credential, and there is no session id in the call.\n- ONE line, about your own run: a phase landed, the approach you were given is\n  wrong, you are burning context far faster than the task warrants. Say what\n  would change your manager's next decision.\n- It does NOT end your turn or your task, and it is not your report: your final\n  message reaches your manager in full when you actually finish.\n- needsDecision:true marks you BLOCKED on an answer. The channel is one-way —\n  your manager may reply with a message, or may not — so keep working if you\n  can, and do not wait on it.\n- One per minute, 20 per session, no repeats. Every bound refuses out loud, so\n  a rejected note was NOT delivered: shorten it, wait, or fold it into the next\n  one. Nothing is ever silently truncated.\n- If you have no manager (nobody dispatched you), it refuses — tell the user in\n  your reply instead.",
+    "routing": "Routing preferences: routing_preferences_get returns this connected hub's safe\npolicy, shipped defaults, inherited host values, sparse overrides and revision.\nrouting_preferences_validate/save accept {baseRevision, patch}; reset accepts\n{baseRevision} and clears managed preferences to the inherited baseline.\nMutations require the static authenticated facade credential AND an authenticated\nhost connection to the hub; an agent's operator tier alone is insufficient.\nUnknown changed model catalogs leave a draft pending and unapplied. New model\nIDs need trusted host classification before assigning them to a capability.\nNo caller can edit ranks, directory ceilings, tool scope or host freshness floors.\nPeer-qualified preference edits are unavailable; connect directly to the owner.\nrouting_preview uses the applied policy and bounded usage/cache snapshots, returns\nchoice and reasons without decisionId, decision log, event or agent launch.\n\nselect_model is the ask-before-you-dispatch tool. You name the ROLE the work is\n(scout, mechanical, implementer, reviewer, deep_reviewer, fixer, complex_fixer,\nvalidator, diagnostician, judge) and the project directory as cwd, and the hub\nresolves that role through its routing matrix and the live subscription capacity\ninto a concrete provider, model and effort when the user has not named a model.\nAn explicit user model choice overrides this default: use provider/model and\nexactModel:true on spawn_agent without stale capability/decisionId, or pass\nmodelSelection:{provider,model,effort?} to dispatch_workflow_step instead of routing.\nConfigured model ceilings still apply; an exact choice is\nrefused rather than replaced if a ceiling prevents it.\nWhat comes back, and what to do with it:\n- provider, model, effort: pass them to spawn_agent exactly as named.\n- capability (the tier chosen) and baseCapability (what the role asks for before\n  the routing mode moved it). Copy capability onto the spawn; there is no way to\n  ask for one above what the answer gave.\n- decisionId: pass it on the spawn so the worker and the decision are joined.\n- mode (normal, conserve or spend_down), the capacity it judged, the ceiling it\n  resolved under, and a reason list saying why. The reasons are what you quote to\n  the user, not your own guess at them.\n- capacity.pace, when the host has pacing on: the allowance judged against the\n  CLOCK rather than as a level. A window is not just 60% used, it is 60% used\n  with half its life left, and the ratio of the two is what says whether the\n  fleet will run dry before the reset. pace.state is on_track, ahead,\n  overspending or unknown; pace.ratio is consumed-over-expected (1.0 is exactly\n  on the curve); pace.window names which window bound, and capacity.paceWindows\n  shows what the others said. For a provider with two readable windows the WORSE\n  one binds. Pace can turn a decision CONSERVE that health alone would have\n  called normal, and it can block a spend_down; it never promotes anything and\n  it never overrides a red or exhausted allowance. unknown (no window length\n  reported, or nothing readable) changes nothing. Quote pace.because when you\n  explain a conserve to the user — \"we are 1.6x over the five-hour curve\" is the\n  sentence, and inventing your own number for it is not.\n- effort, and effortStep when a routing mode moved it. A mode has two levers,\n  not one: it can move the role to a different CAPABILITY (a different model),\n  and it can step the effort one notch along that provider's own reasoning\n  ladder — the SAME model, thinking less, or more. Under conserve BOTH can fire\n  on one decision, so an answer may come back on a cheaper tier AND at a lower\n  effort. effortStep names the effort the matrix declares, the effort the answer\n  runs at, and one sentence saying why. It is present even when the step was\n  armed and then refused, which is how you learn a trim did not happen and why.\n  It is absent when nothing stepped at all. Pass effort to spawn_agent exactly\n  as given; do not re-derive it from the model.\n- eligible:false means the matrix found nothing spawnable for that role under\n  that constraint: a provider held out of service, no profile pairing that\n  capability with a provider you asked for, or a ceiling whose configured value\n  cannot be read. model is empty and the reason list says which. Do not\n  substitute a model of your own; report the reason it gave.\n- previousProvider (the harness the previous worker ran on) is worth passing when\n  you route a review, so the answer can land on a different model family. It is a\n  PREFERENCE: the router tries the capability's other-provider candidates first\n  and takes the best one it can actually use, then reports independentFamily\n  honestly when none of them could be. fresh is the rule with teeth.\n- fellOverFrom, when present, names the pairing the answer did NOT take. Two\n  different mechanisms can move work across providers and they are easy to\n  confuse: mode_shifts moves a ROLE to a DIFFERENT CAPABILITY (a conserving\n  scout drops from balanced to cheap, and whichever provider that lands on is a\n  consequence), while alternatives keep the SAME capability and change only\n  which PROVIDER serves it, when the primary's own allowance is red, its\n  provider is conserving, or its row is switched off. capability plus\n  baseCapability tell you the first happened; fellOverFrom tells you the second\n  did. A fallover can also be triggered by LIVE AVAILABILITY, and it is worth\n  knowing exactly what that does and does not see. It detects ONE thing: the\n  host asked a provider's CLI what it can launch, the CLI ran, and it reported\n  no launchable model. That candidate is passed over and the reason says so.\n  Everything else is unknown and is used as normal, including a probe that\n  FAILED: a CLI that is not installed makes the host's spawn fail, the daemon\n  answers 502, and that is unknown rather than unavailable, so a missing CLI is\n  NOT what this catches. claude can never be reported unavailable at all,\n  because its model list is assembled from alias names and past transcripts\n  rather than reported by a running CLI, so an empty answer there means \"I do\n  not know\". And the check runs only inside the fallover walk, so it is not\n  applied when you PIN a provider, when the capability has no alternatives, or\n  to the provider a mode shift lands on.\nPlain spawn_agent accepts an explicit provider/model. Otherwise ask select_model\nand pass its decision through. dispatch_workflow_step already performs automatic routing for its pinned step\nunless modelSelection names the explicit user choice, so do not route separately or spawn a duplicate worker.\nThe composed receipt includes the selection and its decisionId for inspection.\nTwo model-routing rules DO bind on every spawn the host receives, asked or not, because they\nlive in the spawn sanitizer rather than in routing:\n- THE MODEL CEILING is per directory (longest matching ancestor wins, default\n  otherwise). A spawn above it is clamped rather than refused. The capability drops\n  and takes the model and effort you named with it, replaced by the permitted\n  capability's own; escalationScrubbed on\n  the result names what went. select_model applies the SAME ceiling before it\n  answers, so a capped answer arrives already capped, with the ceiling and the\n  reason on it, instead of being taken away afterwards.\n- FRESHNESS is a refusal, not a downgrade. Every shipped profile marks its review\n  capabilities fresh, and a spawn declaring a role or capability the active\n  profile marks fresh may not also carry a resumeSessionId. The host refuses the\n  call and names the session it would have inherited, because dropping the field\n  would start a new session the caller went on believing was a continuation.\n  spawn_agent carries no resumeSessionId field at all, so your own dispatches\n  cannot trip it; the rule binds the bus spawn paths that do carry one. What a\n  fresh reviewer gets instead is yours to compose: the task, the acceptance\n  criteria, the diff, the files and the test results, and never the implementer's\n  reasoning.\ndocs/limit-aware-routing.md in the workspacer repo is the full reference: the\nmatrix file, the profiles, the modes and the thresholds, and how to raise a\nceiling. Nothing on this wire edits any of it.",
+    "sessions": "Saved workspace sessions are pane/agent ARRANGEMENTS (the session picker), not\nlive agents — list_agents is the live fleet. list/load/save/delete by filename.",
+    "spawn": "Prefer manager_context to combine pending inbox plus up to four owned task inspections. dispatch_workflow_step validates/decides, routes and spawns one exact pinned step/revision; optional watchContextUsedPct arms a local watch. Do not also select_model/spawn_agent. run:false stops after the skip; uncertain admission never triggers an automatic retry. Reuse nextActions on resolve_manager_request/accept_task_outcome instead of extra next-step reads. Use list_manager_requests({view:\"pending\"}) for a standalone inbox check to combine unresolved identities and original content; fetch get_manager_request only for contentDeferred. Omit view for full history/task state. Use compact:true on resolve_manager_request and workflow step calls to omit repeated template bodies. Reuse returned step instructions instead of immediately calling next_workflow_step again.\n\nTask loops (owning Rust host, standalone or embedded): stage=scout|implement|review|fix|validate|land|other is optional descriptive history metadata. To attribute or continue a task, parentSessionId must name your live local manager; save the returned taskId and dispatchId, then pass taskId and afterDispatchId under that same manager and project. Without valid manager attribution, stage and automatic respawn provenance may launch but are not recorded or linked. Omitted metadata is unclassified standalone history; roles and idle/ended states do not prove completion. respawn_with links a known originating owner/source as a retry; ordinary resumed turns stay one attempt. Recent agents is available from Fleet Deck and the command palette.\n\nspawn_agent starts a new coding-agent session and returns its sessionId.\n- Pass message: the TASK ITSELF, as the new agent's first turn. Dispatching is\n  one call — you do not spawn, wait for the id, and then send_message. The host\n  hands the prompt to the daemon as part of the spawn, so it cannot race the\n  agent coming up. Host contracts land through a separate instruction channel,\n  not inside this user-visible task, and reach the agent's first turn even when\n  message is omitted. Use send_message for anything AFTER that first turn.\n- Pass label (a short human name). For a session-authenticated caller, the host\n  derives parentSessionId from your credential and overwrites any conflicting\n  value, so the new agent nests under you and its direct wakes return to you.\n  Static controllers may still pass parentSessionId explicitly. A manager flag\n  remains separate: it controls fleet-wide broadcasts and task ownership, not\n  whether an ordinary parent receives its own child's wake.\n- Every supported spawned agent receives the full Workspacer operator surface\n  and every enabled plugin tool automatically, including recursively spawned\n  children. Pi is refused because it has no MCP bridge. Legacy toolScope,\n  mcpFacade and pluginTools inputs are accepted but ignored.\n- skipPermissions is provider configuration, not a Workspacer grant. Omit it\n  for the Workspacer config default, pass true for the provider's bypass mode,\n  or false to keep approvals on for one worker.\n- resultSchema (optional) asks the worker for a MACHINE-READABLE report as well\n  as its prose: pass a JSON Schema and the worker is told to end its final\n  message with a fenced wks-result block matching it, which arrives back on your\n  worker-finished wake already parsed and VALIDATED. Use it whenever you will\n  transcribe the outcome into a brief — it turns restating a report into copying\n  fields. Typical shape: {\"type\":\"object\",\"required\":[\"commit\"],\"properties\":\n  {\"commit\":{\"type\":\"string\"},\"filesChanged\":{\"type\":\"array\",\"items\":\n  {\"type\":\"string\"}},\"checksRun\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\n  \"caveats\":{\"type\":\"string\"},\"followUps\":{\"type\":\"array\",\"items\":\n  {\"type\":\"string\"}}}}. Additive: the prose report is unaffected, and a worker\n  that skips or botches the block reports that beside its prose rather than\n  failing. Validated keywords are type/properties/required/items/enum/\n  additionalProperties; anything else is ignored (it can under-constrain, never\n  wrongly reject). The shared Rust host validates arbitrary result schemas in standalone and\n  embedded modes; older peers may refuse them.\n- A fleet worker may finish with one fenced wks-escalation object instead when\n  it is terminally blocked on authority or a decision. Its strict six-key\n  payload is type, status, reason, requiredAuthorityOrDecision, changed, and\n  nextAction. Resolve an in-scope authority or decision yourself; ask the user\n  only before destructive, external, credential, cross-repo, or otherwise\n  unauthorized action. A valid escalation is a terminal alternative to\n  wks-result and gets its own wake card; a malformed block is ordinary prose\n  and does not suppress missing or invalid result errors. This fixed\n  host-authored contract is available on standalone and embedded Rust fleet\n  dispatches alongside validated arbitrary resultSchema.\n- template + templateParams renders a library DISPATCH TEMPLATE (kind\n  'dispatch') into the first message instead of you retyping the framing.\n  Discover one cheaply with list_library({kind:\"dispatch\", id:\"ship-task\"}):\n  each dispatch item carries a machine-readable \"params\" list — {name,\n  required, default?} — so you learn what to fill without reading the body.\n  A required param left unfilled REFUSES the spawn naming it; it is never\n  silently defaulted. The spawn result then echoes the text that was actually\n  sent back as \"renderedMessage\" (with renderedMessageTruncated:true if it was\n  clipped), so verifying the render costs nothing — do not call\n  get_conversation just to see what your own dispatch said. {{cwd}} and\n  {{projectCwd}} are host-owned automatic variables, never templateParams:\n  {{cwd}} is the actual execution directory (an allocated worktree when one\n  exists), while {{projectCwd}} is the original validated project directory.\n- role, capability and decisionId carry a select_model answer onto the dispatch,\n  alongside the provider, model and effort it named. role is what the work IS\n  (implementer, reviewer, scout and the rest); capability is the model tier the\n  answer chose, which you copy and never raise; decisionId joins this worker to\n  that decision in the host's routing log. A dispatch that declares no role is\n  routed by nobody: it gets no decision recorded, gives the directory ceiling no\n  capability to judge, and makes no freshness claim, so a reviewer sent without\n  one loses the guarantee that it never saw the implementation. The routing\n  topic covers what to ask for and what binds whether you asked or not.\n- YOUR MODEL ANSWER MAY COME BACK CLAMPED, and escalationScrubbed on the spawn result\n  is where you see it: a list of the fields the host took away (capability,\n  model and effort are the ordinary cases). It is stamped\n  by the host, which deletes any value you sent under that name first, so it\n  reports what THIS spawn lost and nothing else. A clamped capability takes the\n  model and effort you named with it and substitutes the permitted capability's\n  own. Read it on every spawn rather than assuming you got what you asked for,\n  tell the user what was narrowed, and do not retry the same request: only a\n  person with a text editor can raise a ceiling.\n- Drive it afterwards with send_message; watch it with get_conversation.\n- To spawn on a federated peer machine, pass hub (a hub name seen on\n  list_agents rows). Driving the new agent needs the same hub value.",
+    "ui": "These steer the user's DESKTOP screen — use them deliberately.\n- Right for guided tours (\"show me around workspacer\", first-time onboarding):\n  narrate each step in chat, then focus_agent / open_pane / open_browser so the\n  user sees what you describe. open_spawn_dialog shows how to start an agent\n  without actually spawning one.\n- open_browser opens the built-in browser pane on a URL — use it to walk the\n  user through web docs (e.g. the workspacer guides) alongside your narration.\n  It also takes a file:// URL for a file under the user's home or a configured\n  project directory, so an HTML page you generated can be shown in place; a\n  markdown file opens in the preview pane instead of the browser.\n- open_guide opens the built-in Workspacer Guide pane — a chat with a dedicated\n  tour agent. Hand off \"how do I use workspacer\" questions there instead of\n  answering at length yourself.\n- Otherwise PREFER notify: a notification lets the user click through when\n  ready, while navigation yanks their screen mid-thought. Never re-focus\n  repeatedly; once per step of a tour the user asked for.\n- Fire-and-forget: \"ok\" means the command was sent, not that the UI acted. On a\n  headless/remote-only setup nothing consumes these.",
+    "watch": "notify_when({sessionId, contextUsedPct|tokens|usd|idleSeconds, notifySessionId?}) is how you\nkeep an eye on a running worker WITHOUT polling. Never loop on list_agents or\nget_conversation to \"keep an eye on\" something — that is a hang, and it locks\nthe user out. Arm a watch and STOP.\n- Prefer contextUsedPct (finite range (0,100]) for health: it is ACTIVE context\n  occupancy divided only by a runtime-confirmed effective window. OpenCode and\n  Pi cannot emit that window and are refused at arm time. It is single-purpose\n  and cannot be combined with another threshold. Missing,\n  stale, provisional, reset, or inconsistent telemetry leaves the watch armed\n  until trustworthy telemetry arrives; an already-high sample fires on the\n  next sweep. A provider/session/model reset invalidates it and asks you to\n  re-arm. The wake includes percentage, numerator, denominator, provider,\n  observation time, and telemetry epoch. Claude correlates the pair on result\n  frames; during a long turn the prior sample may age stale and the watch waits\n  rather than trusting an in-progress numerator.\n- tokens is legacy cache-inclusive CUMULATIVE throughput (input + output,\n  including cache reads where reported): useful for cadence/scope checkpoints,\n  not active-context health. Compaction does not reset it. usd is cumulative\n  session cost (provider-authoritative where supplied, otherwise Workspacer's\n  estimate; absent cost telemetry cannot cross it);\n  idleSeconds catches a worker that stopped without finishing — it measures\n  SILENCE, not the reported state, so it also catches one that is wedged and\n  still claiming to stream. The wake names which of the two it was.\n- Crossing delivers a [fleet] wake naming exactly what crossed.\n- ONE-SHOT: the watch is discarded when it fires. Arm another if you still want\n  to watch — that is a decision you should make deliberately, not a loop.\n- The wake goes to the target's PARENT by default (you, for a worker you\n  dispatched); notifySessionId overrides it.\n- Watches live in memory: a workspacer restart clears them; they are not\n  persisted or recovered.",
+    "workflows": "Use manager_context once per user/wake turn to read the pending inbox and up to\nfour relevant owned tasks together. It preserves outcome evidence and per-task\nerrors, omits templates/history, and marks oversized evidence contentDeferred.\nFetch a deferred task with next_workflow_step before accepting its outcome.\nStandalone inbox reads remain list_manager_requests {view:\"pending\"}; only\ncontentDeferred originals need get_manager_request. Host identities are separate\nfrom userContent, which remains user input. Resolve independent intents together\nwith resolve_manager_request and revision CAS before work. Unknown delivery is\nnot proof of consumption and must never be replayed; rejected requests are\nineligible. Corrections keep taskId, followups name dependencies, and synthetic\nfleet events never become new user requests.\n\nresolve_manager_request returns nextActions; accept_task_outcome does likewise\nfor ready followups. These bounded projections grant no dispatch/publish authority.\nUse manager_context for remaining task IDs when nextActionsRemaining is nonzero.\nstart_workflow {cwd,title} is only for legacy work without inbox capture.\nFor explicit no-task requests resolve kind:\"untracked\" (key/kind/reason only),\nthen spawn_agent with trackTask:false and parentSessionId, without task/workflow\nlinks. Worker nesting and wakes remain; no Task is created. Do not manufacture a\ntask to work around this choice. respawn_with also accepts trackTask:false.\nFor tracked audits/chores without prescribed steps, use workflowId:null on the\ncreate/followUp intent. A workflow id selects that policy for this task, while\nomitting it keeps the default. An update may change workflowId before the first\nworker starts; in-flight policy cannot be rewritten. next_workflow_step and\nmanager_context also inspect freeform tasks without pretending a workflow ran.\n\nFor a known pinned step, dispatch_workflow_step {taskId,cwd,stepId,\nexpectedTaskRevision,templateParams} prepares and spawns through existing gates.\nUse modelSelection:{provider,model,effort?} for a user-named model (no automatic\nrouting and no fabricated decisionId); otherwise routing chooses. The explicit\nchoice can be cheaper than the default implementer/reviewer model. An explicit conditional run/reason can ride that call; run:false records\nonly that skip and stops. Required review cannot be skipped here; host-user\nwaivers in Task Inspector never constitute passing evidence. Optional local\nwatchContextUsedPct arms a one-shot watch; if it fails, retry only notify_when.\nNever repeat an uncertain admission; inspect task/worker/dispatch state first.\nKeep select_model/spawn_agent for manual dispatch, not an extra phase after the\ncomposition. Concrete outcomes still require explicit accept_task_outcome;\nidle and well-formed schemas alone are not success.\n\nFleet workflows require a compatible owning Rust host, in standalone or\nembedded mode. A paired worker may execute remotely while that host owns the task.\nOlder hosts may return unavailable; report that plainly, never claim a workflow ran.\n\nTask references (get_task_references / update_task_references) are where a task\nrecords the PR, ticket and links that belong to it:\n- When the USER gives you a PR number, ticket id or URL in chat, or a worker you\n  dispatched reports one in a result you trust, store it on that exact task. This\n  is the only way it reaches the Inspector the user is looking at.\n- Read first: get_task_references {taskId,cwd} returns the current references and\n  a taskRevision. Pass that back as expectedTaskRevision, or the write is refused\n  as a conflict. On conflict, re-read and reapply — do not retry blindly.\n- Writes are ADDITIVE per entry: upsert [{kind:\"pullRequest\",number,url}],\n  [{kind:\"ticket\",id,url}], [{kind:\"reference\",label,url}]; remove names the same\n  identity. Entries you do not name are left exactly as they are, including ones\n  the user typed in themselves. Never re-send the whole set to \"sync\" it.\n- Any provider: a PR/MR URL from GitHub, Azure DevOps, GitLab or anywhere else is\n  a pullRequest reference; Jira keys and plain ticket ids are tickets; anything\n  else with a URL is a named reference. Do not assume GitHub from a bare number.\n- What you store is what you were given. These are unverified references, not\n  provider status. Never fetch the URL, call an external API, mutate anything on\n  the provider, or guess a PR number that the user did not state.\n- Bind to the right task. You may only edit tasks you own, in their own project.\n  If a link could belong to more than one of your tasks, ask which one rather\n  than scanning transcripts for a guess."
+  }
+}

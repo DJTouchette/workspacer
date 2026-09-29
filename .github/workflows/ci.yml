@@ -242,6 +242,31 @@ jobs:
       - name: Test shared backend and standalone CLI
         run: cargo test --locked --no-fail-fast
 
+  hub-latency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/hub-rs
+          shared-key: hub-latency-release
+          cache-bin: false
+      - name: Retained optimized WebSocket latency budget
+        shell: bash
+        run: |
+          set -o pipefail
+          make test-hub-latency 2>&1 | tee hub-latency.log
+      - name: Preserve latency receipt, including unmeasurable or failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hub-latency-${{ github.sha }}
+          path: hub-latency.log
+          if-no-files-found: warn
+          retention-days: 14
+
   capability-parameters:
     runs-on: ubuntu-latest
     steps:
@@ -254,6 +279,8 @@ jobs:
           workspaces: tools/capability-source-check
       - name: Trace Rust capability parameter contracts
         run: make check-hub-capability-parameters
+      - name: Verify portable MCP catalog and wire contracts
+        run: make check-hub-mcp-catalog
 
   # Exercise actual Windows filesystem/process branches, plus the same
   # TypeScript boundary corpus used by the Electron client.

@@ -71,6 +71,10 @@ fn compose(input: &Value, snapshot: &Value, conversation: &Value, session: &str)
     } else if let Some(model) = snapshot["settings"].get("model") {
         params["model"] = model.clone();
     }
+    if input.get("contextWindow").is_some_and(Value::is_null) {
+        // Null is an explicit Rust provider-default override, not inheritance.
+        params["contextWindow"] = Value::Null;
+    }
     if !text(input, "model").is_empty() || !text(input, "modelIdentity").is_empty() {
         params["exactModel"] = true.into();
         if text(input, "capability").is_empty() {

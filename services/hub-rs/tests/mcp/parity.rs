@@ -1027,3 +1027,158 @@ async fn composed_workflow_inputs_cannot_forge_host_metadata_or_start_unbounded_
     facade.close();
     worker.await.unwrap();
 }
+#[tokio::test]
+async fn typed_legacy_wire_omits_value_zeros_but_keeps_pointer_values_and_opaque_objects() {
+    let facade = Facade::start(Options::default()).await;
+    let worker = provider(
+        &facade,
+        &[
+            "agents.notifyWhen",
+            "terminals.create",
+            "sessions.terminalResize",
+            "sessions.terminalInput",
+            "claude.answer",
+            "routing.select",
+            "config.save",
+            "library.save",
+        ],
+        |method, params| Ok(json!({"method":method,"params":params})),
+    )
+    .await;
+    for (tool, args, expected) in [
+        (
+            "notify_when",
+            json!({"sessionId":"worker","contextUsedPct":80,"tokens":0,"usd":0,"idleSeconds":0,"notifySessionId":""}),
+            json!({"sessionId":"worker","contextUsedPct":80}),
+        ),
+        (
+            "create_terminal",
+            json!({"shell":"","cwd":"","cols":0,"rows":0}),
+            json!({}),
+        ),
+        (
+            "terminal_resize",
+            json!({"sessionId":"s","cols":0,"rows":0}),
+            json!({"sessionId":"s","cols":0,"rows":0}),
+        ),
+        (
+            "terminal_input",
+            json!({"sessionId":"s","data":""}),
+            json!({"sessionId":"s","data":""}),
+        ),
+        (
+            "answer",
+            json!({"sessionId":"s","option":0,"text":"","answers":[]}),
+            json!({"sessionId":"s","option":0,"text":""}),
+        ),
+        (
+            "select_model",
+            json!({"role":"scout","forecastDemandBeforeResetPct":0,"requireIndependentFamily":false,"expectedWork":[{"phase":"implementation","count":0}]}),
+            json!({"role":"scout","forecastDemandBeforeResetPct":0,"expectedWork":[{"phase":"implementation","count":0}]}),
+        ),
+        (
+            "save_config",
+            json!({"ui":{"guiFontScale":0},"pluginSettings":{"enabled":false,"empty":"","array":[]}}),
+            json!({"ui":{"guiFontScale":0},"pluginSettings":{"enabled":false,"empty":"","array":[]}}),
+        ),
+        (
+            "save_library",
+            json!({"scope":"global","kind":"prompt","id":"item","body":"","extra":{"false":false,"zero":0,"empty":{},"null":null}}),
+            json!({"scope":"global","kind":"prompt","id":"item","body":"","extra":{"false":false,"zero":0,"empty":{},"null":null}}),
+        ),
+    ] {
+        let result = success(&facade.call("parity-owner", tool, args).await);
+        assert_eq!(result["params"], expected, "{tool}: {result}");
+    }
+    facade.close();
+    worker.await.unwrap();
+}
+#[tokio::test]
+async fn explicit_null_context_remains_provider_default_across_canonical_mcp_spawns() {
+    let root = tempfile::tempdir().unwrap();
+    let tokens = root.path().join("tokens.json");
+    let manager = auth::mint(&tokens, Scope::Operator, "session:manager").unwrap();
+    let mut options = Options::default();
+    options.scoped_tokens = Some(tokens);
+    let facade = Facade::start(options).await;
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let calls = seen.clone();
+    let worker=provider(&facade,&["config.get","agents.spawn","sessions.snapshot","sessions.conversation","claude.setModel","fleetWorkflows.request","agents.notifyWhen"],move|method,params|{
+        calls.lock().unwrap().push((method.to_owned(),params.clone()));
+        match method{
+            "config.get"=>Ok(json!({"claude":{}})),
+            "sessions.snapshot"=>Ok(json!({"provider":"codex","cwd":"/repo","requestedSelection":{"model":"gpt-fixture","contextWindow":400000}})),
+            "sessions.conversation"=>Ok(json!({"items":[{"kind":"user_message","text":"original task"}]})),
+            "fleetWorkflows.request"=>Ok(json!({"ok":true,"dispatch":{"taskId":"task","cwd":"/repo","stepId":"implement","expectedTaskRevision":0,"role":"implementer","stage":"implement","template":"ship-task","toolScope":"operator"}})),
+            "agents.spawn"=>Ok(json!({"sessionId":"successor","messageQueued":true,"params":params})),
+            "claude.setModel"|"agents.notifyWhen"=>Ok(params),_=>panic!("unexpected composed call")
+        }
+    }).await;
+    for (args, window) in [
+        (json!({"provider":"codex"}), json!(1000000)),
+        (
+            json!({"provider":"codex","contextWindow":null}),
+            Value::Null,
+        ),
+        (
+            json!({"provider":"codex","modelIdentity":"gpt-fixture","contextWindow":null}),
+            Value::Null,
+        ),
+        (
+            json!({"provider":"codex","modelIdentity":"gpt-fixture"}),
+            json!(1000000),
+        ),
+    ] {
+        let receipt = success(&facade.call(&manager.token, "spawn_agent", args).await);
+        assert_eq!(
+            receipt["params"].get("contextWindow"),
+            Some(&window),
+            "{receipt}"
+        );
+    }
+    for args in [
+        json!({"sessionId":"prior","amendment":"redo","contextWindow":null}),
+        json!({"sessionId":"prior","amendment":"redo","modelIdentity":"gpt-fixture","contextWindow":null}),
+    ] {
+        let receipt = success(&facade.call(&manager.token, "respawn_with", args).await);
+        assert_eq!(receipt["params"].get("contextWindow"), Some(&Value::Null));
+        assert_eq!(receipt["params"]["modelIdentity"], "gpt-fixture");
+    }
+    let switched = success(
+        &facade
+            .call(
+                &manager.token,
+                "set_model",
+                json!({"sessionId":"s","modelIdentity":"gpt-fixture","contextWindow":null}),
+            )
+            .await,
+    );
+    assert_eq!(switched.get("contextWindow"), Some(&Value::Null));
+    let dispatched=success(&facade.call(&manager.token,"dispatch_workflow_step",json!({"taskId":"task","cwd":"/repo","stepId":"implement","expectedTaskRevision":0,"modelSelection":{"provider":"codex","model":"gpt-fixture","contextWindow":null}})).await);
+    assert_eq!(
+        dispatched["params"].get("contextWindow"),
+        Some(&Value::Null)
+    );
+    for (tool, args) in [
+        (
+            "notify_when",
+            json!({"sessionId":"worker","contextUsedPct":80,"tokens":null}),
+        ),
+        ("spawn_agent", json!({"provider":"codex","model":null})),
+        (
+            "spawn_agent",
+            json!({"provider":"codex","contextWindow":0,"skipPermissions":false}),
+        ),
+    ] {
+        let before = seen.lock().unwrap().len();
+        let invalid = facade.call(&manager.token, tool, args).await;
+        assert_eq!(invalid["result"]["isError"], true);
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            before,
+            "invalid scalar null reached provider or config read"
+        );
+    }
+    facade.close();
+    worker.await.unwrap();
+}

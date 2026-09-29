@@ -3301,10 +3301,48 @@
       ]
     },
     "services/hub/cmd/mcp/main.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/wire.rs",
+        "services/hub-rs/src/mcp/access.rs",
+        "services/hub-rs/src/mcp/legacy_sse.rs",
+        "services/hub-rs/src/mcp/config_save.rs",
+        "services/hub-rs/src/mcp/spawn.rs",
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/assets/mcp-wire-contract.json",
+        "services/hub-rs/assets/mcp-wire-overrides.json",
+        "services/hub-rs/assets/mcp-effective-wire.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all1831 lines: standalone flag/environment setup, scoped/static/untokened authentication, host-pinned HTTP/SSE/health composition, tier/cache/registry wiring, generic typed/freeform forwarders, spawn defaults/first-message receipts, approval-gate enrichment, independent wholesale-map guard and every input struct. Earlier27-file MCP slices supply the detailed helper/transport assertions; this final review closes generic wire and launcher ownership.",
+          "Explicit per-tool wire rules are captured from actual retained Go registration closure/input types and json tags, not inferred from schema optionality. All100 built-in tool input types are mapped;16 original production source digests are preserved. Value omitempty, nil pointers, slice/map emptiness, embedded structs and nested typed array elements remain distinct. Rules never apply to plugin payloads or freeform object map entries.",
+          "typed_legacy_wire_omits_value_zeros_but_keeps_pointer_values_and_opaque_objects exercises real HTTP/broker forwarding. notify_when drops explicit zero tokens/usd/idleSeconds around a valid context watch; optional terminal zeros/empty strings omit; required terminal resize zeros and PTY empty data remain; answer option0/text-empty survive; forecast0 and required count0 survive; config/library freeform false/zero/empty/null data remains unchanged. Unit negatives retain skipPermissions:false, pointed-to contextWindow0, an empty routing struct pointer, nested arbitrary intent maps and all open-object tool shapes.",
+          "owned_mcp_cli_resolves_flags_and_environment_then_joins_its_listeners launches the real serve --hub-only component with isolated state and environment allowlist in both flag and environment modes. It verifies actual health hub/listener readiness, static credential overriding untokened access, unknown credential refusal, owner/static/scoped acceptance, token-file revocation and parent-pipe EOF cleanup while the parent lives. Both MCP and hub listeners must be gone after successful exit. Existing standalone tests separately exercise SIGTERM and declared-parent death.",
+          "MCP_MIGRATION.md maps every former component option/responsibility to the current owned launcher or library Options. The public typed/freeform schemas, clean no-provider/tool-error envelopes, progress/session provenance, scope checks, first-message no-replay policy and modern private cache hints are covered by the now60-test MCP/CLI set.",
+          "Final validation on2026-09-29:31 MCP library tests are included in the successful full343-lib run;25 HTTP/broker integration tests,5 SSE tests and1 real owned-MCP CLI test passed after explicit-null corrections (62 MCP/CLI Rust tests). Portable generator8 tests passed, including operation without any legacy Go tree, and optional stdlib Go capture matched100 input contracts/16 original source hashes. Logs:/tmp/workspacer-mcp-canonical-null-final.log and /tmp/workspacer-mcp-canonical-null-cli.log. Generator check, format and diff checks passed.",
+          "Actual HTTP/broker regression distinguishes omitted fresh-Codex context (1M) from explicit null (provider default), including a canonical modelIdentity, retry inheritance, live selection and explicit workflow choice. Nonnullable scalar null and pointer context0 are refused before provider/launch access; explicit pointer0 is not silently converted into an omitted default."
+        ],
+        "intentionalChanges": [
+          "The separate Go MCP process and its independently supervised --addr/--hub entry point are retired. serve owns the shared Rust facade; embedding uses Options.mcp_listen. Local calls are in-process, while upstream worker mode requires a separate scoped facade-authority caller and refuses owner/provider credential borrowing.",
+          "A separately configured static facade credential is operator authority, not host administration. Only the actual owner credential authorizes host-only mutations; the old static-to-outbound-host shortcut is intentionally not restored.",
+          "Catalogs/help follow actual available registrations, and modern2026-07-28 lists carry ttlMs0/private metadata. Joined backend cleanup replaces independent child/process shutdown. Existing explicit uncertain-delivery receipts prohibit replay rather than claiming a worker is certainly idle.",
+          "Old Go MCP and the prior Rust MCP facade collapsed contextWindow:null to omission before fresh-Codex1M defaults. The shared Rust spawn planner already distinguishes explicit null from omission. The facade now preserves explicit provider-default null on fresh spawn, retry, live-model selection and composed explicit workflow model selection; this deliberate correction is isolated in authored per-method wire overrides and tested through actual HTTP/broker calls. Nonnullable scalar null is refused by the advertised SDK schema before projection/provider access, rather than being treated as raw encoding/json scalar input."
+        ]
+      },
       "sha256": "871bc06f19aeffedadc6135a31c57bac4ddfbad747021bdecdffa8a4b82ec6ad",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/mcp/parity.rs",
+        "services/hub-rs/tests/mcp/sse_preferences.rs",
+        "services/hub-rs/tests/mcp/cli.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/mcp/wire.rs"
+      ]
     },
     "services/hub/cmd/mcp/main_test.go": {
       "replacement": [
@@ -3381,10 +3419,43 @@
       ]
     },
     "services/hub/cmd/mcp/migration_catalog_test.go": {
-      "replacement": [],
+      "replacement": [
+        "scripts/mcp-catalog.py",
+        "services/hub-rs/assets/mcp-tools.json",
+        "services/hub-rs/assets/mcp-help.json",
+        "services/hub-rs/assets/mcp-wire-contract.json",
+        "services/hub-rs/assets/mcp-rust-presentation.json",
+        "services/hub-rs/assets/mcp-effective-tools.json",
+        "services/hub-rs/assets/mcp-effective-help.json",
+        "services/hub-rs/assets/mcp-effective-provenance.json",
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/help.rs",
+        "services/hub-rs/assets/mcp-wire-overrides.json",
+        "services/hub-rs/assets/mcp-effective-wire.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Original Go SDK catalog/help exporter now has a concrete portable replacement: python3 scripts/mcp-catalog.py --write and --check. Reviewed JSON contracts are the source of truth; effective generated assets are the files runtime consumes. The original captured Go schemas/help and their historical input digests are preserved, not silently replaced with inferred tool-name inventory.",
+          "Generator checks all three public tiers, duplicate names, tier containment, required-field/schema consistency, exact help-tool closure, one explicit wire policy per builtin, per-field wire/schema type compatibility, pointer/value omission semantics, nonempty provenance, description-only overrides and deterministic generated artifacts. Semantic input digests track the authored contracts without requiring the legacy tree.",
+          "Eight portable regression tests reject stale generated output, stale or constraint-mutating presentation edits, duplicate/omitted tools/help, schema fields without wire review and pointer values misclassified as zero omissions. A fixture containing only authored JSON inputs proves generation works with no services/hub directory or Go SDK. Independent Rust tests compare generated effective outputs with the separately implemented overlay and prove every non-description schema value is unchanged.",
+          "Final validation on2026-09-29:31 MCP library tests are included in the successful full343-lib run;25 HTTP/broker integration tests,5 SSE tests and1 real owned-MCP CLI test passed after explicit-null corrections (62 MCP/CLI Rust tests). Portable generator8 tests passed, including operation without any legacy Go tree, and optional stdlib Go capture matched100 input contracts/16 original source hashes. Logs:/tmp/workspacer-mcp-canonical-null-final.log and /tmp/workspacer-mcp-canonical-null-cli.log. Generator check, format and diff checks passed.",
+          "An explicit authored override may preserve canonical contextWindow null only at a reviewed nullable numeric pointer path. The generator rejects attempts to use this exception for permission booleans or unrelated fields; original Go AST metadata and source digests remain unchanged.",
+          "Actual HTTP/broker regression distinguishes omitted fresh-Codex context (1M) from explicit null (provider default), including a canonical modelIdentity, retry inheritance, live selection and explicit workflow choice. Nonnullable scalar null and pointer context0 are refused before provider/launch access; explicit pointer0 is not silently converted into an omitted default."
+        ],
+        "intentionalChanges": [
+          "SDK reflection over Go registration code is no longer the normal generator. Canonical JSON contracts plus the reviewed Rust presentation overlay are generated with Python stdlib only. Optional historical AST capture in tools/go-mcp-wire-reference remains available for deliberate reference review; it is not a build or normal generation dependency.",
+          "Rust-specific standalone/embedded descriptions are applied as explicit presentation changes over frozen reference input. Makefile/CI entry-point wiring is manager-owned and must use the portable generator before this record is applied."
+        ]
+      },
       "sha256": "c4472b3d5c1dc95491c968cec0d607823e4630cb1ac6840a15fdd8f0c5869831",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "scripts/test_mcp_catalog.py",
+        "services/hub-rs/src/mcp/presentation.rs",
+        "services/hub-rs/src/mcp/wire.rs",
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp/parity.rs"
+      ]
     },
     "services/hub/cmd/mcp/notify_test.go": {
       "replacement": [

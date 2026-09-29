@@ -10,6 +10,7 @@ mod help;
 mod legacy_sse;
 mod manager_context;
 mod plugin_catalog;
+#[cfg(test)]
 mod presentation;
 mod project_status;
 mod raw_preferences;
@@ -17,6 +18,7 @@ mod respawn;
 mod spawn;
 mod status_summary;
 mod ui;
+mod wire;
 mod workflow_dispatch;
 mod workflows;
 use crate::{
@@ -152,11 +154,8 @@ impl Gate {
 fn catalogs() -> &'static BTreeMap<String, Vec<Tool>> {
     static CATALOG: OnceLock<BTreeMap<String, Vec<Tool>>> = OnceLock::new();
     CATALOG.get_or_init(|| {
-        serde_json::from_value(presentation::tools(
-            serde_json::from_str(include_str!("../assets/mcp-tools.json"))
-                .expect("reference MCP catalog"),
-        ))
-        .expect("effective Rust MCP catalog")
+        serde_json::from_str(include_str!("../assets/mcp-effective-tools.json"))
+            .expect("generated Rust MCP catalog")
     })
 }
 fn method(name: &str) -> Option<&'static str> {
@@ -418,6 +417,9 @@ impl ServerHandler for Adapter {
                 ))])
                 .into());
             }
+        }
+        if !plugin {
+            wire::project(&request.name, &mut params);
         }
         if request.name == "save_config" {
             if let Some(path) = config_save::invalid_wholesale(&params) {

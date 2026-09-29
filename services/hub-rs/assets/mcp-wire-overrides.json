@@ -1,0 +1,8 @@
+{
+  "preserveNull": [
+    {"tool":"spawn_agent","path":["contextWindow"],"reason":"The shared Rust spawn contract distinguishes explicit provider-default null from an omitted fresh-Codex request, which defaults to 1M."},
+    {"tool":"respawn_with","path":["contextWindow"],"reason":"An explicit nullable context override clears the inherited requested window while retaining the selected model; omission still inherits the predecessor."},
+    {"tool":"set_model","path":["contextWindow"],"reason":"The canonical live model selection must preserve an explicit provider-default window instead of silently deleting caller intent."},
+    {"tool":"dispatch_workflow_step","path":["modelSelection","contextWindow"],"reason":"An explicit canonical workflow model choice retains its nullable provider-default context through composed spawn admission."}
+  ]
+}

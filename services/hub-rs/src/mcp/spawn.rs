@@ -59,6 +59,7 @@ fn resolve_defaults(params: &mut Value, config: &Value) -> Result<()> {
     };
     let model = params["model"].as_str().unwrap_or("");
     let identity = params["modelIdentity"].as_str().unwrap_or("");
+    let explicit_provider_default = params.get("contextWindow").is_some_and(Value::is_null);
     let window = if params["contextWindow"].is_null() {
         None
     } else {
@@ -69,7 +70,11 @@ fn resolve_defaults(params: &mut Value, config: &Value) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("spawn_agent: invalid-context-window"))?,
         )
     };
-    let window = context_for_new_spawn(provider, window, false);
+    let window = if explicit_provider_default {
+        None
+    } else {
+        context_for_new_spawn(provider, window, false)
+    };
     let selection =
         if provider == "claude" && model.is_empty() && identity.is_empty() && window.is_none() {
             let model = config["claude"]["defaultModel"].as_str().unwrap_or("");
@@ -102,8 +107,11 @@ fn resolve_defaults(params: &mut Value, config: &Value) -> Result<()> {
         params["modelIdentity"] = selection.selection.model.into();
         if let Some(window) = selection.selection.context_window {
             params["contextWindow"] = json!(window);
+        } else if explicit_provider_default {
+            params["contextWindow"] = Value::Null;
         } else {
-            // Match the original facade's omitempty canonical companion.
+            // Bare legacy model overrides still omit an unknown companion;
+            // explicit canonical null retains the shared provider-default intent.
             params.as_object_mut().unwrap().remove("contextWindow");
         }
     }

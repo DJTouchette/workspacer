@@ -35,6 +35,18 @@
       "pointer": "/inputSchema/properties/workflowStepId/description",
       "before": "desktop local only",
       "after": "owned by the local Rust host in standalone or embedded mode"
+    },
+    {
+      "tool": "spawn_agent",
+      "pointer": "/inputSchema/properties/contextWindow/description",
+      "before": "defaults to the shared contract’s fresh-Codex request",
+      "after": "omission uses the shared fresh-Codex request, while explicit null uses the provider default"
+    },
+    {
+      "tool": "respawn_with",
+      "pointer": "/inputSchema/properties/contextWindow/description",
+      "before": "canonical context-window override in tokens; pair with modelIdentity",
+      "after": "canonical context-window override in tokens; pair with modelIdentity. Explicit null resets the inherited request to the provider default"
     }
   ],
   "guidance": [

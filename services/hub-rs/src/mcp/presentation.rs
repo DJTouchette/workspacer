@@ -99,6 +99,12 @@ mod tests {
         let original: Value =
             serde_json::from_str(include_str!("../../assets/mcp-tools.json")).unwrap();
         let effective = tools(original.clone());
+        let generated: Value =
+            serde_json::from_str(include_str!("../../assets/mcp-effective-tools.json")).unwrap();
+        assert_eq!(
+            effective, generated,
+            "portable generator must agree with the independent description overlay"
+        );
         let mut baseline = original;
         let mut actual = effective.clone();
         without_descriptions(&mut baseline);
@@ -124,6 +130,9 @@ mod tests {
         let mut texts: BTreeMap<String, String> =
             serde_json::from_value(raw["guidance"].clone()).unwrap();
         guidance(&mut texts);
+        let generated: Value =
+            serde_json::from_str(include_str!("../../assets/mcp-effective-help.json")).unwrap();
+        assert_eq!(serde_json::to_value(&texts).unwrap(), generated["guidance"]);
         assert!(texts["workflows"].contains("owning Rust host"));
         assert!(!texts["spawn"].contains("headless declines arbitrary"));
         assert!(

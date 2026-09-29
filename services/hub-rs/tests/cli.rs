@@ -1484,3 +1484,6 @@ async fn plugin_dev_isolates_source_reloads_after_build_and_preserves_live_plugi
     assert!(source.join("plugin.json").exists());
     assert!(config.join("plugins/other/plugin.json").exists());
 }
+
+#[path = "mcp/cli.rs"]
+mod mcp_cli_contract;

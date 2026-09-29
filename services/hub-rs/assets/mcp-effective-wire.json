@@ -1,0 +1,2612 @@
+{
+  "sourceSha256": {
+    "services/hub/cmd/mcp/conversation.go": "aad4048c18383d23da4218b95a8623034036ac5e856b3a35a687903089d8a447",
+    "services/hub/cmd/mcp/federated.go": "1b09f7d5638cbd73ea600db4f7edc70c5a6f77c903496bb17009498789d7edad",
+    "services/hub/cmd/mcp/fleet_workflows.go": "6e77f9bd04561367ee82c498fbe1af1893f2ffa398de83dc1c4f25176433281e",
+    "services/hub/cmd/mcp/help.go": "e87c4f0e006da86ebf389936f861e94cd6c072d9236109e5a6355e70572ec126",
+    "services/hub/cmd/mcp/main.go": "871bc06f19aeffedadc6135a31c57bac4ddfbad747021bdecdffa8a4b82ec6ad",
+    "services/hub/cmd/mcp/manager_context.go": "11aec6d63319ff73b0a70e7ede649982aa0fc17833e6745fa854a6f99dc1b9f3",
+    "services/hub/cmd/mcp/manager_requests.go": "3fd6a85f5a2567f7e7b92f263fd373cfa674d6be9e80a2c7b83eaeb24aab4a56",
+    "services/hub/cmd/mcp/operation_schema.go": "126a6f84b19f314151dbfab90ad3f719c60948376d9388909d3527589308b7f1",
+    "services/hub/cmd/mcp/plugins.go": "8e651accb2c1539d3be473e4dcafd62fd01a45953d5210db6867c88ca9bad1fd",
+    "services/hub/cmd/mcp/progress.go": "02247f86b0506afa7a79f5d6f528d3e3d86e650757198e1a5ae483d268401fbd",
+    "services/hub/cmd/mcp/projectstatus.go": "34c7601a28b1dfb2b9dd439670f9eeb06b01767484d2c320d141299a707c5ec6",
+    "services/hub/cmd/mcp/respawn.go": "8a2ce5db4dda6a9b9718e4d7bc290afe5b442e831c64f45a2a49102ec3fcb0ad",
+    "services/hub/cmd/mcp/status_summary.go": "9aca610d34c1d172139713062a9bb50dca0b70257075e84780dd1a78db5dfe97",
+    "services/hub/cmd/mcp/task_references.go": "8cd5788b82d088f224564eefe7dc416c52ae435428984b158da0a344e690b902",
+    "services/hub/cmd/mcp/ui.go": "f1f24b944f52dcbf2b37b8b26acb3cb01199600905436990c8423ad08e504e8b",
+    "services/hub/cmd/mcp/workflow_dispatch.go": "e700b3381d789078a2c209b4b5af8d99aba7ff618a6cdc013988354f77773996"
+  },
+  "inputs": {
+    "accept_task_outcome": {
+      "type": "managerRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "expectedTaskRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "intents": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "requestId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "view": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "add_profile": {
+      "type": "addProfileIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "configDir": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "extraArgs": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "string"
+            }
+          },
+          "name": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "adopt_workers": {
+      "type": "adoptWorkersIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "fromSessionId": {
+            "kind": "string"
+          },
+          "toSessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "analytics_recent": {
+      "type": "recentIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "limit": {
+            "kind": "number",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "analytics_summary": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "answer": {
+      "type": "answerIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "answers": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "string"
+            }
+          },
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "option": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "sessionId": {
+            "kind": "string"
+          },
+          "text": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "approve": {
+      "type": "approveIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "decision": {
+            "kind": "string"
+          },
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "brief_append": {
+      "type": "briefAppendIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "line": {
+            "kind": "string"
+          },
+          "project": {
+            "kind": "string"
+          },
+          "result": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "section": {
+            "kind": "string"
+          },
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "brief_archive": {
+      "type": "briefArchiveIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "count": {
+            "kind": "number",
+            "omit": "zero"
+          },
+          "keep": {
+            "kind": "number",
+            "omit": "zero"
+          },
+          "project": {
+            "kind": "string"
+          },
+          "section": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "brief_check": {
+      "type": "briefCheckIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "project": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "clone_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "close_session": {
+      "type": "sessionIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "create_terminal": {
+      "type": "createTerminalIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cols": {
+            "kind": "number",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "rows": {
+            "kind": "number",
+            "omit": "zero"
+          },
+          "shell": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "create_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "decide_workflow_step": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "delete_layout": {
+      "type": "idIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "delete_saved_session": {
+      "type": "filenameIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "filename": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "delete_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "disable_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "dispatch_workflow_step": {
+      "type": "dispatchWorkflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string"
+          },
+          "executionTarget": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedTaskRevision": {
+            "kind": "number"
+          },
+          "label": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "modelSelection": {
+            "kind": "object",
+            "omit": "nil",
+            "pointer": true,
+            "fields": {
+              "contextWindow": {
+                "kind": "number",
+                "pointer": true
+              },
+              "effort": {
+                "kind": "string",
+                "omit": "zero"
+              },
+              "model": {
+                "kind": "string"
+              },
+              "provider": {
+                "kind": "string"
+              }
+            }
+          },
+          "profileId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "remoteCwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "routing": {
+            "kind": "object",
+            "omit": "nil",
+            "pointer": true,
+            "fields": {
+              "decisionDensity": {
+                "kind": "string",
+                "omit": "zero"
+              },
+              "difficulty": {
+                "kind": "string",
+                "omit": "zero"
+              },
+              "expectedWork": {
+                "kind": "array",
+                "omit": "empty",
+                "item": {
+                  "kind": "object",
+                  "fields": {
+                    "count": {
+                      "kind": "number"
+                    },
+                    "phase": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              },
+              "forecastDemandBeforeResetPct": {
+                "kind": "number",
+                "omit": "nil",
+                "pointer": true
+              },
+              "profile": {
+                "kind": "string",
+                "omit": "zero"
+              },
+              "provider": {
+                "kind": "string",
+                "omit": "zero"
+              },
+              "requireIndependentFamily": {
+                "kind": "boolean",
+                "omit": "zero"
+              },
+              "risk": {
+                "kind": "string",
+                "omit": "zero"
+              }
+            }
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "skipPermissions": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string"
+          },
+          "taskId": {
+            "kind": "string"
+          },
+          "templateParams": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "watchContextUsedPct": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "focus_agent": {
+      "type": "focusAgentIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "get_config": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "get_config_path": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "get_conversation": {
+      "type": "conversationIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "lastMessage": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          },
+          "sinceSeq": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "textOnly": {
+            "kind": "boolean",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "get_host_cwd": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "get_manager_request": {
+      "type": "managerRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "expectedTaskRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "intents": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "requestId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "view": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "get_snapshot": {
+      "type": "sessionIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "get_task_references": {
+      "type": "taskRefsIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string"
+          },
+          "expectedTaskRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "remove": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          },
+          "taskId": {
+            "kind": "string"
+          },
+          "upsert": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          }
+        }
+      }
+    },
+    "get_transcript": {
+      "type": "transcriptIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "get_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "help": {
+      "type": "helpIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "topic": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "job_history": {
+      "type": "idIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "list_agents": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_dir": {
+      "type": "listDirIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "path": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "list_dispatch_targets": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_dispatches": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_entries": {
+      "type": "listDirIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "path": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "list_jobs": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_layouts": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_library": {
+      "type": "listLibraryIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "kind": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "list_manager_requests": {
+      "type": "managerRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "expectedTaskRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "intents": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "requestId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "view": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "list_models": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_orphans": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_profiles": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_providers": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_resumable_sessions": {
+      "type": "cwdIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "list_saved_sessions": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_snapshots": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "list_workflows": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "load_saved_session": {
+      "type": "filenameIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "filename": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "manager_context": {
+      "type": "managerContextIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "tasks": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "cwd": {
+                  "kind": "string"
+                },
+                "taskId": {
+                  "kind": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "next_workflow_step": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "notify": {
+      "type": "notifyIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "body": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "inAppOnly": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "key": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "level": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "paneSection": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "paneType": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "silent": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "url": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "notify_when": {
+      "type": "notifyWhenIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "contextUsedPct": {
+            "kind": "number",
+            "omit": "zero"
+          },
+          "idleSeconds": {
+            "kind": "number",
+            "omit": "zero"
+          },
+          "notifySessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          },
+          "tokens": {
+            "kind": "number",
+            "omit": "zero"
+          },
+          "usd": {
+            "kind": "number",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "open_browser": {
+      "type": "openBrowserIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "url": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "open_guide": {
+      "type": "openGuideIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "open_pane": {
+      "type": "openPaneIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "paneType": {
+            "kind": "string"
+          },
+          "url": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "open_plugin": {
+      "type": "openPluginIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "type": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "open_spawn_dialog": {
+      "type": "spawnDialogIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "open_terminal": {
+      "type": "openTerminalIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "command": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "label": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "parentSessionId": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "project_status": {
+      "type": "projectStatusIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "dirs": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "string"
+            }
+          },
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "propose_job": {
+      "type": "@object",
+      "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
+    },
+    "read_file": {
+      "type": "readFileIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "path": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "reload_config": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "remove_job": {
+      "type": "idIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "remove_library": {
+      "type": "libraryRemoveIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "id": {
+            "kind": "string"
+          },
+          "kind": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "scope": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "remove_profile": {
+      "type": "idIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "report_progress": {
+      "type": "reportProgressIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "needsDecision": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "note": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "resolve_manager_request": {
+      "type": "managerRequestIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "expectedTaskRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "intents": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "requestId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "view": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "respawn_with": {
+      "type": "respawnWithIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "amendment": {
+            "kind": "string"
+          },
+          "capability": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "contextWindow": {
+            "kind": "number",
+            "pointer": true
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "effort": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "label": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "model": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "modelIdentity": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "role": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          },
+          "toolScope": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "trackTask": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "worktree": {
+            "kind": "boolean",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "routing_preferences_get": {
+      "type": "listAgentsIn",
+      "rule": {
+        "kind": "object"
+      }
+    },
+    "routing_preferences_reset": {
+      "type": "routingPreferencesResetIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "baseRevision": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "routing_preferences_save": {
+      "type": "routing.PreferencesRequest",
+      "passthrough": "strict raw preference validation retains its own null/unknown-field policy"
+    },
+    "routing_preferences_validate": {
+      "type": "routing.PreferencesRequest",
+      "passthrough": "strict raw preference validation retains its own null/unknown-field policy"
+    },
+    "routing_preview": {
+      "type": "routingSelectIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "account": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "decisionDensity": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "difficulty": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedWork": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "count": {
+                  "kind": "number"
+                },
+                "phase": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "forecastDemandBeforeResetPct": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "previousProvider": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "profile": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "profileId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "provider": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "requireIndependentFamily": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "risk": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "role": {
+            "kind": "string"
+          },
+          "ticketId": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "run_job": {
+      "type": "idIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "run_ui_action": {
+      "type": "runActionIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "action": {
+            "kind": "string"
+          },
+          "digit": {
+            "kind": "number",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "save_config": {
+      "type": "@object",
+      "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
+    },
+    "save_layout": {
+      "type": "@object",
+      "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
+    },
+    "save_library": {
+      "type": "@object",
+      "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
+    },
+    "save_saved_session": {
+      "type": "@object",
+      "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
+    },
+    "search_project": {
+      "type": "searchProjectIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "caseSensitive": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string"
+          },
+          "query": {
+            "kind": "string"
+          },
+          "regex": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "wholeWord": {
+            "kind": "boolean",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "select_default_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "select_dispatch_model": {
+      "type": "routingSelectIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "account": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "decisionDensity": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "difficulty": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedWork": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "count": {
+                  "kind": "number"
+                },
+                "phase": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "forecastDemandBeforeResetPct": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "previousProvider": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "profile": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "profileId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "provider": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "requireIndependentFamily": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "risk": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "role": {
+            "kind": "string"
+          },
+          "ticketId": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "select_model": {
+      "type": "routingSelectIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "account": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "decisionDensity": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "difficulty": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedWork": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "object",
+              "fields": {
+                "count": {
+                  "kind": "number"
+                },
+                "phase": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "forecastDemandBeforeResetPct": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "previousProvider": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "profile": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "profileId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "provider": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "requireIndependentFamily": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "risk": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "role": {
+            "kind": "string"
+          },
+          "ticketId": {
+            "kind": "string",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "select_project_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "send_message": {
+      "type": "sendMessageIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "fromSessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          },
+          "text": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "set_approval_gate": {
+      "type": "gateIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "on": {
+            "kind": "boolean"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "set_model": {
+      "type": "setModelIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "contextWindow": {
+            "kind": "number",
+            "pointer": true
+          },
+          "effort": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "model": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "modelIdentity": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "signal": {
+      "type": "signalIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          },
+          "signal": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "spawn_agent": {
+      "type": "spawnAgentIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "afterDispatchId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "capability": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "contextWindow": {
+            "kind": "number",
+            "pointer": true
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "decisionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "effort": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "exactModel": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "executionTarget": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "expectedTaskRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "label": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "mcpFacade": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "message": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "model": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "modelIdentity": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "parentSessionId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "pluginTools": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "string"
+            }
+          },
+          "profileId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "provider": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "remoteCwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "resultSchema": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "role": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "skipPermissions": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stage": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "template": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "templateParams": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "toolScope": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "trackTask": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "transport": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowStepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "worktree": {
+            "kind": "boolean",
+            "omit": "zero"
+          }
+        }
+      }
+    },
+    "start_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "summarize_agent_status": {
+      "type": "statusSummaryIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "hub": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "terminal_input": {
+      "type": "terminalInputIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "data": {
+            "kind": "string"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "terminal_resize": {
+      "type": "terminalResizeIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cols": {
+            "kind": "number"
+          },
+          "rows": {
+            "kind": "number"
+          },
+          "sessionId": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "update_profile": {
+      "type": "@object",
+      "passthrough": "freeform object: original addObjectTool/addConfigSaveTool never projected map entries"
+    },
+    "update_task_references": {
+      "type": "taskRefsIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "cwd": {
+            "kind": "string"
+          },
+          "expectedTaskRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "remove": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          },
+          "taskId": {
+            "kind": "string"
+          },
+          "upsert": {
+            "kind": "array",
+            "omit": "empty",
+            "item": {
+              "kind": "map"
+            }
+          }
+        }
+      }
+    },
+    "update_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "validate_workflow": {
+      "type": "workflowIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "compact": {
+            "kind": "boolean",
+            "omit": "zero"
+          },
+          "cwd": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "definition": {
+            "kind": "map",
+            "omit": "empty"
+          },
+          "expectedRevision": {
+            "kind": "number",
+            "omit": "nil",
+            "pointer": true
+          },
+          "id": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "name": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "reason": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "run": {
+            "kind": "boolean",
+            "omit": "nil",
+            "pointer": true
+          },
+          "stepId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "taskId": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "title": {
+            "kind": "string",
+            "omit": "zero"
+          },
+          "workflowId": {
+            "kind": "string",
+            "omit": "nil",
+            "pointer": true
+          }
+        }
+      }
+    },
+    "write_file": {
+      "type": "writeFileIn",
+      "rule": {
+        "kind": "object",
+        "fields": {
+          "contents": {
+            "kind": "string"
+          },
+          "path": {
+            "kind": "string"
+          }
+        }
+      }
+    }
+  }
+}

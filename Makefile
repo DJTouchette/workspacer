@@ -98,11 +98,20 @@ build-hub: build-rust-backend
 
 .PHONY: test-hub-rust test-hub-parity hub-migration hub-vocabulary test-native-rust hub-mcp-catalog
 hub-mcp-catalog:
-	cd $(HUB) && WKS_UPDATE_RUST_MIGRATION_ASSETS=1 go test ./cmd/mcp -run '^TestRustMigrationToolCatalog$$' -count=1
+	python3 scripts/mcp-catalog.py --write
+
+.PHONY: check-hub-mcp-catalog
+check-hub-mcp-catalog:
+	python3 scripts/mcp-catalog.py --check
+	python3 -B -m unittest discover -s scripts -p 'test_mcp_catalog.py' -v
 test-native-rust:
 	cargo test --locked --manifest-path $(NATIVE)/Cargo.toml --no-default-features --features rust-hub
 test-hub-rust:
 	cargo test --locked --manifest-path $(HUB_RUST)/Cargo.toml
+
+.PHONY: test-hub-latency
+test-hub-latency:
+	cargo test --locked --release --manifest-path $(HUB_RUST)/Cargo.toml --test bus_latency -- --ignored --nocapture
 
 # Build the reference in a disposable directory. The environment variable is
 # mandatory in the ignored test: this target never silently skips Go parity.
@@ -136,6 +145,7 @@ check-hub-rust-windows-platform:
 
 .PHONY: check-hub-rust-assets
 check-hub-rust-assets:
+	python3 scripts/mcp-catalog.py --check
 	python3 scripts/generate-rust-launch-assets.py --check
 	node scripts/generate-rust-library-assets.mjs --check
 	node scripts/generate-rust-workflow-assets.mjs --check
