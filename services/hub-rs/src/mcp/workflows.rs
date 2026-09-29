@@ -32,6 +32,22 @@ pub(super) fn prepare(name: &str, params: &mut Value, session: &str) -> Result<(
     if name == "select_default_workflow" && !params["cwd"].as_str().unwrap_or("").is_empty() {
         return Err("global selection must omit cwd".into());
     }
+    if matches!(name, "get_manager_request" | "resolve_manager_request")
+        && params["requestId"].as_str().unwrap_or("").is_empty()
+    {
+        return Err("requestId is required".into());
+    }
+    if name == "resolve_manager_request" && params["expectedRevision"].is_null() {
+        return Err("expectedRevision is required".into());
+    }
+    if name == "accept_task_outcome"
+        && (params["expectedTaskRevision"].is_null()
+            || ["taskId", "cwd", "reason"]
+                .iter()
+                .any(|key| params[*key].as_str().unwrap_or("").is_empty()))
+    {
+        return Err("taskId, cwd, expectedTaskRevision and reason are required".into());
+    }
     if name == "update_task_references" {
         if params["expectedTaskRevision"].as_u64().is_none() {
             return Err("expectedTaskRevision is required; call get_task_references first".into());
@@ -47,6 +63,37 @@ pub(super) fn prepare(name: &str, params: &mut Value, session: &str) -> Result<(
     let op = op(name).ok_or_else(|| "unknown workflow tool".to_owned())?;
     let map = params.as_object_mut().unwrap();
     map.remove("compact");
+    // Match the reference facade's typed omitempty wire projection. Pointer
+    // values (workflowId, run and revisions) retain null/false/zero semantics.
+    for key in [
+        "id",
+        "name",
+        "cwd",
+        "taskId",
+        "title",
+        "stepId",
+        "reason",
+        "view",
+        "requestId",
+    ] {
+        if map.get(key).and_then(Value::as_str) == Some("") {
+            map.remove(key);
+        }
+    }
+    if map
+        .get("intents")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty)
+    {
+        map.remove("intents");
+    }
+    if map
+        .get("definition")
+        .and_then(Value::as_object)
+        .is_some_and(serde_json::Map::is_empty)
+    {
+        map.remove("definition");
+    }
     map.insert("op".into(), op.into());
     map.insert("callerSessionId".into(), session.into());
     if op == "select" {

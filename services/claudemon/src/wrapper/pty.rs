@@ -208,20 +208,19 @@ mod windows_job_tests {
     fn conpty_job_confines_a_child_that_forks_immediately_without_input() {
         let directory = tempfile::tempdir().unwrap();
         let marker = directory.path().join("descendant.pid");
-        let script="$p=Start-Process cmd.exe -ArgumentList '/D','/C','ping -n 30 127.0.0.1 >nul' -PassThru;Set-Content -LiteralPath $env:WORKSPACER_PTY_JOB_MARKER -Value $p.Id -Encoding ascii;Start-Sleep -Seconds 30";
-        let argv = [
-            "powershell.exe",
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script,
-        ]
-        .map(str::to_owned);
-        let environment = std::collections::HashMap::from([(
-            "WORKSPACER_PTY_JOB_MARKER".into(),
-            marker.to_string_lossy().into_owned(),
-        )]);
+        let mut argv = vec![std::env::current_exe()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()];
+        argv.extend(crate::child_job::tests::immediate_arguments());
+        let environment = std::collections::HashMap::from([
+            (
+                "WORKSPACER_JOB_TEST_MARKER".into(),
+                marker.to_string_lossy().into_owned(),
+            ),
+            ("WORKSPACER_JOB_TEST_WAIT_FOR_STDIN".into(), "0".into()),
+        ]);
         let handle = spawn(
             &argv,
             directory.path().to_str().unwrap(),

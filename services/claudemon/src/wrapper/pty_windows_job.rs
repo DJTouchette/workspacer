@@ -197,7 +197,7 @@ impl Drop for Job {
     }
 }
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[test]
     fn host_process_is_never_assigned() {
@@ -237,26 +237,12 @@ mod tests {
     }
     #[test]
     fn job_close_terminates_a_descendant_created_after_assignment() {
-        use std::{
-            io::{BufRead, Write},
-            os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
-            process::Stdio,
-        };
-        use windows_sys::Win32::{
-            Foundation::WAIT_OBJECT_0,
-            System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
-        };
-        let script = "$null=[Console]::ReadLine();$p=Start-Process cmd.exe -ArgumentList '/D','/C','ping -n 30 127.0.0.1 >nul' -PassThru;[Console]::WriteLine($p.Id);Start-Sleep -Seconds 30";
-        let mut child = std::process::Command::new("powershell.exe")
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                script,
-            ])
+        use std::{io::Write, process::Stdio};
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("descendant.pid");
+        let mut child = immediate_command(&marker)
+            .env("WORKSPACER_JOB_TEST_WAIT_FOR_STDIN", "1")
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
             .spawn()
             .unwrap();
         let job = match Job::assign(child.as_raw_handle()) {
@@ -267,27 +253,9 @@ mod tests {
                 panic!("could not assign child job: {error}");
             }
         };
+        assert!(!marker.exists(), "descendant must wait for assigned owner");
         child.stdin.take().unwrap().write_all(b"go\n").unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let reader = std::thread::spawn(move || {
-            let mut line = String::new();
-            let result = std::io::BufReader::new(stdout)
-                .read_line(&mut line)
-                .map(|_| line);
-            let _ = tx.send(result);
-        });
-        let pid: u32 = rx
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .expect("descendant ready")
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        reader.join().unwrap();
-        let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-        assert!(!raw.is_null(), "open original descendant handle");
-        let descendant = unsafe { OwnedHandle::from_raw_handle(raw) };
+        let descendant = descendant(&marker);
         drop(job);
         assert_eq!(
             unsafe { WaitForSingleObject(descendant.as_raw_handle(), 5000) },
@@ -301,6 +269,11 @@ mod tests {
         let Some(marker) = std::env::var_os("WORKSPACER_JOB_TEST_MARKER") else {
             return;
         };
+        if std::env::var("WORKSPACER_JOB_TEST_WAIT_FOR_STDIN").as_deref() == Ok("1") {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).unwrap();
+            assert_eq!(line.trim(), "go");
+        }
         let mut child = std::process::Command::new("cmd.exe")
             .args(["/D", "/C", "ping -n 30 127.0.0.1 >nul"])
             .spawn()
@@ -310,15 +283,19 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
     }
-    fn immediate_command(marker: &std::path::Path) -> std::process::Command {
+    pub(crate) fn immediate_arguments() -> Vec<String> {
         let module = module_path!().split_once("::").unwrap().1;
+        vec![
+            "--exact".into(),
+            format!("{module}::immediate_fork_child_helper"),
+            "--nocapture".into(),
+        ]
+    }
+    fn immediate_command(marker: &std::path::Path) -> std::process::Command {
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
         command
-            .args([
-                "--exact",
-                &format!("{module}::immediate_fork_child_helper"),
-                "--nocapture",
-            ])
+            .args(immediate_arguments())
+            .env_remove("WORKSPACER_JOB_TEST_WAIT_FOR_STDIN")
             .env("WORKSPACER_JOB_TEST_MARKER", marker)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

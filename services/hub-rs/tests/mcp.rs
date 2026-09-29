@@ -1238,3 +1238,294 @@ async fn forwarding_tools_keep_identity_click_targets_and_operator_boundaries() 
     }
     hub.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn workflow_operation_schemas_and_compact_transport_preserve_evidence() {
+    use std::sync::{Arc, Mutex};
+    use workspacer_hub::protocol::Frame;
+    let directory = tempfile::tempdir().unwrap();
+    let tokens = directory.path().join("tokens.json");
+    let session = auth::mint(&tokens, Scope::Operator, "session:manager").unwrap();
+    let mut options = Options::default();
+    options.control_plane_only = true;
+    options.scoped_tokens = Some(tokens);
+    options.token = "workflow-fixture-owner".into();
+    options.mcp_listen = Some("127.0.0.1:0".parse().unwrap());
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let address = match *hub.handle().status().borrow() {
+        Status::Ready {
+            mcp_address: Some(address),
+            ..
+        } => address.to_string(),
+        _ => panic!("MCP unavailable"),
+    };
+    let mut provider = hub.handle().connect().await.unwrap();
+    assert_eq!(provider.recv().await.unwrap().op, "hello");
+    provider
+        .send(Frame {
+            op: "register".into(),
+            methods: vec!["fleetWorkflows.request".into()],
+            ..Frame::default()
+        })
+        .unwrap();
+    assert_eq!(provider.recv().await.unwrap().op, "registered");
+    let wires = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let observed = wires.clone();
+    let worker = tokio::spawn(async move {
+        while let Some(frame) = provider.recv().await {
+            if frame.op != "call" {
+                continue;
+            }
+            assert_eq!(frame.method, "fleetWorkflows.request");
+            let params = frame.params.unwrap();
+            let conflict = params["op"] == "resolveRequest";
+            observed.lock().unwrap().push(params);
+            let value: Value = serde_json::from_str(r#"{"ok":true,"task":{"taskId":"t","workflow":{"hash":"pinned","templates":{"ship":{"body":"REPEATED BODY","params":[{"name":"task"}],"resultSchema":{"type":"object"}}},"definition":{"id":"policy"},"steps":[{"outcome":{"verdict":"failed","exact":9007199254740993}}]}},"instructions":"next action"}"#).unwrap();
+            provider
+                .send(Frame {
+                    op: "result".into(),
+                    id: frame.id,
+                    result: Some(if conflict { json!({"ok":false,"code":"conflict","request":{"host":{"requestId":"r","revision":3}}}) } else { value }),
+                    ..Frame::default()
+                })
+                .unwrap();
+        }
+    });
+    let client = reqwest::Client::new();
+    let tools = result(rpc(&client, &address, &session.token, "tools/list", json!({})).await).await;
+    let tools = tools["result"]["tools"].as_array().unwrap();
+    let workflow_names = [
+        "list_workflows",
+        "get_workflow",
+        "validate_workflow",
+        "create_workflow",
+        "update_workflow",
+        "clone_workflow",
+        "disable_workflow",
+        "delete_workflow",
+        "select_default_workflow",
+        "select_project_workflow",
+        "start_workflow",
+        "next_workflow_step",
+        "decide_workflow_step",
+        "list_manager_requests",
+        "get_manager_request",
+        "resolve_manager_request",
+        "accept_task_outcome",
+    ];
+    let selected: Vec<_> = tools
+        .iter()
+        .filter(|tool| workflow_names.contains(&tool["name"].as_str().unwrap()))
+        .collect();
+    assert_eq!(selected.len(), workflow_names.len());
+    let bytes: usize = selected
+        .iter()
+        .map(|tool| {
+            tool["inputSchema"].to_string().len() + tool["description"].as_str().unwrap().len()
+        })
+        .sum();
+    assert!(
+        bytes <= 12_500,
+        "workflow schema context regression: {bytes}"
+    );
+    for (names, field) in [
+        (
+            &[
+                "list_manager_requests",
+                "get_manager_request",
+                "accept_task_outcome",
+            ][..],
+            "intents",
+        ),
+        (
+            &[
+                "start_workflow",
+                "next_workflow_step",
+                "decide_workflow_step",
+            ][..],
+            "definition",
+        ),
+    ] {
+        for name in names {
+            let tool = selected.iter().find(|tool| tool["name"] == *name).unwrap();
+            assert!(tool["inputSchema"]["properties"].get(field).is_none());
+        }
+    }
+    for compact in [false, true] {
+        let response = result(rpc(&client,&address,&session.token,"tools/call",json!({"name":"next_workflow_step","arguments":{"taskId":"t","cwd":"/repo","compact":compact}})).await).await;
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        let body = response["result"]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(body.contains("REPEATED BODY"), !compact);
+        for kept in [
+            "pinned",
+            "resultSchema",
+            "verdict",
+            "failed",
+            "next action",
+            "policy",
+            "9007199254740993",
+        ] {
+            assert!(body.contains(kept), "lost {kept}: {body}");
+        }
+        let wires = wires.lock().unwrap();
+        let wire = wires.last().unwrap();
+        assert!(wire.get("compact").is_none());
+        assert_eq!(wire["callerSessionId"], "manager");
+        assert_eq!(wire["op"], "next");
+    }
+    for (name, arguments) in [
+        (
+            "select_project_workflow",
+            json!({"cwd":"/repo","workflowId":null,"expectedRevision":0}),
+        ),
+        (
+            "decide_workflow_step",
+            json!({"taskId":"t","cwd":"/repo","stepId":"scout","run":false,"reason":"bounded"}),
+        ),
+        (
+            "clone_workflow",
+            json!({"id":"policy","expectedRevision":1}),
+        ),
+        ("list_manager_requests", json!({"view":"pending"})),
+    ] {
+        let response = result(
+            rpc(
+                &client,
+                &address,
+                &session.token,
+                "tools/call",
+                json!({"name":name,"arguments":arguments}),
+            )
+            .await,
+        )
+        .await;
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        assert!(response.get("error").is_none(), "{response}");
+    }
+    {
+        let wires = wires.lock().unwrap();
+        assert_eq!(wires[wires.len() - 4].get("workflowId"), Some(&Value::Null));
+        assert_eq!(wires[wires.len() - 3]["run"], false);
+        assert_eq!(wires.last().unwrap()["view"], "pending");
+    }
+    for (name, arguments, omitted) in [
+        ("list_manager_requests", json!({"view":""}), "view"),
+        (
+            "clone_workflow",
+            json!({"id":"policy","expectedRevision":0,"name":""}),
+            "name",
+        ),
+    ] {
+        let response = result(
+            rpc(
+                &client,
+                &address,
+                &session.token,
+                "tools/call",
+                json!({"name":name,"arguments":arguments}),
+            )
+            .await,
+        )
+        .await;
+        assert_ne!(response["result"]["isError"], true, "{response}");
+        assert!(wires.lock().unwrap().last().unwrap().get(omitted).is_none());
+    }
+    assert_eq!(wires.lock().unwrap().last().unwrap()["expectedRevision"], 0);
+    let inbox = [
+        "list_manager_requests",
+        "get_manager_request",
+        "resolve_manager_request",
+        "accept_task_outcome",
+    ];
+    for scope in [Scope::View, Scope::Triage] {
+        let token = auth::mint(
+            &directory.path().join("tokens.json"),
+            scope,
+            "session:limited",
+        )
+        .unwrap();
+        let listed =
+            result(rpc(&client, &address, &token.token, "tools/list", json!({})).await).await;
+        assert!(
+            listed["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tool| !inbox.contains(&tool["name"].as_str().unwrap()))
+        );
+    }
+    let response = result(rpc(&client,&address,&session.token,"tools/call",json!({"name":"resolve_manager_request","arguments":{"requestId":"r","expectedRevision":2,"intents":[{"key":"status","kind":"none","reason":"status question"}]}})).await).await;
+    assert_ne!(
+        response["result"]["isError"], true,
+        "domain conflict is data, not an MCP transport error"
+    );
+    assert_eq!(
+        tool_value(&response),
+        json!({"ok":false,"code":"conflict","request":{"host":{"requestId":"r","revision":3}}})
+    );
+    assert_eq!(
+        wires.lock().unwrap().last().unwrap()["op"],
+        "resolveRequest"
+    );
+    assert_eq!(
+        wires.lock().unwrap().last().unwrap()["callerSessionId"],
+        "manager"
+    );
+    for (name, arguments) in [
+        (
+            "get_manager_request",
+            json!({"requestId":"","callerSessionId":"foreign"}),
+        ),
+        ("get_manager_request", json!({"requestId":""})),
+        (
+            "resolve_manager_request",
+            json!({"requestId":"","expectedRevision":2,"intents":[]}),
+        ),
+        (
+            "resolve_manager_request",
+            json!({"requestId":"r","intents":[]}),
+        ),
+        (
+            "accept_task_outcome",
+            json!({"taskId":"t","cwd":"/repo","expectedTaskRevision":2,"reason":""}),
+        ),
+        (
+            "accept_task_outcome",
+            json!({"taskId":"","cwd":"/repo","expectedTaskRevision":2,"reason":"reviewed"}),
+        ),
+        (
+            "accept_task_outcome",
+            json!({"taskId":"t","cwd":"","expectedTaskRevision":2,"reason":"reviewed"}),
+        ),
+    ] {
+        let before = wires.lock().unwrap().len();
+        let response = result(
+            rpc(
+                &client,
+                &address,
+                &session.token,
+                "tools/call",
+                json!({"name":name,"arguments":arguments}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(response["result"]["isError"], true, "{name}: {response}");
+        assert_eq!(
+            wires.lock().unwrap().len(),
+            before,
+            "invalid inbox request reached provider"
+        );
+    }
+    let before = wires.lock().unwrap().len();
+    let response = result(rpc(&client,&address,&session.token,"tools/call",json!({"name":"next_workflow_step","arguments":{"taskId":"t","cwd":"/repo","callerSessionId":"foreign"}})).await).await;
+    assert_eq!(response["result"]["isError"], true);
+    assert_eq!(
+        wires.lock().unwrap().len(),
+        before,
+        "forged identity reached provider"
+    );
+    hub.shutdown().unwrap();
+    worker.await.unwrap();
+}

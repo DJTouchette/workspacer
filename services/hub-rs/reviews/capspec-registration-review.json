@@ -1,0 +1,21 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "Portable capabilityRegistration4 + busAuthorityRegistry2 + busPublicationSites4 pass (10 tests), /tmp/workspacer-capability-registration-green.log. Desktop main typecheck passed. Witness did not map the support helper; the helper is exercised directly by the registration mutation suite. No Rust behavior change and no composition/path-parameter certification implied.",
+  "records": {
+    "services/hub/internal/capspec/hubnative_test.go": {
+      "status": "ported",
+      "sha256": "c7a7cd0eca71f8cb221e91bddadbc686cab7a04fd6f4e9645340651e717f2db7",
+      "replacement": [
+        "apps/desktop/tests/support/capabilitySource.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts"
+      ],
+      "tests": [
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
+        "services/hub-rs/assets/hub-vocabulary.json",
+        "contracts/backend-capabilities.json"
+      ],
+      "note": "Both original assertions retained: every actual hub registration classified with a population ratchet and required layout.get/layout.set, and hub-owned names disjoint from actual desktop provider declarations with a desktop population ratchet. Rust scans all production modules including newly introduced files and expands concrete literal registration loops; desktop uses AST import/variable registrar aliases and literal imported constant arrays for native service registration. Fourteen Rust-only capabilities have explicit actor/read decisions and handler-bound authorization proofs. Two deliberate duplicate registrations have exact owner-file populations and override/readiness proof checks rather than a general duplicate exemption. Mutation tests cover unknown/new modules, computed names, name rebinding, missing populations, unreviewed duplicate takeover, missing gate, stale decisions, comments/literals, cfg(test) ownership changes, CRLF, registrar aliases and imported method-list changes. The original Go main.go registration mechanism is replaced by common Rust core/service Options.handler registration; captured hub ownership remains separate from provider methods even though implementations share a crate. Composition call-chain and dangerous-parameter completeness remain separate pending responsibilities."
+    }
+  }
+}

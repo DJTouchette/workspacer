@@ -1,0 +1,56 @@
+{
+  "records": {
+    "services/hub/cmd/mcp/operation_schema.go": {
+      "sha256": "126a6f84b19f314151dbfab90ad3f719c60948376d9388909d3527589308b7f1",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Go reflection-derived per-operation schemas are replaced by the checked-in scope-specific MCP catalog and rmcp Tool schemas, validated before dispatch. Live tools/list pins17 workflow/inbox operations, no unrelated intents/definition schema fields and total schema+description budget<=12500bytes (current9297). Compact projection strips only pinned template body fields from task/tasks and keeps result contracts, policy, instructions and exact serde_json integer evidence; successful transport preserves domain conflicts. Real HTTP and a registered provider pin compact flag removal and request-local identity. Rust does not recreate generic Go reflection or its registration panic mechanism; catalog/schema integration supplies the equivalent registration contract.",
+      "status": "ported"
+    },
+    "services/hub/cmd/mcp/operation_schema_test.go": {
+      "sha256": "1e34a639992cbf55888ed0902f862ecb3ed5cde7c599cd57f29e528a3ce41c03",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Ported exact reference transport assertions into workflow_operation_schemas_and_compact_transport_preserve_evidence: live tools/list schema budget/field exclusions, compact false/true with9007199254740993 exact, callerSessionId/op stamped and compact absent, inheritance null, false decision, clone without name, pending inbox view, and forged identity rejected with no provider call. Added empty optional field omission/zero revision assertions; no live provider or model invoked.",
+      "status": "ported"
+    },
+    "services/hub/cmd/mcp/manager_requests.go": {
+      "sha256": "3fd6a85f5a2567f7e7b92f263fd373cfa674d6be9e80a2c7b83eaeb24aab4a56",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "All four manager inbox/outcome tools remain operator-only and route literal fleetWorkflows.request operations with identity from authenticated session context. Added missing preforward empty requestId and outcome taskId/cwd/reason checks, preserving required revision guards and Go typed omission for empty optional strings/intents. Compact remains facade-only; host conflict ok:false/code/conflicting request content stays a successful MCP transport result, with no inferred replay or execution authority. Sessionless requests remain rejected by existing actual MCP identity fixture; host service retains ownership/atomicity.",
+      "status": "ported"
+    },
+    "services/hub/cmd/mcp/manager_requests_test.go": {
+      "sha256": "ed882c7a9a020c717db9b6d11be3d9f10dceb0904b76083a1ea2bb359441690e",
+      "replacement": [
+        "services/hub-rs/src/mcp.rs",
+        "services/hub-rs/src/mcp/workflows.rs",
+        "services/hub-rs/assets/mcp-tools.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "review": "Real MCP HTTP plus a registered fake provider reproduces operator-only inbox tool visibility (view/triage absent), resolveRequest operation and authenticated manager identity, conflict payload preservation, forged caller rejection and no provider side effect. Expanded with empty required-field rejection before provider, which failed before the Rust facade guard fix. This supplements the existing sessionless owner/raw-scope identity refusal integration; tests use isolated token files and no real provider.",
+      "status": "ported"
+    }
+  }
+}
