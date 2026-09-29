@@ -364,3 +364,127 @@ fn killed_credential_writer_releases_advisory_lock_without_age_stealing() {
     assert_eq!(auth::load(&path).unwrap().len(), 2);
     assert!(dir.path().join("tokens.json.lock").exists());
 }
+
+#[tokio::test]
+async fn exact_health_status_and_identity_are_rechecked_before_mint_and_recover_without_cache() {
+    use axum::{
+        Json, Router,
+        http::{HeaderMap, StatusCode, Uri},
+        routing::get,
+    };
+    use serde_json::Value;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let good = json!({"status":"ok","service":"workspacer-mcp-facade","hubConnected":true,"pluginCatalogReady":true,"listenAddr":address.to_string(),"hubUrl":"expected-hub"});
+    let state = Arc::new(Mutex::new((StatusCode::OK, good.clone())));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let served = state.clone();
+    let counted = calls.clone();
+    let app = Router::new().route(
+        "/health",
+        get(move |headers: HeaderMap, uri: Uri| {
+            let (status, body) = served.lock().unwrap().clone();
+            counted.fetch_add(1, Ordering::SeqCst);
+            async move {
+                assert!(headers.get("authorization").is_none());
+                assert!(uri.query().is_none());
+                (status, Json(body))
+            }
+        }),
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let facade = SessionFacade {
+        endpoint: Some(
+            format!("http://{address}/mcp?keep=1&t=old-credential#fragment")
+                .parse()
+                .unwrap(),
+        ),
+        expected_hub: "expected-hub".into(),
+        readiness: workspacer_hub::services::session_facade::Readiness::Legacy,
+        tokens: root.path().join("tokens.json"),
+        directory: root.path().join("mcp"),
+        home: root.path().join("unused-home"),
+        instructions: String::new(),
+    };
+    let plan = |id: &str| {
+        spawn_plan::resolve(
+            &json!({"cwd":root.path(),"provider":"codex"}),
+            &json!({}),
+            None,
+            root.path(),
+            id,
+            false,
+        )
+        .unwrap()
+    };
+    for status in [
+        StatusCode::CREATED,
+        StatusCode::ACCEPTED,
+        StatusCode::FOUND,
+        StatusCode::SERVICE_UNAVAILABLE,
+    ] {
+        *state.lock().unwrap() = (status, good.clone());
+        let mut candidate = plan("bad-status");
+        assert!(
+            facade.prepare(&mut candidate, "bad-status").await.is_err(),
+            "{status}"
+        );
+        assert!(!facade.tokens.exists());
+        assert!(candidate.request.get("mcp").is_none());
+    }
+    for (key, bad) in [
+        ("status", json!("starting")),
+        ("service", json!("different-service")),
+        ("hubConnected", json!(false)),
+        ("pluginCatalogReady", json!(false)),
+        ("listenAddr", json!("127.0.0.1:1")),
+        ("hubUrl", json!("other-hub")),
+    ] {
+        let mut body = good.clone();
+        body[key] = bad;
+        *state.lock().unwrap() = (StatusCode::OK, body);
+        assert!(
+            facade
+                .prepare(&mut plan("bad-identity"), "bad-identity")
+                .await
+                .is_err(),
+            "{key}"
+        );
+        assert!(!facade.tokens.exists());
+    }
+    *state.lock().unwrap() = (StatusCode::OK, good.clone());
+    let mut first = plan("first");
+    facade.prepare(&mut first, "first").await.unwrap();
+    let records = auth::load(&facade.tokens).unwrap();
+    assert_eq!(records.len(), 1);
+    let endpoint: url::Url = first.request["mcp"].as_str().unwrap().parse().unwrap();
+    assert_eq!(endpoint.query_pairs().filter(|(k, _)| k == "t").count(), 1);
+    assert!(
+        endpoint
+            .query_pairs()
+            .any(|(k, v)| k == "t" && v == records[0].token)
+    );
+    assert!(endpoint.query_pairs().any(|(k, v)| k == "keep" && v == "1"));
+    let before = std::fs::read(&facade.tokens).unwrap();
+    let mut down = good.clone();
+    down["pluginCatalogReady"] = Value::Bool(false);
+    *state.lock().unwrap() = (StatusCode::OK, down);
+    assert!(facade.prepare(&mut plan("down"), "down").await.is_err());
+    assert_eq!(std::fs::read(&facade.tokens).unwrap(), before);
+    *state.lock().unwrap() = (StatusCode::OK, good);
+    facade
+        .prepare(&mut plan("recovered"), "recovered")
+        .await
+        .unwrap();
+    assert_eq!(auth::load(&facade.tokens).unwrap().len(), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 13);
+    server.abort();
+    let _ = server.await;
+}

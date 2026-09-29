@@ -49,20 +49,28 @@ identity and lifecycle revocation, not a grant selector. Manual/remote clients
 may independently mint view/triage/operator/provider credentials with
 `workspacer token create`; those tiers remain enforced.
 
-Desktop and headless spawns both verify facade readiness before minting or
-injecting a bearer. The headless brain treats its configured URL only as a
-probe target and checks service, bind, expected hub (when known),
-`hubConnected`, and `pluginCatalogReady` for every spawn. A failed check omits
-the facade and mints nothing; a later healthy check recovers automatically.
+Readiness is checked before minting or injecting a bearer. An owned Rust facade
+is verified through its runtime handle, exact bound MCP address and internal
+launch readiness. Legacy external-facade mode requires HTTP200 plus matching
+service, bind, expected hub, `hubConnected`, and `pluginCatalogReady` on every
+launch; health probes carry no bearer and follow no redirects.
+
+A configured but unverified Rust facade refuses launch before minting. This is
+an explicit change from the retained Go brain's omit-and-continue fallback.
+Deliberately disabled facade mode remains supported and does not invent a URL
+or credential. Failed checks are not cached, so later healthy preparation can
+recover. See `services/hub-rs/src/services/session_facade.rs` for these distinct
+ownership modes.
 
 ## Supervision
 
 The desktop's `mcpFacadeDaemon.ts` adopts an exact healthy external facade or
 owns a local child. Owned-child restart timers carry a generation fence and are
 cancelled on adoption, stop, and newer startup, so a stale timer cannot kill or
-replace an adopted `workspacer serve` listener. Headless `workspacer serve`
-starts the brain only after the initial exact MCP health gate; per-spawn probes
-provide the lifetime guarantee after later crashes/restarts.
+replace an adopted `workspacer serve` listener. The Rust standalone backend owns
+its shared services and listeners in one runtime; there is no separately started
+Go brain. Per-launch readiness and generation-bound credentials remain required
+after initial startup.
 
 ## Authentication and plugins
 

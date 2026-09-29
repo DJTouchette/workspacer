@@ -86,7 +86,10 @@ impl SessionFacade {
             .build()?;
         // Readiness is a public, nonsecret endpoint. Never disclose the host
         // bearer to a listener whose identity has not yet been established.
-        let response = client.get(url).send().await?.error_for_status()?;
+        let response = client.get(url).send().await?;
+        if response.status() != reqwest::StatusCode::OK {
+            bail!("configured facade health returned {}", response.status());
+        }
         let health: Value = response.json().await?;
         let listen = &endpoint[url::Position::BeforeHost..url::Position::AfterPort];
         if health["status"] != "ok"
