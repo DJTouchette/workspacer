@@ -110,7 +110,7 @@ mod tests {
             Foundation::WAIT_OBJECT_0,
             System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
         };
-        let script="$null=[Console]::ReadLine();$p=Start-Process cmd.exe -ArgumentList '/D','/C','ping -n 30 127.0.0.1 >nul' -PassThru;[Console]::WriteLine($p.Id);Start-Sleep -Seconds 30";
+        let script = "$null=[Console]::ReadLine();$p=Start-Process cmd.exe -ArgumentList '/D','/C','ping -n 30 127.0.0.1 >nul' -PassThru;[Console]::WriteLine($p.Id);Start-Sleep -Seconds 30";
         let mut child = std::process::Command::new("powershell.exe")
             .args([
                 "-NoLogo",

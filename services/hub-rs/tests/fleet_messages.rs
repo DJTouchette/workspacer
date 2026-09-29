@@ -26,3 +26,15 @@ fn shared_fleet_message_contracts() {
         );
     }
 }
+
+#[test]
+fn labelled_and_unlabelled_sender_headers_match_retained_wire_text() {
+    assert_eq!(
+        fleet_messages::sender_header("worker1", "Rust Worker"),
+        "[fleet] session:worker1 (Rust Worker) says:\n"
+    );
+    assert_eq!(
+        fleet_messages::sender_header("worker2", ""),
+        "[fleet] session:worker2 says:\n"
+    );
+}

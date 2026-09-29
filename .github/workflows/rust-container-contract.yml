@@ -1,6 +1,15 @@
 name: Rust container contract
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/fly/**"
+      - "services/hub-rs/**"
+      - "services/claudemon/**"
+      - "contracts/**"
+      - "apps/desktop/src/renderer/**"
+      - ".github/workflows/rust-container-contract.yml"
   pull_request:
     paths:
       - "deploy/fly/**"

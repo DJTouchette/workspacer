@@ -50,10 +50,10 @@ pub fn verify_anchor(pid: u32) -> io::Result<bool> {
     }
     if exited {
         if let Some(info) = process_info(pid as i32) {
-            if info.pbsi_pid == pid
-                && info.pbsi_ppid == unsafe { libc::getpid() } as u32
-                && info.pbsi_pgid == pid
-                && info.pbsi_status == libc::SZOMB
+            if info.pbi_pid == pid
+                && info.pbi_ppid == unsafe { libc::getpid() } as u32
+                && info.pbi_pgid == pid
+                && info.pbi_status == libc::SZOMB
             {
                 return Ok(true);
             }
@@ -81,14 +81,17 @@ fn observe_exit(pid: u32) -> io::Result<bool> {
     Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
 #[cfg(target_os = "macos")]
-fn process_info(pid: i32) -> Option<libc::proc_bsdshortinfo> {
-    let mut info = std::mem::MaybeUninit::<libc::proc_bsdshortinfo>::zeroed();
-    let size = std::mem::size_of::<libc::proc_bsdshortinfo>() as i32;
+fn process_info(pid: i32) -> Option<libc::proc_bsdinfo> {
+    // Full BSD info is available in claudemon's independently locked libc
+    // 0.2.186 as well as the hub/native lock. The short-info Rust bindings were
+    // only added later; do not accidentally require a different crate graph.
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
     // arg=1 explicitly includes zombie records, unlike the default lookup.
     let got = unsafe {
         libc::proc_pidinfo(
             pid,
-            libc::PROC_PIDT_SHORTBSDINFO,
+            libc::PROC_PIDTBSDINFO,
             1,
             info.as_mut_ptr().cast(),
             size,
@@ -126,9 +129,9 @@ fn only_zombies(group: i32) -> bool {
         let Some(info) = process_info(pid) else {
             return false;
         };
-        info.pbsi_pid == pid as u32
-            && info.pbsi_pgid == group as u32
-            && info.pbsi_status == libc::SZOMB
+        info.pbi_pid == pid as u32
+            && info.pbi_pgid == group as u32
+            && info.pbi_status == libc::SZOMB
     })
 }
 

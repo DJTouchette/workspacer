@@ -345,6 +345,8 @@ fn extraction_rejects_links() {
 async fn http_public_manifest_omits_private_fields_and_host_mutations_work() {
     let dir = tempfile::tempdir().unwrap();
     let manifest = fixture(dir.path());
+    std::fs::write(dir.path().join("ui/app.js"), "export const value = 1;\n").unwrap();
+    std::fs::write(dir.path().join("ui/style.css"), "body{color:red}").unwrap();
     let hub = Hub::start(Options::default()).unwrap();
     hub.ready().await.unwrap();
     let mut manager = Manager::new(dir.path().into(), hub.handle(), String::new());
@@ -378,6 +380,42 @@ async fn http_public_manifest_omits_private_fields_and_host_mutations_work() {
         .unwrap();
     assert!(public[0].get("settings").is_none());
     assert!(public[0].get("provides").is_none());
+    assert!(public[0].as_object().unwrap().keys().all(|key| {
+        [
+            "id",
+            "name",
+            "apiVersion",
+            "version",
+            "disabled",
+            "panes",
+            "widgets",
+            "hotkeys",
+        ]
+        .contains(&key.as_str())
+    }));
+    let private: Value = client
+        .get(format!("{base}/plugins"))
+        .bearer_auth("host-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(private[0]["provides"], json!(["fixture.*"]));
+    assert!(private[0]["settings"].is_array());
+    for (file, expected) in [
+        ("app.js", "export const value = 1;\n"),
+        ("style.css", "body{color:red}"),
+    ] {
+        let response = client
+            .get(format!("{base}/plugins/ui/fixture/{file}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.text().await.unwrap(), expected);
+    }
     assert_eq!(
         client
             .get(format!("{base}/plugins/tokens"))
@@ -431,6 +469,23 @@ async fn http_public_manifest_omits_private_fields_and_host_mutations_work() {
     assert!(own_ui.contains("__WKS_SETTINGS__"));
     assert!(own_ui.contains("__WKS_SECRET__"));
     assert!(!own_ui.contains("sensitive"));
+    // The standalone router also retains Go's explicitly unkeyed local mode.
+    let unkeyed = workspacer_hub::plugins::http::router(manager.clone(), String::new());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let unkeyed_address = listener.local_addr().unwrap();
+    let unkeyed_task = tokio::spawn(async move { axum::serve(listener, unkeyed).await.unwrap() });
+    assert_eq!(
+        client
+            .post(format!("http://{unkeyed_address}/plugins/reload"))
+            .json(&json!({"dir":dir.path()}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    unkeyed_task.abort();
+    let _ = unkeyed_task.await;
     manager.lock().await.remove("fixture").await.unwrap();
     let empty: Value = client
         .get(format!("{base}/plugins"))
@@ -615,6 +670,18 @@ async fn http_operator_cannot_install_or_reload_and_bundled_examples_are_host_ow
     fixture(&example);
     let records = root.path().join("tokens.json");
     let operator = auth::mint(&records, auth::Scope::Operator, "fixture").unwrap();
+    let restricted = [
+        auth::Scope::View,
+        auth::Scope::Triage,
+        auth::Scope::Provider,
+    ]
+    .into_iter()
+    .map(|scope| {
+        auth::mint(&records, scope, "restricted-fixture")
+            .unwrap()
+            .token
+    })
+    .collect::<Vec<_>>();
     let hub = Hub::start(Options::default()).unwrap();
     hub.ready().await.unwrap();
     let manager = Arc::new(tokio::sync::Mutex::new(Manager::new(
@@ -636,6 +703,25 @@ async fn http_operator_cannot_install_or_reload_and_bundled_examples_are_host_ow
     let base = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let client = reqwest::Client::new();
+    for route in ["install", "reload", "examples/install"] {
+        for token in std::iter::once("")
+            .chain(std::iter::once("invalid-fixture"))
+            .chain(restricted.iter().map(String::as_str))
+        {
+            let response = client
+                .post(format!("{base}/plugins/{route}"))
+                .bearer_auth(token)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                401,
+                "{route} admitted a non-operator credential"
+            );
+        }
+    }
     let public: Value = client
         .get(format!("{base}/plugins/examples"))
         .send()
@@ -657,17 +743,18 @@ async fn http_operator_cannot_install_or_reload_and_bundled_examples_are_host_ow
         .unwrap();
     assert!(full[0].get("settings").is_some());
     for route in ["reload", "install", "examples/install"] {
-        assert_eq!(
-            client
-                .post(format!("{base}/plugins/{route}"))
-                .bearer_auth(&operator.token)
-                .json(&json!({"id":"fixture","dir":example}))
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            401
-        );
+        let response = client
+            .post(format!("{base}/plugins/{route}"))
+            .bearer_auth(&operator.token)
+            .json(&json!({"id":"fixture","dir":example}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403);
+        let body = response.text().await.unwrap();
+        assert!(body.contains("host authority"));
+        assert!(!body.contains(&operator.token));
+        assert!(!body.contains("restricted-fixture"));
     }
     let result = client
         .post(format!("{base}/plugins/examples/install"))
@@ -678,6 +765,62 @@ async fn http_operator_cannot_install_or_reload_and_bundled_examples_are_host_ow
         .unwrap();
     assert_eq!(result.status(), 200);
     assert!(root.path().join("plugins/fixture/plugin.json").exists());
+    for body in [
+        json!({"id":"fixture"}),
+        json!({"id":"fixture","enabled":null}),
+    ] {
+        assert_eq!(
+            client
+                .post(format!("{base}/plugins/setEnabled"))
+                .bearer_auth("host-key")
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        assert!(
+            manager
+                .lock()
+                .await
+                .list()
+                .into_iter()
+                .find(|m| m.id == "fixture")
+                .unwrap()
+                .disabled
+        );
+        client
+            .post(format!("{base}/plugins/setEnabled"))
+            .bearer_auth("host-key")
+            .json(&json!({"id":"fixture","enabled":true}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+    assert_eq!(
+        client
+            .post(format!("{base}/plugins/setEnabled"))
+            .bearer_auth("host-key")
+            .json(&json!({"id":"fixture","enabled":"false"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    assert!(
+        !manager
+            .lock()
+            .await
+            .list()
+            .into_iter()
+            .find(|m| m.id == "fixture")
+            .unwrap()
+            .disabled
+    );
     let origin: Value = client
         .get(format!("{base}/plugins/origin"))
         .send()

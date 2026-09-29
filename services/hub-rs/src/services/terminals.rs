@@ -169,6 +169,9 @@ impl Terminals {
     }
     async fn expire(&self, now: Instant) {
         let mut forwarders = self.forwarders.lock().await;
+        Self::expire_entries(&mut forwarders, now).await;
+    }
+    async fn expire_entries(forwarders: &mut BTreeMap<String, Forwarder>, now: Instant) {
         let ids: Vec<_> = forwarders
             .iter_mut()
             .filter_map(|(id, row)| {
@@ -477,6 +480,54 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn viewer_lease_expiry_keeps_live_viewers_and_joins_last_forwarder() {
+        let now = Instant::now();
+        let (stop, mut stopping) = watch::channel(false);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let ended = stopped.clone();
+        let task = tokio::spawn(async move {
+            stopping.changed().await.unwrap();
+            assert!(*stopping.borrow());
+            ended.store(true, Ordering::Release);
+        });
+        let mut rows = BTreeMap::from([(
+            "session".into(),
+            Forwarder {
+                leases: BTreeMap::from([
+                    (1, now + LEASE),
+                    (2, now + LEASE + Duration::from_secs(1)),
+                ]),
+                stop,
+                task,
+            },
+        )]);
+        Terminals::expire_entries(&mut rows, now + LEASE).await;
+        assert_eq!(
+            rows["session"].leases.len(),
+            2,
+            "exact deadline still owns its lease"
+        );
+        Terminals::expire_entries(&mut rows, now + LEASE + Duration::from_millis(1)).await;
+        assert_eq!(
+            rows["session"].leases.keys().copied().collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert!(!stopped.load(Ordering::Acquire));
+        // Renewal replaces a viewer deadline rather than leaking a reference.
+        rows.get_mut("session")
+            .unwrap()
+            .leases
+            .insert(2, now + LEASE + Duration::from_secs(5));
+        Terminals::expire_entries(&mut rows, now + LEASE + Duration::from_secs(2)).await;
+        assert_eq!(rows.len(), 1);
+        Terminals::expire_entries(&mut rows, now + LEASE + Duration::from_secs(6)).await;
+        assert!(rows.is_empty());
+        assert!(
+            stopped.load(Ordering::Acquire),
+            "last expired viewer must join the owned stream"
+        );
+    }
     #[test]
     fn shell_allowlist_and_cwd_are_host_policy() {
         assert_eq!(

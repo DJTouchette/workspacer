@@ -82,6 +82,8 @@ struct Fixture {
     coordinator: Arc<SpawnCoordinator>,
     fake: Arc<Fake>,
     owner: Arc<RwLock<Value>>,
+    parents: Arc<RwLock<std::collections::BTreeMap<String, Value>>>,
+    config: Arc<Config>,
 }
 fn git(cwd: &Path, args: &[&str]) {
     let out = Command::new("git")
@@ -128,8 +130,17 @@ impl Fixture {
             json!({"sessionId":"manager","isWakeTarget":true,"status":"active","cwd":project}),
         ));
         let observed = owner.clone();
-        let lookup =
-            Arc::new(move |id: &str| (id == "manager").then(|| observed.read().unwrap().clone()));
+        let parents = Arc::new(RwLock::new(
+            std::collections::BTreeMap::<String, Value>::new(),
+        ));
+        let observed_parents = parents.clone();
+        let lookup = Arc::new(move |id: &str| {
+            if id == "manager" {
+                Some(observed.read().unwrap().clone())
+            } else {
+                observed_parents.read().unwrap().get(id).cloned()
+            }
+        });
         let workflow = Arc::new(WorkflowRuntime::new(
             Arc::new(WorkflowStore::new(config_dir.clone(), cfg.clone())),
             Arc::new(TaskStore::open(config_dir.join("dispatch-history.json")).unwrap()),
@@ -140,7 +151,7 @@ impl Fixture {
         let coordinator = SpawnCoordinator::new(
             config_dir,
             dir.path().join("home"),
-            cfg,
+            cfg.clone(),
             lifecycle,
             workflow,
             trees,
@@ -152,6 +163,8 @@ impl Fixture {
             coordinator,
             fake,
             owner,
+            parents,
+            config: cfg,
         }
     }
     fn workflow_params(&self) -> Value {
@@ -539,7 +552,13 @@ impl workspacer_hub::services::remote_dispatch::Execution for RemoteExecution {
 #[tokio::test]
 async fn consumed_remote_lease_pins_identity_and_never_creates_local_parent_authority() {
     use workspacer_hub::{Caller, Hub, Options, services::remote_dispatch::Receiver};
-    let fixture = Fixture::new(None);
+    let mut fixture = Fixture::new(None);
+    // Execution readiness advertises canonical choices, and prepare must echo
+    // that exact choice. A raw Windows tempdir path violates the fake's contract.
+    fixture.project = workspacer_hub::services::paths::canonicalize(Path::new(&fixture.project))
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let hub = Hub::start(Options::default()).unwrap();
     hub.ready().await.unwrap();
     let receiver = Receiver::open(
@@ -610,4 +629,169 @@ async fn consumed_remote_lease_pins_identity_and_never_creates_local_parent_auth
     receiver.close().await;
     fixture.coordinator.close().await;
     hub.shutdown().unwrap();
+}
+
+#[tokio::test]
+async fn fleet_full_access_follows_recorded_ancestry_and_current_config_for_each_provider() {
+    for provider in ["claude", "codex", "copilot"] {
+        let fixture = Fixture::new(None);
+        fixture.config.save(json!({"agents":{"fleetFullAccess":true},"claude":{"skipPermissionsDefault":false,"defaultPermissionMode":"default"}}),true).unwrap();
+        fixture.parents.write().unwrap().extend([
+            (
+                "cycle-a".into(),
+                json!({"sessionId":"cycle-a","parentSessionId":"cycle-b"}),
+            ),
+            (
+                "cycle-b".into(),
+                json!({"sessionId":"cycle-b","parentSessionId":"cycle-a"}),
+            ),
+            (
+                "foreign".into(),
+                json!({"sessionId":"foreign","hub":"peer","isWakeTarget":true}),
+            ),
+        ]);
+        let mut worker = String::new();
+        for role in [
+            "manager",
+            "worker",
+            "grandchild",
+            "ordinary",
+            "disabled",
+            "cycle",
+            "unknown",
+            "foreign",
+        ] {
+            fixture
+                .config
+                .save(json!({"agents":{"fleetFullAccess":role!="disabled"}}), true)
+                .unwrap();
+            let mut params = json!({"provider":provider,"transport":"stream","cwd":fixture.project,"skipPermissions":false,"trackTask":false});
+            match role {
+                "manager" | "disabled" => params["manager"] = json!(true),
+                "worker" => params["parentSessionId"] = json!("manager"),
+                "grandchild" => params["parentSessionId"] = json!(worker),
+                "cycle" => params["parentSessionId"] = json!("cycle-a"),
+                "unknown" => params["parentSessionId"] = json!("absent"),
+                "foreign" => params["parentSessionId"] = json!("foreign"),
+                _ => (),
+            }
+            let result = fixture.coordinator.spawn_sanitized(params).await.unwrap();
+            if role == "worker" {
+                worker = result["sessionId"].as_str().unwrap().to_owned();
+            }
+            let full = matches!(role, "manager" | "worker" | "grandchild");
+            assert_eq!(result["fullAccess"], full, "{provider}/{role}");
+            let plans = fixture.fake.plans.lock().unwrap();
+            let plan = plans.last().unwrap();
+            assert_eq!(
+                plan.full_access, full,
+                "{provider}/{role}: actual admitted plan"
+            );
+            let expected = match (provider, full) {
+                ("claude", true) => "bypassPermissions",
+                ("claude", false) => "default",
+                (_, true) => "yolo",
+                (_, false) => "ask",
+            };
+            assert_eq!(
+                plan.metadata["settings"]["permissionMode"], expected,
+                "{provider}/{role}"
+            );
+        }
+        fixture.coordinator.close().await;
+        fixture.coordinator.lifecycle.close().await;
+    }
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn symlink_project_workflow_spawns_with_canonical_or_legacy_manager_and_task_metadata() {
+    use std::os::unix::fs::symlink;
+    for manager_alias in [false, true] {
+        for legacy_task_alias in [false, true] {
+            let mut fixture = Fixture::new(None);
+            let canonical =
+                workspacer_hub::services::paths::canonicalize(Path::new(&fixture.project))
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+            let alias = fixture.dir.path().join("project-alias");
+            symlink(&canonical, &alias).unwrap();
+            let alias_text = alias.to_string_lossy().into_owned();
+            fixture.owner.write().unwrap()["cwd"] = json!(if manager_alias {
+                &alias_text
+            } else {
+                &canonical
+            });
+            fixture.project = alias_text.clone();
+            let mut params = fixture.workflow_params();
+            let id = params["taskId"].as_str().unwrap().to_owned();
+            let created = fixture
+                .coordinator
+                .workflow
+                .tasks
+                .task(&id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                created["projectCwd"], canonical,
+                "new ingress stores the selected canonical project"
+            );
+            if legacy_task_alias {
+                // Old Go/headless workflow ingress stored an absolute alias
+                // verbatim before spawnCore resolved the actual directory.
+                fixture
+                    .coordinator
+                    .workflow
+                    .tasks
+                    .transaction(|history| {
+                        history.task_mut(&id)?["projectCwd"] = json!(alias_text);
+                        Ok(())
+                    })
+                    .unwrap();
+                params["expectedTaskRevision"] =
+                    json!(workspacer_hub::services::task_store::revision(
+                        &fixture
+                            .coordinator
+                            .workflow
+                            .tasks
+                            .task(&id)
+                            .unwrap()
+                            .unwrap()
+                    ));
+            }
+            let denied = fixture.coordinator.workflow.request(
+                &json!({"op":"next","taskId":id,"cwd":alias_text}),
+                "other-manager",
+            );
+            assert_eq!(denied["ok"], false);
+            assert!(denied.get("task").is_none());
+            if !legacy_task_alias {
+                let different = fixture.dir.path().join("different-project");
+                std::fs::create_dir(&different).unwrap();
+                std::fs::remove_file(&alias).unwrap();
+                symlink(&different, &alias).unwrap();
+                assert!(
+                    fixture
+                        .coordinator
+                        .spawn_sanitized(params.clone())
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    fixture.fake.plans.lock().unwrap().is_empty(),
+                    "repointed selector may not launch"
+                );
+                std::fs::remove_file(&alias).unwrap();
+                symlink(&canonical, &alias).unwrap();
+            }
+            let receipt = fixture.coordinator.spawn_sanitized(params).await.unwrap();
+            assert!(receipt["sessionId"].is_string());
+            assert_eq!(fixture.fake.plans.lock().unwrap().len(), 1);
+            let plan = fixture.fake.plans.lock().unwrap()[0].clone();
+            assert_eq!(plan.metadata["projectCwd"], canonical);
+            assert_eq!(plan.metadata["parentSessionId"], "manager");
+            assert!(Path::new(plan.request["cwd"].as_str().unwrap()).is_dir());
+            fixture.coordinator.close().await;
+        }
+    }
 }

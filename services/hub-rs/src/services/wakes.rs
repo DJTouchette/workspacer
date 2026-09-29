@@ -57,7 +57,6 @@ struct Pending {
 struct Block {
     at: i64,
     generation: u64,
-    targets: Vec<(String, bool)>,
 }
 #[derive(Clone)]
 struct Action {
@@ -172,7 +171,7 @@ impl Wakes {
         }
         state
             .groups
-            .retain(|_, pending| !pending.workers.is_empty());
+            .retain(|(_, parent, _), pending| parent != id && !pending.workers.is_empty());
     }
     pub fn prime(&self, rows: &[Value]) {
         let mut state = self.state.lock().unwrap();
@@ -205,11 +204,8 @@ impl Wakes {
             .is_some_and(|state| state.held(parent).is_some())
             || (self.lookup)(parent).is_some_and(|row| !ended(&row))
     }
-    pub fn observe(&self, row: &Value, now: i64) {
+    fn block_targets(&self, row: &Value) -> Vec<(String, bool)> {
         let id = text(row, "sessionId");
-        if id.is_empty() || !text(row, "hub").is_empty() {
-            return;
-        }
         let mode = text(row, "ambientState");
         let parent = self
             .target(text(row, "parentSessionId"), id)
@@ -240,9 +236,29 @@ impl Wakes {
                 targets.insert((parent.clone(), remote));
             }
         }
+        targets.into_iter().collect()
+    }
+    pub fn observe(&self, row: &Value, now: i64) {
+        let id = text(row, "sessionId");
+        if id.is_empty() || !text(row, "hub").is_empty() {
+            return;
+        }
+        let mode = text(row, "ambientState");
+        let parent = self
+            .target(text(row, "parentSessionId"), id)
+            .unwrap_or_default();
+        let remote = self.is_remote(id);
+        let parent_available =
+            remote || (!parent.is_empty() && parent != id && self.available(&parent));
+        let targets = if blocked(mode) {
+            self.block_targets(row)
+        } else {
+            Vec::new()
+        };
         let mut state = self.state.lock().unwrap();
         let previous = state.previous.insert(id.into(), mode.into());
-        if previous.as_deref() != Some(mode) {
+        let continuous_block = previous.as_deref().is_some_and(blocked) && blocked(mode);
+        if previous.as_deref() != Some(mode) && !continuous_block {
             state.sequence += 1;
             let generation = state.sequence;
             state.generations.insert(id.into(), generation);
@@ -259,7 +275,6 @@ impl Wakes {
                     Block {
                         at: now + 20000,
                         generation,
-                        targets: targets.into_iter().collect(),
                     },
                 );
             }
@@ -281,27 +296,50 @@ impl Wakes {
         }
     }
     fn due(&self, now: i64, limit: usize) -> Vec<Action> {
-        let mut state = self.state.lock().unwrap();
-        let blocks: Vec<_> = state
-            .blocks
-            .iter()
-            .filter(|(_, block)| block.at <= now)
-            .map(|(id, _)| id.clone())
+        // Look up current recipients outside the scheduler lock. Go's blocked
+        // broadcast includes managers appearing during the survival window;
+        // the initial recipient list is only a cheap admission check.
+        let due_blocks: Vec<_> = {
+            let state = self.state.lock().unwrap();
+            state
+                .blocks
+                .iter()
+                .filter(|(_, block)| block.at <= now)
+                .map(|(id, block)| (id.clone(), block.clone()))
+                .collect()
+        };
+        let recipients: Vec<_> = due_blocks
+            .into_iter()
+            .map(|(id, block)| {
+                let targets = (self.lookup)(&id)
+                    .filter(|row| !ended(row) && blocked(text(row, "ambientState")))
+                    .map(|row| self.block_targets(&row))
+                    .unwrap_or_default();
+                (id, block, targets)
+            })
             .collect();
-        for id in blocks {
-            if let Some(block) = state.blocks.remove(&id) {
-                for (parent, remote) in block.targets {
-                    schedule_for(
-                        &mut state,
-                        "blocked",
-                        &parent,
-                        &id,
-                        block.generation,
-                        now,
-                        1500,
-                        remote,
-                    );
-                }
+        let mut state = self.state.lock().unwrap();
+        for (id, block, targets) in recipients {
+            // A clear/re-block during lookup invalidates this timer generation.
+            if state
+                .blocks
+                .get(&id)
+                .is_none_or(|current| current.generation != block.generation)
+            {
+                continue;
+            }
+            state.blocks.remove(&id);
+            for (parent, remote) in targets {
+                schedule_for(
+                    &mut state,
+                    "blocked",
+                    &parent,
+                    &id,
+                    block.generation,
+                    now,
+                    1500,
+                    remote,
+                );
             }
         }
         let keys: Vec<_> = state
@@ -398,7 +436,8 @@ impl Wakes {
                 continue;
             };
             if action.kind == "blocked" {
-                if !blocked(text(&row, "ambientState"))
+                if ended(&row)
+                    || !blocked(text(&row, "ambientState"))
                     || self.state.lock().unwrap().generations.get(&id) != Some(&generation)
                 {
                     continue;
@@ -601,7 +640,8 @@ impl Wakes {
                         return false;
                     };
                     if kind == "blocked" {
-                        return blocked(text(&row, "ambientState"))
+                        return !ended(&row)
+                            && blocked(text(&row, "ambientState"))
                             && self.state.lock().unwrap().generations.get(id).copied()
                                 == entry["_wakeGeneration"].as_u64();
                     }
@@ -692,10 +732,16 @@ impl Wakes {
         Ok(())
     }
     pub async fn tick(&self, now: i64) -> Result<()> {
+        let mut first_error = None;
         for action in self.due(now, 16) {
-            self.deliver_action(action).await?;
+            if let Err(error) = self.deliver_action(action).await {
+                first_error.get_or_insert(error);
+            }
         }
-        Ok(())
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
     pub async fn run(self: Arc<Self>) -> Result<()> {
         let mut stop = self.stop.subscribe();

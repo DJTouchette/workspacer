@@ -5,8 +5,17 @@
       "status": "pending"
     },
     "deployment": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        ".github/workflows/rust-container-contract.yml",
+        "deploy/fly/rust/boot-rehearsal.sh",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36512096125"
+      ],
+      "status": "pending",
+      "verified_checkpoint": {
+        "commit": "379d3b34",
+        "final_head_rerun_required": true,
+        "result": "Three default Rust role images built and fresh-volume hub, worker and combined boot/shutdown contracts passed; only Tailscale simulated, no cloud/provider mutations."
+      }
     },
     "electron-and-web": {
       "evidence": [],
@@ -1123,16 +1132,40 @@
       "tests": []
     },
     "services/hub/cmd/hub/brain.go": {
-      "replacement": [],
+      "reason": "Go brain executable discovery, argv assembly and inherited child output are retired with the owned Rust backend graph. Retained bind-to-dial normalization has real IPv4/IPv6 wildcard child-connection tests; owned readiness, explicit facade binding, failure propagation and parent/signal shutdown replace the obsolete child launch contract.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Go brain executable discovery, argv assembly and inherited child output are retired with the owned Rust backend graph. Retained bind-to-dial normalization has real IPv4/IPv6 wildcard child-connection tests; owned readiness, explicit facade binding, failure propagation and parent/signal shutdown replace the obsolete child launch contract.",
       "sha256": "8b64c7eadbbb1d0d7949f90a5078d6539cb23d36ccf0888e6e1f37084b15d5f5",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/shutdown.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/net_address.rs"
+      ]
     },
     "services/hub/cmd/hub/brain_test.go": {
-      "replacement": [],
+      "reason": "Go brain executable discovery, argv assembly and inherited child output are retired with the owned Rust backend graph. Retained bind-to-dial normalization has real IPv4/IPv6 wildcard child-connection tests; owned readiness, explicit facade binding, failure propagation and parent/signal shutdown replace the obsolete child launch contract.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Go brain executable discovery, argv assembly and inherited child output are retired with the owned Rust backend graph. Retained bind-to-dial normalization has real IPv4/IPv6 wildcard child-connection tests; owned readiness, explicit facade binding, failure propagation and parent/signal shutdown replace the obsolete child launch contract.",
       "sha256": "2e8b05a1d611c94ebbe3a04856570e2a9c071994f311dd1619aed3a49b630c37",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/shutdown.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/net_address.rs"
+      ]
     },
     "services/hub/cmd/hub/bundledplugins.go": {
       "replacement": [
@@ -1197,22 +1230,47 @@
       "tests": []
     },
     "services/hub/cmd/hub/mobile_capabilities_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/server/web.rs",
+        "services/hub-rs/assets/web/mobile.html",
+        "services/hub-rs/assets/web/remote.html",
+        "services/hub-rs/src/plugins/sdk.js"
+      ],
+      "review": "Reviewed every embedded asset mapping and compared all eleven web assets plus SDK byte-for-byte with Go source. Real Rust browser fixtures exercised68desktop/mobile assertions (67full-suite plus corrected same-condition Browserpane poll rerun); Claude effort uses the distinct delivering capability. Public shell/static assets versus operator entry-page auth covered on actual sockets.",
       "sha256": "46d8577cb0c92e3d86161580dee355d62a17d6ee5858f5f0435b0e875a724d31",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/server/tests.rs",
+        "apps/desktop/tests/e2e/mobileClient.test.ts",
+        "apps/desktop/tests/e2e/appClient.test.ts",
+        "apps/desktop/tests/e2e/appBrowserParity.test.ts"
+      ]
     },
     "services/hub/cmd/hub/networkadmin.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Reviewed fixed private Unix broker endpoints, bounded replies, server-owned credential lookup, owner gate, Tailscale operator checks and aggregate10s/120s deadlines. Pairing reads/mints/revokes only ordinary Remote Control records, preserves infrastructure grants and serializes writes. Four deterministic service tests include actual Unix transport and live caller revocation; no external network mutation.",
       "sha256": "c7f1308fff662da6ddccca87026a9a226bba87036b7b658c6d66fc235f8f0553",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/hub/networkadmin_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Reviewed fixed private Unix broker endpoints, bounded replies, server-owned credential lookup, owner gate, Tailscale operator checks and aggregate10s/120s deadlines. Pairing reads/mints/revokes only ordinary Remote Control records, preserves infrastructure grants and serializes writes. Four deterministic service tests include actual Unix transport and live caller revocation; no external network mutation.",
       "sha256": "70d2b6199a35e0b21fd132e3c146912d4fea1648682792df7ff38d60c998606b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/hub/nodes.go": {
       "replacement": [
@@ -1318,22 +1376,47 @@
       "tests": []
     },
     "services/hub/cmd/hub/remote.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/server/web.rs",
+        "services/hub-rs/assets/web/mobile.html",
+        "services/hub-rs/assets/web/remote.html",
+        "services/hub-rs/src/plugins/sdk.js"
+      ],
+      "review": "Reviewed every embedded asset mapping and compared all eleven web assets plus SDK byte-for-byte with Go source. Real Rust browser fixtures exercised68desktop/mobile assertions (67full-suite plus corrected same-condition Browserpane poll rerun); Claude effort uses the distinct delivering capability. Public shell/static assets versus operator entry-page auth covered on actual sockets.",
       "sha256": "afe94b857f1449b9f4e278d424110dc6924f667ac6c82025b8500514ef5cc497",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/server/tests.rs",
+        "apps/desktop/tests/e2e/mobileClient.test.ts",
+        "apps/desktop/tests/e2e/appClient.test.ts",
+        "apps/desktop/tests/e2e/appBrowserParity.test.ts"
+      ]
     },
     "services/hub/cmd/hub/remotepairing.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Reviewed fixed private Unix broker endpoints, bounded replies, server-owned credential lookup, owner gate, Tailscale operator checks and aggregate10s/120s deadlines. Pairing reads/mints/revokes only ordinary Remote Control records, preserves infrastructure grants and serializes writes. Four deterministic service tests include actual Unix transport and live caller revocation; no external network mutation.",
       "sha256": "4966df63eaf98e8fffc15a2d695dbb096d0411350a8a86fb27468b21338062b0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/hub/remotepairing_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Reviewed fixed private Unix broker endpoints, bounded replies, server-owned credential lookup, owner gate, Tailscale operator checks and aggregate10s/120s deadlines. Pairing reads/mints/revokes only ordinary Remote Control records, preserves infrastructure grants and serializes writes. Four deterministic service tests include actual Unix transport and live caller revocation; no external network mutation.",
       "sha256": "418996b4c02a4dfe4a8871cd97518ca18530821a96ac8c5129e25b0ee58e2123",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_admin.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/hub/routing.go": {
       "replacement": [],
@@ -1384,16 +1467,30 @@
       "tests": []
     },
     "services/hub/cmd/hub/upload.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/uploads.rs",
+        "services/hub-rs/src/provider_relay/methods.rs"
+      ],
+      "review": "Reviewed24MiB/base64 envelope limits, extension-only generated private spill names, byte preservation and exactly-once worker forwarding with60s acknowledgement budget. Missing or uncertain worker ACK never falls back to hub-owned disk; real broker forwarding test and mobile attachment flow pass.",
       "sha256": "ef9578a1b86ae0ac1f5560fa2181170abf7cd993308e43d9e7778667acb485f1",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/uploads.rs",
+        "apps/desktop/tests/e2e/mobileClient.test.ts"
+      ]
     },
     "services/hub/cmd/hub/upload_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/uploads.rs",
+        "services/hub-rs/src/provider_relay/methods.rs"
+      ],
+      "review": "Reviewed24MiB/base64 envelope limits, extension-only generated private spill names, byte preservation and exactly-once worker forwarding with60s acknowledgement budget. Missing or uncertain worker ACK never falls back to hub-owned disk; real broker forwarding test and mobile attachment flow pass.",
       "sha256": "0bafe34c6c03545eed3427d3c9bf490ff588f1df030ff8eab4be27a1712f4301",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/uploads.rs",
+        "apps/desktop/tests/e2e/mobileClient.test.ts"
+      ]
     },
     "services/hub/cmd/hub/usageprefs.go": {
       "replacement": [],
@@ -2017,52 +2114,102 @@
       "tests": []
     },
     "services/hub/internal/authtoken/authtoken.go": {
-      "replacement": [],
+      "note": "Persisted credential/scopes/24-byte base64url mint/atomic private writes/revoke/read-through Store and default paths ported. Rust store serializes cooperating writers and preserves unknown metadata. Legacy profiles/yolo/role metadata remains inert; authenticated host identity remains distinct from operator scope.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
       "sha256": "95b7efe4b7eb3e6a01af7c8d31285b4418cfa20fbad0c8a2c1a0d7bb8cf01945",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/auth_composition.rs"
+      ]
     },
     "services/hub/internal/authtoken/authtoken_test.go": {
-      "replacement": [],
+      "note": "Scope ASCII whitespace and exact stored names, mint/private roundtrip, short/ambiguous revoke, live read-through deletion/corruption and malformed-store preservation are covered.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/cli/identity.rs"
+      ],
       "sha256": "2953609e6958db396ecc3558914a6f0fe4eab3c495f8787aef8a5f7db95c7ecb",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/internal/authtoken/composition_test.go": {
-      "replacement": [],
+      "note": "Independent127-actor/47-inert classification,8 pair-bound compositions, scoped actor acknowledgments and deliberate absences preserved with mutation battery and actual broker authorization using inert handlers. Replay remains Electron-provided, not claimed as a standalone installed method; this does not certify separate capspec closure-callgraph tests.",
+      "replacement": [
+        "services/hub-rs/tests/auth_composition.rs",
+        "services/hub-rs/tests/fixtures/authorization-compositions.json"
+      ],
       "sha256": "bf95bba8540955cfd2d4721459f0779cb0f6028212dd8d0ad7fdc9931e6491f2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth_composition.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/authtoken/profilegrant_test.go": {
-      "replacement": [],
+      "note": "Desktop-shaped plugins/profilesAllowed/role/yoloAllowed survive mint/revoke/load/Store rewrites without inventing fields on an ungranted record. Metadata is retained for compatibility and does not independently grant authority.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs"
+      ],
       "sha256": "c8d65e8f71d175f6a9d1161ffe421042869a6be9bc897a1dedd75a4d8b566fc3",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/authtoken/providertier_test.go": {
-      "replacement": [],
+      "note": "Provider call surface is exactly layout.get plus bound private preparation vocabulary; minted register grant is [*], every human/unknown scope ignores injected provides. Typed immutable slice replaces Go defensive slice copy. Registration/revocation behavior is exercised in auth tests; private launch admission has separate plugin tests.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
       "sha256": "821f1faf359d32456c993e8c9c032925bfd89af8065574740ecec7d224c9796f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/auth_composition.rs"
+      ]
     },
     "services/hub/internal/authtoken/role_test.go": {
-      "replacement": [],
+      "note": "Desktop-shaped plugins/profilesAllowed/role/yoloAllowed survive mint/revoke/load/Store rewrites without inventing fields on an ungranted record. Metadata is retained for compatibility and does not independently grant authority.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs"
+      ],
       "sha256": "9e26510f6794b284a0f8df64017d843c9b567be534ef5591a58a40e0c2b43023",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/authtoken/runbookpin_test.go": {
-      "replacement": [],
+      "note": "Both Fly runbooks must mint fly-node as provider; recognizes both flag orders and Rust binary alias. Missing examples fail rather than skipping.",
+      "replacement": [
+        "services/hub-rs/tests/auth_composition.rs"
+      ],
       "sha256": "b2530aa59fe29d81771614a751fc7bf37e4aedda64318cc2d62e5b808da4574d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth_composition.rs"
+      ]
     },
     "services/hub/internal/authtoken/yologrant_test.go": {
-      "replacement": [],
+      "note": "Desktop-shaped plugins/profilesAllowed/role/yoloAllowed survive mint/revoke/load/Store rewrites without inventing fields on an ungranted record. Metadata is retained for compatibility and does not independently grant authority.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs"
+      ],
       "sha256": "0ca976a431c1ff5db41e5ac2f1a240b5e2a39285f8a85717c94afcb0072664e8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/broker/admit_test.go": {
       "replacement": [],
@@ -2445,22 +2592,49 @@
       "tests": []
     },
     "services/hub/internal/busclient/client.go": {
-      "replacement": [],
+      "note": "Typed caller preserves correlation, concurrent/error/drop handling, bounded64MiB messages and immediate subscription changes. Architectural change: reconnect/backoff/subscription restoration belong to federation/native owners; Client never autonomously reconnects or replays accepted calls. Authorization header replaces token query mutation; Go accepts both. Federation test proves post-reconnect event delivery;4001 explicitly pauses rather than reconnecting.",
+      "replacement": [
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/federation.rs",
+        "apps/native/src/bus.rs"
+      ],
       "sha256": "2d87b7b6e9657c35797bccb983b09a37bd75aab0cc841e721240528d640d46e1",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/client.rs"
+      ]
     },
     "services/hub/internal/busclient/client_test.go": {
-      "replacement": [],
+      "note": "Typed caller preserves correlation, concurrent/error/drop handling, bounded64MiB messages and immediate subscription changes. Architectural change: reconnect/backoff/subscription restoration belong to federation/native owners; Client never autonomously reconnects or replays accepted calls. Authorization header replaces token query mutation; Go accepts both. Federation test proves post-reconnect event delivery;4001 explicitly pauses rather than reconnecting.",
+      "replacement": [
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/federation.rs",
+        "apps/native/src/bus.rs"
+      ],
       "sha256": "3f935892cabe3633567a81093e34167f04600b89fcdffc6a8d31b28ed38e6967",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/client.rs"
+      ]
     },
     "services/hub/internal/busclient/subscribe_test.go": {
-      "replacement": [],
+      "note": "Typed caller preserves correlation, concurrent/error/drop handling, bounded64MiB messages and immediate subscription changes. Architectural change: reconnect/backoff/subscription restoration belong to federation/native owners; Client never autonomously reconnects or replays accepted calls. Authorization header replaces token query mutation; Go accepts both. Federation test proves post-reconnect event delivery;4001 explicitly pauses rather than reconnecting.",
+      "replacement": [
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/federation.rs",
+        "apps/native/src/bus.rs"
+      ],
       "sha256": "db35cb7811db3a92358df687e7e4c1c9579f7ee60a3d3dc4091519ae1a730f51",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/client.rs"
+      ]
     },
     "services/hub/internal/capspec/capspec.go": {
       "replacement": [],
@@ -4077,16 +4251,38 @@
       ]
     },
     "services/hub/internal/statelost/statelost.go": {
-      "replacement": [],
+      "note": "Exact10-case Suspected corpus plus explicit Rust own-lock exclusion; missing/unreadable root false, unreadable/nonempty child counts evidence, empty directories do not. Config first missing-file diagnostic warns without blocking seeding; token refuses new identity amid prior state, push drops unusable subscriptions only when key lost.",
+      "replacement": [
+        "services/hub-rs/src/state_loss.rs",
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/push/mod.rs"
+      ],
       "sha256": "cccbc8dc34ea7c4eb1c8b165449efd2e4ba31c20a920bd3eeb537530cbfc37e9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/state_loss.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/push/tests.rs"
+      ]
     },
     "services/hub/internal/statelost/statelost_test.go": {
-      "replacement": [],
+      "note": "Exact10-case Suspected corpus plus explicit Rust own-lock exclusion; missing/unreadable root false, unreadable/nonempty child counts evidence, empty directories do not. Config first missing-file diagnostic warns without blocking seeding; token refuses new identity amid prior state, push drops unusable subscriptions only when key lost.",
+      "replacement": [
+        "services/hub-rs/src/state_loss.rs",
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/push/mod.rs"
+      ],
       "sha256": "f6c5bad605630c969aef467f12fa1e03f88e61fbf95545c51286fd0026cf3190",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/state_loss.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/src/services/push/tests.rs"
+      ]
     },
     "services/hub/internal/supervisor/inheritoutput_test.go": {
       "replacement": [],

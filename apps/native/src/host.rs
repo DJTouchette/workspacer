@@ -43,18 +43,13 @@ pub enum Status {
 pub async fn verify_owned_listeners_released(addresses: &[std::net::SocketAddr]) -> Result<()> {
     use tokio::net::{TcpSocket, TcpStream};
     for address in addresses {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            TcpStream::connect(address),
-        )
-        .await
-        {
-            Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => (),
-            Ok(Ok(_)) => {
-                anyhow::bail!("An owned listener remains reachable after shutdown: {address}")
-            }
-            _ => anyhow::bail!("Cannot verify owned listener shutdown: {address}"),
-        }
+        // Winsock can take over one second to report refusal on a closed
+        // loopback port. Keep a bounded budget without equating a timeout with
+        // refusal, and do not attempt rebind until absence is actually proved.
+        verify_connection_refused(*address, std::time::Duration::from_secs(5), async {
+            TcpStream::connect(address).await.map(|_| ())
+        })
+        .await?;
         let socket = if address.is_ipv4() {
             TcpSocket::new_v4()?
         } else {
@@ -67,6 +62,26 @@ pub async fn verify_owned_listeners_released(addresses: &[std::net::SocketAddr])
         drop(socket.listen(1)?);
     }
     Ok(())
+}
+
+async fn verify_connection_refused(
+    address: std::net::SocketAddr,
+    budget: std::time::Duration,
+    connect: impl std::future::Future<Output = std::io::Result<()>>,
+) -> Result<()> {
+    match tokio::time::timeout(budget, connect).await {
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => Ok(()),
+        Ok(Ok(())) => {
+            anyhow::bail!("An owned listener remains reachable after shutdown: {address}")
+        }
+        Ok(Err(error)) => anyhow::bail!(
+            "Cannot verify owned listener shutdown at {address}: connect failed ({:?}): {error}",
+            error.kind()
+        ),
+        Err(_) => anyhow::bail!(
+            "Timed out after {budget:?} connecting to owned listener after shutdown: {address}"
+        ),
+    }
 }
 
 pub struct NativeHost {
@@ -212,6 +227,52 @@ async fn run(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn listener_shutdown_proof_requires_refusal_and_reports_indeterminate_causes() {
+        let address = "127.0.0.1:1".parse().unwrap();
+        verify_connection_refused(address, std::time::Duration::from_secs(1), async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            Err(std::io::ErrorKind::ConnectionRefused.into())
+        })
+        .await
+        .unwrap();
+        let timeout = verify_connection_refused(
+            address,
+            std::time::Duration::from_millis(1),
+            std::future::pending::<std::io::Result<()>>(),
+        )
+        .await
+        .unwrap_err();
+        assert!(timeout.to_string().contains("Timed out"));
+        let unexpected =
+            verify_connection_refused(address, std::time::Duration::from_secs(1), async {
+                Err(std::io::ErrorKind::PermissionDenied.into())
+            })
+            .await
+            .unwrap_err();
+        assert!(unexpected.to_string().contains("PermissionDenied"));
+        let reachable =
+            verify_connection_refused(address, std::time::Duration::from_secs(1), async { Ok(()) })
+                .await
+                .unwrap_err();
+        assert!(reachable.to_string().contains("remains reachable"));
+    }
+
+    #[tokio::test]
+    async fn listener_shutdown_probe_refuses_a_live_listener_then_verifies_its_release() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        assert!(
+            verify_owned_listeners_released(&[address])
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("remains reachable")
+        );
+        drop(listener);
+        verify_owned_listeners_released(&[address]).await.unwrap();
+    }
+
     use super::*;
     #[cfg(feature = "rust-hub")]
     #[test]

@@ -260,6 +260,18 @@ pub struct Handle {
     status: watch::Receiver<Status>,
 }
 
+/// Reserved before a persisted peer update begins. Publication is synchronous
+/// inside the runtime-owned blocking transaction, even if its caller expires.
+pub(crate) struct PeerReplacementReservation {
+    permit: mpsc::OwnedPermit<Command>,
+    reply: oneshot::Sender<Result<()>>,
+}
+impl PeerReplacementReservation {
+    pub(crate) fn publish(self, peers: Vec<crate::federation::Peer>) {
+        self.permit.send(Command::ReplacePeers(peers, self.reply));
+    }
+}
+
 impl Hub {
     pub fn start(mut options: Options) -> Result<Self> {
         if options
@@ -520,12 +532,17 @@ impl Handle {
             .await
             .map_err(|_| anyhow!("hub stopped during launch preparation"))?
     }
-    pub(crate) async fn replace_peers(&self, peers: Vec<crate::federation::Peer>) -> Result<()> {
-        let (reply, result) = oneshot::channel();
-        self.submit(Command::ReplacePeers(peers, reply))?;
-        result
+    pub(crate) async fn reserve_peer_replacement(
+        &self,
+    ) -> Result<(PeerReplacementReservation, oneshot::Receiver<Result<()>>)> {
+        let permit = self
+            .tx
+            .clone()
+            .reserve_owned()
             .await
-            .map_err(|_| anyhow!("hub stopped while replacing peers"))?
+            .map_err(|_| anyhow!("hub stopped before peer configuration commit"))?;
+        let (reply, result) = oneshot::channel();
+        Ok((PeerReplacementReservation { permit, reply }, result))
     }
     pub fn status(&self) -> watch::Receiver<Status> {
         self.status.clone()

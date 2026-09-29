@@ -61,9 +61,13 @@ fn check(policy: &Value, tiers: &BTreeMap<String, BTreeSet<String>>) -> Vec<Stri
         errors.push("composition population collapsed".into());
     }
     let mut open_held = 0;
+    let mut distinct_pairs = BTreeSet::new();
     for pair in pairs {
         let a = pair["a"].as_str().unwrap();
         let b = pair["b"].as_str().unwrap();
+        if !distinct_pairs.insert((a, b)) {
+            errors.push(format!("duplicate composition {a} + {b}"));
+        }
         let accepted = words(&pair["acceptedIn"]);
         let closed = pair["closedProof"].as_str();
         if let Some(proof) = closed {
@@ -93,6 +97,9 @@ fn check(policy: &Value, tiers: &BTreeMap<String, BTreeSet<String>>) -> Vec<Stri
         errors.push("no open held composition evaluated".into());
     }
     for (tier, held) in tiers {
+        if !held.is_subset(&methods) {
+            errors.push(format!("tier {tier} grants unclassified methods"));
+        }
         let allowed = policy["acknowledgedActors"].get(tier);
         let Some(allowed) = allowed else {
             errors.push(format!("missing actor acknowledgments {tier}"));
@@ -192,7 +199,16 @@ fn composition_mutations_cannot_hide_in_a_closed_or_stale_exception() {
 fn provider_runbooks_cannot_mint_a_node_on_the_human_operator_ladder() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mint =
-        regex::Regex::new(r"workspacer(?:-rust)? token create[^\n]*--scope\s+([a-z]+)").unwrap();
+        regex::Regex::new(r"workspacer(?:-rust)? token create[^\n]*--scope\s+([a-z]+)[^\n]*")
+            .unwrap();
+    for line in [
+        "workspacer token create --label fly-node --scope operator",
+        "workspacer-rust token create --scope operator --label fly-node",
+    ] {
+        let row = mint.captures(line).unwrap();
+        assert!(row[0].contains("fly-node"));
+        assert_eq!(&row[1], "operator");
+    }
     for file in ["deploy/fly/RUNBOOK.md", "deploy/fly/node/RUNBOOK.md"] {
         let text = std::fs::read_to_string(root.join(file)).unwrap();
         let mut found = 0;

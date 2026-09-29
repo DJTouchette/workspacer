@@ -9,12 +9,10 @@ const STAGES: &[&str] = &[
     "other",
 ];
 fn same_project(task: &Value, cwd: &Value) -> bool {
-    task["projectCwd"] == *cwd
-        || task["attempts"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|a| a["executionCwd"] == *cwd && a["worktree"]["allocated"] == true)
+    same_cwd(text(&task["projectCwd"]), text(cwd))
+        || task["attempts"].as_array().into_iter().flatten().any(|a| {
+            same_cwd(text(&a["executionCwd"]), text(cwd)) && a["worktree"]["allocated"] == true
+        })
 }
 fn retry_source(state: &History, input: &Value) -> Option<(String, Value)> {
     if text(&input["retrySourceSessionId"]).is_empty() || manager(&input["owner"]).is_err() {
@@ -86,7 +84,7 @@ pub fn validate_admission(state: &History, input: &Value) -> Result<()> {
                             && r["intents"].as_array().into_iter().flatten().any(|i| {
                                 i["key"] == s["intentKey"]
                                     && i["taskId"] == task["taskId"]
-                                    && i["cwd"] == task["projectCwd"]
+                                    && same_cwd(text(&i["cwd"]), text(&task["projectCwd"]))
                             })
                     })
                 })

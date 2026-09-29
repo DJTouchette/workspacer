@@ -59,6 +59,24 @@ fn denied() -> Response {
     )
         .into_response()
 }
+fn host_denied(
+    s: &HttpState,
+    h: &HeaderMap,
+    q: &BTreeMap<String, String>,
+    action: &str,
+) -> Response {
+    if !authorized(s, h, q) {
+        return denied();
+    }
+    (StatusCode::FORBIDDEN, Json(json!({"error":format!("{action} requires host authority: it runs code on the hub's own machine, so it is refused to every scoped bus token, the operator tier included. Run it from the machine that owns the hub.")}))).into_response()
+}
+fn enabled_value(body: &Value) -> anyhow::Result<bool> {
+    match body.get("enabled") {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(enabled)) => Ok(*enabled),
+        _ => anyhow::bail!("enabled must be a boolean"),
+    }
+}
 fn answer(result: anyhow::Result<Value>) -> Response {
     match result {
         Ok(v) => Json(v).into_response(),
@@ -162,7 +180,7 @@ async fn mutate(
         return denied();
     }
     if operation == "reload" && !host(&s, &h, &q) {
-        return denied();
+        return host_denied(&s, &h, &q, "plugin reload");
     }
     let mut manager = s.manager.lock().await;
     let id = body
@@ -173,7 +191,7 @@ async fn mutate(
     answer(async {match operation.as_str(){
         "settings"=>Ok(json!({"values":manager.set_settings(id,body.get("values").and_then(Value::as_object).ok_or_else(||anyhow::anyhow!("values required"))?).await?})),
         "pane-token"=>Ok(json!({"token":manager.pane_token(id).await?})),
-        "setEnabled"=>Ok(serde_json::to_value(manager.set_enabled(id,body.get("enabled").and_then(Value::as_bool).ok_or_else(||anyhow::anyhow!("enabled required"))?).await?)?),
+        "setEnabled"=>Ok(serde_json::to_value(manager.set_enabled(id,enabled_value(&body)?).await?)?),
         "reload"=>{let manifest=if let Some(dir)=body.get("dir").and_then(Value::as_str){Manifest::load(&std::path::Path::new(dir).join("plugin.json"))?}else{let m=manager.manifest(id)?;Manifest::load(&m.dir.join("plugin.json"))?};manager.add(manifest.clone()).await?;Ok(serde_json::to_value(manifest)?)},
         "remove"=>{if let Some(dir)=manager.remove(id).await?{super::install::uninstall_directory(&manager.root,&dir)?;}Ok(json!({"ok":true}))},
         _=>anyhow::bail!("unsupported plugin operation")
@@ -409,7 +427,7 @@ async fn install(
     Json(body): Json<Value>,
 ) -> Response {
     if !host(&s, &h, &q) {
-        return denied();
+        return host_denied(&s, &h, &q, "plugin install");
     }
     let input = body
         .get("url")
@@ -554,7 +572,7 @@ async fn example_install(
     Json(body): Json<Value>,
 ) -> Response {
     if !host(&s, &h, &q) {
-        return denied();
+        return host_denied(&s, &h, &q, "installing a bundled example plugin");
     }
     let id = body.get("id").and_then(Value::as_str).unwrap_or("");
     let Some(manifest) = example_manifests(s.examples_dir.as_deref())

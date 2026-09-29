@@ -160,7 +160,7 @@ docs/          specs, design notes, and the feature catalog
 landing/       the marketing site + user docs (static HTML)
 ```
 
-On this migration branch, the native GUI embeds the Rust backend and session
+The native GUI embeds the Rust backend and session
 engine; `workspacer-rust serve` runs the same services as a standalone process.
 Platform validation and legacy removal are still in progress (see
 [the migration gates](services/hub-rs/MIGRATION.md)).
@@ -205,7 +205,7 @@ is via the standard `cargo`/`rustup` toolchain.
 Contributions are welcome. Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** for
 the dev setup, how the codebase is laid out, the test/lint expectations, and the
 pull-request flow. TL;DR: fork or branch, `make install && make build`, make your
-change with tests, run `make test`, and open a PR against `master`.
+change with tests, run `make test`, and open a PR against `main`.
 
 Found a security-sensitive issue? See [`SECURITY.md`](SECURITY.md) — please
 don't file those as public issues.

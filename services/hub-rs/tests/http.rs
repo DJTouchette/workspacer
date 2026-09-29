@@ -35,12 +35,21 @@ async fn health_hides_topology_and_websocket_checks_credentials_host_and_origin(
             "federation.peersConfig",
             "federation.resumePeer",
             "federation.savePeersConfig",
+            "files.upload",
             "fixture.echo",
             "fleet.dispatchTargets",
             "fleet.quiescence",
             "machine.power",
             "machine.stop",
-            "plugins.tools"
+            "plugins.tools",
+            "remote.pairingInfo",
+            "remote.setSharing",
+            "remote.sharingInfo",
+            "remote.tailscaleInfo",
+            "remote.tailscaleServe",
+            "remote.tokenGetOrCreate",
+            "remote.tokenRevoke",
+            "remote.tokensList"
         ])
     );
     for (token, origin, host, status) in [

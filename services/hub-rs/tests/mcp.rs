@@ -761,3 +761,322 @@ async fn mcp_calls_the_in_memory_hub_and_revalidates_each_http_request() {
     );
     hub.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn spawn_first_message_receipts_preserve_legacy_fallback_without_replaying_uncertain_delivery()
+ {
+    use std::sync::{Arc, Mutex};
+    use workspacer_hub::protocol::Frame;
+    let directory = tempfile::tempdir().unwrap();
+    let tokens = directory.path().join("tokens.json");
+    let provider_token = auth::mint(&tokens, Scope::Provider, "scripted-provider").unwrap();
+    let mut options =
+        Options::default().handler("config.get", |_, _| async { Ok(json!({"claude":{}})) });
+    options.token = "spawn-receipt-owner".into();
+    options.control_plane_only = true;
+    options.scoped_tokens = Some(tokens);
+    options.mcp_listen = Some("127.0.0.1:0".parse().unwrap());
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let address = match *hub.handle().status().borrow() {
+        Status::Ready {
+            mcp_address: Some(address),
+            ..
+        } => address.to_string(),
+        _ => panic!("MCP unavailable"),
+    };
+    let mut provider = hub
+        .handle()
+        .connect_authenticated(provider_token.token, false)
+        .await
+        .unwrap();
+    assert_eq!(provider.recv().await.unwrap().op, "hello");
+    provider
+        .send(Frame {
+            methods: vec!["agents.spawn".into(), "agents.sendMessage".into()],
+            ..Frame::op("register")
+        })
+        .unwrap();
+    assert_eq!(provider.recv().await.unwrap().op, "registered");
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let captured = seen.clone();
+    let worker = tokio::spawn(async move {
+        while let Some(frame) = provider.recv().await {
+            if frame.op != "call" {
+                continue;
+            }
+            let params = frame.params.clone().unwrap_or_default();
+            captured
+                .lock()
+                .unwrap()
+                .push((frame.method.clone(), params.clone()));
+            let response = match frame.method.as_str() {
+                "agents.spawn" => match params["label"].as_str().unwrap() {
+                    "confirmed" => json!({"sessionId":"confirmed","messageQueued":true}),
+                    "uncertain" => json!({"sessionId":"uncertain","messageQueued":false}),
+                    "missing-id" => json!({}),
+                    label => json!({"sessionId":label}),
+                },
+                "agents.sendMessage" if params["sessionId"] == "delivery-fails" => {
+                    provider
+                        .send(Frame::error(frame.id, "delivery acknowledgement lost"))
+                        .unwrap();
+                    continue;
+                }
+                "agents.sendMessage" => json!({"ok":true}),
+                _ => panic!("unexpected provider call"),
+            };
+            provider
+                .send(Frame {
+                    id: frame.id,
+                    result: Some(response),
+                    ..Frame::op("result")
+                })
+                .unwrap();
+        }
+    });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    for (key, value) in [
+        ("profileGranted", json!(true)),
+        ("skipPermissionsGranted", json!(true)),
+        ("retrySourceSessionId", json!("forged-predecessor")),
+        ("dispatchOwnerSessionId", json!("forged-owner")),
+    ] {
+        let mut arguments = json!({"cwd":directory.path(),"label":"forged"});
+        arguments[key] = value;
+        let reply = result(
+            rpc(
+                &client,
+                &address,
+                "spawn-receipt-owner",
+                "tools/call",
+                json!({"name":"spawn_agent","arguments":arguments}),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(reply["result"]["isError"], true, "{key}: {reply}");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "forged authority reached the provider"
+        );
+    }
+    for (label, message, error, deliveries) in [
+        ("confirmed", true, false, 0),
+        ("legacy", true, false, 1),
+        ("delivery-fails", true, true, 1),
+        ("missing-id", true, true, 0),
+        ("uncertain", true, true, 0),
+        ("no-message", false, false, 0),
+    ] {
+        seen.lock().unwrap().clear();
+        let mut arguments = json!({"cwd":directory.path(),"label":label});
+        if message {
+            arguments["message"] = "the exact first task".into();
+        }
+        let reply = result(
+            rpc(
+                &client,
+                &address,
+                "spawn-receipt-owner",
+                "tools/call",
+                json!({"name":"spawn_agent","arguments":arguments}),
+            )
+            .await,
+        )
+        .await;
+        assert!(reply.get("error").is_none(), "{label}: {reply}");
+        assert_eq!(
+            reply["result"]["isError"] == true,
+            error,
+            "{label}: {reply}"
+        );
+        let calls = seen.lock().unwrap();
+        let spawns: Vec<_> = calls
+            .iter()
+            .filter(|(method, _)| method == "agents.spawn")
+            .collect();
+        assert_eq!(spawns.len(), 1, "{label}: no automatic spawn replay");
+        assert_eq!(spawns[0].1.get("message").is_some(), message, "{label}");
+        let sends: Vec<_> = calls
+            .iter()
+            .filter(|(method, _)| method == "agents.sendMessage")
+            .collect();
+        assert_eq!(sends.len(), deliveries, "{label}");
+        for (_, params) in sends {
+            assert_eq!(params["sessionId"], label);
+            assert_eq!(params["text"], "the exact first task");
+        }
+        if error {
+            assert!(
+                reply["result"]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("do not repeat"),
+                "{reply}"
+            );
+        } else if message {
+            assert_eq!(tool_value(&reply)["messageQueued"], true);
+        }
+    }
+    hub.shutdown().unwrap();
+    worker.await.unwrap();
+}
+
+#[tokio::test]
+async fn forwarding_tools_keep_identity_click_targets_and_operator_boundaries() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let tokens = directory.path().join("tokens.json");
+    let view = auth::mint(&tokens, Scope::View, "view").unwrap();
+    let triage = auth::mint(&tokens, Scope::Triage, "worker").unwrap();
+    let operator = auth::mint(&tokens, Scope::Operator, "manager").unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut options = Options::default();
+    options.token = "forwarding-owner".into();
+    options.control_plane_only = true;
+    options.scoped_tokens = Some(tokens);
+    options.mcp_listen = Some("127.0.0.1:0".parse().unwrap());
+    for method in [
+        "agents.sendMessage",
+        "agents.reparent",
+        "agents.orphans",
+        "terminals.open",
+        "notifications.post",
+        "agents.notifyWhen",
+    ] {
+        let calls = calls.clone();
+        options = options.handler(method, move |_, params| {
+            let calls = calls.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"method":method,"params":params}))
+            }
+        });
+    }
+    options = options.handler("claude.gate", |_, params| async move {
+        Ok(json!({"ok":true,"gate_enabled":params["on"],"session_id":params["sessionId"]}))
+    }).handler("sessions.snapshot", |_, params| async move {
+        match params["sessionId"].as_str() {
+            Some("missing") => anyhow::bail!("snapshot unavailable"),
+            Some("settings") => Ok(json!({"settings":{"permissionMode":"acceptEdits"}})),
+            _ => Ok(json!({"livePermissionMode":"default","settings":{"permissionMode":"bypassPermissions"}})),
+        }
+    });
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let address = match *hub.handle().status().borrow() {
+        Status::Ready {
+            mcp_address: Some(address),
+            ..
+        } => address.to_string(),
+        _ => panic!("MCP unavailable"),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    for (tool, method, arguments, triage_allowed) in [
+        (
+            "send_message",
+            "agents.sendMessage",
+            json!({"sessionId":"manager","text":"phase one landed","fromSessionId":"worker"}),
+            true,
+        ),
+        (
+            "adopt_workers",
+            "agents.reparent",
+            json!({"fromSessionId":"old-manager","toSessionId":"new-manager"}),
+            false,
+        ),
+        ("list_orphans", "agents.orphans", json!({}), false),
+        (
+            "open_terminal",
+            "terminals.open",
+            json!({"cwd":directory.path(),"command":"npm run dev","label":"dev server","parentSessionId":"manager"}),
+            false,
+        ),
+        (
+            "notify",
+            "notifications.post",
+            json!({"title":"Job proposed","body":"Approval required","level":"info","key":"proposal","sessionId":"worker","paneType":"settings","paneSection":"jobs","url":"https://example.test/docs","silent":true,"inAppOnly":true}),
+            false,
+        ),
+        (
+            "notify_when",
+            "agents.notifyWhen",
+            json!({"sessionId":"worker","notifySessionId":"manager","contextUsedPct":80}),
+            false,
+        ),
+    ] {
+        for (credential, allowed) in [
+            (&view.token, false),
+            (&triage.token, triage_allowed),
+            (&operator.token, true),
+        ] {
+            let before = calls.load(Ordering::SeqCst);
+            let reply = result(
+                rpc(
+                    &client,
+                    &address,
+                    credential,
+                    "tools/call",
+                    json!({"name":tool,"arguments":arguments.clone()}),
+                )
+                .await,
+            )
+            .await;
+            if allowed {
+                assert!(
+                    reply.get("error").is_none() && reply["result"]["isError"] != true,
+                    "{tool}: {reply}"
+                );
+                assert_eq!(
+                    tool_value(&reply),
+                    json!({"method":method,"params":arguments}),
+                    "{tool}"
+                );
+                assert_eq!(calls.load(Ordering::SeqCst), before + 1);
+            } else {
+                assert!(reply.get("error").is_some(), "{tool}: {reply}");
+                assert_eq!(
+                    calls.load(Ordering::SeqCst),
+                    before,
+                    "rejected tool reached provider"
+                );
+            }
+        }
+    }
+    for (session, expected_mode) in [
+        ("live", "default"),
+        ("settings", "acceptEdits"),
+        ("missing", "unknown"),
+    ] {
+        let reply = result(
+            rpc(
+                &client,
+                &address,
+                &operator.token,
+                "tools/call",
+                json!({"name":"set_approval_gate","arguments":{"sessionId":session,"on":false}}),
+            )
+            .await,
+        )
+        .await;
+        assert!(
+            reply.get("error").is_none() && reply["result"]["isError"] != true,
+            "{reply}"
+        );
+        let receipt = tool_value(&reply);
+        assert_eq!(receipt["gate_enabled"], false);
+        assert_eq!(receipt["permissionMode"], expected_mode);
+        assert!(receipt["note"].as_str().unwrap().contains("still prompts"));
+    }
+    hub.shutdown().unwrap();
+}

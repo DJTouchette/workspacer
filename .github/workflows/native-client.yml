@@ -2,10 +2,10 @@ name: native-client
 
 on:
   pull_request:
-    paths: ['apps/native/**', '.github/workflows/native-client.yml']
+    paths: ['apps/native/**', 'services/hub-rs/**', 'services/claudemon/**', '.github/workflows/native-client.yml']
   push:
     branches: [main]
-    paths: ['apps/native/**', '.github/workflows/native-client.yml']
+    paths: ['apps/native/**', 'services/hub-rs/**', 'services/claudemon/**', '.github/workflows/native-client.yml']
   workflow_dispatch:
 
 concurrency:
@@ -38,7 +38,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets --features ui-tests -- -D warnings
       - name: Reducer, WebSocket and GPUI interaction tests
-        run: cargo test --locked --features ui-tests
+        run: cargo test --locked --no-fail-fast --features ui-tests
       - name: Link the native application
         run: cargo build --locked --bin wks-native --bin native-harness
       - name: Real Linux window, keyboard and pixel smoke

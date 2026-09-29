@@ -50,6 +50,7 @@ jobs:
       build: ${{ steps.decide.outputs.build }}
       stamp: ${{ steps.decide.outputs.stamp }}
     steps:
+      - uses: actions/checkout@v5
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,6 +62,10 @@ jobs:
           fi
           build=true
           if [ "$nightly" = "true" ]; then
+            if [ -f services/hub-rs/migration.json ] && ! python3 scripts/hub-migration.py ready; then
+              echo "::notice::Rust migration completion checks are pending; deferring the nightly."
+              build=false
+            fi
             last=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" -q .object.sha 2>/dev/null || echo none)
             if [ "$last" = "${{ github.sha }}" ]; then
               echo "nightly already built for ${{ github.sha }} — skipping"

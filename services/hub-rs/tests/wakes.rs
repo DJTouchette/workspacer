@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -18,6 +18,8 @@ struct Fixture {
     sent: Arc<Mutex<Vec<(String, String)>>>,
     fail: Arc<AtomicBool>,
     resume: Arc<AtomicBool>,
+    capture_fail: Arc<AtomicBool>,
+    fail_recipients: Arc<Mutex<BTreeSet<String>>>,
 }
 impl Fixture {
     fn new(manager: bool) -> Self {
@@ -53,6 +55,8 @@ impl Fixture {
         let resume = Arc::new(AtomicBool::new(false));
         let resume_capture = resume.clone();
         let capture_rows = rows.clone();
+        let capture_fail = Arc::new(AtomicBool::new(false));
+        let failing_capture = capture_fail.clone();
         let capture_replies = replies.clone();
         let capture: Capture = Arc::new(move |id| {
             let (rows, replies, resume) = (
@@ -60,7 +64,9 @@ impl Fixture {
                 capture_replies.clone(),
                 resume_capture.clone(),
             );
+            let failing = failing_capture.clone();
             Box::pin(async move {
+                anyhow::ensure!(!failing.load(Ordering::SeqCst), "conversation unavailable");
                 if resume.load(Ordering::SeqCst) {
                     rows.lock().unwrap().get_mut(&id).unwrap()["ambientState"] = "streaming".into();
                 }
@@ -71,10 +77,16 @@ impl Fixture {
         let deliver_sent = sent.clone();
         let fail = Arc::new(AtomicBool::new(false));
         let delivery_fail = fail.clone();
+        let fail_recipients = Arc::new(Mutex::new(BTreeSet::new()));
+        let recipients = fail_recipients.clone();
         let delivery: Delivery = Arc::new(move |id, message, _| {
             let (sent, fail) = (deliver_sent.clone(), delivery_fail.clone());
+            let recipients = recipients.clone();
             Box::pin(async move {
-                anyhow::ensure!(!fail.load(Ordering::SeqCst), "explicit delivery refusal");
+                anyhow::ensure!(
+                    !fail.load(Ordering::SeqCst) && !recipients.lock().unwrap().contains(&id),
+                    "explicit delivery refusal"
+                );
                 sent.lock().unwrap().push((id, message));
                 Ok(())
             })
@@ -88,6 +100,8 @@ impl Fixture {
             sent,
             fail,
             resume,
+            capture_fail,
+            fail_recipients,
         }
     }
     fn mode(&self, id: &str, mode: &str, now: i64) {
@@ -210,4 +224,246 @@ fn account_overage_alone_never_mislabels_a_success_as_failure() {
         .unwrap()
         .starts_with("out of credits (overage disabled)")
     );
+}
+
+#[tokio::test]
+async fn continuous_approval_question_block_keeps_one_survival_window() -> Result<()> {
+    let f = Fixture::new(true);
+    f.mode("one", "waiting_approval", 100);
+    f.mode("one", "waiting_input", 1000);
+    f.wakes.tick(20100).await?;
+    f.wakes.tick(21600).await?;
+    assert_eq!(f.sent.lock().unwrap().len(), 1);
+    assert!(f.sent.lock().unwrap()[0].1.contains("question"));
+    f.mode("one", "waiting_approval", 30000);
+    f.wakes.tick(60000).await?;
+    f.wakes.tick(61500).await?;
+    assert_eq!(
+        f.sent.lock().unwrap().len(),
+        1,
+        "one continuous block must not re-broadcast"
+    );
+    f.mode("one", "streaming", 62000);
+    f.mode("one", "waiting_approval", 63000);
+    f.wakes.tick(83000).await?;
+    f.wakes.tick(84500).await?;
+    assert_eq!(
+        f.sent.lock().unwrap().len(),
+        2,
+        "a new block after a clear wakes again"
+    );
+    Ok(())
+}
+#[tokio::test]
+async fn surviving_block_resolves_new_managers_and_excludes_ended_recipients() -> Result<()> {
+    let f = Fixture::new(true);
+    f.mode("one", "waiting_approval", 100);
+    f.rows.lock().unwrap().insert("new-manager".into(),json!({"sessionId":"new-manager","isWakeTarget":true,"status":"active","ambientState":"idle"}));
+    f.rows.lock().unwrap().get_mut("parent").unwrap()["status"] = json!("ended");
+    f.wakes.tick(20100).await?;
+    f.wakes.tick(21600).await?;
+    let sent = f.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "new-manager");
+    Ok(())
+}
+#[tokio::test]
+async fn stale_or_forgotten_blocks_are_reverified_at_both_delivery_boundaries() -> Result<()> {
+    for during_coalesce in [false, true] {
+        for change in ["idle", "ended", "missing", "forgotten"] {
+            let f = Fixture::new(true);
+            f.mode("one", "waiting_approval", 100);
+            if during_coalesce {
+                f.wakes.tick(20100).await?;
+            }
+            match change {
+                "idle" => {
+                    f.rows.lock().unwrap().get_mut("one").unwrap()["ambientState"] = json!("idle")
+                }
+                "ended" => {
+                    f.rows.lock().unwrap().get_mut("one").unwrap()["status"] = json!("ended")
+                }
+                "missing" => {
+                    f.rows.lock().unwrap().remove("one");
+                }
+                _ => f.wakes.forget("one"),
+            }
+            f.wakes.tick(20100).await?;
+            f.wakes.tick(21600).await?;
+            assert!(
+                f.sent.lock().unwrap().is_empty(),
+                "{change}, during_coalesce={during_coalesce}"
+            );
+        }
+    }
+    Ok(())
+}
+#[tokio::test]
+async fn block_fanout_is_failure_isolated_and_ordinary_recipients_are_direct_parents() -> Result<()>
+{
+    let f = Fixture::new(false);
+    f.rows.lock().unwrap().insert("zz-manager".into(),json!({"sessionId":"zz-manager","isWakeTarget":true,"status":"active","ambientState":"idle"}));
+    f.rows.lock().unwrap().insert(
+        "unrelated".into(),
+        json!({"sessionId":"unrelated","status":"active","ambientState":"idle"}),
+    );
+    f.fail_recipients.lock().unwrap().insert("parent".into());
+    f.mode("one", "waiting_approval", 100);
+    f.mode("two", "waiting_input", 200);
+    f.wakes.tick(20200).await?;
+    assert!(f.wakes.tick(21700).await.is_err());
+    let sent = f.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "zz-manager");
+    assert!(sent[0].1.contains("session:one") && sent[0].1.contains("session:two"));
+    f.fail_recipients.lock().unwrap().clear();
+    f.mode("one", "streaming", 30000);
+    f.mode("one", "waiting_input", 31000);
+    f.wakes.tick(51000).await?;
+    f.wakes.tick(52500).await?;
+    let sent = f.sent.lock().unwrap();
+    assert!(
+        sent.iter()
+            .any(|(id, msg)| id == "parent" && msg.contains("continue your own work"))
+    );
+    assert!(!sent.iter().any(|(id, _)| id == "unrelated"));
+    Ok(())
+}
+#[tokio::test]
+async fn boot_priming_and_first_sightings_preserve_opposite_block_and_finish_rules() -> Result<()> {
+    let f = Fixture::new(true);
+    let row = {
+        let mut rows = f.rows.lock().unwrap();
+        let row = rows.get_mut("one").unwrap();
+        row["ambientState"] = json!("waiting_input");
+        row.clone()
+    };
+    f.wakes.prime(&[row.clone()]);
+    f.wakes.observe(&row, 100);
+    f.wakes.tick(20100).await?;
+    f.wakes.tick(21600).await?;
+    assert!(f.sent.lock().unwrap().is_empty());
+    let blocked = json!({"sessionId":"new-block","ambientState":"waiting_input","status":"active","cwd":"/new-project"});
+    f.rows
+        .lock()
+        .unwrap()
+        .insert("new-block".into(), blocked.clone());
+    f.wakes.observe(&blocked, 30000);
+    let idle = json!({"sessionId":"new-idle","parentSessionId":"parent","ambientState":"idle","status":"active"});
+    f.rows
+        .lock()
+        .unwrap()
+        .insert("new-idle".into(), idle.clone());
+    f.wakes.observe(&idle, 30000);
+    f.wakes.tick(50000).await?;
+    f.wakes.tick(51500).await?;
+    let sent = f.sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].1.contains("new-project") && sent[0].1.contains("session:new-block"));
+    assert!(!sent[0].1.contains("new-idle"));
+    Ok(())
+}
+#[tokio::test]
+async fn only_working_edges_finish_and_an_unparented_finish_arms_nothing() -> Result<()> {
+    for previous in [
+        "thinking",
+        "streaming",
+        "background",
+        "waiting_approval",
+        "waiting_input",
+        "idle",
+        "",
+    ] {
+        let f = Fixture::new(true);
+        let row = {
+            let mut rows = f.rows.lock().unwrap();
+            let row = rows.get_mut("one").unwrap();
+            row["ambientState"] = json!(previous);
+            row.clone()
+        };
+        f.wakes.prime(&[row]);
+        f.mode("one", "idle", 100);
+        f.wakes.tick(1600).await?;
+        assert_eq!(
+            f.sent.lock().unwrap().len(),
+            usize::from(matches!(previous, "thinking" | "streaming" | "background")),
+            "{previous}"
+        );
+    }
+    let f = Fixture::new(true);
+    f.rows.lock().unwrap().get_mut("one").unwrap()["parentSessionId"] = json!("");
+    f.mode("one", "idle", 100);
+    f.wakes.tick(1600).await?;
+    assert!(f.sent.lock().unwrap().is_empty());
+    Ok(())
+}
+#[tokio::test]
+async fn finish_windows_are_per_parent_and_capture_the_latest_reply() -> Result<()> {
+    let f = Fixture::new(true);
+    f.rows.lock().unwrap().insert(
+        "second".into(),
+        json!({"sessionId":"second","ambientState":"idle","status":"active"}),
+    );
+    f.rows.lock().unwrap().get_mut("two").unwrap()["parentSessionId"] = json!("second");
+    f.mode("one", "idle", 100);
+    f.mode("two", "idle", 100);
+    f.replies.lock().unwrap().get_mut("one").unwrap()["items"][1]["text"] =
+        json!("late final report");
+    f.wakes.tick(1600).await?;
+    let sent = f.sent.lock().unwrap();
+    assert_eq!(sent.len(), 2);
+    assert!(sent.iter().any(|(id, msg)| id == "parent"
+        && msg.contains("late final report")
+        && !msg.contains("session:two")));
+    assert!(sent.iter().any(|(id, msg)| id == "second"
+        && msg.contains("session:two")
+        && !msg.contains("session:one")));
+    Ok(())
+}
+#[tokio::test]
+async fn unreachable_conversation_still_wakes_and_parent_death_suppresses_delivery() -> Result<()> {
+    let f = Fixture::new(true);
+    f.capture_fail.store(true, Ordering::SeqCst);
+    f.mode("one", "idle", 100);
+    f.wakes.tick(1600).await?;
+    assert_eq!(f.sent.lock().unwrap().len(), 1);
+    let f = Fixture::new(true);
+    f.mode("one", "idle", 100);
+    f.rows.lock().unwrap().get_mut("parent").unwrap()["status"] = json!("ended");
+    f.wakes.tick(1600).await?;
+    assert!(f.sent.lock().unwrap().is_empty());
+    Ok(())
+}
+#[tokio::test]
+async fn backstop_obeys_three_minute_grace_parent_activity_and_busy_state() -> Result<()> {
+    for manager in [false, true] {
+        for guard in ["recover", "acted", "busy", "working-child", "unknown-time"] {
+            let f = Fixture::new(manager);
+            {
+                let mut rows = f.rows.lock().unwrap();
+                rows.get_mut("one").unwrap()["ambientState"] = json!("idle");
+                rows.get_mut("one").unwrap()["lastActivity"] = json!(100);
+                match guard {
+                    "acted" => rows.get_mut("parent").unwrap()["lastActivity"] = json!(100),
+                    "busy" => rows.get_mut("parent").unwrap()["ambientState"] = json!("streaming"),
+                    "working-child" => {
+                        rows.get_mut("one").unwrap()["ambientState"] = json!("streaming")
+                    }
+                    "unknown-time" => rows.get_mut("one").unwrap()["lastActivity"] = json!(0),
+                    _ => (),
+                }
+            }
+            f.wakes.backstop(180100);
+            f.wakes.tick(180100).await?;
+            assert!(f.sent.lock().unwrap().is_empty(), "grace boundary {guard}");
+            f.wakes.backstop(180101);
+            f.wakes.tick(180101).await?;
+            assert_eq!(
+                f.sent.lock().unwrap().len(),
+                usize::from(guard == "recover"),
+                "manager={manager}/{guard}"
+            );
+        }
+    }
+    Ok(())
 }

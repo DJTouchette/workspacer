@@ -275,7 +275,57 @@ impl WorkflowRuntime {
         }
         Ok(out)
     }
+    /// The desktop capability wrapper resolves both project selectors before
+    /// invoking the shared workflow service. Preserve that boundary in-process.
+    /// Read-only exact-record lookups need no filesystem: archived projects may
+    /// be offline, and this reads manager-owned history rather than project data.
+    fn normalize_request(
+        &self,
+        input: &Value,
+        caller: &str,
+        historical_reads: bool,
+    ) -> Result<Value> {
+        if !input.is_object() || serde_json::to_vec(input)?.len() > 100 * 1024 {
+            bail!("Invalid or oversized workflow request");
+        }
+        let mut request = input.clone();
+        let preserve = historical_reads
+            && matches!(text(input, "op"), "next" | "taskReferences")
+            && self.tasks.task(text(input, "taskId"))?.is_some_and(|task| {
+                task["ownerSessionId"] == caller && task["projectCwd"] == input["cwd"]
+            });
+        fn normalize(value: &mut Value) -> Result<()> {
+            if value.is_null() || value.as_str() == Some("") {
+                return Ok(());
+            }
+            let cwd = value
+                .as_str()
+                .ok_or_else(|| anyhow!("Workflow project cwd must be absolute"))?;
+            *value = json!(
+                super::paths::canonicalize(std::path::Path::new(cwd))?
+                    .to_string_lossy()
+                    .into_owned()
+            );
+            Ok(())
+        }
+        if !preserve && let Some(cwd) = request.get_mut("cwd") {
+            normalize(cwd)?;
+        }
+        if let Some(intents) = request.get_mut("intents").and_then(Value::as_array_mut) {
+            for intent in intents {
+                if let Some(cwd) = intent.get_mut("cwd") {
+                    normalize(cwd)?;
+                }
+            }
+        }
+        Ok(request)
+    }
     pub fn request(&self, request: &Value, caller: &str) -> Value {
+        let request = match self.normalize_request(request, caller, true) {
+            Ok(request) => request,
+            Err(error) => return json!({"ok":false,"code":"unavailable","error":error.to_string()}),
+        };
+        let request = &request;
         let op = text(request, "op");
         if let Some(state) = self.replacements.lock().unwrap().as_ref() {
             if !caller.is_empty() {
@@ -460,6 +510,8 @@ impl WorkflowRuntime {
     /// A process crash retains the reservation as uncertainty, not permission to
     /// retry. Only the matching token can finish or explicitly release it.
     pub fn admit(&self, params: &Value, caller: &str) -> Result<Admission> {
+        let params = self.normalize_request(params, caller, false)?;
+        let params = &params;
         let id = text(params, "taskId");
         let cwd = text(params, "cwd");
         let mut output = params.clone();

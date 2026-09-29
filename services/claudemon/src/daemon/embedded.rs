@@ -444,14 +444,26 @@ async fn dispatch_request(
     let status = response.status();
     let body = to_bytes(response.into_body(), 32 * 1024 * 1024).await?;
     if !status.is_success() {
-        return Err(CommandRejected {
-            status: status.as_u16(),
-            message: format!(
-                "daemon returned {status}: {}",
-                String::from_utf8_lossy(&body)
-            ),
+        let message = format!(
+            "daemon returned {status}: {}",
+            String::from_utf8_lossy(&body)
+        );
+        // A completed HTTP exchange is not necessarily a rejected operation:
+        // a server error can follow an accepted write or provider dispatch.
+        // Keep the same definitive-refusal boundary as the existing delivery
+        // outbox so callers retain uncertain reservations instead of replaying.
+        if matches!(
+            status.as_u16(),
+            400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 429
+        ) || (status.as_u16() == 503 && body.as_ref() == b"session input queue is full")
+        {
+            return Err(CommandRejected {
+                status: status.as_u16(),
+                message,
+            }
+            .into());
         }
-        .into());
+        return Err(anyhow!("{message}; execution outcome is unknown"));
     }
     let value: Value = serde_json::from_slice(&body)?;
     if value.get("ok").and_then(Value::as_bool) == Some(false) {
@@ -462,4 +474,78 @@ async fn dispatch_request(
         .into());
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+    use axum::{http::StatusCode, routing::post};
+
+    #[tokio::test]
+    async fn definitive_refusals_are_distinct_from_ambiguous_server_failures() {
+        for (status, body, rejected) in [
+            (400, "bad request", true),
+            (401, "unauthorized", true),
+            (403, "forbidden", true),
+            (404, "missing", true),
+            (409, "conflict", true),
+            (410, "gone", true),
+            (413, "large", true),
+            (422, "invalid", true),
+            (429, "busy", true),
+            (503, "session input queue is full", true),
+            (503, "session input queue is full\n", false),
+            (503, "service unavailable", false),
+            (500, "late failure", false),
+            (502, "gateway failure", false),
+            (504, "deadline", false),
+            (418, "unknown response", false),
+            (302, "redirect", false),
+        ] {
+            let router = Router::new().route(
+                "/fixture",
+                post(move || async move { (StatusCode::from_u16(status).unwrap(), body) }),
+            );
+            let error = dispatch_request(router, "POST", "/fixture".into(), Some(json!({})))
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<CommandRejected>().is_some(),
+                rejected,
+                "{status} {body:?}: {error}"
+            );
+            if !rejected {
+                assert!(error.to_string().contains("outcome is unknown"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_effect_before_a_server_error_is_never_classified_as_rejected() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let effects = Arc::new(AtomicUsize::new(0));
+        let captured = effects.clone();
+        let router = Router::new().route(
+            "/fixture",
+            post(move || {
+                let effects = captured.clone();
+                async move {
+                    effects.fetch_add(1, Ordering::SeqCst);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "acknowledgement failed after acceptance",
+                    )
+                }
+            }),
+        );
+        let error = dispatch_request(router, "POST", "/fixture".into(), Some(json!({})))
+            .await
+            .unwrap_err();
+        assert_eq!(effects.load(Ordering::SeqCst), 1);
+        assert!(error.downcast_ref::<CommandRejected>().is_none());
+        assert!(error.to_string().contains("outcome is unknown"));
+    }
 }

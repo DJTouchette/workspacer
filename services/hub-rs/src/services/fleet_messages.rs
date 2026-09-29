@@ -11,6 +11,15 @@ fn assets() -> &'static Value {
         serde_json::from_str(include_str!("../../assets/fleet-messages.json")).unwrap()
     })
 }
+/// Attribution uses a recorded label when supplied; it never invents a name.
+pub fn sender_header(session: &str, label: &str) -> String {
+    if label.is_empty() {
+        format!("[fleet] session:{session} says:\n")
+    } else {
+        format!("[fleet] session:{session} ({label}) says:\n")
+    }
+}
+
 pub fn clip(text: &str, max: usize, suffix: &str) -> String {
     if text.encode_utf16().count() <= max {
         return text.into();

@@ -1,0 +1,12 @@
+[package]
+name = "workspacer-macos-contract-check"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+# Match the oldest independent claudemon lock, not only the newer Hub graph.
+libc = "=0.2.186"

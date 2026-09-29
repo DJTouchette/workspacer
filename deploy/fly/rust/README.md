@@ -59,7 +59,11 @@ bash deploy/fly/hub/test-bootstrap.sh
 
 The optional binary check parses the exact container argument arrays with
 `--help`; it starts no backend. Docker is not available in the implementation
-workspace, so no image build or container boot has been certified here.
+workspace. [Container CI run 36512096125](https://github.com/DJTouchette/workspacer/actions/runs/36512096125)
+verified commit `379d3b34`: all three default role images built, the persistence
+and credential contracts passed, and fresh-volume hub/worker/combined boots
+and graceful stops passed with simulated Tailscale. This is checkpoint evidence;
+the final source revision still needs its own passing run.
 `deploy/fly/rust/preflight.sh` supplies static, build, artifact and boot stages;
 `deploy/fly/preflight.sh` routes to them by default. The boot rehearsal
 uses actual images and fresh local volumes, simulates only Tailscale, provisions

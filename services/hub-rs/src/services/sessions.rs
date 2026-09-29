@@ -631,8 +631,8 @@ impl Sessions {
                         .and_then(|row| row["label"].as_str())
                         .filter(|label| !label.is_empty());
                     text = format!(
-                        "[fleet] session:{from}{} says:\n{text}",
-                        label.map(|label| format!(" ({label})")).unwrap_or_default()
+                        "{}{text}",
+                        super::fleet_messages::sender_header(from, label.unwrap_or(""))
                     );
                 }
                 if let Some(tracker) = &self.message_tracker {

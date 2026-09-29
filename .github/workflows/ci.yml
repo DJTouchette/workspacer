@@ -183,7 +183,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Test
-        run: cargo test
+        run: cargo test --locked --no-fail-fast
 
       # The tree is clippy-clean, so warnings are hard errors.
       - name: Clippy
@@ -214,7 +214,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Test
-        run: cargo test
+        run: cargo test --locked --no-fail-fast
 
       # The tree is clippy-clean, so warnings are hard errors.
       - name: Clippy
@@ -238,7 +238,7 @@ jobs:
       - name: Rust backend format check
         run: cargo fmt -- --check
       - name: Test shared backend and standalone CLI
-        run: cargo test --locked
+        run: cargo test --locked --no-fail-fast
 
   # Exercise actual Windows filesystem/process branches, plus the same
   # TypeScript boundary corpus used by the Electron client.
@@ -289,10 +289,10 @@ jobs:
 
       - name: Shared Rust backend tests
         working-directory: services/hub-rs
-        run: cargo test --locked
+        run: cargo test --locked --no-fail-fast
       - name: Windows process and path contracts
         working-directory: tools/windows-contract-check
-        run: cargo test --locked
+        run: cargo test --locked --no-fail-fast
 
       # --ignore-scripts skips apps/desktop's postinstall (electron-rebuild
       # against better-sqlite3), which needs an Electron download and a native

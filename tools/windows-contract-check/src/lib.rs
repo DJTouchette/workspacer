@@ -33,13 +33,16 @@ mod pty_owned;
 mod node_exposure;
 
 extern crate self as claudemon;
-#[path = "../../../services/claudemon/src/wrapper/pty_windows_job.rs"]
-pub mod child_job;
 #[path = "../../../services/claudemon/src/child_env.rs"]
 pub mod child_env;
+#[path = "../../../services/claudemon/src/wrapper/pty_windows_job.rs"]
+pub mod child_job;
 
 #[path = "../../../services/hub-rs/src/services/owned_process.rs"]
 mod owned_process;
 
 #[path = "../../../services/hub-rs/src/services/account_setup/platform.rs"]
 mod account_links;
+
+#[path = "../../../services/hub-rs/src/services/task_store/project.rs"]
+mod task_project;

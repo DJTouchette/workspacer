@@ -227,3 +227,65 @@ async fn local_handler_observes_verified_identity_instead_of_caller_parameters()
     );
     hub.shutdown().unwrap();
 }
+
+#[test]
+fn desktop_shaped_legacy_metadata_and_provider_grants_survive_every_store_rewrite() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tokens.json");
+    let legacy = json!([
+        {"token":"manager-existing-token","scope":"operator","label":"session:manager","created":"2026-08-20T00:00:00Z","plugins":["fixture.plugin"],"profilesAllowed":["work","personal"],"role":"manager","yoloAllowed":true},
+        {"token":"plain-existing-token","scope":"view","created":"2026-08-20T00:00:00Z"}
+    ]);
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let node = auth::mint(&path, Scope::Provider, "node").unwrap();
+    let store = Store { path: path.clone() };
+    let manager = store.lookup("manager-existing-token").unwrap();
+    for key in ["plugins", "profilesAllowed", "role", "yoloAllowed"] {
+        assert_eq!(manager.metadata.get(key), legacy[0].get(key), "{key}");
+        assert!(
+            !store
+                .lookup("plain-existing-token")
+                .unwrap()
+                .metadata
+                .contains_key(key)
+        );
+    }
+    assert_eq!(
+        store.lookup(&node.token).unwrap().provides(),
+        &["*".to_owned()]
+    );
+    let phone = auth::mint(&path, Scope::Triage, "phone").unwrap();
+    auth::revoke(&path, &phone.token).unwrap();
+    assert_eq!(
+        store.lookup(&node.token).unwrap().provides(),
+        &["*".to_owned()]
+    );
+    assert_eq!(
+        store.lookup("manager-existing-token").unwrap().metadata,
+        manager.metadata
+    );
+    for scope in [Scope::View, Scope::Triage, Scope::Operator] {
+        let record = auth::mint(&path, scope, "human").unwrap();
+        assert!(record.provides.is_none());
+        assert!(
+            serde_json::to_value(&record)
+                .unwrap()
+                .get("provides")
+                .is_none()
+        );
+        let mut injected = record.clone();
+        injected.provides = Some(vec!["*".into()]);
+        assert!(injected.provides().is_empty(), "{}", scope.name());
+    }
+    for scope in ["", "bogus"] {
+        assert!(
+            Record {
+                scope: scope.into(),
+                provides: Some(vec!["*".into()]),
+                ..Default::default()
+            }
+            .provides()
+            .is_empty()
+        );
+    }
+}

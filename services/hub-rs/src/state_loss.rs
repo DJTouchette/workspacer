@@ -10,11 +10,12 @@ pub(crate) fn suspected(directory: &Path, missing: &OsStr) -> bool {
 /// Exclusions are explicit host-created bookkeeping files, never a blanket
 /// dotfile/lock suffix exception that could hide real persisted state.
 pub(crate) fn suspected_ignoring(directory: &Path, missing: &OsStr, ignored: &[&OsStr]) -> bool {
-    let Ok(entries) = std::fs::read_dir(directory) else {
+    let Ok(entries) = std::fs::read_dir(directory)
+        .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>())
+    else {
         return false;
     };
     for entry in entries {
-        let Ok(entry) = entry else { return true };
         let name = entry.file_name();
         if name == missing || ignored.iter().any(|ignored| name == *ignored) {
             continue;

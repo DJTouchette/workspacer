@@ -30,7 +30,7 @@ The shared service graph and standalone launcher are implemented. The current
 work is client/build cutover, running preserved end-to-end assertions against
 Rust, reviewing source-by-source replacement evidence, and platform validation.
 Desktop, native local mode and TUI startup now select Rust; these changed defaults
-are on the migration branch and have not been released. Native launches without
+are being developed directly on `main` and have not been released. Native launches without
 `--local` still attach to an existing service.
 
 The original Go code remains a reference until the completion gates pass. The
@@ -41,8 +41,10 @@ completed migration.
 
 The native Windows artifact uses the isolated Rust Preview identity/data folder.
 Release packaging now selects that artifact and a standalone Rust server bundle.
-No nightly containing these changes has been published. Actual Windows install,
-macOS packaging, and Docker boot validation remain outstanding.
+No nightly containing these changes has been published. Linux packaging and the
+three default Docker image builds/fresh-volume boots have passed CI checkpoints.
+Windows install and the latest macOS standalone build still need a green rerun;
+all publication gates will be checked against the final source revision.
 
 Implemented migration slices include config and profile persistence, saved
 sessions/layouts, usage preferences, filesystem access, Git review, search,

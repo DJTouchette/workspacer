@@ -313,12 +313,52 @@ impl SpawnCoordinator {
         }
         input
     }
+    fn has_fleet_ancestor(&self, parent: &str) -> bool {
+        let records = self.lifecycle.records();
+        let replacements = self.replacements.lock().unwrap().clone();
+        let mut next = parent.to_owned();
+        let mut seen = std::collections::BTreeSet::new();
+        // Permission preference only: no token scope/host authority is inferred.
+        // Follow host-recorded ancestry even if a parent's live row has ended,
+        // as the Go meta store did. Bound concurrent lineage churn as well as
+        // ordinary cycles; raw caller-supplied role or grant flags are not read.
+        while !next.is_empty() && seen.len() < 4096 && seen.insert(next.clone()) {
+            let row = self
+                .workflow
+                .owner_snapshot(&next)
+                .or_else(|| {
+                    records.get(&next).map(|record| {
+                        let mut row = record.metadata.clone();
+                        row["sessionId"] = json!(next);
+                        row
+                    })
+                })
+                .or_else(|| {
+                    replacements
+                        .as_ref()
+                        .and_then(|state| state.metadata(&next))
+                });
+            let Some(row) = row else {
+                return false;
+            };
+            if row["hub"].as_str().is_some_and(|hub| !hub.is_empty()) {
+                return false;
+            }
+            let row = super::snapshots::with_host_metadata(
+                row,
+                Some(self.lifecycle.as_ref()),
+                replacements.as_deref(),
+            );
+            if row["isWakeTarget"] == true {
+                return true;
+            }
+            next = text(&row, "parentSessionId").to_owned();
+        }
+        false
+    }
     fn routed(&self, params: &Value, config: &Value, id: &str, project: &str) -> Result<Plan> {
         let profile = self.profiles.get(text(params, "profileId"));
-        let fleet = self
-            .workflow
-            .owner_snapshot(text(params, "parentSessionId"))
-            .is_some_and(|p| p["isWakeTarget"] == true && p["status"] != "ended");
+        let fleet = self.has_fleet_ancestor(text(params, "parentSessionId"));
         let plan = spawn_plan::resolve(params, config, profile.as_ref(), &self.home, id, fleet)?;
         let mut resolved_params = effective(params, &plan, project);
         let mut scrubbed = self.routing.sanitize_spawn(&mut resolved_params)?;

@@ -12,6 +12,8 @@ use std::{
 mod admission;
 mod directory;
 mod host;
+mod project;
+use project::same_cwd;
 pub mod references;
 mod remote;
 pub use admission::validate_admission;
@@ -98,7 +100,7 @@ pub fn dependency_state(task: &Value, tasks: &[Value]) -> &'static str {
             .all(|id| {
                 tasks.iter().find(|t| t["taskId"] == *id).is_some_and(|t| {
                     t["ownerSessionId"] == task["ownerSessionId"]
-                        && t["projectCwd"] == task["projectCwd"]
+                        && same_cwd(text(&t["projectCwd"]), text(&task["projectCwd"]))
                         && task_outcome_accepted(t)
                         && ready(t, tasks, visited)
                 })
@@ -145,7 +147,7 @@ impl History {
     }
     pub fn owned(&self, id: &str, owner: &str, cwd: &str) -> Result<&Value> {
         let t = self.task(id)?;
-        if t["ownerSessionId"] != owner || t["projectCwd"] != cwd {
+        if t["ownerSessionId"] != owner || !same_cwd(text(&t["projectCwd"]), cwd) {
             bail!("Task unavailable for this manager/project");
         }
         Ok(t)
@@ -350,7 +352,7 @@ impl TaskStore {
             edit(state.task_mut(id)?)
         })?;
         let task = self.task(id)?.context("Task was removed")?;
-        if task["ownerSessionId"] != owner || task["projectCwd"] != cwd {
+        if task["ownerSessionId"] != owner || !same_cwd(text(&task["projectCwd"]), cwd) {
             bail!("Task ownership changed after mutation");
         }
         Ok(task)

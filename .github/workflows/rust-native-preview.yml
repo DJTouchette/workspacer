@@ -1,9 +1,19 @@
 name: Rust backend and native preview
 
-# Explicit opt-in artifact build. This workflow never updates a release, tag,
+# Validation artifacts only. This workflow never updates a release, tag,
 # Electron feed or rolling nightly. Node is build tooling, not runtime payload.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/rust-native-preview.yml'
+      - 'apps/native/**'
+      - 'services/hub-rs/**'
+      - 'services/claudemon/**'
+      - 'contracts/**'
+      - 'tools/windows-contract-check/**'
+      - 'tools/macos-contract-check/**'
   pull_request:
     paths:
       - '.github/workflows/rust-native-preview.yml'
@@ -12,6 +22,7 @@ on:
       - 'services/claudemon/**'
       - 'contracts/**'
       - 'tools/windows-contract-check/**'
+      - 'tools/macos-contract-check/**'
 
 permissions:
   contents: read
@@ -42,10 +53,10 @@ jobs:
       - name: Verify macOS unreaped process-group cleanup
         if: runner.os == 'macOS'
         run: |
-          cargo test --locked --manifest-path services/claudemon/Cargo.toml --lib child_group::tests
-          cargo test --locked --manifest-path services/claudemon/Cargo.toml --lib pty_owned::macos_tests
+          cargo test --locked --no-fail-fast --manifest-path services/claudemon/Cargo.toml --lib child_group::tests
+          cargo test --locked --no-fail-fast --manifest-path services/claudemon/Cargo.toml --lib pty_owned::macos_tests
       - name: Test shared Rust services and standalone lifecycle
-        run: cargo test --locked --manifest-path services/hub-rs/Cargo.toml
+        run: cargo test --locked --no-fail-fast --manifest-path services/hub-rs/Cargo.toml
 
   windows-preview:
     runs-on: windows-latest
@@ -91,11 +102,11 @@ jobs:
       - name: Test Rust hub and owned native backend
         shell: pwsh
         run: |
-          cargo test --locked --manifest-path tools/windows-contract-check/Cargo.toml
+          cargo test --locked --no-fail-fast --manifest-path tools/windows-contract-check/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw 'Windows process and filesystem contract tests failed' }
-          cargo test --locked --manifest-path services/hub-rs/Cargo.toml
+          cargo test --locked --no-fail-fast --manifest-path services/hub-rs/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw 'Rust hub tests failed' }
-          cargo test --locked --manifest-path apps/native/Cargo.toml --no-default-features --features rust-hub
+          cargo test --locked --no-fail-fast --manifest-path apps/native/Cargo.toml --no-default-features --features rust-hub
           if ($LASTEXITCODE -ne 0) { throw 'Rust native backend tests failed' }
       - name: Build native Rust app, owned-backend harness and standalone CLI
         shell: pwsh

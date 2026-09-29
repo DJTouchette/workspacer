@@ -261,7 +261,7 @@ pub(super) fn wrap(
                     Err(reap) => {
                         return Err(error.context(format!(
                             "PTY rejection cleanup could not reap child: {reap}"
-                        )))
+                        )));
                     }
                     Ok(None) => (),
                 }

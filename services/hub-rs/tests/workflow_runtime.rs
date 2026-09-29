@@ -13,7 +13,10 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let cwd = dir.path().to_string_lossy().into_owned();
+        let cwd = workspacer_hub::services::paths::canonicalize(dir.path())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let cfg = Arc::new(Config::open(dir.path().join("config.yaml")));
         let definitions = Arc::new(WorkflowStore::new(dir.path().to_owned(), cfg));
         let tasks = Arc::new(TaskStore::open(dir.path().join("dispatch-history.json")).unwrap());
@@ -154,5 +157,97 @@ fn conditional_skip_advances_revision_but_does_not_forge_review_evidence() {
             .as_str()
             .unwrap()
             .contains("Required evidence")
+    );
+}
+#[cfg(unix)]
+#[test]
+fn exact_owned_history_remains_readable_offline_but_admission_resolves_the_selected_object() {
+    let mut f = Fixture::new();
+    let project = f._dir.path().join("offline-project");
+    std::fs::create_dir(&project).unwrap();
+    f.cwd = workspacer_hub::services::paths::canonicalize(&project)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let task = f.start();
+    std::fs::remove_dir(&project).unwrap();
+    for op in ["next", "taskReferences"] {
+        assert_eq!(
+            f.runtime.request(
+                &json!({"op":op,"taskId":task["taskId"],"cwd":f.cwd}),
+                "manager"
+            )["ok"],
+            true
+        );
+    }
+    // An exact historical read must not probe the now-unavailable selected
+    // object. A fresh mutation/admission may not inherit that read exception.
+    std::os::unix::fs::symlink("offline-project", &project).unwrap();
+    for op in ["next", "taskReferences"] {
+        let response = f.runtime.request(
+            &json!({"op":op,"taskId":task["taskId"],"cwd":f.cwd}),
+            "manager",
+        );
+        assert_eq!(response["ok"], true, "{response}");
+        assert_eq!(
+            f.runtime.request(
+                &json!({"op":op,"taskId":task["taskId"],"cwd":f.cwd}),
+                "other-manager"
+            )["ok"],
+            false
+        );
+    }
+    assert_eq!(f.runtime.request(&json!({"op":"list"}), "")["ok"], true);
+    assert_eq!(f.runtime.tasks.list().unwrap().len(), 1);
+    let mut params = f.spawn(&task);
+    params["op"] = json!("next"); // Cannot spoof the history exception in admission.
+    assert!(f.runtime.admit(&params, "manager").is_err());
+    let mutation = f.runtime.request(&json!({"op":"setTaskReferences","taskId":task["taskId"],"cwd":f.cwd,"expectedTaskRevision":task["revision"],"upsert":[]}), "manager");
+    assert_eq!(mutation["ok"], false);
+    assert_eq!(
+        f.runtime
+            .tasks
+            .task(task["taskId"].as_str().unwrap())
+            .unwrap()
+            .unwrap()["revision"],
+        task["revision"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn manager_request_intents_persist_the_canonical_project_selector() {
+    let f = Fixture::new();
+    let project = f._dir.path().join("request-project");
+    let alias = f._dir.path().join("request-alias");
+    std::fs::create_dir(&project).unwrap();
+    std::os::unix::fs::symlink(&project, &alias).unwrap();
+    let request = f
+        .runtime
+        .requests
+        .prepare("manager", "Work through the selected alias", false)
+        .unwrap();
+    let id = request["requestId"].as_str().unwrap();
+    let delivery = f
+        .runtime
+        .requests
+        .begin_delivery("manager", id)
+        .unwrap()
+        .unwrap();
+    f.runtime
+        .requests
+        .finish_delivery(id, delivery["deliveryId"].as_str().unwrap(), "accepted")
+        .unwrap();
+    let stored = f.runtime.requests.request("manager", id).unwrap();
+    let response = f.runtime.request(&json!({"op":"resolveRequest","requestId":id,"expectedRevision":stored["revision"],"intents":[{"key":"work","kind":"create","cwd":alias,"title":"Selected task","reason":"Explicit project request","provenance":"explicit"}]}), "manager");
+    assert_eq!(response["ok"], true, "{response}");
+    let tasks = f.runtime.tasks.list().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(
+        tasks[0]["projectCwd"],
+        workspacer_hub::services::paths::canonicalize(&project)
+            .unwrap()
+            .to_string_lossy()
+            .as_ref()
     );
 }

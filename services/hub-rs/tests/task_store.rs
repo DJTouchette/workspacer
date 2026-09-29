@@ -505,3 +505,61 @@ fn paired_receipt_updates_only_admitted_remote_attempts_without_result_authority
         true
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn windows_project_aliases_preserve_task_owner_revision_and_distinct_project_guards() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("ProjectMixedCase");
+    let other = dir.path().join("DifferentProject");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    let canonical = workspacer_hub::services::paths::canonicalize(&project).unwrap();
+    let canonical = canonical.to_str().unwrap();
+    let plain = canonical.strip_prefix(r"\\?\").unwrap_or(canonical);
+    let git_style = plain.replace('\\', "/").to_lowercase();
+    let store = TaskStore::open(dir.path().join("history.json")).unwrap();
+    let task = store
+        .start_workflow(&owner(), plain, "Raw stored spelling", pin())
+        .unwrap();
+    let id = task["taskId"].as_str().unwrap();
+    let history = store.snapshot().unwrap();
+    assert!(history.owned(id, "manager", canonical).is_ok());
+    assert!(history.owned(id, "manager", &git_style).is_ok());
+    assert!(history.owned(id, "other-manager", canonical).is_err());
+    assert!(
+        history
+            .owned(id, "manager", other.to_str().unwrap())
+            .is_err()
+    );
+    let edited = store
+        .mutate_owned(
+            id,
+            "manager",
+            canonical,
+            revision(&task),
+            || Ok(()),
+            |task| {
+                task["title"] = json!("Updated through canonical spelling");
+                Ok(())
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        edited["projectCwd"], plain,
+        "comparison must not silently rewrite persisted identity"
+    );
+    assert_eq!(revision(&edited), revision(&task) + 1);
+    assert!(
+        store
+            .mutate_owned(
+                id,
+                "manager",
+                &git_style,
+                revision(&task),
+                || Ok(()),
+                |_| Ok(())
+            )
+            .is_err()
+    );
+}
