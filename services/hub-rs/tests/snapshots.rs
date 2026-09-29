@@ -1,3 +1,5 @@
+#[path = "support/sweepguard.rs"]
+mod sweepguard;
 use serde_json::{Value, json};
 use workspacer_hub::services::snapshots::{compat, layout_ids, live, visible};
 
@@ -106,6 +108,8 @@ fn legacy_visibility_and_process_liveness_vectors_remain_separate() {
 fn shared_snapshot_projection_matches_go_reference() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../../contracts/hub-snapshot-cases.json")).unwrap();
+    assert!(fixture["vocabulary"]["blocks"]["cases"]["loaders"].as_array().unwrap().iter().any(|v| v == "services/hub-rs/tests/snapshots.rs::shared_snapshot_projection_matches_go_reference"));
+    let mut tally = sweepguard::Tally::default();
     for case in fixture["cases"].as_array().unwrap() {
         assert_eq!(
             compat(case["raw"].clone()),
@@ -113,7 +117,11 @@ fn shared_snapshot_projection_matches_go_reference() {
             "{}",
             case["name"]
         );
+        tally.ran("other");
     }
+    tally
+        .require_every("shared snapshot projection", 4)
+        .unwrap();
 }
 #[test]
 fn visibility_distinguishes_live_stopped_curated_and_unknown_sessions() {

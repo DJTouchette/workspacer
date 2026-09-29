@@ -1,0 +1,83 @@
+{
+  "records": {
+    "services/hub/cmd/brain/ownerselection_test.go": {
+      "status": "ported",
+      "sha256": "d5791549fa144eec1d6f803aa0b6b179f94b5de2500976c594f6e6a77321d18e",
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/tests/snapshot_routes.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All five pure legacy controls are covered by owner_selection_remains_sparse_and_preserves_contradictory_provider_evidence: absence, full pair/raw retention, null sparse request, independent missing halves, contradicted usage/status-line evidence.",
+          "New isolated real-engine route test writes canonical requested selection to actual SQLite using the public writer, rehydrates it, delivers a hook before hub boot, verifies initial seed, real agent.snapshot event, sessions.snapshots list and uncached sessions.snapshot fallback all retain both original and camelCase fields with exact1M values.",
+          "The fallback control uses a second persisted empty stopped row excluded from the initial seed, proving a real daemon read rather than another cached answer."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/brain/migration_snapshots_test.go": {
+      "status": "ported",
+      "sha256": "42521389d96eda7cb231d0a214b00e18dd8a609e4dec76f8aa1819b0ed709ddf",
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs",
+        "contracts/hub-snapshot-cases.json"
+      ],
+      "review": {
+        "behaviors": [
+          "The actual Rust loader runs every frozen hub-snapshot-cases.json raw row through production compat and compares full expected JSON.",
+          "Added an observed Tally floor requiring at least4 executed comparisons and explicit loader ownership. Fixture case bytes and expected values remain unchanged; snapshots target9 passed."
+        ],
+        "intentionalChanges": []
+      }
+    },
+    "services/hub/cmd/brain/sse_failure_test.go": {
+      "status": "ported",
+      "sha256": "317f8abb31655b8f7fba7be98826968d948a6581c3da64684dd5a8240b914d03",
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/snapshot_routes.rs",
+        "services/hub-rs/src/services/sessions.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Full-scope session source is now the owned embedded engine: subscriptions are acquired before the initial fallible seed, typed lag reseeds authoritative state, closed session streams or stopped engine return an error to supervised hub lifetime.",
+          "New real-engine test verifies engine death changes hub status to a specific failed producer diagnosis, subsequent snapshots fail instead of returning an empty fleet, and hub.shutdown retains the failure. A stopped engine cannot initialize a healthy hub or silently seed an empty fleet.",
+          "Existing typed-lag test actually overflows a bounded receiver and proves terminal-state recovery without importing unrelated history or losing an owned fast launch. Owning source SHA68d5225f49983926f8217e56d9d4ef03d922b15137b866f75fbf4f539f7ec61b is unchanged from Windows CI checkout c0f40add8e7459e1a336a44f3155cea0f06f1292; actual test passed in /tmp/workspacer-sweep-windows-c0.log."
+        ],
+        "intentionalChanges": [
+          "Old full-scope /events and /statusline/stream HTTP consumers and their403/404/502 diagnostics are retired; do not claim an internal HTTP endpoint test. Typed in-process producer failure terminates supervised full backend with an explicit diagnostic instead of reconnecting forever.",
+          "An ordinary clean HTTP200 EOF is no longer a full-scope lifecycle operation. Intentional owner shutdown is separately owned; unexpected typed producer closure is fatal. Optional external read-only bridge remains distinct and is not certified by these rows."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "snapshot_routes": "1 passed /tmp/workspacer-snapshot-routes-review.log",
+    "snapshots": "9 passed /tmp/workspacer-snapshots-floor-review.log",
+    "typed_lag": "Unchanged owning source and exact Windows CI proof above; no fresh full-library claim",
+    "witness": "Both test files unmapped; explicit owning Cargo targets executed",
+    "other_target": "Root-requested headless_completeness FAILED missing capability assertion; /tmp/workspacer-headless-completeness-review.log. Separate root scope, not hidden by this review.",
+    "format": "rustfmt and git diff --check passed"
+  },
+  "readyToStage": [
+    "services/hub-rs/tests/snapshots.rs",
+    "services/hub-rs/tests/snapshot_routes.rs",
+    ".rivet/learnings/2026-09-29-snapshot-parity-requires-actual-seed-event-and-f-d9e71a.md",
+    "services/hub-rs/reviews/brain-snapshot-routes.json"
+  ]
+}
