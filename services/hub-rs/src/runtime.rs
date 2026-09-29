@@ -95,7 +95,7 @@ pub struct Options {
     pub(crate) launch_lifecycle: Option<Arc<crate::services::agent_lifecycle::Lifecycle>>,
     pub(crate) routing: Option<Arc<crate::services::routing::RoutingService>>,
     pub(crate) session_snapshots: Arc<std::sync::RwLock<BTreeMap<String, Value>>>,
-    pub(crate) confirmed_controls: Arc<services::live_controls::ConfirmedControls>,
+    pub(crate) confirmed_controls: Arc<crate::services::live_controls::ConfirmedControls>,
     pub(crate) workflow_runtime: Option<Arc<crate::services::workflow_runtime::WorkflowRuntime>>,
     pub(crate) replacements: Option<Arc<crate::services::manager_replacements::ReplacementState>>,
     pub(crate) worktrees: Option<Arc<crate::services::worktrees::Worktrees>>,
