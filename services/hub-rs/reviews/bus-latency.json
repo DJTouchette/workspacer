@@ -53,7 +53,7 @@
           "budgetMicros": 5000
         },
         "transportCorrection": {
-          "status": "Linux accepted-socket configuration tests2 passed; debug transport/protocol tests and corrected optimized CI still pending",
+          "status": "Linux accepted-socket configuration2 passed; corrected optimized CI9bd passed the unchanged budget",
           "sourceEvidence": [
             "Production Client already passes disable_nagle=true to tokio-tungstenite0.24 connect_async_with_config. Benchmark connect_async defaulted false.",
             "Pinned axum0.7.9 Serve defaults tcp_nodelay=None; Go net.newTCPConn calls setNoDelay(fd,true) for dialed and accepted sockets.",
@@ -62,7 +62,7 @@
           "proof": [
             "tests/tcp_options.rs inspects actual accepted hub/MCP socket TCP_NODELAY through the Linux kernel, with a controlled false/true accepted-socket floor.",
             "Benchmark client/echo assertions read the live socket option; existing debug functional test validates actual payload delivery.",
-            "Neither configuration proof nor the historical a271 pass establishes that the corrected current optimized run passes. The observed approximately40ms tail is consistent with delayed ACK/Nagle; measured follow-up is required."
+            "Configuration proof alone cannot establish an optimized pass. The corrected9bd run has its own successful measured receipt below; pre-fix51 also passed, so the40ms tail was intermittent and no deterministic causal/general-speedup claim follows."
           ],
           "budgetChanged": false,
           "configurationReceipt": {
@@ -70,7 +70,40 @@
             "result": "2 passed;0 failed;0 ignored",
             "log": "/tmp/workspacer-tcp-options-check.log",
             "scope": "Actual accepted hub/MCP socket options; deliberately opposite client option and raw accepted-socket false/true control. Not timing evidence."
+          },
+          "timingCaveat": "Pre-correction51b5b451 passed after a7 failed, establishing intermittency. Corrected9bd also passed. These are separate run-specific receipts, not proof of deterministic Nagle causality or a general speedup.",
+          "optimizedCheckpoint": {
+            "commit": "9bd86db6019172f58b68d0befd97739d9e66bcfa",
+            "run": "https://github.com/DJTouchette/workspacer/actions/runs/36642609790",
+            "job": "https://github.com/DJTouchette/workspacer/actions/runs/36642609790/job/109659991266",
+            "result": "pass",
+            "profile": "release",
+            "transportCorrectionIncluded": true,
+            "turns": 200,
+            "payloadBytes": 38005,
+            "hubSamples": 2000,
+            "floorSamples": 500,
+            "hubP50Micros": 307,
+            "hubP99Micros": 370,
+            "floorP99Micros": 107,
+            "hubShareP99Micros": 263,
+            "budgetMicros": 5000,
+            "log": "/tmp/workspacer-tcp-optimized-ci.log",
+            "replacementTestSha256": "0e07b06d5fb958df10fe3ebb5f715b0d3c43587e445e4a630c2f3b342c438963"
           }
+        },
+        "preCorrectionFollowup": {
+          "commit": "51b5b4514875f16d395997c0a505dc184d2f34e8",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36642453390",
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36642453390/job/109657628435",
+          "result": "pass",
+          "transportCorrectionIncluded": false,
+          "hubP50Micros": 418,
+          "hubP99Micros": 625,
+          "floorP99Micros": 146,
+          "hubShareP99Micros": 479,
+          "budgetMicros": 5000,
+          "log": "/tmp/workspacer-51-latency.log"
         }
       },
       "status": "ported"
@@ -127,7 +160,7 @@
           "budgetMicros": 5000
         },
         "transportCorrection": {
-          "status": "Linux accepted-socket configuration tests2 passed; debug transport/protocol tests and corrected optimized CI still pending",
+          "status": "Linux accepted-socket configuration2 passed; corrected optimized CI9bd passed the unchanged budget",
           "sourceEvidence": [
             "Production Client already passes disable_nagle=true to tokio-tungstenite0.24 connect_async_with_config. Benchmark connect_async defaulted false.",
             "Pinned axum0.7.9 Serve defaults tcp_nodelay=None; Go net.newTCPConn calls setNoDelay(fd,true) for dialed and accepted sockets.",
@@ -136,7 +169,7 @@
           "proof": [
             "tests/tcp_options.rs inspects actual accepted hub/MCP socket TCP_NODELAY through the Linux kernel, with a controlled false/true accepted-socket floor.",
             "Benchmark client/echo assertions read the live socket option; existing debug functional test validates actual payload delivery.",
-            "Neither configuration proof nor the historical a271 pass establishes that the corrected current optimized run passes. The observed approximately40ms tail is consistent with delayed ACK/Nagle; measured follow-up is required."
+            "Configuration proof alone cannot establish an optimized pass. The corrected9bd run has its own successful measured receipt below; pre-fix51 also passed, so the40ms tail was intermittent and no deterministic causal/general-speedup claim follows."
           ],
           "budgetChanged": false,
           "configurationReceipt": {
@@ -144,7 +177,40 @@
             "result": "2 passed;0 failed;0 ignored",
             "log": "/tmp/workspacer-tcp-options-check.log",
             "scope": "Actual accepted hub/MCP socket options; deliberately opposite client option and raw accepted-socket false/true control. Not timing evidence."
+          },
+          "timingCaveat": "Pre-correction51b5b451 passed after a7 failed, establishing intermittency. Corrected9bd also passed. These are separate run-specific receipts, not proof of deterministic Nagle causality or a general speedup.",
+          "optimizedCheckpoint": {
+            "commit": "9bd86db6019172f58b68d0befd97739d9e66bcfa",
+            "run": "https://github.com/DJTouchette/workspacer/actions/runs/36642609790",
+            "job": "https://github.com/DJTouchette/workspacer/actions/runs/36642609790/job/109659991266",
+            "result": "pass",
+            "profile": "release",
+            "transportCorrectionIncluded": true,
+            "turns": 200,
+            "payloadBytes": 38005,
+            "hubSamples": 2000,
+            "floorSamples": 500,
+            "hubP50Micros": 307,
+            "hubP99Micros": 370,
+            "floorP99Micros": 107,
+            "hubShareP99Micros": 263,
+            "budgetMicros": 5000,
+            "log": "/tmp/workspacer-tcp-optimized-ci.log",
+            "replacementTestSha256": "0e07b06d5fb958df10fe3ebb5f715b0d3c43587e445e4a630c2f3b342c438963"
           }
+        },
+        "preCorrectionFollowup": {
+          "commit": "51b5b4514875f16d395997c0a505dc184d2f34e8",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36642453390",
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36642453390/job/109657628435",
+          "result": "pass",
+          "transportCorrectionIncluded": false,
+          "hubP50Micros": 418,
+          "hubP99Micros": 625,
+          "floorP99Micros": 146,
+          "hubShareP99Micros": 479,
+          "budgetMicros": 5000,
+          "log": "/tmp/workspacer-51-latency.log"
         }
       },
       "status": "retired",
@@ -202,7 +268,7 @@
           "budgetMicros": 5000
         },
         "transportCorrection": {
-          "status": "Linux accepted-socket configuration tests2 passed; debug transport/protocol tests and corrected optimized CI still pending",
+          "status": "Linux accepted-socket configuration2 passed; corrected optimized CI9bd passed the unchanged budget",
           "sourceEvidence": [
             "Production Client already passes disable_nagle=true to tokio-tungstenite0.24 connect_async_with_config. Benchmark connect_async defaulted false.",
             "Pinned axum0.7.9 Serve defaults tcp_nodelay=None; Go net.newTCPConn calls setNoDelay(fd,true) for dialed and accepted sockets.",
@@ -211,7 +277,7 @@
           "proof": [
             "tests/tcp_options.rs inspects actual accepted hub/MCP socket TCP_NODELAY through the Linux kernel, with a controlled false/true accepted-socket floor.",
             "Benchmark client/echo assertions read the live socket option; existing debug functional test validates actual payload delivery.",
-            "Neither configuration proof nor the historical a271 pass establishes that the corrected current optimized run passes. The observed approximately40ms tail is consistent with delayed ACK/Nagle; measured follow-up is required."
+            "Configuration proof alone cannot establish an optimized pass. The corrected9bd run has its own successful measured receipt below; pre-fix51 also passed, so the40ms tail was intermittent and no deterministic causal/general-speedup claim follows."
           ],
           "budgetChanged": false,
           "configurationReceipt": {
@@ -219,7 +285,40 @@
             "result": "2 passed;0 failed;0 ignored",
             "log": "/tmp/workspacer-tcp-options-check.log",
             "scope": "Actual accepted hub/MCP socket options; deliberately opposite client option and raw accepted-socket false/true control. Not timing evidence."
+          },
+          "timingCaveat": "Pre-correction51b5b451 passed after a7 failed, establishing intermittency. Corrected9bd also passed. These are separate run-specific receipts, not proof of deterministic Nagle causality or a general speedup.",
+          "optimizedCheckpoint": {
+            "commit": "9bd86db6019172f58b68d0befd97739d9e66bcfa",
+            "run": "https://github.com/DJTouchette/workspacer/actions/runs/36642609790",
+            "job": "https://github.com/DJTouchette/workspacer/actions/runs/36642609790/job/109659991266",
+            "result": "pass",
+            "profile": "release",
+            "transportCorrectionIncluded": true,
+            "turns": 200,
+            "payloadBytes": 38005,
+            "hubSamples": 2000,
+            "floorSamples": 500,
+            "hubP50Micros": 307,
+            "hubP99Micros": 370,
+            "floorP99Micros": 107,
+            "hubShareP99Micros": 263,
+            "budgetMicros": 5000,
+            "log": "/tmp/workspacer-tcp-optimized-ci.log",
+            "replacementTestSha256": "0e07b06d5fb958df10fe3ebb5f715b0d3c43587e445e4a630c2f3b342c438963"
           }
+        },
+        "preCorrectionFollowup": {
+          "commit": "51b5b4514875f16d395997c0a505dc184d2f34e8",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36642453390",
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36642453390/job/109657628435",
+          "result": "pass",
+          "transportCorrectionIncluded": false,
+          "hubP50Micros": 418,
+          "hubP99Micros": 625,
+          "floorP99Micros": 146,
+          "hubShareP99Micros": 479,
+          "budgetMicros": 5000,
+          "log": "/tmp/workspacer-51-latency.log"
         }
       },
       "status": "retired",

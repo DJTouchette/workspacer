@@ -51,8 +51,9 @@ checkpoint; the dedicated CI job continues to guard subsequent pushes.
 [Linux CI run 36637635374](https://github.com/DJTouchette/workspacer/actions/runs/36637635374/job/109642058103)
 on `a7e11447b5a8a9097401786e46b2d3b1e47f0048` **failed** the same real budget:
 hub p50 437µs, hub p99 40,037µs, echo p99 143µs and adjusted share 39,894µs.
-It ran 2,000/500 samples with the same 200-turn, 38,005-byte payload. This failure
-remains the current optimized receipt until a corrected run passes.
+It ran 2,000/500 samples with the same 200-turn, 38,005-byte payload. A later
+pre-correction checkpoint passed, as recorded below; the failed run remains
+evidence of an intermittent tail, not a deterministic regression.
 
 The pinned transport sources show a configuration discrepancy. Go's TCP
 constructor enables TCP_NODELAY for both dialed and accepted sockets. Rust's
@@ -75,4 +76,21 @@ The Linux accepted-socket target passed both tests locally
 (`/tmp/workspacer-tcp-options-check.log`): actual hub/MCP health responses were
 observed and their accepted sockets had TCP_NODELAY set, while client sockets
 were deliberately unset. The false/true control also passed. This establishes
-socket configuration; the corrected optimized timing receipt remains pending.
+socket configuration; a corrected optimized checkpoint is recorded below.
+
+A later **pre-correction** candidate, `51b5b451`,
+[passed its optimized CI guard](https://github.com/DJTouchette/workspacer/actions/runs/36642453390/job/109657628435):
+hub p50 418µs, p99 625µs, echo p99 146µs and adjusted share 479µs.
+That establishes the earlier spike was intermittent. It neither invalidates the
+a7 failure nor proves Nagle was its sole cause. The corrected `9bd` candidate
+supplies separate timing evidence below.
+
+## Corrected optimized checkpoint
+
+The `9bd86db6` candidate
+[passed the unchanged optimized guard](https://github.com/DJTouchette/workspacer/actions/runs/36642609790/job/109659991266):
+hub p50 307µs, p99 370µs, echo p99 107µs and adjusted share 263µs against 5,000µs.
+It used the same 2,000/500 samples, 200 turns and 38,005-byte payload. The raw
+receipt is `/tmp/workspacer-tcp-optimized-ci.log`. This is timing evidence for
+the corrected source revision. Since pre-correction `51b5b451` also passed, the
+records do not establish a deterministic causal attribution or general speedup.

@@ -1,0 +1,70 @@
+{
+  "records": {
+    "services/hub/cmd/brain/facade.go": {
+      "status": "ported",
+      "sha256": "34c82fea1ed01932b6b8845d5aebf31fea99fd51f71fbdd370bed8864f3574a1",
+      "replacement": [
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/launch_instructions.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/launch_instructions.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete legacy source and every facade regression assertion. Configured legacy endpoints are rechecked for every preparation without cached failures, using public health without bearer/query and exact HTTP 200, service/listener/hub identity, connection and catalog readiness. Healthy/down/recovered launches mint exactly twice; non-200 success and redirects refuse before token writes.",
+          "Real SessionFacade prepares managed query credentials and private Claude MCP files with Authorization headers, retains selected library servers and strict MCP configuration, replaces only existing t query values, and keeps Claude argv free of bearer bytes. Atomic token mutations preserve unrelated pairings and the prior generation cannot revoke its successor.",
+          "Manager preparation preserves operator scope, wildcard plugin compatibility and manager role while omitting obsolete profilesAllowed/yoloAllowed grants. Full-access remains a provider execution preference. Worker escalation contracts survive managed and PTY preparation, both profile prompt spellings compose into one ordered flag, and accidental manager parent metadata does not attach worker escalation.",
+          "Real lifecycle and persistent SessionFacade integration verifies credentials exist before both managed/PTY engine calls, failure revokes them, a token-store filesystem failure retains pending cleanup, a repeated stop retries successfully, and later duplicates do not touch the store. Existing lifecycle tests additionally fence old generations and reconcile authoritative stopped rows.",
+          "Existing collaboration tests verify exact bundled skill bytes, pointer-only ordinary instructions, manager exclusion and safe refusal without overwriting user content. No old grant enforcement is reinstated."
+        ],
+        "intentionalChanges": [
+          "A configured but unverified facade refuses the launch before minting; the old Go path silently omitted tools and continued. Deliberately Disabled remains a supported no-facade launch with selected library MCP and worker contracts. This distinction is documented in mcp-tool-facade context.",
+          "Owned Rust readiness uses its in-process actor, exact bound endpoint and launchReady capability proof, rather than trusting a public HTTP responder. Legacy compatibility checks remain separate.",
+          "Credential mutation is protected across processes with an advisory lock and durable generation-scoped lifecycle cleanup, replacing the Go process mutex and in-memory stop callback. Session IDs additionally require a portable ASCII filename vocabulary.",
+          "Library resolution and collaboration skill responsibilities are reviewed with their owning groups; source-local shim reconcileManagerGrants remains an intentional no-op because obsolete grants are parseable metadata only.",
+          "The shared manager doctrine explains how to read worker escalation results; unlike the older short manager prompt, it legitimately names wks-escalation. The regression excludes the actual STRUCTURED WORKER ESCALATION CONTRACT, not every mention of that result format."
+        ],
+        "validation": "Final session_facade target: 11 passed, zero ignored, /tmp/workspacer-facade-parity-final.log. Existing unchanged agent_lifecycle, launch_instructions and spawn_plan source/test bytes verified against a7e11447; actual Linux CI run36637635273/job109642057174 passed their owning targets (including generation retry/fencing, authoritative stop reconciliation, exact skill bytes and worker contract). Log /tmp/workspacer-facade-baseline-ci.log. Witness left Rust integration unmapped; explicit owning target supplied current proof. The shared library run separately failed/hung unrelated fixtures and is not claimed green."
+      }
+    },
+    "services/hub/cmd/brain/facade_test.go": {
+      "status": "ported",
+      "sha256": "90b9113fa7cbc4b1457f8261d6b72c46f0257d1ab9abdec0ea1f7d820dc8db5c",
+      "replacement": [
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/launch_instructions.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/launch_instructions.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete legacy source and every facade regression assertion. Configured legacy endpoints are rechecked for every preparation without cached failures, using public health without bearer/query and exact HTTP 200, service/listener/hub identity, connection and catalog readiness. Healthy/down/recovered launches mint exactly twice; non-200 success and redirects refuse before token writes.",
+          "Real SessionFacade prepares managed query credentials and private Claude MCP files with Authorization headers, retains selected library servers and strict MCP configuration, replaces only existing t query values, and keeps Claude argv free of bearer bytes. Atomic token mutations preserve unrelated pairings and the prior generation cannot revoke its successor.",
+          "Manager preparation preserves operator scope, wildcard plugin compatibility and manager role while omitting obsolete profilesAllowed/yoloAllowed grants. Full-access remains a provider execution preference. Worker escalation contracts survive managed and PTY preparation, both profile prompt spellings compose into one ordered flag, and accidental manager parent metadata does not attach worker escalation.",
+          "Real lifecycle and persistent SessionFacade integration verifies credentials exist before both managed/PTY engine calls, failure revokes them, a token-store filesystem failure retains pending cleanup, a repeated stop retries successfully, and later duplicates do not touch the store. Existing lifecycle tests additionally fence old generations and reconcile authoritative stopped rows.",
+          "Existing collaboration tests verify exact bundled skill bytes, pointer-only ordinary instructions, manager exclusion and safe refusal without overwriting user content. No old grant enforcement is reinstated."
+        ],
+        "intentionalChanges": [
+          "A configured but unverified facade refuses the launch before minting; the old Go path silently omitted tools and continued. Deliberately Disabled remains a supported no-facade launch with selected library MCP and worker contracts. This distinction is documented in mcp-tool-facade context.",
+          "Owned Rust readiness uses its in-process actor, exact bound endpoint and launchReady capability proof, rather than trusting a public HTTP responder. Legacy compatibility checks remain separate.",
+          "Credential mutation is protected across processes with an advisory lock and durable generation-scoped lifecycle cleanup, replacing the Go process mutex and in-memory stop callback. Session IDs additionally require a portable ASCII filename vocabulary.",
+          "Library resolution and collaboration skill responsibilities are reviewed with their owning groups; source-local shim reconcileManagerGrants remains an intentional no-op because obsolete grants are parseable metadata only.",
+          "The shared manager doctrine explains how to read worker escalation results; unlike the older short manager prompt, it legitimately names wks-escalation. The regression excludes the actual STRUCTURED WORKER ESCALATION CONTRACT, not every mention of that result format."
+        ],
+        "validation": "Final session_facade target: 11 passed, zero ignored, /tmp/workspacer-facade-parity-final.log. Existing unchanged agent_lifecycle, launch_instructions and spawn_plan source/test bytes verified against a7e11447; actual Linux CI run36637635273/job109642057174 passed their owning targets (including generation retry/fencing, authoritative stop reconciliation, exact skill bytes and worker contract). Log /tmp/workspacer-facade-baseline-ci.log. Witness left Rust integration unmapped; explicit owning target supplied current proof. The shared library run separately failed/hung unrelated fixtures and is not claimed green."
+      }
+    }
+  }
+}

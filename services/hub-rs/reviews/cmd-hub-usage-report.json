@@ -1,0 +1,66 @@
+{
+  "records": {
+    "services/hub/cmd/hub/usagereport.go": {
+      "status": "ported",
+      "sha256": "71b29e45b32903eb38c7000bcefa57f9f5dad18ef8e4b3066b13a57b21cf2cf6",
+      "replacement": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/tests/services.rs"
+      ],
+      "review": {
+        "originalTests": [],
+        "behaviors": [
+          "Production usage.report handler accepts null/empty object only, reads host-owned sampler with60-second completed-cache eligibility, joins shared in-flight fetches and projects the currently installed pacing matrix/preference. It returns before model-catalog refresh, routing selection, decision logging or publication.",
+          "Transport failure on an uncached read is an error, not a successful empty observation. routing.select separately may continue with unknown capacity plus warning. Full Go runFetch invalidates haveSnap on failure; Rust now clears cache.report for the current generation on failure. A cache with no known failed refresh remains eligible for60seconds.",
+          "New focused fixture installs the actual production handler and sampler behind real actor authentication with a view token, then executes12 concurrent calls against an isolated HTTP upstream. It checks exactly one fetch, evaluated_at in epoch-second call bounds and valid_until exactly60seconds later, missing reset/measurement remain unknown with no invented zero, and caller-supplied URL/data/array/string parameters are refused before fetch.",
+          "The fixture establishes live catalog-observer and audit-log positive floors, then verifies unchanged policy/log bytes, no catalog fetch, and a routing-event sentinel arriving without any preceding decision. A new uncached sampler sees503 as an error while the first sampler retains its legitimate cached observation. The independent external-daemon SSE adapter is not started in this fixture; the actual install function captures the HTTP transport before Options clears that separate lifecycle adapter.",
+          "Existing pacing/window currency corpus tests and schedule-is-not-routing-policy tests retain quota uncertainty and preference semantics. This pair does not certify the larger usageWatcher polling/cancellation machinery or routing preference/select adapters.",
+          "The existing raw sampler regression now forces a failed refresh on the same sampler and requires cache.report to be absent plus another cached-policy read to fail, proving old observations cannot be revived after known failure. Older waiters still receive their own immutable fetch result, and generation checks prevent an old flight from overwriting newer cache state."
+        ],
+        "validation": "Exact current compiled-library services::routing::sampler filter passed3 tests with0 failed and376 filtered (/tmp/workspacer-usage-report-scoped.log). Covers actual twelve-reader view handler, known-failure cache invalidation, and catalog decoding. The same three tests passed in the earlier broader checkpoint that had an unrelated library_watch failure; no full-suite green claim is inferred. Subsequent independent-flight/preview changes remain a separate pending batch."
+      }
+    },
+    "services/hub/cmd/hub/usagereport_test.go": {
+      "status": "ported",
+      "sha256": "c65038f0db3de16173bee6a7ceb86bf120da24000a769eea481707fc22fbbc16",
+      "replacement": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/tests/services.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestUsageReportReadAndConcurrentCache",
+          "TestUsageReportTransportFailure",
+          "TestUsageReportHasNoDecisionSideEffects"
+        ],
+        "behaviors": [
+          "Production usage.report handler accepts null/empty object only, reads host-owned sampler with60-second completed-cache eligibility, joins shared in-flight fetches and projects the currently installed pacing matrix/preference. It returns before model-catalog refresh, routing selection, decision logging or publication.",
+          "Transport failure on an uncached read is an error, not a successful empty observation. routing.select separately may continue with unknown capacity plus warning. Full Go runFetch invalidates haveSnap on failure; Rust now clears cache.report for the current generation on failure. A cache with no known failed refresh remains eligible for60seconds.",
+          "New focused fixture installs the actual production handler and sampler behind real actor authentication with a view token, then executes12 concurrent calls against an isolated HTTP upstream. It checks exactly one fetch, evaluated_at in epoch-second call bounds and valid_until exactly60seconds later, missing reset/measurement remain unknown with no invented zero, and caller-supplied URL/data/array/string parameters are refused before fetch.",
+          "The fixture establishes live catalog-observer and audit-log positive floors, then verifies unchanged policy/log bytes, no catalog fetch, and a routing-event sentinel arriving without any preceding decision. A new uncached sampler sees503 as an error while the first sampler retains its legitimate cached observation. The independent external-daemon SSE adapter is not started in this fixture; the actual install function captures the HTTP transport before Options clears that separate lifecycle adapter.",
+          "Existing pacing/window currency corpus tests and schedule-is-not-routing-policy tests retain quota uncertainty and preference semantics. This pair does not certify the larger usageWatcher polling/cancellation machinery or routing preference/select adapters.",
+          "The existing raw sampler regression now forces a failed refresh on the same sampler and requires cache.report to be absent plus another cached-policy read to fail, proving old observations cannot be revived after known failure. Older waiters still receive their own immutable fetch result, and generation checks prevent an old flight from overwriting newer cache state."
+        ],
+        "validation": "Exact current compiled-library services::routing::sampler filter passed3 tests with0 failed and376 filtered (/tmp/workspacer-usage-report-scoped.log). Covers actual twelve-reader view handler, known-failure cache invalidation, and catalog decoding. The same three tests passed in the earlier broader checkpoint that had an unrelated library_watch failure; no full-suite green claim is inferred. Subsequent independent-flight/preview changes remain a separate pending batch."
+      }
+    }
+  }
+}

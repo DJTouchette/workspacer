@@ -9,6 +9,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 type Fetch = Shared<BoxFuture<'static, std::result::Result<Value, String>>>;
+#[cfg(test)]
+mod report_tests;
 fn claude_models(catalog: &Value) -> Option<Vec<Value>> {
     #[derive(serde::Deserialize)]
     struct Alias {
@@ -86,6 +88,11 @@ mod tests {
         );
         external.close();
         assert!(sampler.report(Duration::ZERO).await.is_err());
+        assert!(sampler.cache.lock().unwrap().report.is_none());
+        assert!(
+            sampler.report(Duration::from_secs(60)).await.is_err(),
+            "a known failed refresh must not turn an old observation back into success"
+        );
         assert_eq!(reads.load(Ordering::SeqCst), 2);
         stop.send(()).unwrap();
         server.await.unwrap();
@@ -282,6 +289,11 @@ impl UsageSampler {
             cache.flight = None;
             if let Ok(report) = &result {
                 cache.report = Some((Instant::now(), report.clone()));
+            } else {
+                // A cached observation is reusable only until this sampler
+                // learns its upstream cannot supply a new one. Preserve each
+                // waiter's own result, but never revive old quota after failure.
+                cache.report = None;
             }
         }
         result.map_err(anyhow::Error::msg)

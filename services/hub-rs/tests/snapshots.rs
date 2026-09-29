@@ -258,3 +258,93 @@ fn approval_projection_unwraps_current_legacy_and_unknown_payloads() {
         assert_eq!(row["pendingQuestions"], Value::Null);
     }
 }
+
+#[test]
+fn owner_selection_remains_sparse_and_preserves_contradictory_provider_evidence() {
+    let old = compat(
+        json!({"session_id":"old","mode":"input","usage":{"model":"opus","context_tokens":10}}),
+    );
+    for key in [
+        "requestedSelection",
+        "requested_selection",
+        "resolvedContextWindow",
+        "resolved_context_window",
+    ] {
+        assert!(old.get(key).is_none());
+    }
+    for (selection, resolved) in [
+        (
+            Some(json!({"model":"opus","context_window":1000000})),
+            Some(json!(1000000)),
+        ),
+        (
+            Some(json!({"model":"opus","context_window":null})),
+            Some(json!(200000)),
+        ),
+        (
+            Some(json!({"model":"sonnet","context_window":1000000})),
+            None,
+        ),
+        (None, Some(json!(200000))),
+        (None, Some(Value::Null)),
+    ] {
+        let mut raw = json!({"session_id":"s","mode":"input","requested_model":"opus[1m]"});
+        if let Some(value) = &selection {
+            raw["requested_selection"] = value.clone();
+        }
+        if let Some(value) = &resolved {
+            raw["resolved_context_window"] = value.clone();
+        }
+        let row = compat(raw.clone());
+        assert_eq!(
+            row.get("requested_selection"),
+            raw.get("requested_selection")
+        );
+        assert_eq!(
+            row.get("resolved_context_window"),
+            raw.get("resolved_context_window")
+        );
+        assert_eq!(row["requested_model"], "opus[1m]");
+        if let Some(selection) = selection {
+            assert_eq!(
+                row["requestedSelection"],
+                json!({"model":selection["model"],"contextWindow":selection["context_window"]})
+            );
+        } else {
+            assert!(row.get("requestedSelection").is_none());
+        }
+        if let Some(value) = resolved.filter(|value| !value.is_null()) {
+            assert_eq!(row["resolvedContextWindow"], value);
+        } else {
+            assert!(row.get("resolvedContextWindow").is_none());
+        }
+    }
+    let raw = json!({"session_id":"s","requested_selection":{"model":"opus","context_window":1000000},"resolved_context_window":1000000,"usage":{"model":"claude-opus-5","context_tokens":356380,"context_limit":1000000},"status_line":{"model_display":"Opus","context_used_pct":178.19,"context_window_size":200000}});
+    let row = compat(raw.clone());
+    assert_eq!(row["requestedSelection"]["contextWindow"], 1000000);
+    assert_eq!(row["resolvedContextWindow"], 1000000);
+    assert_eq!(row["usage"]["contextLimit"], 1000000);
+    assert_eq!(row["usage"]["contextTokens"], 356380);
+    assert_eq!(row["statusLine"]["contextWindowSize"], 200000);
+    assert_eq!(row["statusLine"]["contextUsedPct"], 178.19);
+    assert_eq!(row["status_line"], raw["status_line"]);
+}
+
+#[test]
+fn execution_engine_projection_keeps_exact_owner_metadata_without_inventing_support() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../contracts/execution-engine-v1.json")).unwrap();
+    for readiness in ["ready", "unavailable"] {
+        let mut metadata = fixture["metadata"].clone();
+        metadata["readiness"] = json!(readiness);
+        let row =
+            compat(json!({"session_id":"engine","mode":"stopped","execution_engine":metadata}));
+        assert_eq!(row["executionEngine"], metadata);
+        assert_eq!(row["execution_engine"], metadata);
+    }
+    assert!(
+        compat(json!({"session_id":"old","mode":"input"}))
+            .get("executionEngine")
+            .is_none()
+    );
+}

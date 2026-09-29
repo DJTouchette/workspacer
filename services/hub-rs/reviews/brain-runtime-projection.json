@@ -1,0 +1,40 @@
+{
+  "records": {
+    "services/hub/cmd/brain/executionengine_test.go": {
+      "status": "ported",
+      "sha256": "859499b9f11715f4c989c7163c6c9ef6fa0feb8f1a964511b60c595c6f3c3dd4",
+      "replacement": [
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Replays the execution-engine-v1 metadata with both ready and unavailable readiness and compares the entire projected executionEngine object. Original snake_case metadata is retained; an old row does not acquire engine support."
+        ],
+        "intentionalChanges": [],
+        "validation": "Snapshots owning target9 passed, zero ignored: /tmp/workspacer-owner-projection-final.log. Includes exact engine metadata and old-row absence plus full sparse/contradicted owner-window matrix. No source change was needed."
+      }
+    },
+    "services/hub/cmd/brain/desktopruntime.go": {
+      "status": "ported",
+      "sha256": "07ed2ed9246ad4e424335049c8812e86f89e620debdbf634e55ffac5429c251a",
+      "replacement": [
+        "services/hub-rs/src/services/host_status.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/host_status.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reads actual owned daemon and hub phases plus installed MCP readiness. The real bus test exercises absent services, fully ready owned daemon/MCP, and daemon shutdown without a stale ready claim."
+        ],
+        "intentionalChanges": [
+          "Retains unknown for deliberately absent services and adds starting for actual startup phases. Replaces network health polling with owned lifecycle state; the host-only desktop capability does not disclose an external URL or imply launch admission."
+        ],
+        "validation": "Host status owning target1 passed: /tmp/workspacer-host-status-parity.log. Live catalog reports absent daemon/facade as unknown; owned daemon and real MCP become ready; shutdown returns failed state or refuses the read and subsequently reports the hub shutdown phase. Phase transition is awaited because bus refusal may precede published final status. Earlier fixture omissions (explicit listener token and asynchronous phase wait) were corrected before this successful run. No production change was needed."
+      }
+    }
+  }
+}

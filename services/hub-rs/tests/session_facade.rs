@@ -43,6 +43,7 @@ async fn verified_facade_injects_generation_bound_credentials_and_revokes_only_i
     let record = auth::load(&facade.tokens).unwrap().remove(0);
     assert_eq!(record.scope, "operator");
     assert_eq!(record.label, "session:agent");
+    assert_eq!(record.metadata["plugins"], json!(["*"]));
     assert!(
         plan.request["mcp"]
             .as_str()
@@ -69,6 +70,20 @@ async fn verified_facade_injects_generation_bound_credentials_and_revokes_only_i
     let content: serde_json::Value =
         serde_json::from_slice(&std::fs::read(facade.directory.join("claude.json")).unwrap())
             .unwrap();
+    let claude_token = auth::load(&facade.tokens)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.label == "session:claude")
+        .unwrap();
+    assert!(
+        !claude.request["argv"]
+            .to_string()
+            .contains(&claude_token.token)
+    );
+    assert_eq!(
+        content["mcpServers"]["workspacer"]["headers"]["Authorization"],
+        format!("Bearer {}", claude_token.token)
+    );
     assert!(
         content["mcpServers"]["workspacer"]["headers"]["Authorization"]
             .as_str()
@@ -112,6 +127,31 @@ async fn verified_facade_injects_generation_bound_credentials_and_revokes_only_i
     let remaining = auth::load(&facade.tokens).unwrap();
     assert_eq!(remaining.len(), 2);
     assert!(remaining.iter().any(|r| r.label == "owner-pairing"));
+    let mut manager = spawn_plan::resolve(
+        &json!({"cwd":dir.path(),"provider":"codex","manager":true,"parentSessionId":"accidental-parent"}),
+        &json!({"agents":{"fleetFullAccess":true}}), None, dir.path(), "manager", false,
+    ).unwrap();
+    facade
+        .prepare(&mut manager, "manager-generation")
+        .await
+        .unwrap();
+    let record = auth::load(&facade.tokens)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.label == "session:manager")
+        .unwrap();
+    assert_eq!(record.scope, "operator");
+    assert_eq!(record.metadata["role"], "manager");
+    assert_eq!(record.metadata["plugins"], json!(["*"]));
+    assert!(!record.metadata.contains_key("yoloAllowed"));
+    assert!(!record.metadata.contains_key("profilesAllowed"));
+    assert_eq!(manager.request["yolo"], true);
+    assert!(
+        !manager.request["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("STRUCTURED WORKER ESCALATION CONTRACT")
+    );
     task.abort();
 }
 #[tokio::test]
@@ -487,4 +527,159 @@ async fn exact_health_status_and_identity_are_rechecked_before_mint_and_recover_
     assert_eq!(calls.load(Ordering::SeqCst), 13);
     server.abort();
     let _ = server.await;
+}
+
+#[tokio::test]
+async fn failed_launch_and_retrying_end_cleanup_use_real_generation_credentials() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use workspacer_hub::services::agent_lifecycle::{LaunchEngine, Lifecycle, Operation};
+    struct Engine {
+        fail: AtomicBool,
+        tokens: std::path::PathBuf,
+    }
+    impl LaunchEngine for Engine {
+        fn sessions(&self) -> Operation<'_, serde_json::Value> {
+            Box::pin(async { Ok(json!([])) })
+        }
+        fn spawn<'a>(&'a self, plan: &'a spawn_plan::Plan) -> Operation<'a, serde_json::Value> {
+            Box::pin(async move {
+                let records = auth::load(&self.tokens)?;
+                assert!(
+                    records
+                        .iter()
+                        .any(|r| r.label == format!("session:{}", plan.session_id))
+                );
+                if self.fail.load(Ordering::SeqCst) {
+                    anyhow::bail!("injected engine failure after credential mint");
+                }
+                Ok(json!({"session_id":plan.session_id}))
+            })
+        }
+        fn stop<'a>(&'a self, _: &'a str) -> Operation<'a, ()> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, axum::Router::new().route("/health", axum::routing::get(move || async move {
+            axum::Json(json!({"status":"ok","service":"workspacer-mcp-facade","hubConnected":true,"pluginCatalogReady":true,"listenAddr":address.to_string(),"hubUrl":"in-process"}))
+        }))).await.unwrap();
+    });
+    for provider in ["claude", "codex"] {
+        let dir = tempfile::tempdir().unwrap();
+        let tokens = dir.path().join("tokens.json");
+        let facade = Arc::new(SessionFacade {
+            endpoint: Some(format!("http://{address}/mcp").parse().unwrap()),
+            expected_hub: "in-process".into(),
+            readiness: workspacer_hub::services::session_facade::Readiness::Legacy,
+            tokens: tokens.clone(),
+            directory: dir.path().join("mcp"),
+            home: dir.path().join("unused-home"),
+            instructions: String::new(),
+        });
+        let engine = Arc::new(Engine {
+            fail: AtomicBool::new(true),
+            tokens: tokens.clone(),
+        });
+        let lifecycle =
+            Lifecycle::open(dir.path().join("journal.json"), engine.clone(), facade).unwrap();
+        let plan = || {
+            spawn_plan::resolve(
+                &json!({"cwd":dir.path(),"provider":provider}),
+                &json!({}),
+                None,
+                dir.path(),
+                "agent",
+                false,
+            )
+            .unwrap()
+        };
+        assert!(
+            lifecycle
+                .launch(plan())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("engine failure")
+        );
+        assert!(auth::load(&tokens).unwrap().is_empty());
+        engine.fail.store(false, Ordering::SeqCst);
+        lifecycle.launch(plan()).await.unwrap();
+        let generation = lifecycle.records()["agent"].generation.clone();
+        let bytes = std::fs::read(&tokens).unwrap();
+        assert_eq!(auth::load(&tokens).unwrap().len(), 1);
+        let backup = dir.path().join("tokens-backup.json");
+        std::fs::rename(&tokens, &backup).unwrap();
+        std::fs::create_dir(&tokens).unwrap();
+        assert!(lifecycle.stopped("agent", &generation).await.is_err());
+        assert!(lifecycle.records()["agent"].revocation_pending);
+        assert_eq!(std::fs::read(&backup).unwrap(), bytes);
+        std::fs::remove_dir(&tokens).unwrap();
+        std::fs::rename(&backup, &tokens).unwrap();
+        assert!(lifecycle.stopped("agent", &generation).await.unwrap());
+        assert!(!lifecycle.records()["agent"].revocation_pending);
+        assert!(auth::load(&tokens).unwrap().is_empty());
+        // A duplicate stop after durable success must not revisit the store.
+        std::fs::remove_file(&tokens).unwrap();
+        std::fs::create_dir(&tokens).unwrap();
+        assert!(lifecycle.stopped("agent", &generation).await.unwrap());
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn worker_escalation_survives_facade_preparation_and_profile_prompt_forms() {
+    use workspacer_hub::services::{profiles::Profile, session_facade::Readiness};
+    let dir = tempfile::tempdir().unwrap();
+    let facade = SessionFacade {
+        endpoint: None,
+        expected_hub: String::new(),
+        readiness: Readiness::Disabled,
+        tokens: dir.path().join("tokens.json"),
+        directory: dir.path().join("mcp"),
+        home: dir.path().join("home"),
+        instructions: "Additional host instruction".into(),
+    };
+    for (provider, transport) in [
+        ("codex", "stream"),
+        ("opencode", "stream"),
+        ("claude", "pty"),
+    ] {
+        for extras in [
+            vec!["--append-system-prompt", "PROFILE"],
+            vec!["--append-system-prompt=PROFILE"],
+        ] {
+            let profile = Profile {
+                extra_args: extras.into_iter().map(str::to_owned).collect(),
+                ..Default::default()
+            };
+            let mut plan = spawn_plan::resolve(&json!({"cwd":dir.path(),"provider":provider,"transport":transport,"parentSessionId":"manager"}), &json!({}), Some(&profile), dir.path(), "worker", false).unwrap();
+            facade.prepare(&mut plan, "generation").await.unwrap();
+            let instructions = if provider == "claude" {
+                let argv = plan.request["argv"].as_array().unwrap();
+                assert_eq!(
+                    argv.iter()
+                        .filter(|arg| arg
+                            .as_str()
+                            .is_some_and(|s| s.starts_with("--append-system-prompt")))
+                        .count(),
+                    1
+                );
+                let position = argv
+                    .iter()
+                    .position(|arg| arg == "--append-system-prompt")
+                    .unwrap();
+                let prompt = argv[position + 1].as_str().unwrap();
+                assert!(prompt.find("PROFILE").unwrap() < prompt.find("wks-escalation").unwrap());
+                assert!(prompt.contains("Additional host instruction"));
+                prompt
+            } else {
+                plan.request["instructions"].as_str().unwrap()
+            };
+            assert!(instructions.contains("wks-escalation"));
+            assert!(instructions.contains("requiredAuthorityOrDecision"));
+        }
+    }
+    assert!(!facade.tokens.exists());
 }

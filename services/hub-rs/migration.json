@@ -1167,10 +1167,23 @@
       ]
     },
     "services/hub/cmd/brain/desktopruntime.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/host_status.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reads actual owned daemon and hub phases plus installed MCP readiness. The real bus test exercises absent services, fully ready owned daemon/MCP, and daemon shutdown without a stale ready claim."
+        ],
+        "intentionalChanges": [
+          "Retains unknown for deliberately absent services and adds starting for actual startup phases. Replaces network health polling with owned lifecycle state; the host-only desktop capability does not disclose an external URL or imply launch admission."
+        ],
+        "validation": "Host status owning target1 passed: /tmp/workspacer-host-status-parity.log. Live catalog reports absent daemon/facade as unknown; owned daemon and real MCP become ready; shutdown returns failed state or refuses the read and subsequently reports the hub shutdown phase. Phase transition is awaited because bus refusal may precede published final status. Earlier fixture omissions (explicit listener token and asynchronous phase wait) were corrected before this successful run. No production change was needed."
+      },
       "sha256": "07ed2ed9246ad4e424335049c8812e86f89e620debdbf634e55ffac5429c251a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/host_status.rs"
+      ]
     },
     "services/hub/cmd/brain/desktopworkflow_test.go": {
       "replacement": [],
@@ -1454,22 +1467,87 @@
       "tests": []
     },
     "services/hub/cmd/brain/executionengine_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Replays the execution-engine-v1 metadata with both ready and unavailable readiness and compares the entire projected executionEngine object. Original snake_case metadata is retained; an old row does not acquire engine support."
+        ],
+        "intentionalChanges": [],
+        "validation": "Snapshots owning target9 passed, zero ignored: /tmp/workspacer-owner-projection-final.log. Includes exact engine metadata and old-row absence plus full sparse/contradicted owner-window matrix. No source change was needed."
+      },
       "sha256": "859499b9f11715f4c989c7163c6c9ef6fa0feb8f1a964511b60c595c6f3c3dd4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs"
+      ]
     },
     "services/hub/cmd/brain/facade.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/launch_instructions.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete legacy source and every facade regression assertion. Configured legacy endpoints are rechecked for every preparation without cached failures, using public health without bearer/query and exact HTTP 200, service/listener/hub identity, connection and catalog readiness. Healthy/down/recovered launches mint exactly twice; non-200 success and redirects refuse before token writes.",
+          "Real SessionFacade prepares managed query credentials and private Claude MCP files with Authorization headers, retains selected library servers and strict MCP configuration, replaces only existing t query values, and keeps Claude argv free of bearer bytes. Atomic token mutations preserve unrelated pairings and the prior generation cannot revoke its successor.",
+          "Manager preparation preserves operator scope, wildcard plugin compatibility and manager role while omitting obsolete profilesAllowed/yoloAllowed grants. Full-access remains a provider execution preference. Worker escalation contracts survive managed and PTY preparation, both profile prompt spellings compose into one ordered flag, and accidental manager parent metadata does not attach worker escalation.",
+          "Real lifecycle and persistent SessionFacade integration verifies credentials exist before both managed/PTY engine calls, failure revokes them, a token-store filesystem failure retains pending cleanup, a repeated stop retries successfully, and later duplicates do not touch the store. Existing lifecycle tests additionally fence old generations and reconcile authoritative stopped rows.",
+          "Existing collaboration tests verify exact bundled skill bytes, pointer-only ordinary instructions, manager exclusion and safe refusal without overwriting user content. No old grant enforcement is reinstated."
+        ],
+        "intentionalChanges": [
+          "A configured but unverified facade refuses the launch before minting; the old Go path silently omitted tools and continued. Deliberately Disabled remains a supported no-facade launch with selected library MCP and worker contracts. This distinction is documented in mcp-tool-facade context.",
+          "Owned Rust readiness uses its in-process actor, exact bound endpoint and launchReady capability proof, rather than trusting a public HTTP responder. Legacy compatibility checks remain separate.",
+          "Credential mutation is protected across processes with an advisory lock and durable generation-scoped lifecycle cleanup, replacing the Go process mutex and in-memory stop callback. Session IDs additionally require a portable ASCII filename vocabulary.",
+          "Library resolution and collaboration skill responsibilities are reviewed with their owning groups; source-local shim reconcileManagerGrants remains an intentional no-op because obsolete grants are parseable metadata only.",
+          "The shared manager doctrine explains how to read worker escalation results; unlike the older short manager prompt, it legitimately names wks-escalation. The regression excludes the actual STRUCTURED WORKER ESCALATION CONTRACT, not every mention of that result format."
+        ],
+        "validation": "Final session_facade target: 11 passed, zero ignored, /tmp/workspacer-facade-parity-final.log. Existing unchanged agent_lifecycle, launch_instructions and spawn_plan source/test bytes verified against a7e11447; actual Linux CI run36637635273/job109642057174 passed their owning targets (including generation retry/fencing, authoritative stop reconciliation, exact skill bytes and worker contract). Log /tmp/workspacer-facade-baseline-ci.log. Witness left Rust integration unmapped; explicit owning target supplied current proof. The shared library run separately failed/hung unrelated fixtures and is not claimed green."
+      },
       "sha256": "34c82fea1ed01932b6b8845d5aebf31fea99fd51f71fbdd370bed8864f3574a1",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/launch_instructions.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/cmd/brain/facade_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/launch_instructions.rs",
+        "services/hub-rs/src/services/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete legacy source and every facade regression assertion. Configured legacy endpoints are rechecked for every preparation without cached failures, using public health without bearer/query and exact HTTP 200, service/listener/hub identity, connection and catalog readiness. Healthy/down/recovered launches mint exactly twice; non-200 success and redirects refuse before token writes.",
+          "Real SessionFacade prepares managed query credentials and private Claude MCP files with Authorization headers, retains selected library servers and strict MCP configuration, replaces only existing t query values, and keeps Claude argv free of bearer bytes. Atomic token mutations preserve unrelated pairings and the prior generation cannot revoke its successor.",
+          "Manager preparation preserves operator scope, wildcard plugin compatibility and manager role while omitting obsolete profilesAllowed/yoloAllowed grants. Full-access remains a provider execution preference. Worker escalation contracts survive managed and PTY preparation, both profile prompt spellings compose into one ordered flag, and accidental manager parent metadata does not attach worker escalation.",
+          "Real lifecycle and persistent SessionFacade integration verifies credentials exist before both managed/PTY engine calls, failure revokes them, a token-store filesystem failure retains pending cleanup, a repeated stop retries successfully, and later duplicates do not touch the store. Existing lifecycle tests additionally fence old generations and reconcile authoritative stopped rows.",
+          "Existing collaboration tests verify exact bundled skill bytes, pointer-only ordinary instructions, manager exclusion and safe refusal without overwriting user content. No old grant enforcement is reinstated."
+        ],
+        "intentionalChanges": [
+          "A configured but unverified facade refuses the launch before minting; the old Go path silently omitted tools and continued. Deliberately Disabled remains a supported no-facade launch with selected library MCP and worker contracts. This distinction is documented in mcp-tool-facade context.",
+          "Owned Rust readiness uses its in-process actor, exact bound endpoint and launchReady capability proof, rather than trusting a public HTTP responder. Legacy compatibility checks remain separate.",
+          "Credential mutation is protected across processes with an advisory lock and durable generation-scoped lifecycle cleanup, replacing the Go process mutex and in-memory stop callback. Session IDs additionally require a portable ASCII filename vocabulary.",
+          "Library resolution and collaboration skill responsibilities are reviewed with their owning groups; source-local shim reconcileManagerGrants remains an intentional no-op because obsolete grants are parseable metadata only.",
+          "The shared manager doctrine explains how to read worker escalation results; unlike the older short manager prompt, it legitimately names wks-escalation. The regression excludes the actual STRUCTURED WORKER ESCALATION CONTRACT, not every mention of that result format."
+        ],
+        "validation": "Final session_facade target: 11 passed, zero ignored, /tmp/workspacer-facade-parity-final.log. Existing unchanged agent_lifecycle, launch_instructions and spawn_plan source/test bytes verified against a7e11447; actual Linux CI run36637635273/job109642057174 passed their owning targets (including generation retry/fencing, authoritative stop reconciliation, exact skill bytes and worker contract). Log /tmp/workspacer-facade-baseline-ci.log. Witness left Rust integration unmapped; explicit owning target supplied current proof. The shared library run separately failed/hung unrelated fixtures and is not claimed green."
+      },
       "sha256": "90b9113fa7cbc4b1457f8261d6b72c46f0257d1ab9abdec0ea1f7d820dc8db5c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/launch_instructions.rs",
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/cmd/brain/filewatch.go": {
       "replacement": [
@@ -3999,16 +4077,66 @@
       ]
     },
     "services/hub/cmd/hub/usagereport.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Production usage.report handler accepts null/empty object only, reads host-owned sampler with60-second completed-cache eligibility, joins shared in-flight fetches and projects the currently installed pacing matrix/preference. It returns before model-catalog refresh, routing selection, decision logging or publication.",
+          "Transport failure on an uncached read is an error, not a successful empty observation. routing.select separately may continue with unknown capacity plus warning. Full Go runFetch invalidates haveSnap on failure; Rust now clears cache.report for the current generation on failure. A cache with no known failed refresh remains eligible for60seconds.",
+          "New focused fixture installs the actual production handler and sampler behind real actor authentication with a view token, then executes12 concurrent calls against an isolated HTTP upstream. It checks exactly one fetch, evaluated_at in epoch-second call bounds and valid_until exactly60seconds later, missing reset/measurement remain unknown with no invented zero, and caller-supplied URL/data/array/string parameters are refused before fetch.",
+          "The fixture establishes live catalog-observer and audit-log positive floors, then verifies unchanged policy/log bytes, no catalog fetch, and a routing-event sentinel arriving without any preceding decision. A new uncached sampler sees503 as an error while the first sampler retains its legitimate cached observation. The independent external-daemon SSE adapter is not started in this fixture; the actual install function captures the HTTP transport before Options clears that separate lifecycle adapter.",
+          "Existing pacing/window currency corpus tests and schedule-is-not-routing-policy tests retain quota uncertainty and preference semantics. This pair does not certify the larger usageWatcher polling/cancellation machinery or routing preference/select adapters.",
+          "The existing raw sampler regression now forces a failed refresh on the same sampler and requires cache.report to be absent plus another cached-policy read to fail, proving old observations cannot be revived after known failure. Older waiters still receive their own immutable fetch result, and generation checks prevent an old flight from overwriting newer cache state."
+        ],
+        "originalTests": [],
+        "validation": "Exact current compiled-library services::routing::sampler filter passed3 tests with0 failed and376 filtered (/tmp/workspacer-usage-report-scoped.log). Covers actual twelve-reader view handler, known-failure cache invalidation, and catalog decoding. The same three tests passed in the earlier broader checkpoint that had an unrelated library_watch failure; no full-suite green claim is inferred. Subsequent independent-flight/preview changes remain a separate pending batch."
+      },
       "sha256": "71b29e45b32903eb38c7000bcefa57f9f5dad18ef8e4b3066b13a57b21cf2cf6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/tests/services.rs"
+      ]
     },
     "services/hub/cmd/hub/usagereport_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Production usage.report handler accepts null/empty object only, reads host-owned sampler with60-second completed-cache eligibility, joins shared in-flight fetches and projects the currently installed pacing matrix/preference. It returns before model-catalog refresh, routing selection, decision logging or publication.",
+          "Transport failure on an uncached read is an error, not a successful empty observation. routing.select separately may continue with unknown capacity plus warning. Full Go runFetch invalidates haveSnap on failure; Rust now clears cache.report for the current generation on failure. A cache with no known failed refresh remains eligible for60seconds.",
+          "New focused fixture installs the actual production handler and sampler behind real actor authentication with a view token, then executes12 concurrent calls against an isolated HTTP upstream. It checks exactly one fetch, evaluated_at in epoch-second call bounds and valid_until exactly60seconds later, missing reset/measurement remain unknown with no invented zero, and caller-supplied URL/data/array/string parameters are refused before fetch.",
+          "The fixture establishes live catalog-observer and audit-log positive floors, then verifies unchanged policy/log bytes, no catalog fetch, and a routing-event sentinel arriving without any preceding decision. A new uncached sampler sees503 as an error while the first sampler retains its legitimate cached observation. The independent external-daemon SSE adapter is not started in this fixture; the actual install function captures the HTTP transport before Options clears that separate lifecycle adapter.",
+          "Existing pacing/window currency corpus tests and schedule-is-not-routing-policy tests retain quota uncertainty and preference semantics. This pair does not certify the larger usageWatcher polling/cancellation machinery or routing preference/select adapters.",
+          "The existing raw sampler regression now forces a failed refresh on the same sampler and requires cache.report to be absent plus another cached-policy read to fail, proving old observations cannot be revived after known failure. Older waiters still receive their own immutable fetch result, and generation checks prevent an old flight from overwriting newer cache state."
+        ],
+        "originalTests": [
+          "TestUsageReportReadAndConcurrentCache",
+          "TestUsageReportTransportFailure",
+          "TestUsageReportHasNoDecisionSideEffects"
+        ],
+        "validation": "Exact current compiled-library services::routing::sampler filter passed3 tests with0 failed and376 filtered (/tmp/workspacer-usage-report-scoped.log). Covers actual twelve-reader view handler, known-failure cache invalidation, and catalog decoding. The same three tests passed in the earlier broader checkpoint that had an unrelated library_watch failure; no full-suite green claim is inferred. Subsequent independent-flight/preview changes remain a separate pending batch."
+      },
       "sha256": "c65038f0db3de16173bee6a7ceb86bf120da24000a769eea481707fc22fbbc16",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/tests/services.rs"
+      ]
     },
     "services/hub/cmd/mcp/adopt_test.go": {
       "replacement": [
