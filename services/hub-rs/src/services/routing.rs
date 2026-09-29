@@ -1,6 +1,7 @@
 //! Shared standalone/embedded routing policy. Requests never supply quota evidence.
 use super::limits;
 mod audit;
+pub(crate) use audit::SpawnAudit;
 mod events;
 pub(crate) mod path;
 mod preferences;
@@ -228,7 +229,10 @@ fn named_rank(matrix: &Value, p: &str, m: &str, e: &str) -> i64 {
 pub fn sanitize(matrix: &Value, params: &mut Value) -> Result<Vec<String>> {
     if !word(&params["resumeSessionId"]).is_empty() {
         if let Some(cap) = freshness(matrix, params) {
-            bail!("resume refused: capability {cap} requires fresh context; omit resumeSessionId");
+            bail!(
+                "resume refused for session {}: routing.yaml capability {cap} requires fresh context; omit resumeSessionId",
+                word(&params["resumeSessionId"])
+            );
         }
     }
     let Some((key, c)) = ceiling(matrix, word(&params["cwd"])) else {
@@ -250,7 +254,9 @@ pub fn sanitize(matrix: &Value, params: &mut Value) -> Result<Vec<String>> {
         return Ok(vec![]);
     }
     if params["exactModel"] == true {
-        bail!("exactModel conflicts with {key} capability ceiling {max}");
+        bail!(
+            "exactModel conflicts with routing.yaml {key} capability ceiling {max}; no substitute was launched"
+        );
     }
     let safe = assignment(matrix, active_profile(matrix), max, &p)?;
     if safe["enabled"] == false

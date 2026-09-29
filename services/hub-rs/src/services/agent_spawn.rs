@@ -356,12 +356,20 @@ impl SpawnCoordinator {
         }
         false
     }
-    fn routed(&self, params: &Value, config: &Value, id: &str, project: &str) -> Result<Plan> {
+    fn routed(
+        &self,
+        params: &Value,
+        config: &Value,
+        id: &str,
+        project: &str,
+        audit: &mut super::routing::SpawnAudit<'_>,
+    ) -> Result<Plan> {
+        audit.begin_resolution();
         let profile = self.profiles.get(text(params, "profileId"));
         let fleet = self.has_fleet_ancestor(text(params, "parentSessionId"));
         let plan = spawn_plan::resolve(params, config, profile.as_ref(), &self.home, id, fleet)?;
         let mut resolved_params = effective(params, &plan, project);
-        let mut scrubbed = self.routing.sanitize_spawn(&mut resolved_params)?;
+        let mut scrubbed = audit.check(&mut resolved_params)?;
         if scrubbed
             .iter()
             .any(|key| matches!(key.as_str(), "model" | "provider"))
@@ -392,11 +400,8 @@ impl SpawnCoordinator {
         // A profile CLI pin may win again at resolution. Never silently launch
         // that model after a ceiling changed it at the named-field boundary.
         let mut final_effective = effective(&resolved_params, &resolved, project);
-        if !self
-            .routing
-            .sanitize_spawn(&mut final_effective)?
-            .is_empty()
-        {
+        if !audit.check(&mut final_effective)?.is_empty() {
+            audit.refuse_profile_override();
             bail!(
                 "profile/provider arguments override the configured routing ceiling; no substitute was launched"
             );
@@ -408,6 +413,7 @@ impl SpawnCoordinator {
                 }
             }
         }
+        audit.extend_scrubbed(&scrubbed);
         if !scrubbed.is_empty() {
             resolved.metadata["escalationScrubbed"] = json!(scrubbed);
         }
@@ -627,7 +633,9 @@ impl SpawnCoordinator {
             .tasks
             .validate_admission(&self.tracking_input(&params, &project))?;
         // Validate provider/profile/model before any checkout or reservation.
-        let preliminary = self.routed(&params, &config, &id, &routing_project)?;
+        let mut routing_audit = self.routing.begin_spawn_audit(caller.as_ref());
+        let preliminary =
+            self.routed(&params, &config, &id, &routing_project, &mut routing_audit)?;
         if let Some(remote) = &remote {
             if preliminary.provider != remote.provider() {
                 bail!("routing cannot replace the leased remote provider");
@@ -705,7 +713,7 @@ impl SpawnCoordinator {
             if let Some(template)=&template{params["message"]=json!(dispatch_templates::render(text(template,"body"),&params["templateParams"],&execution,&project)?);}
             // Recheck effective selection after slow setup; ceilings apply to the
             // original project, not the allocated path outside that project's tree.
-            let mut plan=self.routed(&params,&config,&id,&routing_project)?;plan.request["cwd"]=json!(execution);
+            let mut plan=self.routed(&params,&config,&id,&routing_project,&mut routing_audit)?;plan.request["cwd"]=json!(execution);
             if let Some(remote)=&remote {
                 if plan.session_id != remote.session_id() || plan.provider != remote.provider() || execution != remote.cwd() {bail!("resolved launch differs from the consumed remote lease");}
                 plan.metadata["remoteOrigin"]=remote.origin();

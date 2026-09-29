@@ -214,7 +214,9 @@ pub fn archive(
     date: &str,
 ) -> Result<(String, String, usize)> {
     if count.is_some() == keep.is_some() {
-        bail!("brief.archive: supply exactly one of count or keep");
+        bail!(
+            "brief.archive: give either count (archive this many of the oldest) or keep (leave this many of the newest), and not both"
+        );
     }
     let doc = parse(text);
     if !doc
@@ -222,7 +224,10 @@ pub fn archive(
         .iter()
         .any(|s| s.level == 2 && s.title.eq_ignore_ascii_case(section))
     {
-        bail!("brief board: missing ## {section} section");
+        bail!(
+            "brief board: this brief has no {:?} section",
+            format!("## {section}")
+        );
     }
     let mut entries: Vec<_> = doc
         .entries

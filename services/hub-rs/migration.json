@@ -260,52 +260,189 @@
       "tests": []
     },
     "services/hub/cmd/brain/brief.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/mod.rs",
+        "services/hub-rs/src/services/briefs/document.rs",
+        "services/hub-rs/src/services/briefs/report.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read section admission, line normalization/flattening, header parsing, additive insertion, size reports, append RPC, file read and lock branches. Rust preserves canonical sections, Recently prepend versus other append, interior double spaces, CRLF/unterminated preexisting lines, line refusal before locking, literal brief path derived inside selected project, created/path/section/line/count/byte result fields and five-attempt optimistic retry.",
+          "Production uses a compatible brief.md.lock exclusive-create lease with three-second wait and fifteen-second stale threshold. Existing parallel12 appends, lock contention/recovery and successor-token tests cover real writes. New CAS callback seam interposes an outside edit between read and commit; retry keeps it and archives the chosen entry exactly once.",
+          "Optional sessionId/result nulls now behave as absent, preserving ordinary append bytes. Structured-result composition keeps significance and all caveats; oversized output refuses the entire append instead of truncating the document."
+        ],
+        "intentionalChanges": [
+          "Rust retains desktop JavaScript whitespace and UTF16 length rules for newly composed text (4000 units), whereas Go used Unicode rune count for line limits and byte count for capped facts. Existing document bytes are preserved; no universal Unicode cap equivalence is claimed.",
+          "Rust reads valid UTF8 text and uses private atomic files. Owner-token lock checks prevent an expired writer from unlinking a successor lease. CAS still cannot lock a user editor racing after the final read; archive and active brief are not one filesystem transaction."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "1ec76e1c7259071aff820a8bec232a6936bff3744dae5cd2d1b7bb7b30e4fe02",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/src/services/briefs/mod.rs"
+      ]
     },
     "services/hub/cmd/brain/brief_windows_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/mod.rs",
+        "services/hub-rs/src/services/briefs/document.rs",
+        "services/hub-rs/src/services/briefs/report.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Added Windows-gated ambient_windows_project_spellings_and_ordinal_containment_match_reference: actual append/check/archive over case-swapped forward-slash paths inside a manager directory, outside it, and in a manager-prefix sibling all remain allowed under ambient authenticated authority.",
+          "The same test runs all seven legacy ASCII containment decisions directly through production paths::contained, plus Cyrillic/umlaut acceptance and Kelvin-versus-K refusal. Existing Windows path tests retain native canonicalization and verbatim/Git spelling support."
+        ],
+        "intentionalChanges": [
+          "These platform-only assertions are retained for Windows CI. Linux validation cannot claim they ran, so the Windows cutover runtime gate remains open."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "7f95896fc096757a895afb764f42109592f7ef480dfed193259bc8c31ec76e83",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ]
     },
     "services/hub/cmd/brain/briefboard.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/mod.rs",
+        "services/hub-rs/src/services/briefs/document.rs",
+        "services/hub-rs/src/services/briefs/report.rs",
+        "services/hub-rs/src/services/briefs/cards.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared parser sections/columns/groups and multiline entry boundaries, byte-exact split/join, line-index removal, date-grouped archive append, oldest ordering, no-op/idempotent keep, archive-first side effects and result envelope. The shared4entry/5archive corpus still drives production parse/archive and reports stats; executed tallies now prevent empty or shrinking loaders.",
+          "Actual service accepts exactly one nonnegative integral count/keep; null means absent and integral JSON floats such as2.0 are accepted like Go float64 decoding. Refusal occurs before directories/lock are created. Legacy either-count, missing-heading and unknown-section diagnostic substrings are restored.",
+          "Actual archive test preserves continuation lines and unrelated sections, verifies no-op leaves both files unchanged, and CAS test injects an outside writer before commit then checks no duplicate archive entry."
+        ],
+        "intentionalChanges": [
+          "Rust additionally rechecks the archive snapshot and lock token before writes. Reported size fields describe the committed next text instead of a potentially externally changed reread. Two-file all-or-nothing atomicity is not claimed."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "59983b754d03aa1a0f08d11d97d8f96c719173d3260fe4cfaef72f6373b69e6d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/src/services/briefs/mod.rs"
+      ]
     },
     "services/hub/cmd/brain/briefboard_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/mod.rs",
+        "services/hub-rs/src/services/briefs/document.rs",
+        "services/hub-rs/src/services/briefs/report.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Entry/Archive/Check contract cases all run with executed floors4/5/6. Complete report goldens include advisory wording, details and notes; real capability checks compare brief bytes and prove no archive/lock/missing brief creation.",
+          "Missing/malformed session provider and live snake_case/ended rows run through actual hub brief.check handlers. UnavailableChecks names stale only, stale findings are omitted, malformed/unreferenced findings remain, and the note explicitly says ONE CHECK DID NOT RUN.",
+          "Archive both/neither/fractional/negative/string bounds, null/integral variants, absent/unknown section errors, idempotent keep, every removed line surviving archive, and actual outside-write CAS retry are covered. A real embedded engine test demonstrates known unknown-mode and remote-proxy rows remain live evidence even when public snapshots hide unknown rows."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "796b00429c5b286dcad0938a69fca385f1751566aa0cb1a8a9bfc33c4cba2a8e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/src/services/briefs/mod.rs"
+      ]
     },
     "services/hub/cmd/brain/briefcheck.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/mod.rs",
+        "services/hub-rs/src/services/briefs/document.rs",
+        "services/hub-rs/src/services/briefs/report.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read precise Now-only predicate: malformed references win over stale detection; mixed valid/bad references still count live when appropriate; reference prefixes work in either direction; only dispatch/dispatched/dispatching words produce no-reference findings. Reports retain line/text/ref/detail/path/section/count/note fields and perform no writes.",
+          "Fixed missing snake_case session_id fallback, including blank camelCase values. Known non-ended/non-archived rows remain live regardless of visibility or missing/malformed mode metadata; rows explicitly ended/stopped remain excluded.",
+          "Fixed no-source handling: hub-only missing or malformed provider evidence returns the narrowed legacy report instead of erroring or inventing an empty known fleet. Embedded mode now reads owned local/remote session maps when its engine is ready, before UI visibility filters; unready engines degrade explicitly."
+        ],
+        "intentionalChanges": [
+          "Embedded owned maps replace the Go sessionStore pointer. Hub-only provider failures and malformed envelopes receive the same explicit unavailable arm as absence; this is broader conservative reporting than only testing a nil Go store. Reason text names the Rust source, while advisory meaning and remaining finding wording are preserved."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "c8d04a826800e0d9ff8c7ac9ceb141f27866d2e12b8472d0e36efdf863012f89",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/src/services/briefs/mod.rs"
+      ]
     },
     "services/hub/cmd/brain/briefconfinement_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/mod.rs",
+        "services/hub-rs/src/services/briefs/document.rs",
+        "services/hub-rs/src/services/briefs/report.rs",
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/image_preview.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Actual Briefs call refusal test plants an escaping .workspacer directory symlink and proves no outside file appears for append/archive/check. The Rust fixture additionally runs on Windows when symlink privilege exists; it fails loudly rather than skipping unavailable privilege.",
+          "Retained fs.readImage half drives actual files::call with planted .env/id_rsa values and checks extension refusal plus absence of plaintext/base64 secret. The positive control uses the exact one-pixel PNG header from Go and verifies full data URL plus dimensions."
+        ],
+        "intentionalChanges": [
+          "Caller-selected absolute projects remain ambient; only the composed semantic brief path is confined to that selected project. This does not resurrect obsolete workspace-root authorization described by older comments."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "404b15622dfd58c44488d9036a1245d9845d48aabaf782a29ac79c31bcd10cf6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs"
+      ]
     },
     "services/hub/cmd/brain/briefresult.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/report.rs",
+        "services/hub-rs/src/services/briefs/document.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read normalization/composition/fact formatting branches. Exact legacy session-ref refusals and canonical fullUUID/6hex/prefixed-uppercase vectors are exercised. Significance is mandatory; dates and existing sentence references are not stacked; mechanical fields preserve known-first then sorted-extra ordering, empty omission, scalar rendering and announced list/value caps.",
+          "Fixed non-SHA commit text to remain uncapped, whole-valued float facts to render as integers, optional blank session IDs to omit a reference, and references appearing only in result facts not to suppress the explicit trailing link. Null optional metadata leaves an ordinary append uncomposed; nonobject result payloads are refused.",
+          "Caveat lists retain all five long facts without item/value caps. Full SHA abbreviates to12 hex characters, files lists announce hidden items, and overflow after significance/facts is rejected by the append line bound without changing the existing file."
+        ],
+        "intentionalChanges": [
+          "Rust retains established desktop UTF16 announced caps and JavaScript trim/whitespace semantics instead of Go byte slicing/Unicode TrimSpace. Mixed-case session: prefixes are accepted consistently with desktop normalization. Exact all-Unicode byte-for-byte fact equivalence is not claimed."
+        ],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "dbb9a1e49e820445baac927a89faa7ea70433474ba5400b6cb5b24adf20263f4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs"
+      ]
     },
     "services/hub/cmd/brain/briefresult_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/briefs/report.rs",
+        "services/hub-rs/src/services/briefs/document.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "legacy_result_vectors_preserve_significance_facts_and_session_links ports the offending6a-round2/refusal vector set, canonical vectors, complete happy-path expected sentence, blank significance error meaning, uncapped caveats, lossy list disclosure, unknown-key ordering, integer fact rendering and caller date/reference de-duplication.",
+          "Additional regression cases cover a long non-SHA commit, null/blank optional metadata, a session reference mentioned only in facts, and nonobject result refusal. Existing additive CRLF and real long-caveat rejection tests preserve unchanged source text and refusal atomicity."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test briefs passed full library338 and briefs integration11 (349 tests; zero ignored). Log /tmp/workspacer-brief-audit.log. Initial fixture compilation/privacy and engine-singleton coordination problems were corrected before this successful complete rerun. Witness left edited sources/tests unmapped; explicit owning targets were run. Windows-gated runtime tests were not executed on Linux and remain required by platform CI."
+      },
       "sha256": "155aca69e417eb6178a1de1e85b8755d659257c9e2d94c7815cb9e1c9cbfa788",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/briefs.rs"
+      ]
     },
     "services/hub/cmd/brain/bus.go": {
       "replacement": [],

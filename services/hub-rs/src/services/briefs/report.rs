@@ -30,7 +30,12 @@ pub fn check(content: &str, rows: &[Value], path: &str) -> Value {
                 && !matches!(r["mode"].as_str(), Some("ended" | "stopped"))
                 && !matches!(r["status"].as_str(), Some("ended" | "stopped"))
         })
-        .filter_map(|r| r["sessionId"].as_str())
+        .filter_map(|r| {
+            r["sessionId"]
+                .as_str()
+                .filter(|id| !trim(id).is_empty())
+                .or_else(|| r["session_id"].as_str())
+        })
         .map(|s| trim(s).to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
@@ -91,17 +96,21 @@ pub fn check(content: &str, rows: &[Value], path: &str) -> Value {
         };
         findings.push(json!({"line":entry.start,"text":entry.lines[0],"reason":reason,"refs":refs,"detail":detail}));
     }
+    let note = note(entries.len(), &findings);
+    json!({"path":path,"section":"Now","entriesChecked":entries.len(),"entriesLive":entries_live,"findings":findings,"liveSessions":live.len(),"note":note})
+}
+fn note(entries: usize, findings: &[Value]) -> String {
     let stale = findings.iter().filter(|f| f["reason"] == "stale").count();
     let note = if findings.is_empty() {
         format!(
             "Every ## Now entry ({}) either names a session this host still knows about or is not a dispatch line. Nothing to prune.",
-            entries.len()
+            entries
         )
     } else {
         format!(
             "{} of {} ## Now entries need YOUR judgement{}. This check only reports: it never edits, moves or deletes a line, because the user's own brief edits are authoritative. Act on them with a board move or an explicit edit.",
             findings.len(),
-            entries.len(),
+            entries,
             if stale > 0 {
                 format!(" ({stale} name sessions that are gone)")
             } else {
@@ -109,11 +118,34 @@ pub fn check(content: &str, rows: &[Value], path: &str) -> Value {
             }
         )
     };
-    json!({"path":path,"section":"Now","entriesChecked":entries.len(),"entriesLive":entries_live,"findings":findings,"liveSessions":live.len(),"note":note})
+    note
+}
+pub fn without_liveness(mut report: Value, why: &str) -> Value {
+    let findings = report["findings"]
+        .as_array_mut()
+        .expect("brief report findings");
+    findings.retain(|finding| finding["reason"] != "stale");
+    let remaining = findings.clone();
+    report["entriesLive"] = json!(0);
+    report["liveSessions"] = json!(0);
+    report["unavailableChecks"] = json!(["stale"]);
+    report["note"] = json!(format!(
+        "{} ONE CHECK DID NOT RUN: {why} — so no entry here was tested for a dead dispatch, and this report is not evidence that there are none. The malformed-reference and no-reference checks did run.",
+        note(
+            report["entriesChecked"].as_u64().unwrap() as usize,
+            &remaining
+        )
+    ));
+    report
 }
 fn scalar(v: &Value) -> String {
     match v {
         Value::String(s) => trim(&re(r"@s+").replace_all(s, " ")).into(),
+        Value::Number(number)
+            if number.is_f64() && number.as_f64().is_some_and(|n| n.fract() == 0.0) =>
+        {
+            format!("{:.0}", number.as_f64().unwrap())
+        }
         _ => v.to_string(),
     }
 }
@@ -157,8 +189,12 @@ fn fact(key: &str, v: &Value) -> Option<String> {
         if text.is_empty() {
             return None;
         }
-        if key.eq_ignore_ascii_case("commit") && re(r"(?i)^[0-9a-f]{40}$").is_match(&text) {
-            text[..12].into()
+        if key.eq_ignore_ascii_case("commit") {
+            if re(r"(?i)^[0-9a-f]{40}$").is_match(&text) {
+                text[..12].into()
+            } else {
+                text
+            }
         } else {
             cut(text, uncapped)
         }
@@ -169,11 +205,18 @@ pub fn compose(line: &str, params: &Value, today: &str) -> Result<String> {
     let line = document::flatten(line);
     if line.is_empty() {
         bail!(
-            "brief.append: line must contain your own significance sentence; a result alone cannot become a brief entry"
+            "brief.append: line must contain your own one-sentence significance; a result alone cannot become a brief entry"
         );
     }
-    let reference = if let Some(raw) = params.get("sessionId") {
-        session_ref(raw.as_str().unwrap_or(""))?
+    let reference = if let Some(raw) = params.get("sessionId").filter(|v| !v.is_null()) {
+        let raw = raw
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("sessionId must be text"))?;
+        if trim(raw).is_empty() {
+            String::new()
+        } else {
+            session_ref(raw)?
+        }
     } else {
         String::new()
     };
@@ -201,8 +244,8 @@ pub fn compose(line: &str, params: &Value, today: &str) -> Result<String> {
                     }
                 }
             }
-        } else if let Some(f) = fact("result", result) {
-            facts.push(f);
+        } else if !result.is_null() {
+            bail!("brief.append result must be an object");
         }
     }
     let mut output = if re(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\b").is_match(&line) {
@@ -210,15 +253,14 @@ pub fn compose(line: &str, params: &Value, today: &str) -> Result<String> {
     } else {
         format!("{today}  {line}")
     };
+    let has_reference = output
+        .to_lowercase()
+        .contains(&format!("session:{reference}"));
     if !facts.is_empty() {
         output.push_str(" — ");
         output.push_str(&facts.join("; "));
     }
-    if !reference.is_empty()
-        && !output
-            .to_lowercase()
-            .contains(&format!("session:{reference}"))
-    {
+    if !reference.is_empty() && !has_reference {
         output.push_str(&format!(" (session:{reference})"));
     }
     Ok(output)

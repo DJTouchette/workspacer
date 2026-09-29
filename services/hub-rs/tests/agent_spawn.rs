@@ -943,3 +943,63 @@ async fn acknowledged_launch_falls_back_once_and_preserves_receipt_on_message_un
     assert!(fixture.fake.messages.lock().unwrap().is_empty());
     fixture.coordinator.close().await;
 }
+
+#[tokio::test]
+async fn owned_routing_audit_is_once_across_both_resolutions_and_records_refusals() {
+    for (decision, extra, expected) in [
+        (
+            "owned-clamp",
+            json!({"provider":"codex","model":"gpt-5.6-sol","effort":"high","capability":"frontier"}),
+            "clamped",
+        ),
+        (
+            "owned-fresh",
+            json!({"provider":"codex","model":"gpt-5.6-terra","role":"reviewer","resumeSessionId":"existing-worker"}),
+            "refused",
+        ),
+    ] {
+        let fixture = Fixture::new(Some("cheap"));
+        let mut params = extra;
+        params["cwd"] = json!(fixture.project);
+        params["decisionId"] = json!(decision);
+        params["message"] = json!("SECRET_OWNED_PROMPT");
+        params["env"] = json!({"SECRET":"SECRET_OWNED_ENV"});
+        let caller = workspacer_hub::Caller {
+            call_id: 1,
+            activity_seq: 1,
+            connection_id: 1,
+            authenticated_host: true,
+            trusted: true,
+            scope: "operator".into(),
+            plugin_id: String::new(),
+            token_id: "fixture-fingerprint".into(),
+            federated: false,
+        };
+        let result = fixture.coordinator.spawn_for(caller, params).await;
+        if expected == "refused" {
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("existing-worker"), "{error}");
+            assert!(fixture.fake.plans.lock().unwrap().is_empty());
+        } else {
+            result.unwrap();
+            assert_eq!(fixture.fake.plans.lock().unwrap().len(), 1);
+        }
+        let raw =
+            std::fs::read_to_string(fixture.dir.path().join("config/routing-decisions.jsonl"))
+                .unwrap();
+        let rows: Vec<Value> = raw
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "preliminary/final routing checks must not duplicate audit rows"
+        );
+        assert_eq!(rows[0]["decisionId"], decision);
+        assert_eq!(rows[0]["spawn"]["outcome"], expected);
+        assert_eq!(rows[0]["spawn"]["callerTokenId"], "fixture-fingerprint");
+        assert!(!raw.contains("SECRET_OWNED"));
+        fixture.coordinator.close().await;
+    }
+}

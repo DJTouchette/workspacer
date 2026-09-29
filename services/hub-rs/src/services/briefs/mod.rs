@@ -220,6 +220,15 @@ impl Briefs {
         base
     }
     pub fn call(&self, method: &str, params: Value, rows: &[Value]) -> Result<Value> {
+        self.call_observed(method, params, rows, |_| {})
+    }
+    fn call_observed(
+        &self,
+        method: &str,
+        params: Value,
+        rows: &[Value],
+        mut before_commit: impl FnMut(&Path),
+    ) -> Result<Value> {
         let params = if method == "desktop.moveBriefCard" {
             params.get("request").cloned().unwrap_or(params)
         } else {
@@ -262,7 +271,7 @@ impl Briefs {
                 .into_iter()
                 .find(|s| s.eq_ignore_ascii_case(trim(text(&params, "section"))))
                 .ok_or_else(|| {
-                    anyhow!("brief: expected section Now, Direction, Recently, or User")
+                    anyhow!("brief.append: unknown section {:?} — expected one of Now, Direction, Recently, User", text(&params, "section"))
                 })?
                 .to_owned()
         };
@@ -271,7 +280,9 @@ impl Briefs {
             let raw = params["line"]
                 .as_str()
                 .ok_or_else(|| anyhow!("brief.append requires line text"))?;
-            let candidate = if params.get("sessionId").is_some() || params.get("result").is_some() {
+            let candidate = if params.get("sessionId").is_some_and(|v| !v.is_null())
+                || params.get("result").is_some_and(|v| !v.is_null())
+            {
                 report::compose(raw, &params, &date)?
             } else {
                 raw.into()
@@ -279,6 +290,34 @@ impl Briefs {
             Some(document::normalized(&candidate)?)
         } else {
             None
+        };
+        let bounds = if method == "brief.archive" {
+            let bound = |key: &str| -> Result<Option<usize>> {
+                params
+                    .get(key)
+                    .filter(|v| !v.is_null())
+                    .map(|v| {
+                        v.as_f64()
+                            .filter(|n| {
+                                n.is_finite()
+                                    && *n >= 0.0
+                                    && n.fract() == 0.0
+                                    && *n < isize::MAX as f64
+                            })
+                            .map(|n| n as usize)
+                            .ok_or_else(|| anyhow!("{key} must be a whole number, zero or more"))
+                    })
+                    .transpose()
+            };
+            let bounds = (bound("count")?, bound("keep")?);
+            if bounds.0.is_some() == bounds.1.is_some() {
+                bail!(
+                    "brief.archive: give either count (archive this many of the oldest) or keep (leave this many of the newest), and not both"
+                );
+            }
+            bounds
+        } else {
+            (None, None)
         };
         let archive_path = confined(&project, "brief.archive.md")?;
         std::fs::create_dir_all(path.parent().unwrap())?;
@@ -300,24 +339,13 @@ impl Briefs {
                     if before.is_none() {
                         bail!("brief board: no brief at {}", path.display());
                     }
-                    let bound =
-                        |key: &str| -> Result<Option<usize>> {
-                            params
-                                .get(key)
-                                .map(|v| {
-                                    v.as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(
-                                        || anyhow!("{key} must be a whole number, zero or more"),
-                                    )
-                                })
-                                .transpose()
-                        };
                     let old = read(&archive_path)?;
                     let (next, archive, n) = document::archive(
                         content,
                         old.as_deref().unwrap_or(""),
                         &section,
-                        bound("count")?,
-                        bound("keep")?,
+                        bounds.0,
+                        bounds.1,
                         &date,
                     )?;
                     archived = n;
@@ -359,6 +387,7 @@ impl Briefs {
                 }
                 _ => bail!("unknown brief method"),
             };
+            before_commit(&path);
             _lock.assert_owned()?;
             if read(&path)? != before {
                 continue;
@@ -402,6 +431,15 @@ pub(crate) fn install(
     hub: Handle,
 ) -> Options {
     let service = Arc::new(Briefs::new(config, home));
+    // Public snapshots hide unknown/spawning rows for display; a brief's live
+    // dispatch check must retain those known rows, as the original store did.
+    let owned_sessions = options.engine.clone().map(|engine| {
+        (
+            engine,
+            options.session_snapshots.clone(),
+            options.remote_proxy_snapshots.clone(),
+        )
+    });
     for method in [
         "brief.append",
         "brief.archive",
@@ -411,51 +449,82 @@ pub(crate) fn install(
     ] {
         let service = service.clone();
         let hub = hub.clone();
+        let owned_sessions = owned_sessions.clone();
         options = options.handler(method, move |_, params| {
             let service = service.clone();
             let hub = hub.clone();
+            let owned_sessions = owned_sessions.clone();
             async move {
-                let rows = if matches!(
-                    method,
-                    "brief.check" | "desktop.loadBriefBoard" | "desktop.moveBriefCard"
-                ) {
-                    let client = crate::client::Client::connect_service(&hub).await?;
-                    let mut result = if method == "brief.check" {
-                        client
-                            .call_with_timeout(
-                                "sessions.snapshots",
-                                json!({}),
-                                std::time::Duration::from_secs(3),
-                            )
-                            .await
+                let (rows, liveness_available) =
+                    if method == "brief.check" && owned_sessions.is_some() {
+                        let (engine, local, remote) = owned_sessions.unwrap();
+                        let available = matches!(
+                            *engine.status().borrow(),
+                            claudemon::daemon::embedded::Status::Ready(_)
+                        );
+                        let rows = if available {
+                            local
+                                .read()
+                                .unwrap()
+                                .values()
+                                .chain(remote.read().unwrap().values())
+                                .cloned()
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                        (rows, available)
+                    } else if matches!(
+                        method,
+                        "brief.check" | "desktop.loadBriefBoard" | "desktop.moveBriefCard"
+                    ) {
+                        let client = crate::client::Client::connect_service(&hub).await?;
+                        let mut result = if method == "brief.check" {
+                            client
+                                .call_with_timeout(
+                                    "sessions.snapshots",
+                                    json!({}),
+                                    std::time::Duration::from_secs(3),
+                                )
+                                .await
+                        } else {
+                            client
+                                .call_with_timeout(
+                                    "analytics.recent",
+                                    json!({"limit":300}),
+                                    std::time::Duration::from_secs(3),
+                                )
+                                .await
+                        };
+                        if result.is_err() && method != "brief.check" {
+                            result = client
+                                .call_with_timeout(
+                                    "sessions.snapshots",
+                                    json!({}),
+                                    std::time::Duration::from_secs(3),
+                                )
+                                .await;
+                        }
+                        client.close();
+                        match result {
+                            Ok(Value::Array(rows)) => (rows, true),
+                            Ok(_) | Err(_) => (Vec::new(), false),
+                        }
                     } else {
-                        client
-                            .call_with_timeout(
-                                "analytics.recent",
-                                json!({"limit":300}),
-                                std::time::Duration::from_secs(3),
-                            )
-                            .await
+                        (Vec::new(), false)
                     };
-                    if result.is_err() && method != "brief.check" {
-                        result = client
-                            .call_with_timeout(
-                                "sessions.snapshots",
-                                json!({}),
-                                std::time::Duration::from_secs(3),
-                            )
-                            .await;
-                    }
-                    client.close();
-                    match result {
-                        Ok(value) => value.as_array().cloned().unwrap_or_default(),
-                        Err(error) if method == "brief.check" => return Err(error),
-                        Err(_) => Vec::new(),
-                    }
-                } else {
-                    Vec::new()
-                };
-                tokio::task::spawn_blocking(move || service.call(method, params, &rows)).await?
+                tokio::task::spawn_blocking(move || {
+                    let result = service.call(method, params, &rows)?;
+                    Ok(if method == "brief.check" && !liveness_available {
+                        report::without_liveness(
+                            result,
+                            "the hub could not read a valid live session source",
+                        )
+                    } else {
+                        result
+                    })
+                })
+                .await?
             }
         });
     }
@@ -466,6 +535,42 @@ pub(crate) fn install(
 mod tests {
     use super::*;
     #[test]
+    fn archive_retries_outside_writes_without_duplicate_side_effects() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".workspacer/brief.md");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "## Now\n- oldest\n- newest\n").unwrap();
+        let service = Briefs::new(
+            Arc::new(Config::open(root.path().join("config.yaml"))),
+            root.path().into(),
+        );
+        let mut attempts = 0;
+        let result = service
+            .call_observed(
+                "brief.archive",
+                json!({"project":root.path(),"section":"Now","count":1}),
+                &[],
+                |path| {
+                    attempts += 1;
+                    if attempts == 1 {
+                        std::fs::write(path, "## Now\n- oldest\n- newest\n- outside writer\n")
+                            .unwrap();
+                    }
+                },
+            )
+            .unwrap();
+        assert_eq!(attempts, 2);
+        assert_eq!(result["archived"], 1);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "## Now\n- newest\n- outside writer\n"
+        );
+        let archive =
+            std::fs::read_to_string(root.path().join(".workspacer/brief.archive.md")).unwrap();
+        assert_eq!(archive.matches("- oldest").count(), 1);
+        assert!(!root.path().join(".workspacer/brief.md.lock").exists());
+    }
+    #[test]
     fn an_expired_writer_never_unlinks_a_successors_lock() {
         let root = tempfile::tempdir().unwrap();
         let lease = Lock::take(&root.path().join("brief.md")).unwrap();
@@ -475,5 +580,68 @@ mod tests {
         assert!(lease.assert_owned().is_err());
         drop(lease);
         assert_eq!(std::fs::read_to_string(path).unwrap(), "new-owner\n");
+    }
+    #[tokio::test]
+    async fn owned_liveness_keeps_known_unknown_rows_that_public_snapshots_hide() {
+        let _engine_guard = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        use crate::{Hub, Options, client::Client};
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".workspacer")).unwrap();
+        std::fs::write(root.path().join(".workspacer/brief.md"),"## Now\n- Dispatched spawning (session:deadbeef)\n- Dispatched remote (session:cccccccc)\n").unwrap();
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: root.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )
+        .unwrap();
+        engine.ready().await.unwrap();
+        let mut options = Options::default();
+        options.engine = Some(engine.client());
+        options.home_dir = Some(root.path().into());
+        options.config_dir = Some(root.path().join("config"));
+        let rows = options.session_snapshots.clone();
+        let remote = options.remote_proxy_snapshots.clone();
+        let hub = Hub::start(options).unwrap();
+        hub.ready().await.unwrap();
+        rows.write().unwrap().insert(
+            "deadbeef".into(),
+            json!({"session_id":"deadbeef","mode":"unknown"}),
+        );
+        remote.write().unwrap().insert(
+            "cccccccc".into(),
+            json!({"sessionId":"cccccccc","hub":"peer","mode":"input"}),
+        );
+        let client = Client::connect(&hub.handle()).await.unwrap();
+        let shown = client.call("sessions.snapshots", json!({})).await.unwrap();
+        assert!(
+            !shown
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["sessionId"] == "deadbeef" || r["session_id"] == "deadbeef")
+        );
+        let report = client
+            .call("brief.check", json!({"project":root.path()}))
+            .await
+            .unwrap();
+        assert_eq!(report["entriesLive"], 2);
+        assert_eq!(report["liveSessions"], 2);
+        assert_eq!(report["findings"], json!([]));
+        client.close();
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        engine.shutdown().await.unwrap();
     }
 }

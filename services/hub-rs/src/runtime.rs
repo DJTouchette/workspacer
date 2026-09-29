@@ -1863,10 +1863,23 @@ impl Core {
         }
         if external_provider
             && bare == "agents.spawn"
-            && let Some(routing) = &self.options.routing
+            && let Some(routing) = self.options.routing.clone()
         {
             let params = frame.params.get_or_insert(Value::Null);
-            match routing.sanitize_spawn(params) {
+            let identity = &self.peers[&caller].identity;
+            let audit_caller = Caller {
+                call_id: 0,
+                activity_seq: self.peers[&caller].activity_seq,
+                connection_id: caller,
+                authenticated_host: identity.authenticated_host(),
+                trusted: identity.trusted(),
+                scope: identity.scope().into(),
+                plugin_id: identity.plugin_id().into(),
+                token_id: identity.token_id.clone(),
+                federated: identity.federated,
+            };
+            let mut audit = routing.begin_spawn_audit(Some(&audit_caller));
+            match audit.check(params) {
                 Ok(mut scrubbed) => {
                     if scrubbed
                         .iter()
@@ -1880,6 +1893,7 @@ impl Core {
                             }
                         }
                     }
+                    audit.extend_scrubbed(&scrubbed);
                     if !scrubbed.is_empty() {
                         params["escalationScrubbed"] = json!(scrubbed);
                     }
@@ -3043,3 +3057,7 @@ mod conversation_overflow_tests {
 #[cfg(test)]
 #[path = "runtime/bus_audit_tests.rs"]
 mod bus_audit_tests;
+
+#[cfg(test)]
+#[path = "runtime/routing_admission_tests.rs"]
+mod routing_admission_tests;
