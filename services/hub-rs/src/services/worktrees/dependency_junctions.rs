@@ -43,8 +43,11 @@ pub(super) fn remove_recorded(cwd: &Path, source: &Path, links: &[PathBuf]) -> R
     }
     for link in verified {
         // Removes only the reparse point and its empty directory, not contents
-        // reached through the junction. Ordinary directories are never removed.
-        junction::delete(link)?;
+        // reached through the junction. Paths already ordinary directories were refused above.
+        junction::delete(&link)?;
+        // junction::delete clears the reparse data but retains the backing
+        // directory. Remove that now-empty directory without recursive cleanup.
+        std::fs::remove_dir(link)?;
     }
     Ok(())
 }
@@ -87,7 +90,7 @@ mod tests {
         assert!(remove_recorded(&cwd, &source, &["node_modules".into()]).is_err());
         assert!(junction::exists(cwd.join("node_modules")).unwrap());
         junction::delete(cwd.join("node_modules")).unwrap();
-        std::fs::create_dir(cwd.join("node_modules")).unwrap();
+        assert!(cwd.join("node_modules").is_dir());
         assert!(remove_recorded(&cwd, &source, &["node_modules".into()]).is_err());
         assert!(cwd.join("node_modules").is_dir());
         junction::create(&other, cwd.join("apps")).unwrap();
