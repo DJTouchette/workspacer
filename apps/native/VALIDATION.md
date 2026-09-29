@@ -152,3 +152,33 @@ its HTML minifier emits decoded text without re-escaping it. Native literal text
 and sanitized card text now encode for both parser passes. A regression verifies
 that tags/entities remain literal and escaped image/script text cannot become
 active nodes. The corrected literal text was checked in a real-window capture.
+
+## Turn-summary helper measurement (2026-09-29)
+
+The visible turn footer calls `transcript::turn_changes`. It previously called
+`Tool::changes`, built every inline diff line, and discarded those strings while
+aggregating file names and added/removed counts. The summary now uses the same
+parser with diff construction disabled. Inline tool details still retain their
+full diff. Semantic tests cover Edit, MultiEdit, Write, multi-file patches,
+context-only files, repeated paths, failed tools and incomplete tools.
+
+Reproduce the workload with `native-harness bench-turn-summary --tools 200
+--lines 80 --iterations 200` (see README for the Cargo invocation). It uses
+558,100 bytes of synthetic completed edit input, five warmups, and checks both
+line totals and absence of diff payloads in its summaries.
+
+On this Linux container, using the same **unoptimized development profile**
+(`debug_assertions: true`) before and after the change:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| p50 helper time | 18.413 ms | 9.512 ms |
+| p95 helper time | 18.789 ms | 9.827 ms |
+| p99 helper time | 18.991 ms | 9.986 ms |
+| 200 measured iterations | 3.693 s | 1.909 s |
+
+This is one bounded helper comparison, not a GUI frame-time, release-build or
+Electron comparison. It excludes layout, painting, GPU, network and provider
+work. It does not establish that the native client feels faster than Electron.
+The complete display-independent native library suite passed (37 tests); no
+new GUI build or hardware measurement was performed for this change.

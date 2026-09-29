@@ -73,6 +73,9 @@ impl Tool {
             .unwrap_or_else(|| self.name.clone())
     }
     pub fn changes(&self) -> Vec<FileChange> {
+        self.changes_with_diff(true)
+    }
+    fn changes_with_diff(&self, include_diff: bool) -> Vec<FileChange> {
         if self.category() != "Edit" || self.is_error {
             return vec![];
         }
@@ -80,16 +83,16 @@ impl Tool {
         let mut changes = Vec::new();
         if let Some(entries) = v["changes"].as_array() {
             for entry in entries.iter().take(100) {
-                add_change(&mut changes, entry, &self.name);
+                add_change(&mut changes, entry, &self.name, include_diff);
             }
         } else if v["edits"].is_array() {
             for edit in v["edits"].as_array().unwrap().iter().take(100) {
                 let mut edit = edit.clone();
                 edit["file_path"] = v["file_path"].clone();
-                add_change(&mut changes, &edit, &self.name);
+                add_change(&mut changes, &edit, &self.name, include_diff);
             }
         } else {
-            add_change(&mut changes, &v, &self.name);
+            add_change(&mut changes, &v, &self.name, include_diff);
         }
         changes
     }
@@ -101,7 +104,7 @@ pub struct FileChange {
     pub removed: usize,
     pub diff: String,
 }
-fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str) {
+fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str, include_diff: bool) {
     let path = v["file_path"]
         .as_str()
         .or_else(|| v["path"].as_str())
@@ -116,6 +119,7 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str) {
             path: path.into(),
             ..Default::default()
         };
+        let mut has_lines = false;
         for line in patch.lines() {
             let header = line
                 .strip_prefix("*** Update File: ")
@@ -123,7 +127,7 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str) {
                 .or_else(|| line.strip_prefix("*** Delete File: "))
                 .or_else(|| line.strip_prefix("+++ b/"));
             if let Some(file) = header {
-                if !current.path.is_empty() && current.path != file && !current.diff.is_empty() {
+                if !current.path.is_empty() && current.path != file && has_lines {
                     out.push(current);
                     current = FileChange::default();
                 }
@@ -135,8 +139,11 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str) {
             if line.starts_with('-') && !line.starts_with("---") {
                 current.removed += 1;
             }
-            current.diff.push_str(line);
-            current.diff.push('\n');
+            if include_diff {
+                current.diff.push_str(line);
+                current.diff.push('\n');
+            }
+            has_lines = true;
         }
         if !current.path.is_empty() {
             out.push(current);
@@ -157,11 +164,14 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str) {
                 }
             })
             .unwrap_or("");
-        let diff = old
-            .lines()
-            .map(|l| format!("-{l}\n"))
-            .chain(new.lines().map(|l| format!("+{l}\n")))
-            .collect();
+        let diff = if include_diff {
+            old.lines()
+                .map(|l| format!("-{l}\n"))
+                .chain(new.lines().map(|l| format!("+{l}\n")))
+                .collect()
+        } else {
+            String::new()
+        };
         out.push(FileChange {
             path: path.into(),
             added: new.lines().count(),
@@ -179,7 +189,9 @@ pub fn turn_changes<'a>(rows: impl Iterator<Item = &'a Row>) -> Vec<FileChange> 
         if let Some(tool) = &row.tool
             && tool.complete
         {
-            for change in tool.changes() {
+            // The footer needs counts only. Constructing every inline diff on
+            // each render would allocate and immediately discard all its lines.
+            for change in tool.changes_with_diff(false) {
                 let file = files
                     .entry(change.path.clone())
                     .or_insert_with(|| FileChange {
@@ -607,6 +619,155 @@ pub fn fleet(text: &str) -> Option<Fleet> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn consecutive_patch_headers_preserve_header_only_files_without_carrying_counts() {
+        // A header is itself a retained diff line. The established full-diff
+        // parser therefore keeps a header-only intermediate file, with zero
+        // counts; summary mode must neither inherit counts nor lose that file.
+        for prefix in ["*** Update File: ", "*** Add File: ", "+++ b/"] {
+            let tool = Tool {
+                name: "apply_patch".into(),
+                input:
+                    json!({"patch":format!("{prefix}a\n-old\n+new\n{prefix}b\n{prefix}c\n+added")})
+                        .to_string(),
+                complete: true,
+                ..Default::default()
+            };
+            assert_eq!(
+                tool.changes(),
+                vec![
+                    FileChange {
+                        path: "a".into(),
+                        added: 1,
+                        removed: 1,
+                        diff: format!("{prefix}a\n-old\n+new\n")
+                    },
+                    FileChange {
+                        path: "b".into(),
+                        added: 0,
+                        removed: 0,
+                        diff: format!("{prefix}b\n")
+                    },
+                    FileChange {
+                        path: "c".into(),
+                        added: 1,
+                        removed: 0,
+                        diff: format!("{prefix}c\n+added\n")
+                    },
+                ],
+            );
+            assert_eq!(
+                turn_changes(
+                    [&Row {
+                        tool: Some(tool),
+                        ..Default::default()
+                    }]
+                    .into_iter()
+                ),
+                vec![
+                    FileChange {
+                        path: "a".into(),
+                        added: 1,
+                        removed: 1,
+                        ..Default::default()
+                    },
+                    FileChange {
+                        path: "b".into(),
+                        added: 0,
+                        removed: 0,
+                        ..Default::default()
+                    },
+                    FileChange {
+                        path: "c".into(),
+                        added: 1,
+                        removed: 0,
+                        ..Default::default()
+                    },
+                ],
+            );
+        }
+    }
+    #[test]
+    fn turn_summaries_match_inline_changes_without_materializing_diffs() {
+        let cases = [
+            (
+                "Edit",
+                json!({"file_path":"a","old_string":"old\r\n二","new_string":"new\nthree\n四"}),
+            ),
+            (
+                "MultiEdit",
+                json!({"file_path":"a","edits":[{"old_string":"one","new_string":"two\nthree"},{"oldString":"four\nfive","newString":"six"}]}),
+            ),
+            ("Write", json!({"path":"b","content":"one\ntwo\n"})),
+            (
+                "apply_patch",
+                json!({"patch":"*** Update File: c\n@@\n-old\n+new\n*** Add File: d\n+added\n*** Delete File: e\n-gone"}),
+            ),
+            (
+                "patch",
+                json!({"diff":"--- a/f\n+++ b/f\n context only\n--- a/g\n+++ b/g\n-old\n+new"}),
+            ),
+            (
+                "Edit",
+                json!({"changes":[{"path":"h","diff":"+added"},{"path":"i","oldString":"removed","newString":""}]}),
+            ),
+        ];
+        let mut expected = BTreeMap::<String, FileChange>::new();
+        let mut rows = Vec::new();
+        for (name, input) in cases {
+            let mut tool = Tool::from_item(&Item {
+                name: name.into(),
+                input,
+                ..Default::default()
+            });
+            tool.complete = true;
+            let full = tool.changes();
+            let summaries = tool.changes_with_diff(false);
+            assert_eq!(full.len(), summaries.len());
+            for (change, summary) in full.iter().zip(&summaries) {
+                assert!(!change.diff.is_empty());
+                assert!(summary.diff.is_empty());
+                assert_eq!(
+                    (&change.path, change.added, change.removed),
+                    (&summary.path, summary.added, summary.removed)
+                );
+                let total = expected
+                    .entry(change.path.clone())
+                    .or_insert_with(|| FileChange {
+                        path: change.path.clone(),
+                        ..Default::default()
+                    });
+                total.added += change.added;
+                total.removed += change.removed;
+            }
+            rows.push(Row {
+                tool: Some(tool.clone()),
+                ..Default::default()
+            });
+            tool.is_error = true;
+            rows.push(Row {
+                tool: Some(tool.clone()),
+                ..Default::default()
+            });
+            tool.is_error = false;
+            tool.complete = false;
+            rows.push(Row {
+                tool: Some(tool),
+                ..Default::default()
+            });
+        }
+        assert_eq!(
+            turn_changes(rows.iter()),
+            expected.into_values().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            turn_changes(rows.iter())
+                .iter()
+                .find(|f| f.path == "a")
+                .map(|f| (f.added, f.removed)),
+            Some((6, 5))
+        );
+    }
     #[test]
     fn edits_include_multifile_patches_and_failures_are_not_changes() {
         let mut tool = Tool::from_item(&Item {

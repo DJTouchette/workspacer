@@ -55,6 +55,15 @@ enum Command {
         #[arg(long)]
         rich_transcript: bool,
     },
+    /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
+    BenchTurnSummary {
+        #[arg(long, default_value_t = 200)]
+        tools: usize,
+        #[arg(long, default_value_t = 80)]
+        lines: usize,
+        #[arg(long, default_value_t = 200)]
+        iterations: usize,
+    },
     /// Repeatable reducer workload. Reports measured values, not GUI frame time.
     Bench {
         #[arg(long, default_value_t = 20000)]
@@ -148,6 +157,66 @@ async fn main() -> Result<()> {
                 rich_transcript,
             )
             .await?;
+        }
+        Command::BenchTurnSummary {
+            tools,
+            lines,
+            iterations,
+        } => {
+            anyhow::ensure!(
+                (1..=2000).contains(&tools)
+                    && (1..=500).contains(&lines)
+                    && (1..=10000).contains(&iterations),
+                "tools/lines/iterations outside bounded benchmark range"
+            );
+            let rows: Vec<_> = (0..tools)
+                .map(|index| {
+                    let mut tool = wks_native::transcript::Tool::from_item(&Item {
+                        name: "Edit".into(),
+                        input: json!({"file_path":format!("/fixture/file-{}.rs",index%20),
+                        "old_string":"old source line\n".repeat(lines),
+                        "new_string":"new source line\n".repeat(lines)}),
+                        ..Default::default()
+                    });
+                    tool.complete = true;
+                    wks_native::model::Row {
+                        tool: Some(tool),
+                        ..Default::default()
+                    }
+                })
+                .collect();
+            let run = || wks_native::transcript::turn_changes(black_box(rows.iter()));
+            for _ in 0..5 {
+                black_box(run());
+            }
+            let mut timings = Vec::with_capacity(iterations);
+            let started = Instant::now();
+            for _ in 0..iterations {
+                let tick = Instant::now();
+                black_box(run());
+                timings.push(tick.elapsed().as_nanos());
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            timings.sort_unstable();
+            let percentile = |p: usize| timings[(timings.len() - 1) * p / 100] as f64 / 1000.;
+            let changes = run();
+            assert_eq!(
+                changes.iter().map(|change| change.added).sum::<usize>(),
+                tools * lines
+            );
+            assert_eq!(
+                changes.iter().map(|change| change.removed).sum::<usize>(),
+                tools * lines
+            );
+            assert!(changes.iter().all(|change| change.diff.is_empty()));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({"tools":tools,"lines_per_edit_side":lines,
+                "iterations":iterations,"input_bytes":rows.iter().map(|row|row.bytes()).sum::<usize>(),
+                "debug_assertions":cfg!(debug_assertions),"elapsed_seconds":elapsed,
+                "p50_us":percentile(50),"p95_us":percentile(95),"p99_us":percentile(99),
+                "scope":"real turn summary parsing/aggregation only; excludes GPUI layout, GPU, network and Electron; five warmup iterations"}))?
+            );
         }
         Command::Bench { events } => {
             let mut transcript = Transcript::default();

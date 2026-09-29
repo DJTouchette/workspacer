@@ -14,8 +14,12 @@ impl Layout {
         if let Some(path) = &path {
             match std::fs::read(path) {
                 Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
-                    Ok(value) if value.is_object() && value["version"].as_i64().is_some() => {
-                        document = json!({"version":value["version"], "data":value["data"]});
+                    Ok(value)
+                        if (value.is_object() || value.is_null())
+                            && (value["version"].is_null()
+                                || value["version"].as_i64().is_some()) =>
+                    {
+                        document = json!({"version":value["version"].as_i64().unwrap_or(0), "data":value["data"]});
                         redact_tokens(&mut document["data"]);
                     }
                     _ => eprintln!("layout: persisted document is invalid; starting empty"),

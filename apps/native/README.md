@@ -426,6 +426,9 @@ cargo fmt --check
 # Optimized reducer + immutable-frame handoff measurement, JSON output.
 cargo run --locked --release --no-default-features --bin native-harness -- bench --events 20000
 
+# Turn-footer parsing/aggregation, JSON output; no GUI, models, or network.
+cargo run --locked --release --no-default-features --bin native-harness -- bench-turn-summary --tools 200 --lines 80 --iterations 200
+
 # Separate fixture process for measuring the UI's own RSS/CPU.
 cargo run --locked --no-default-features --bin native-harness -- serve --sessions 1000 --turns 5000
 cargo run --locked --release -- --bus ws://127.0.0.1:7896/bus

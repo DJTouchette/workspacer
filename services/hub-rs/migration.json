@@ -4592,28 +4592,56 @@
       "tests": []
     },
     "services/hub/internal/layout/layout.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/layout.rs",
+        "services/hub-rs/src/services/mod.rs"
+      ],
+      "review": "Shared Rust Layout retains versioned opaque data, identity-based boot-document scrubbing, URL credential removal, atomic persistence under the same mutex and live layout.changed delivery even after persistence failure. Corrected omitted/null persisted version to Go zero-default without discarding data. JSON is represented semantically through serde_json rather than retaining original whitespace/key order; integer evidence through signed/unsigned64 remains exact. Rust refuses version overflow instead of wrapping. Incoming stale scrub receipts are removed consistently, including a clean write. No broad UI hydration or cross-process ownership claim.",
       "sha256": "52d2d77916de51584c5d537f7171bf767e6f8243318af692aa1db44bee0b3493",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/layout.rs",
+        "services/hub-rs/tests/services.rs"
+      ]
     },
     "services/hub/internal/layout/layout_concurrent_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/layout.rs",
+        "services/hub-rs/src/services/mod.rs"
+      ],
+      "review": "Preserved original8writer\u00d7300round assertion with an independent continuously-reading disk observer: every observation parses complete JSON and its version never decreases. Final version2401 includes seeded document, equals in-memory state and freshly reloaded disk; reader observation floor prevents vacuous pass. Uses actual atomic files/mutex, not mocked writer ordering.",
       "sha256": "16f55886e88a5a123ff8a379f18b36e64a5a5e93037f8733a0a6a9a982d954df",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/layout.rs",
+        "services/hub-rs/tests/services.rs"
+      ]
     },
     "services/hub/internal/layout/layout_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/layout.rs",
+        "services/hub-rs/src/services/mod.rs"
+      ],
+      "review": "Actual Layout and broker client tests cover initial/null state, missing data refusal, trusted field retention, all five agent and three pane field scrubs with per-agent receipt, retained unrelated fields, redacted publication/get/load and arbitrary unrelated shapes. Real disk reload tests include nested writes, old credentials, missing/null version, invalid document types and exact large integer evidence. services.rs additionally starts/restarts real Hub and exercises public layout RPCs. Serialization formatting is not treated as data parity.",
       "sha256": "8cfc806f00f760040aec7d203021a755fbb715dd756d5634805fc6b0ee09ef39",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/layout.rs",
+        "services/hub-rs/tests/services.rs"
+      ]
     },
     "services/hub/internal/layout/persist_failure_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/layout.rs",
+        "services/hub-rs/src/services/mod.rs"
+      ],
+      "review": "Subprocess capture verifies silent first-run absence, audible malformed JSON and unreadable-directory errors, and audible persistence failure with lost-on-restart/version diagnostic. A real occupied destination deterministically forces atomic rename failure on all platforms, rather than chmod test skipping root. Both accepted events and current state still advance; surviving previous document reloads unchanged and occupied contents remain intact. Temporary file cleanup is asserted.",
       "sha256": "eaba882adeeeb62996a91a1b9fada20836a878a21d398de101a3cbdc589d6d2f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/layout.rs",
+        "services/hub-rs/tests/services.rs"
+      ]
     },
     "services/hub/internal/limits/bucket.go": {
       "note": "Reading currency, measured-state/health, per-account windows, pacing and projection are implemented by Reading/capacity/pace/projection; shared portable corpus runs inside Rust inline tests.",
