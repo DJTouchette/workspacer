@@ -68,19 +68,20 @@ async fn owned_startup_preserves_retired_intent_database_and_refuses_its_method(
             .await
             .unwrap();
         assert!(!board["lanes"].as_array().unwrap().is_empty());
-        let error = client
+        client
             .call(
                 "desktop.intentWorkspaceRequest",
                 json!({"request":{"action":"list"}}),
             )
             .await
             .unwrap_err();
-        assert!(
-            error.to_string().contains("desktop.intentWorkspaceRequest"),
-            "unexpected error: {error:#}"
-        );
-        // Rejection must not be a disconnected/broken backend masquerading as
-        // removal: a current public method still succeeds on the same client.
+        // A retired name may be refused by the namespace gate before lookup.
+        // Prove refusal is not a disconnected client or lost owner authority:
+        // a current owner-only desktop method still succeeds on the same caller.
+        client
+            .call("desktop.loadBriefBoard", json!({}))
+            .await
+            .unwrap();
         client.call("config.get", json!({})).await.unwrap();
         assert_untouched(&database, &bytes, &artifact);
         client.close();

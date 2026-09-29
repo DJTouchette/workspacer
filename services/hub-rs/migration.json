@@ -3684,22 +3684,49 @@
       ]
     },
     "services/hub/internal/bus/evictconn_test.go": {
-      "replacement": [],
+      "note": "Shared real embedded/WebSocket bus corpus proves first-live-provider ownership, idempotent self-registration, local-handler precedence, forged-response rejection and slot reclamation after disconnect. Actual Handle provider-eviction unit proves synchronous release/socket closure, immediate successor registration, unknown/builtin no-op and generation-fenced stale-probe refusal. Rust evicts by expected method owner rather than exposing an unfenced raw connection eviction: a stale probe cannot close a replacement or a builtin handler. A live unresponsive provider keeps its slot until that explicit liveness decision, preserving first-owner semantics.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs"
+      ],
       "sha256": "79ff36221ae57006b1ae7ce3222a6162372d4fce5b85ebe3925ff5f42269721d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "contracts/hub-bus-cases.json"
+      ]
     },
     "services/hub/internal/bus/facadeauthority.go": {
-      "replacement": [],
+      "note": "Only owned local-host identity or provisioned local operator facade may assert session lineage. Provider/view/plugin/federated identities cannot gain that permission from a flag; scoped operators without delegation lose dispatch-owner/retry stamps and workflow admission. Desktop owner authority remains separate and manifest-bounded. Rust identity values are immutable; revocation belongs to the actor-owned peer, so frame admission and delivery reject marked-closed peers and store revalidation closes changed facade grants. Real-store revocation tests and private facade/MCP authority tests preserve the original live-connection semantics without adding a general owner or session-identity grant.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
       "sha256": "11ee0250d3a0738baf36f73cfe8c88e1fcc20ee3dd340f5e7a6e095c8041b45f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/internal/bus/facadeauthority_test.go": {
-      "replacement": [],
+      "note": "Only owned local-host identity or provisioned local operator facade may assert session lineage. Provider/view/plugin/federated identities cannot gain that permission from a flag; scoped operators without delegation lose dispatch-owner/retry stamps and workflow admission. Desktop owner authority remains separate and manifest-bounded. Rust identity values are immutable; revocation belongs to the actor-owned peer, so frame admission and delivery reject marked-closed peers and store revalidation closes changed facade grants. Real-store revocation tests and private facade/MCP authority tests preserve the original live-connection semantics without adding a general owner or session-identity grant.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
       "sha256": "ce6b30d74365793ec57820435d541ae14d0978be09b3b6280013d762d2c53941",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ]
     },
     "services/hub/internal/bus/headofline_test.go": {
       "note": "Direct actor regressions prove40 forwarded calls preserve order/correlation, full reliable provider queues cannot block another caller control frame, pending calls fail after provider eviction, and saturated caller cannot stall sibling response/error delivery. Rust closes bounded reliable consumers on overflow rather than reproducing Go goroutine queue internals; no unbounded buffering or silent abandoned pending calls.",
@@ -3796,10 +3823,18 @@
       "tests": []
     },
     "services/hub/internal/bus/origin_test.go": {
-      "replacement": [],
+      "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted.",
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server.rs"
+      ],
       "sha256": "6d522a18c813eae33da85a08f5e1934210f89189b5e4f23862ce7dc344de271f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts"
+      ]
     },
     "services/hub/internal/bus/pluginambient_test.go": {
       "replacement": [],
@@ -3842,10 +3877,17 @@
       ]
     },
     "services/hub/internal/bus/profilegrant_revalidate_test.go": {
-      "replacement": [],
+      "note": "Real on-disk token rewrites drive actor revalidation: view/operator removal, operator tier downgrade, facade-grant revocation, provider-grant narrowing and corruption all close/remove peers, release provider slots and prevent further calls/events. Tests first prove live event delivery. The existing real Hub provider-narrowing integration additionally proves the owned periodic sweep runs. Legacy profilesAllowed/yoloAllowed/role metadata changes remain inert: a real-store rewrite preserves the live peer and identical profileId spawn forwarding before/after the edit. Actor tests advance the private sweep clock deterministically rather than sleeping through every five-second interval.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
       "sha256": "c60be3c90d99b26813e2b33bc1b6140cfadffe29dbb677c5d43aab33c1ac724b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/bus/profilegrant_test.go": {
       "replacement": [],
@@ -3872,16 +3914,31 @@
       "tests": []
     },
     "services/hub/internal/bus/rebinding_test.go": {
-      "replacement": [],
+      "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted.",
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server.rs"
+      ],
       "sha256": "27c641b99935c16b860786e1df3c69253914aa9280f0aef5f5887d6e809886f7",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts"
+      ]
     },
     "services/hub/internal/bus/register_hijack_test.go": {
-      "replacement": [],
+      "note": "Shared real embedded/WebSocket bus corpus proves first-live-provider ownership, idempotent self-registration, local-handler precedence, forged-response rejection and slot reclamation after disconnect. Actual Handle provider-eviction unit proves synchronous release/socket closure, immediate successor registration, unknown/builtin no-op and generation-fenced stale-probe refusal. Rust evicts by expected method owner rather than exposing an unfenced raw connection eviction: a stale probe cannot close a replacement or a builtin handler. A live unresponsive provider keeps its slot until that explicit liveness decision, preserving first-owner semantics.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs"
+      ],
       "sha256": "5e04aa72e6f9008061dcd4789e21e8c456ef04fc9979c6b91fedf0cf6a6223af",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "contracts/hub-bus-cases.json"
+      ]
     },
     "services/hub/internal/bus/remotedispatch.go": {
       "replacement": [
@@ -3922,10 +3979,17 @@
       "tests": []
     },
     "services/hub/internal/bus/revoke_scoped_test.go": {
-      "replacement": [],
+      "note": "Real on-disk token rewrites drive actor revalidation: view/operator removal, operator tier downgrade, facade-grant revocation, provider-grant narrowing and corruption all close/remove peers, release provider slots and prevent further calls/events. Tests first prove live event delivery. The existing real Hub provider-narrowing integration additionally proves the owned periodic sweep runs. Legacy profilesAllowed/yoloAllowed/role metadata changes remain inert: a real-store rewrite preserves the live peer and identical profileId spawn forwarding before/after the edit. Actor tests advance the private sweep clock deterministically rather than sleeping through every five-second interval.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
       "sha256": "98e146f9b809839d25aca0c8d63ebfd67986ff6878e57269188f19656be411e8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs"
+      ]
     },
     "services/hub/internal/bus/routinghost_test.go": {
       "replacement": [],
@@ -4022,10 +4086,18 @@
       "tests": []
     },
     "services/hub/internal/bus/trustedhost_test.go": {
-      "replacement": [],
+      "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted.",
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server.rs"
+      ],
       "sha256": "0f09773a5197f659c33b3494fe7fa8298085a121939cdb760f6a1ef90b8a303b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts"
+      ]
     },
     "services/hub/internal/bus/yologrant_test.go": {
       "replacement": [],
@@ -5996,40 +6068,90 @@
       ]
     },
     "services/hub/internal/supervisor/inheritoutput_test.go": {
-      "replacement": [],
+      "reason": "The InheritOutput mode was used for the Go brain child. That subprocess and inherited-pipe mode are retired: owned Rust Backend startup failures propagate through the library/CLI, while third-party plugin output remains quiet by default or explicitly streamed. The quiet native sidecar test pins absence of captured log pipes; standalone CLI/Backend ownership tests pin startup and shutdown without a private companion. This mapping does not claim a byte-for-byte inherited brain stream.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "retired": true,
+      "review": "The InheritOutput mode was used for the Go brain child. That subprocess and inherited-pipe mode are retired: owned Rust Backend startup failures propagate through the library/CLI, while third-party plugin output remains quiet by default or explicitly streamed. The quiet native sidecar test pins absence of captured log pipes; standalone CLI/Backend ownership tests pin startup and shutdown without a private companion. This mapping does not claim a byte-for-byte inherited brain stream.",
       "sha256": "6da98243154196d40e7e7adccfb6d97ee8596aa4bc6fb946d00cf0552da26e9d",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/internal/supervisor/logwriter.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/process_logs.rs",
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "review": "Preserves opt-in stream identity, newline records and final partial output without adding unowned copier threads. Nonblocking bounded pipe drains continue during graceful termination so cooperative flush cannot deadlock. Explicit intentional framing differences: Rust caps unterminated chunks at64KiB, decodes malformed UTF-8 lossily, and trims CR; Go buffered unlimited lines and removed only LF. This is not byte-identical log transport and neither implementation promises to scrub secrets printed by plugin code.",
       "sha256": "8d27ba6a317cb196936abc3f31f4967625b2884589ca0d5f5174c895ef562275",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ]
     },
     "services/hub/internal/supervisor/supervisor.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/process_logs.rs"
+      ],
+      "review": "Plugin sidecars retain owned start/stop, restart after failed launch or exit, capped exponential backoff with uptime reset, live PID/status/error events, health transitions without restart-on-unhealthy, parent EOF/PID signals, and opt-in separate stdout/stderr streams. Source and deterministic/actual-process tests cover cap/reset/overflow, two-second HTTP budget, crash restart, health failure, quiet default, shutdown ordering/reaping and graceful flush. Go brain/MCP child supervision is replaced by owned Backend services, not hidden replacement binaries. Rust serial health probes are completion-relative rather than a Go fixed ticker; initial Starting is internal only. Environment inheritance now deliberately scrubs owner credentials before explicit child overlays. NativeChild owns/reaps the direct Unix child; do not infer general Unix descendant-group confinement from this mapping.",
       "sha256": "5074c5e83a5137b00283ef12bad3bdf3d284220f9c1796738bd6889df49686d2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ]
     },
     "services/hub/internal/supervisor/supervisor_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "review": "Mapped start/stop/restart, backoff doubling/cap/overflow and uptime reset, healthy/unhealthy transitions, log stdout/stderr/partial tail and quiet default to named Rust fake-process and real-process fixtures. Runtime shutdown proves broker remains available for plugin revocation before direct-child reap. The actual worker-loop cap test and 1.1-second response fixture pin scheduling/HTTP timeout semantics. Added self-executable two-MiB SIGTERM flush regression that failed under the previous wait-without-drain loop and passes after bounded drains. Linux plugin_manager21 and supervisor_shutdown1 passed; Windows process ownership has separate actual CI coverage and remains a platform gate at final head.",
       "sha256": "4f897bc9a48d8b920320ecb09f44d7091924a49e024bba3dc85a81f755e19877",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ]
     },
     "services/hub/internal/supervisor/terminate_unix.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "review": "Retains direct-child SIGTERM, five-second grace, forced kill fallback, then reap. During grace Rust now drains bounded stdout/stderr pipes, preserving cooperative TERM output; the real self-executable fixture proved the previous five-second forced-kill failure and now completes gracefully. Runtime plugin shutdown and process-stream fixtures cover reap and final tail. Go also targeted the direct process; this row does not certify arbitrary Unix descendant cleanup.",
       "sha256": "d8b2557c9491ce46cf37b5124f4bb0046c76fc732d6f6cf75bc91aee76f7dc97",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ]
     },
     "services/hub/internal/supervisor/terminate_windows.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/windows_job.rs",
+        "services/claudemon/src/wrapper/pty_windows_job.rs"
+      ],
+      "review": "Retains direct-child force termination on Windows and strengthens descendant ownership with a kill-on-close job. Shared child_job launches suspended, assigns the job before user code, then resumes; plugin adapter uses this exact helper. Exact-source Windows probe and actual Windows04322791 ownership suite (26 tests) passed, including immediate-fork races; final-head Windows CI remains required. Unix graceful flush test is intentionally not evidence for Windows execution.",
       "sha256": "eb7e3fe0eac82894beed7a1e17162d114d3eba44a86af285760cdd8a7b041fa9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs"
+      ]
     },
     "services/hub/internal/sweepguard/gate_test.go": {
       "replacement": [],

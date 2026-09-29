@@ -477,7 +477,7 @@ jobs:
           # uses must match BEFORE we touch the live release. (No mac zip yet:
           # MacUpdater needs one, but mac auto-update is dead until signing
           # lands anyway — add '*-mac.zip' here when the zip target ships.)
-          for pat in 'Workspacer-Setup-*.exe' 'Workspacer-Native-Setup-*-x64.exe' '*.AppImage' '*-arm64.dmg' \
+          for pat in 'Workspacer-Setup-*.exe' 'Workspacer-Native-Rust-Preview-Setup-*-x64.exe' '*.AppImage' '*-arm64.dmg' \
                      'latest.yml' 'latest-linux.yml' 'latest-mac.yml' \
                      '*.blockmap' \
                      'workspacer-server-windows-x64.zip' \

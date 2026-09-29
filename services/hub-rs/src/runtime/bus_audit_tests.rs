@@ -800,3 +800,147 @@ async fn hello_permission_passthrough_tracks_call_authority_not_provider_registr
     }
     hub.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn disk_revalidation_closes_revoked_downgraded_and_facade_or_provider_narrowed_peers() {
+    for change in [
+        "view-revoked",
+        "operator-revoked",
+        "tier-downgraded",
+        "facade-revoked",
+        "provider-narrowed",
+        "corrupt-store",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tokens.json");
+        let scope = if change == "view-revoked" {
+            Scope::View
+        } else if change == "provider-narrowed" {
+            Scope::Provider
+        } else {
+            Scope::Operator
+        };
+        let mut record = crate::auth::mint(&path, scope, "fixture").unwrap();
+        record.facade_authority = change == "facade-revoked";
+        crate::auth::save(&path, &[record.clone()]).unwrap();
+        let mut core = core();
+        core.options.scoped_tokens = Some(path.clone());
+        let mut mailbox = peer(
+            &mut core,
+            1,
+            Identity {
+                kind: Kind::Scoped(record.clone()),
+                token_id: crate::auth::fingerprint(&record.token),
+                federated: false,
+            },
+            8,
+        );
+        core.peers.get_mut(&1).unwrap().credential = Some(record.token.clone());
+        if scope == Scope::Provider {
+            register(&mut core, 1, "fixture.provider");
+            take(&mut mailbox);
+        } else {
+            topics(&mut core, 1, "subscribe", &["agent.snapshot"]);
+            take(&mut mailbox);
+            core.publish(Event::new(
+                "agent.snapshot",
+                "fixture",
+                json!({"before":true}),
+            ));
+            assert_eq!(
+                mailbox.events.try_recv().unwrap().event.unwrap().data,
+                Some(json!({"before":true}))
+            );
+        }
+        match change {
+            "view-revoked" | "operator-revoked" => crate::auth::save(&path, &[]).unwrap(),
+            "tier-downgraded" => {
+                record.scope = "view".into();
+                crate::auth::save(&path, &[record]).unwrap();
+            }
+            "facade-revoked" => {
+                record.facade_authority = false;
+                crate::auth::save(&path, &[record]).unwrap();
+            }
+            "provider-narrowed" => {
+                record.provides = Some(vec![]);
+                crate::auth::save(&path, &[record]).unwrap();
+            }
+            "corrupt-store" => std::fs::write(&path, b"{broken").unwrap(),
+            _ => unreachable!(),
+        }
+        core.last_revalidation = Instant::now() - Duration::from_secs(6);
+        core.sweep();
+        assert!(*mailbox.closed.borrow(), "{change}");
+        assert!(!core.peers.contains_key(&1), "{change}");
+        assert!(!core.providers.values().any(|id| *id == 1), "{change}");
+        core.publish(Event::new(
+            "agent.snapshot",
+            "fixture",
+            json!({"after":true}),
+        ));
+        assert!(mailbox.events.try_recv().is_err(), "{change}");
+        call(&mut core, 1, "revoked", "agents.list", Value::Null);
+        assert!(core.pending.is_empty(), "{change}");
+    }
+}
+
+#[tokio::test]
+async fn editing_legacy_profile_metadata_neither_disconnects_nor_narrows_spawn_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tokens.json");
+    let mut record = crate::auth::mint(&path, Scope::Operator, "manager").unwrap();
+    record
+        .metadata
+        .insert("profilesAllowed".into(), json!(["work"]));
+    record.metadata.insert("yoloAllowed".into(), true.into());
+    crate::auth::save(&path, &[record.clone()]).unwrap();
+    let mut core = core();
+    core.options.control_plane_only = true;
+    core.options.scoped_tokens = Some(path.clone());
+    let mut caller = peer(
+        &mut core,
+        1,
+        Identity {
+            kind: Kind::Scoped(record.clone()),
+            token_id: crate::auth::fingerprint(&record.token),
+            federated: false,
+        },
+        8,
+    );
+    core.peers.get_mut(&1).unwrap().credential = Some(record.token.clone());
+    let mut provider = peer(&mut core, 2, Identity::host("fixture"), 8);
+    register(&mut core, 2, "agents.spawn");
+    take(&mut provider);
+    for changed in [false, true] {
+        if changed {
+            record.metadata.insert("profilesAllowed".into(), json!([]));
+            record.metadata.insert("yoloAllowed".into(), false.into());
+            record
+                .metadata
+                .insert("role".into(), json!("legacy annotation"));
+            crate::auth::save(&path, &[record.clone()]).unwrap();
+            core.last_revalidation = Instant::now() - Duration::from_secs(6);
+            core.sweep();
+            assert!(!*caller.closed.borrow());
+        }
+        call(
+            &mut core,
+            1,
+            "spawn",
+            "agents.spawn",
+            json!({"profileId":"work"}),
+        );
+        let forwarded = take(&mut provider);
+        assert_eq!(forwarded.params.unwrap()["profileId"], "work");
+        core.frame(
+            2,
+            Frame {
+                id: forwarded.id,
+                result: Some(json!({"ok":true})),
+                ..Frame::op("result")
+            },
+        );
+        assert_eq!(take(&mut caller).result, Some(json!({"ok":true})));
+    }
+}

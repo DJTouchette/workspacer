@@ -30,6 +30,10 @@ use crate::session::store::WrapperHandle;
 use crate::session::{windows::normalize_model_input, ConversationStore, SessionStore};
 use crate::wrapper::pty;
 
+#[cfg(any(windows, test))]
+#[path = "pty_output.rs"]
+mod pty_output;
+
 #[derive(Debug, Deserialize)]
 pub struct SpawnPayload {
     /// Command + args, e.g. `["claude", "--resume", "..."]`.
@@ -430,12 +434,23 @@ pub(crate) fn start_native_pty(
     let generation = store.claim_generation(&session_id);
     let handle_for_reader = pty_handle.clone();
     tokio::spawn(async move {
-        while let Some(chunk) = out_rx.recv().await {
+        #[cfg(windows)]
+        let mut exit_drain = pty_output::ExitDrain::new();
+        loop {
+            #[cfg(windows)]
+            let chunk = exit_drain
+                .recv(&mut out_rx, || pty::has_exited(&handle_for_reader))
+                .await;
+            #[cfg(not(windows))]
+            let chunk = out_rx.recv().await;
+            let Some(chunk) = chunk else { break };
             store_for_reader
                 .record_output(&session_for_reader, &chunk)
                 .await;
         }
-        // Reader EOF — child exited. Reap it (so it doesn't linger as a zombie)
+        // EOF, or positively observed Windows child exit plus the final drain.
+        // ConPTY may hold its output pipe open until our master is dropped.
+        // Reap the child (so it doesn't linger as a zombie)
         // and make sure we don't leak a pending spawn entry if SessionStart never
         // fired (e.g. claude crashed at startup).
         store_for_reader.reap_pty_owned(&session_for_reader, &handle_for_reader);
@@ -1025,6 +1040,68 @@ pub async fn handle_provider_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn native_pty_child_exit_retires_current_generation_with_conpty_master_retained() {
+        use std::time::Duration;
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let db = crate::store::Db::open(crate::testtmp::db_path("pty-exit-drain")).unwrap();
+        let session = format!("pty-exit-{}", Uuid::new_v4());
+        let start = || {
+            let payload: SpawnPayload = serde_json::from_value(json!({
+                "argv": ["cmd.exe", "/D", "/C", "echo owned-child-ready & ping -n 120 127.0.0.1 >nul"],
+                "cwd": std::env::temp_dir().to_string_lossy(),
+                "session_id": session,
+            }))
+            .unwrap();
+            assert_eq!(
+                start_native_pty(&store, &conv, &db, &session, payload, None).status(),
+                StatusCode::OK
+            );
+            store.pty_handle(&session).unwrap()
+        };
+        // Keep BOTH masters alive through the assertions. Child death therefore
+        // cannot rely on dropping our last ConPTY owner to produce output EOF.
+        let previous = start();
+        let successor = start();
+        pty::signal_child(&previous, crate::protocol::Signal::Sigterm).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !pty::has_exited(&previous) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(Arc::ptr_eq(
+            &store.pty_handle(&session).unwrap(),
+            &successor
+        ));
+        assert!(store.get(&session).is_some());
+        assert!(!pty::has_exited(&successor));
+        // This is the same wrapper message used by POST /sessions/:id/signal.
+        store
+            .wrapper(&session)
+            .unwrap()
+            .tx
+            .send(WrapperMessage::Signal {
+                signal: crate::protocol::Signal::Sigterm,
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while store.get(&session).is_some()
+                || store.pty_handle(&session).is_some()
+                || store.wrapper(&session).is_some()
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("terminated pending PTY must retire without ConPTY EOF");
+        assert!(pty::has_exited(&successor));
+    }
 
     #[test]
     fn codex_context_override_is_injected_replaced_and_provider_scoped() {

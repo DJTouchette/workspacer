@@ -1274,10 +1274,20 @@ fn launcher_home_fallback_is_read_only_and_explicit_home_still_wins() {
         let Command::Serve(serve) = &args.command else {
             panic!()
         };
-        let plan = plan_serve(&args, serve).unwrap();
-        assert_eq!(plan.home, directories::BaseDirs::new().unwrap().home_dir());
-        assert!(plan.home.is_absolute());
-        assert_eq!(plan.database, plan.home.join(".claudemon/state.db"));
+        match directories::UserDirs::new() {
+            Some(os) => {
+                let plan = plan_serve(&args, serve).unwrap();
+                assert_eq!(plan.home, os.home_dir());
+                assert!(plan.home.is_absolute());
+                assert_eq!(plan.database, plan.home.join(".claudemon/state.db"));
+            }
+            None => {
+                // The reference accepts a named lookup error when the OS itself
+                // cannot resolve a profile; it must never guess a relative home.
+                let error = plan_serve(&args, serve).unwrap_err().to_string();
+                assert!(error.contains("home directory unavailable"), "{error}");
+            }
+        }
         if let Command::Serve(serve) = &mut args.command {
             serve.home_dir = Some(root.join("selected-home"));
         }

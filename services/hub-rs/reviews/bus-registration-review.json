@@ -1,0 +1,32 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "Latest full lib272 green includes runtime::provider_eviction_tests; shared11-case bus compatibility runner previously green and unchanged. These records concern provider ownership/eviction assertions only; no broad RPC/runtime certification.",
+  "records": {
+    "services/hub/internal/bus/register_hijack_test.go": {
+      "status": "ported",
+      "sha256": "5e04aa72e6f9008061dcd4789e21e8c456ef04fc9979c6b91fedf0cf6a6223af",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "contracts/hub-bus-cases.json"
+      ],
+      "note": "Shared real embedded/WebSocket bus corpus proves first-live-provider ownership, idempotent self-registration, local-handler precedence, forged-response rejection and slot reclamation after disconnect. Actual Handle provider-eviction unit proves synchronous release/socket closure, immediate successor registration, unknown/builtin no-op and generation-fenced stale-probe refusal. Rust evicts by expected method owner rather than exposing an unfenced raw connection eviction: a stale probe cannot close a replacement or a builtin handler. A live unresponsive provider keeps its slot until that explicit liveness decision, preserving first-owner semantics."
+    },
+    "services/hub/internal/bus/evictconn_test.go": {
+      "status": "ported",
+      "sha256": "79ff36221ae57006b1ae7ce3222a6162372d4fce5b85ebe3925ff5f42269721d",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "contracts/hub-bus-cases.json"
+      ],
+      "note": "Shared real embedded/WebSocket bus corpus proves first-live-provider ownership, idempotent self-registration, local-handler precedence, forged-response rejection and slot reclamation after disconnect. Actual Handle provider-eviction unit proves synchronous release/socket closure, immediate successor registration, unknown/builtin no-op and generation-fenced stale-probe refusal. Rust evicts by expected method owner rather than exposing an unfenced raw connection eviction: a stale probe cannot close a replacement or a builtin handler. A live unresponsive provider keeps its slot until that explicit liveness decision, preserving first-owner semantics."
+    }
+  }
+}

@@ -521,6 +521,17 @@
       "floor": 2,
       "suffix": "",
       "cutRustTests": true
+    },
+    {
+      "file": "services/hub-rs/src/cli/readiness.rs",
+      "server": "claudemon-api",
+      "what": "Explicit hub-only external-daemon attachment verifies the maintenance marker and exact health response before startup.",
+      "patterns": [
+        "rustURLJoinRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
     }
   ],
   "routeReasons": {

@@ -22,6 +22,7 @@ let configDir = '';
  * so every other test in this file still exercises real files.
  */
 const fsHooks = vi.hoisted(() => ({
+  streams: [] as import('fs').WriteStream[],
   rename: null as ((from: string, to: string) => void) | null,
   onCreate: null as ((s: unknown) => void) | null,
 }));
@@ -35,6 +36,7 @@ vi.mock('fs', async (importOriginal) => {
         : actual.renameSync(...args),
     createWriteStream: (...args: Parameters<typeof actual.createWriteStream>) => {
       const s = actual.createWriteStream(...args);
+      fsHooks.streams.push(s);
       fsHooks.onCreate?.(s);
       return s;
     },
@@ -50,6 +52,7 @@ beforeEach(() => {
   configDir = dir;
   fsHooks.rename = null;
   fsHooks.onCreate = null;
+  fsHooks.streams = [];
   vi.resetModules();
   // Swallow the real console output BEFORE the tee is installed: initFileLogging
   // binds whatever write() is current as its passthrough, so this keeps the
@@ -58,10 +61,21 @@ beforeEach(() => {
   process.stderr.write = (() => true) as NodeJS.WriteStream['write'];
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   process.stdout.write = origStdout;
   process.stderr.write = origStderr;
+  // Rotation may open a replacement stream in an asynchronous close callback.
+  // Wait for every owned stream before deleting the scratch directory.
+  for (const stream of fsHooks.streams) {
+    if (!stream.closed) {
+      await new Promise<void>((resolve, reject) => {
+        stream.once('close', resolve);
+        stream.once('error', reject);
+        if (!stream.writableEnded) stream.end();
+      });
+    }
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

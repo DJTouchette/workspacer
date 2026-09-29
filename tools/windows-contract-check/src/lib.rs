@@ -39,6 +39,8 @@ mod filewatch_sample;
 mod protocol;
 #[path = "../../../services/claudemon/src/wrapper/pty.rs"]
 mod pty;
+#[path = "../../../services/claudemon/src/daemon/pty_output.rs"]
+mod pty_output;
 
 #[path = "../../../services/hub-rs/src/services/nodes/exposure.rs"]
 mod node_exposure;

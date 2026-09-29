@@ -648,6 +648,14 @@ impl Handle {
             .await
             .map_err(|_| anyhow!("hub stopped while revoking plugin"))?
     }
+    /// HTTP settings entitlement uses the same live registry as bus admission.
+    pub(crate) async fn plugin_token_matches(&self, token: String, id: String) -> Result<bool> {
+        let (reply, result) = oneshot::channel();
+        self.submit(Command::PluginTokenMatches(token, id, reply))?;
+        result
+            .await
+            .map_err(|_| anyhow!("hub stopped while checking plugin identity"))
+    }
     pub fn publish(&self, event: Event) -> Result<()> {
         self.submit(Command::Publish(event))
     }
@@ -1163,6 +1171,7 @@ enum Command {
     ),
     CheckLaunch(LaunchPermit, bool, oneshot::Sender<Result<()>>),
     ReplacePeers(Vec<crate::federation::Peer>, oneshot::Sender<Result<()>>),
+    PluginTokenMatches(String, String, oneshot::Sender<bool>),
     Plugin {
         token: String,
         identity: Option<(String, Vec<String>)>,
@@ -2497,6 +2506,10 @@ async fn run(
                 Command::BeginLaunch(caller,session,plugin,reply)=>{let _=reply.send(core.begin_launch(&caller,session,plugin));}
                 Command::CheckLaunch(permit,finish,reply)=>{let _=reply.send(core.check_launch(&permit,finish));}
                 Command::ReplacePeers(peers, reply) => { let _ = reply.send(federation.replace(peers)); }
+                Command::PluginTokenMatches(token,id,reply) => {
+                    let matches=core.options.plugins.get(&token).is_some_and(|(plugin,_)| plugin==&id);
+                    let _=reply.send(matches);
+                }
                 Command::Plugin {token, identity, reply} => {
                     let active:Vec<_>=core.peers.iter().filter(|(_,p)|matches!(p.identity.kind,Kind::Plugin {..}) && p.credential.as_ref()==Some(&token)).map(|(id,_)|*id).collect();
                     for id in active{core.disconnect(id);}

@@ -1,0 +1,90 @@
+{
+  "records": {
+    "services/hub/internal/supervisor/supervisor.go": {
+      "sha256": "5074c5e83a5137b00283ef12bad3bdf3d284220f9c1796738bd6889df49686d2",
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/plugins/process_logs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ],
+      "review": "Plugin sidecars retain owned start/stop, restart after failed launch or exit, capped exponential backoff with uptime reset, live PID/status/error events, health transitions without restart-on-unhealthy, parent EOF/PID signals, and opt-in separate stdout/stderr streams. Source and deterministic/actual-process tests cover cap/reset/overflow, two-second HTTP budget, crash restart, health failure, quiet default, shutdown ordering/reaping and graceful flush. Go brain/MCP child supervision is replaced by owned Backend services, not hidden replacement binaries. Rust serial health probes are completion-relative rather than a Go fixed ticker; initial Starting is internal only. Environment inheritance now deliberately scrubs owner credentials before explicit child overlays. NativeChild owns/reaps the direct Unix child; do not infer general Unix descendant-group confinement from this mapping.",
+      "status": "ported"
+    },
+    "services/hub/internal/supervisor/supervisor_test.go": {
+      "sha256": "4f897bc9a48d8b920320ecb09f44d7091924a49e024bba3dc85a81f755e19877",
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ],
+      "review": "Mapped start/stop/restart, backoff doubling/cap/overflow and uptime reset, healthy/unhealthy transitions, log stdout/stderr/partial tail and quiet default to named Rust fake-process and real-process fixtures. Runtime shutdown proves broker remains available for plugin revocation before direct-child reap. The actual worker-loop cap test and 1.1-second response fixture pin scheduling/HTTP timeout semantics. Added self-executable two-MiB SIGTERM flush regression that failed under the previous wait-without-drain loop and passes after bounded drains. Linux plugin_manager21 and supervisor_shutdown1 passed; Windows process ownership has separate actual CI coverage and remains a platform gate at final head.",
+      "status": "ported"
+    },
+    "services/hub/internal/supervisor/logwriter.go": {
+      "sha256": "8d27ba6a317cb196936abc3f31f4967625b2884589ca0d5f5174c895ef562275",
+      "replacement": [
+        "services/hub-rs/src/plugins/process_logs.rs",
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ],
+      "review": "Preserves opt-in stream identity, newline records and final partial output without adding unowned copier threads. Nonblocking bounded pipe drains continue during graceful termination so cooperative flush cannot deadlock. Explicit intentional framing differences: Rust caps unterminated chunks at64KiB, decodes malformed UTF-8 lossily, and trims CR; Go buffered unlimited lines and removed only LF. This is not byte-identical log transport and neither implementation promises to scrub secrets printed by plugin code.",
+      "status": "ported"
+    },
+    "services/hub/internal/supervisor/inheritoutput_test.go": {
+      "sha256": "6da98243154196d40e7e7adccfb6d97ee8596aa4bc6fb946d00cf0552da26e9d",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": "The InheritOutput mode was used for the Go brain child. That subprocess and inherited-pipe mode are retired: owned Rust Backend startup failures propagate through the library/CLI, while third-party plugin output remains quiet by default or explicitly streamed. The quiet native sidecar test pins absence of captured log pipes; standalone CLI/Backend ownership tests pin startup and shutdown without a private companion. This mapping does not claim a byte-for-byte inherited brain stream.",
+      "status": "retired",
+      "retired": true,
+      "reason": "The InheritOutput mode was used for the Go brain child. That subprocess and inherited-pipe mode are retired: owned Rust Backend startup failures propagate through the library/CLI, while third-party plugin output remains quiet by default or explicitly streamed. The quiet native sidecar test pins absence of captured log pipes; standalone CLI/Backend ownership tests pin startup and shutdown without a private companion. This mapping does not claim a byte-for-byte inherited brain stream."
+    },
+    "services/hub/internal/supervisor/terminate_unix.go": {
+      "sha256": "d8b2557c9491ce46cf37b5124f4bb0046c76fc732d6f6cf75bc91aee76f7dc97",
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/supervisor_shutdown.rs"
+      ],
+      "review": "Retains direct-child SIGTERM, five-second grace, forced kill fallback, then reap. During grace Rust now drains bounded stdout/stderr pipes, preserving cooperative TERM output; the real self-executable fixture proved the previous five-second forced-kill failure and now completes gracefully. Runtime plugin shutdown and process-stream fixtures cover reap and final tail. Go also targeted the direct process; this row does not certify arbitrary Unix descendant cleanup.",
+      "status": "ported"
+    },
+    "services/hub/internal/supervisor/terminate_windows.go": {
+      "sha256": "eb7e3fe0eac82894beed7a1e17162d114d3eba44a86af285760cdd8a7b041fa9",
+      "replacement": [
+        "services/hub-rs/src/plugins/supervisor.rs",
+        "services/hub-rs/src/plugins/windows_job.rs",
+        "services/claudemon/src/wrapper/pty_windows_job.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs"
+      ],
+      "review": "Retains direct-child force termination on Windows and strengthens descendant ownership with a kill-on-close job. Shared child_job launches suspended, assigns the job before user code, then resumes; plugin adapter uses this exact helper. Exact-source Windows probe and actual Windows04322791 ownership suite (26 tests) passed, including immediate-fork races; final-head Windows CI remains required. Unix graceful flush test is intentionally not evidence for Windows execution.",
+      "status": "ported"
+    }
+  }
+}

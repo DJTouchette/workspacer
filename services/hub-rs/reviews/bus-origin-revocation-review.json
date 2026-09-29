@@ -1,0 +1,106 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "Fresh full lib272/272 +HTTP2/2 PASS in /tmp/workspacer-origin-revalidation-checkpoint.log; TS HTTPregistry6 +corpusvocabulary55 PASS in /tmp/workspacer-http-origin-vocabulary.log. No real provider invocation/install actions: network tests use isolated empty plugin roots and invalid install inputs. hostpin_test.go remains pending its separate per-plugin credential/revoked-UI-seed matrix, now assigned to plugin_system.",
+  "records": {
+    "services/hub/internal/bus/origin_test.go": {
+      "status": "ported",
+      "sha256": "6d522a18c813eae33da85a08f5e1934210f89189b5e4f23862ce7dc344de271f",
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts"
+      ],
+      "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted."
+    },
+    "services/hub/internal/bus/rebinding_test.go": {
+      "status": "ported",
+      "sha256": "27c641b99935c16b860786e1df3c69253914aa9280f0aef5f5887d6e809886f7",
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts"
+      ],
+      "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted."
+    },
+    "services/hub/internal/bus/trustedhost_test.go": {
+      "status": "ported",
+      "sha256": "0f09773a5197f659c33b3494fe7fa8298085a121939cdb760f6a1ef90b8a303b",
+      "replacement": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/server.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/tests/http.rs",
+        "apps/desktop/src/main/services/httpRouteRegistry.test.ts"
+      ],
+      "note": "Reference Host/Origin matrix retains native missing-Origin access, loopback names/IPs/ports, exact same-authority remote/proxy access, cross-site and opaque-origin refusal, and actual loopback-socket DNS-rebinding protection including IPv4-mapped IPv6. Exact declared proxy names cannot wildcard-widen. Audit corrected WHATWG normalization of explicit default ports and legacy IPv4 spellings by preserving raw HTTP authority for comparison. Real sockets exercise matching/mismatching :80/:443 proxy upgrades, and all30 registered Hub route patterns/verbs are probed under foreign and declared Host headers. Rust startup rejects wildcard trust configuration instead of silently ignoring it. Existing strict rejection of userinfo/path/query-bearing origins is retained; browser-invalid inputs are not newly admitted."
+    },
+    "services/hub/internal/bus/revoke_scoped_test.go": {
+      "status": "ported",
+      "sha256": "98e146f9b809839d25aca0c8d63ebfd67986ff6878e57269188f19656be411e8",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs"
+      ],
+      "note": "Real on-disk token rewrites drive actor revalidation: view/operator removal, operator tier downgrade, facade-grant revocation, provider-grant narrowing and corruption all close/remove peers, release provider slots and prevent further calls/events. Tests first prove live event delivery. The existing real Hub provider-narrowing integration additionally proves the owned periodic sweep runs. Legacy profilesAllowed/yoloAllowed/role metadata changes remain inert: a real-store rewrite preserves the live peer and identical profileId spawn forwarding before/after the edit. Actor tests advance the private sweep clock deterministically rather than sleeping through every five-second interval."
+    },
+    "services/hub/internal/bus/profilegrant_revalidate_test.go": {
+      "status": "ported",
+      "sha256": "c60be3c90d99b26813e2b33bc1b6140cfadffe29dbb677c5d43aab33c1ac724b",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs"
+      ],
+      "note": "Real on-disk token rewrites drive actor revalidation: view/operator removal, operator tier downgrade, facade-grant revocation, provider-grant narrowing and corruption all close/remove peers, release provider slots and prevent further calls/events. Tests first prove live event delivery. The existing real Hub provider-narrowing integration additionally proves the owned periodic sweep runs. Legacy profilesAllowed/yoloAllowed/role metadata changes remain inert: a real-store rewrite preserves the live peer and identical profileId spawn forwarding before/after the edit. Actor tests advance the private sweep clock deterministically rather than sleeping through every five-second interval."
+    },
+    "services/hub/internal/bus/facadeauthority.go": {
+      "status": "ported",
+      "sha256": "11ee0250d3a0738baf36f73cfe8c88e1fcc20ee3dd340f5e7a6e095c8041b45f",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "note": "Only owned local-host identity or provisioned local operator facade may assert session lineage. Provider/view/plugin/federated identities cannot gain that permission from a flag; scoped operators without delegation lose dispatch-owner/retry stamps and workflow admission. Desktop owner authority remains separate and manifest-bounded. Rust identity values are immutable; revocation belongs to the actor-owned peer, so frame admission and delivery reject marked-closed peers and store revalidation closes changed facade grants. Real-store revocation tests and private facade/MCP authority tests preserve the original live-connection semantics without adding a general owner or session-identity grant."
+    },
+    "services/hub/internal/bus/facadeauthority_test.go": {
+      "status": "ported",
+      "sha256": "ce6b30d74365793ec57820435d541ae14d0978be09b3b6280013d762d2c53941",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/mcp.rs"
+      ],
+      "note": "Only owned local-host identity or provisioned local operator facade may assert session lineage. Provider/view/plugin/federated identities cannot gain that permission from a flag; scoped operators without delegation lose dispatch-owner/retry stamps and workflow admission. Desktop owner authority remains separate and manifest-bounded. Rust identity values are immutable; revocation belongs to the actor-owned peer, so frame admission and delivery reject marked-closed peers and store revalidation closes changed facade grants. Real-store revocation tests and private facade/MCP authority tests preserve the original live-connection semantics without adding a general owner or session-identity grant."
+    }
+  }
+}

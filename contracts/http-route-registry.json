@@ -1029,7 +1029,8 @@
           "operations"
         ],
         "loaders": [
-          "apps/desktop/src/main/services/httpRouteRegistry.test.ts::http_registry_matches_actual_bindings"
+          "apps/desktop/src/main/services/httpRouteRegistry.test.ts::http_registry_matches_actual_bindings",
+          "services/hub-rs/tests/http.rs::actual_proxy_authorities_preserve_explicit_ports_and_host_pin_every_hub_route"
         ]
       }
     }

@@ -222,14 +222,18 @@ function proof(
   if (id === 'plugin-ui' || id === 'plugin-ui-delegate') {
     const b = chain(sources, site, verb, id === 'plugin-ui' ? ['ui'] : ['ui_index', 'ui']);
     requireProof(
-      b.includes('ifauthorized(&s,&h,&query)||own{manager.settings(&id).ok()}else{None}'),
+      b.includes(
+        'ifauthorized(&s,&h,&query)||own{s.manager.lock().await.settings(&id).ok()}else{None}',
+      ),
       'UI settings must remain credential/own-plugin gated',
     );
     requireProof(
-      b.includes('manager.plugins.get(&id)') &&
-        b.includes('credential_eq(&l.token,token)') &&
-        b.includes('l.panes.iter()'),
-      'UI own-plugin credential must bind requested plugin',
+      b.includes('letmutown=false;') &&
+        b.includes(
+          'hub.plugin_token_matches(token.to_owned(),id.clone()).await.unwrap_or(false)',
+        ) &&
+        b.includes('own=true;break;'),
+      'UI own-plugin credential must bind requested plugin through the live authority registry',
     );
     requireProof(
       b.includes('.ui_file(&id,&path)'),
@@ -674,6 +678,25 @@ describe('HTTP registry source and cross-plane policy', { timeout: 90_000 }, () 
     reject('host downgrade', (d) => {
       d.routes.find((r) => r.pattern === '/plugins/install')!.disposition = 'guarded';
     });
+    reject('plugin token authority bypass', (_, s) =>
+      s.set(
+        'services/hub-rs/src/plugins/http.rs',
+        s
+          .get('services/hub-rs/src/plugins/http.rs')!
+          .replace(
+            'plugin_token_matches(token.to_owned(), id.clone())',
+            'plugin_token_matches(token.to_owned(), "other".into())',
+          ),
+      ),
+    );
+    reject('plugin authority lookup fails open', (_, s) =>
+      s.set(
+        'services/hub-rs/src/plugins/http.rs',
+        s
+          .get('services/hub-rs/src/plugins/http.rs')!
+          .replace('.unwrap_or(false)', '.unwrap_or(true)'),
+      ),
+    );
     reject('credential removal', (_, s) =>
       s.set(
         'services/hub-rs/src/plugins/http.rs',

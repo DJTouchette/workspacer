@@ -91,7 +91,7 @@ impl Policy {
         if value.as_bytes().is_empty() {
             return true;
         }
-        let Some(url) = value
+        let Some(_url) = value
             .to_str()
             .ok()
             .and_then(|raw| url::Url::parse(raw).ok())
@@ -106,9 +106,15 @@ impl Policy {
         else {
             return false;
         };
-        let Some(host) = url
-            .host_str()
-            .map(|host| host.trim_matches(['[', ']']).to_ascii_lowercase())
+        // WHATWG URL parsing canonicalizes default ports and legacy IPv4
+        // spellings. The reference gate compares the presented authorities:
+        // retain those bytes instead of allowing normalization to change the
+        // Host/Origin comparison or turn a non-IP name into loopback.
+        let Some((host, origin_authority)) = value
+            .to_str()
+            .ok()
+            .and_then(|raw| raw.parse::<axum::http::Uri>().ok())
+            .and_then(|uri| uri.authority().and_then(|value| authority(value.as_str())))
         else {
             return false;
         };
@@ -122,8 +128,6 @@ impl Policy {
         else {
             return false;
         };
-        let origin_authority =
-            url[url::Position::BeforeHost..url::Position::AfterPort].to_ascii_lowercase();
         origin_authority == request_authority
             && (self.trusted.contains(&host) || !ip_loopback(local.unwrap_or(self.bound)))
     }
@@ -172,5 +176,78 @@ mod tests {
         assert!(!p.browser(&headers("node.ts.net", "null")));
         assert!(!p.browser(&headers("node.ts.net", "https://foreign.test")));
         assert!(Policy::new("127.0.0.1".parse().unwrap(), &["*".into()]).is_err());
+    }
+    #[test]
+    fn reference_host_origin_matrix_preserves_authority_spelling_and_socket_identity() {
+        let policy = Policy::new("0.0.0.0".parse().unwrap(), &[]).unwrap();
+        let local = Some("127.0.0.1".parse().unwrap());
+        for host in [
+            "evil.example.com",
+            "evil.example.com:7895",
+            "attacker.tld:80",
+            "127.0.0.1.evil.tld:7895",
+            "10.0.0.9:7895",
+        ] {
+            assert!(!policy.host(&headers(host, ""), local), "{host}");
+        }
+        for host in [
+            "127.0.0.1:7895",
+            "127.0.0.1",
+            "127.0.0.2:7895",
+            "localhost:7895",
+            "LOCALHOST:7895",
+            "[::1]:7895",
+            "",
+        ] {
+            assert!(policy.host(&headers(host, ""), local), "{host}");
+        }
+        for (origin, allowed) in [
+            ("", true),
+            ("http://127.0.0.1:7895", true),
+            ("https://127.0.0.1:7895", true),
+            ("http://localhost:5173", true),
+            ("http://127.0.0.1:65000", true),
+            ("http://evil.example.com", false),
+            ("https://attacker.test", false),
+            ("null", false),
+            ("http://127.1", false),
+            ("http://0x7f000001", false),
+            ("http://2130706433", false),
+        ] {
+            assert_eq!(
+                policy.origin(&headers("127.0.0.1:7895", origin), local),
+                allowed,
+                "{origin}"
+            );
+        }
+        let public = Some("100.64.0.5".parse().unwrap());
+        let same = headers(
+            "myhost.tailnet.ts.net:7895",
+            "http://myhost.tailnet.ts.net:7895",
+        );
+        assert!(policy.host(&same, public) && policy.origin(&same, public));
+        assert!(!policy.origin(&same, local));
+        assert!(!policy.origin(
+            &headers(
+                "myhost.tailnet.ts.net:7895",
+                "http://evil.tailnet.ts.net:7895"
+            ),
+            public
+        ));
+        let trusted = Policy::new("127.0.0.1".parse().unwrap(), &["node.ts.net".into()]).unwrap();
+        for (host, origin, allowed) in [
+            ("node.ts.net:80", "http://node.ts.net:80", true),
+            ("node.ts.net:443", "https://node.ts.net:443", true),
+            ("NODE.ts.net:443", "https://node.ts.net:443", true),
+            ("node.ts.net", "https://node.ts.net:443", false),
+            ("node.ts.net:443", "https://node.ts.net", false),
+            ("node.ts.net:80", "http://other.ts.net:80", false),
+        ] {
+            assert_eq!(
+                trusted.browser(&headers(host, origin)),
+                allowed,
+                "{host} {origin}"
+            );
+        }
     }
 }

@@ -28,6 +28,7 @@ const patterns: Record<string, RegExp> = {
   rustPathBindingRe: /let\s+(?:mut\s+)?(?:path|root)\s*=\s*(?:format!\(\s*)?"(\/[^"\n]*)"/g,
   rustRootRe: /"(\{root\}\/[^"\n]*)"/g,
   rustExternalRe: /(?:self\.json\(|self\.base\.join\()\s*(?:&?format!\(\s*)?"([^"\n]+)"/g,
+  rustURLJoinRe: /\bbase\.join\(\s*"([^"\n]+)"/g,
   rustSpawnEndpointsRe: /"(\/sessions\/spawn(?:-managed)?)"/g,
   rustEmbeddedSuffixRe: /session_path\(&id,\s*"([^"]+)"/g,
   rustEmbeddedSessionsRe: /Command::Sessions\s*=>\s*\("([^"]+)"/g,
@@ -150,7 +151,7 @@ function scanCaller(c: Caller, source = read(c.file)): { path: string; line: num
     for (const match of source.matchAll(re)) {
       let raw = match[1];
       if (name === 'rustRootRe') raw = raw.replace('{root}', '/sessions/:id');
-      if (name === 'rustExternalRe') raw = '/' + raw;
+      if (name === 'rustExternalRe' || name === 'rustURLJoinRe') raw = '/' + raw;
       if (name === 'rustEmbeddedSuffixRe') raw = '/sessions/:id/' + raw;
       const p = normalize(raw + c.suffix);
       if (!p) continue;
@@ -315,6 +316,24 @@ describe('claudemon route ownership', { timeout: 60_000 }, () => {
   it('every_caller_path_is_served', () => expect(callerErrors(callers, routes)).toEqual([]));
   it('every_caller_file_is_enumerated', () =>
     expect(discoveryErrors(walk(), callers, nonCallers)).toEqual([]));
+  it('external daemon readiness claims the actual health URL and cannot disappear silently', () => {
+    const caller = callers.find((c) => c.file === 'services/hub-rs/src/cli/readiness.rs');
+    expect(caller).toBeDefined();
+    expect(scanCaller(caller!).map((route) => route.path)).toEqual(['/health']);
+    expect(
+      callerErrors(
+        [caller!],
+        routes.filter((r) => r.pattern !== '/health'),
+      ).join(),
+    ).toContain('/health');
+    expect(
+      discoveryErrors(
+        walk(),
+        callers.filter((c) => c !== caller),
+        nonCallers,
+      ).join(),
+    ).toContain(caller!.file);
+  });
   it('every_route_has_caller_or_declared_reason', () =>
     expect(orphanErrors(callers, routes, reasons)).toEqual([]));
   it('normalizes interpolations and Go concatenation without inventing suffix routes', () => {

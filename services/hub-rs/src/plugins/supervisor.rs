@@ -87,6 +87,12 @@ impl Process for NativeChild {
                 }
                 let deadline = Instant::now() + Duration::from_secs(5);
                 while self.child.try_wait()?.is_none() && Instant::now() < deadline {
+                    // A TERM handler may flush more than a pipe buffer. Keep
+                    // draining while it exits instead of forcing that
+                    // cooperative child to wait until the kill deadline.
+                    for pipe in &mut self.logs {
+                        pipe.drain(false);
+                    }
                     thread::sleep(Duration::from_millis(20));
                 }
                 if self.child.try_wait()?.is_none() {

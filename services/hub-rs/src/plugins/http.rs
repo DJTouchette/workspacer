@@ -235,27 +235,28 @@ async fn ui(
         Ok(p) => p,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
-    let seed = {
-        let manager = s.manager.lock().await;
-        let own = credential(&h, &query).is_some_and(|presented| {
-            [
-                presented,
-                query.get("busToken").map(String::as_str).unwrap_or(""),
-            ]
-            .iter()
-            .any(|token| {
-                !token.is_empty()
-                    && manager.plugins.get(&id).is_some_and(|l| {
-                        crate::auth::credential_eq(&l.token, token)
-                            || l.panes.iter().any(|t| crate::auth::credential_eq(t, token))
-                    })
-            })
-        });
-        if authorized(&s, &h, &query) || own {
-            manager.settings(&id).ok()
-        } else {
-            None
+    let mut own = false;
+    if let Some(presented) = credential(&h, &query) {
+        let hub = s.manager.lock().await.hub.clone();
+        for token in [
+            presented,
+            query.get("busToken").map(String::as_str).unwrap_or(""),
+        ] {
+            if !token.is_empty()
+                && hub
+                    .plugin_token_matches(token.to_owned(), id.clone())
+                    .await
+                    .unwrap_or(false)
+            {
+                own = true;
+                break;
+            }
         }
+    }
+    let seed = if authorized(&s, &h, &query) || own {
+        s.manager.lock().await.settings(&id).ok()
+    } else {
+        None
     };
     let mime = match path.extension().and_then(|x| x.to_str()).unwrap_or("") {
         "html" => "text/html; charset=utf-8",

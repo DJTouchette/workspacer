@@ -1047,3 +1047,83 @@ async fn dev_identity_change_retires_old_directory_owner_and_announces_unload() 
     manager.stop().await.unwrap();
     hub.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn ui_settings_require_a_current_plugin_credential() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = fixture(dir.path());
+    let hub = Hub::start(Options::default()).unwrap();
+    hub.ready().await.unwrap();
+    let mut manager = Manager::new(dir.path().into(), hub.handle(), String::new());
+    manager.add(manifest).await.unwrap();
+    let pane = manager.pane_token("fixture").await.unwrap();
+    let manager = Arc::new(tokio::sync::Mutex::new(manager));
+    let router = workspacer_hub::plugins::http::router(manager.clone(), "host-key".into());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    let tokens: Value = client
+        .get(format!("{base}/plugins/tokens"))
+        .bearer_auth("host-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let stable = tokens["fixture"].as_str().unwrap().to_owned();
+    hub.handle()
+        .register_plugin("other-token".into(), "other".into(), vec![])
+        .await
+        .unwrap();
+    for (token, expected) in [
+        ("", false),
+        ("wrong", false),
+        ("other-token", false),
+        (stable.as_str(), true),
+        (pane.as_str(), true),
+        ("host-key", true),
+    ] {
+        for form in ["token", "busToken", "bearer"] {
+            // busToken is a plugin identity transport, never an owner credential.
+            if token == "host-key" && form == "busToken" {
+                continue;
+            }
+            let request = client.get(format!("{base}/plugins/ui/fixture/"));
+            let request = if form == "bearer" {
+                request.bearer_auth(token)
+            } else {
+                request.query(&[(form, token)])
+            };
+            let body = request.send().await.unwrap().text().await.unwrap();
+            assert_eq!(
+                body.contains("__WKS_SETTINGS__"),
+                expected,
+                "{form} token={token:?}"
+            );
+        }
+    }
+    // Revoke directly in the authority owner, leaving the manager's cache intact.
+    for token in [&stable, &pane] {
+        hub.handle().revoke_plugin(token.clone()).await.unwrap();
+        for form in ["token", "busToken", "bearer"] {
+            let request = client.get(format!("{base}/plugins/ui/fixture/"));
+            let request = if form == "bearer" {
+                request.bearer_auth(token)
+            } else {
+                request.query(&[(form, token.as_str())])
+            };
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status(), 200, "public UI remains available");
+            assert!(
+                !response.text().await.unwrap().contains("__WKS_SETTINGS__"),
+                "revoked {form}"
+            );
+        }
+    }
+    task.abort();
+    let _ = task.await;
+    manager.lock().await.stop().await.unwrap();
+    hub.shutdown().unwrap();
+}

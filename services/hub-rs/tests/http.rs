@@ -101,3 +101,95 @@ async fn health_hides_topology_and_websocket_checks_credentials_host_and_origin(
     client.close(None).await.unwrap();
     hub.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn actual_proxy_authorities_preserve_explicit_ports_and_host_pin_every_hub_route() {
+    let root = tempfile::tempdir().unwrap();
+    let mut options = Options::default();
+    options.plugins_dir = Some(root.path().join("plugins"));
+    options.plugin_examples_dir = Some(root.path().join("empty-examples"));
+    options.listen = Some("127.0.0.1:0".parse().unwrap());
+    options.token = "fixture-owner".into();
+    options.trusted_hosts = vec!["node.ts.net".into()];
+    let hub = Hub::start(options).unwrap();
+    let address = hub.ready().await.unwrap().unwrap();
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let registry: serde_json::Value =
+        serde_json::from_str(include_str!("../../../contracts/http-route-registry.json")).unwrap();
+    let routes: Vec<_> = registry["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|route| route["server"] == "hub")
+        .collect();
+    assert!(routes.len() >= 30);
+    for required in ["/bus", "/health", "/plugins"] {
+        assert!(routes.iter().any(|route| route["pattern"] == required));
+    }
+    for route in routes {
+        let pattern = route["pattern"].as_str().unwrap();
+        let probe = pattern
+            .split('/')
+            .map(|part| {
+                if part.starts_with(':') || part.starts_with('*') {
+                    "fixture"
+                } else {
+                    part
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        for verb in route["verbs"].as_object().unwrap().keys() {
+            let method = reqwest::Method::from_bytes(verb.as_bytes()).unwrap();
+            for (host, blocked) in [("evil.example:443", true), ("node.ts.net:443", false)] {
+                let response = http
+                    .request(method.clone(), format!("http://{address}{probe}"))
+                    .header("host", host)
+                    .bearer_auth("fixture-owner")
+                    .json(&json!({"url":"unsupported-fixture://invalid","id":"missing-fixture","pluginId":"missing-fixture"}))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status() == reqwest::StatusCode::FORBIDDEN,
+                    blocked,
+                    "{verb} {pattern} via {host}: {}",
+                    response.status()
+                );
+            }
+        }
+    }
+    for (host, origin, allowed) in [
+        ("node.ts.net:443", "https://node.ts.net:443", true),
+        ("node.ts.net:80", "http://node.ts.net:80", true),
+        ("node.ts.net", "https://node.ts.net:443", false),
+        ("node.ts.net:443", "https://node.ts.net", false),
+        ("node.ts.net:443", "http://127.1", false),
+        ("node.ts.net:443", "https://foreign.test:443", false),
+        ("node.ts.net:443", "null", false),
+    ] {
+        let mut request = format!("ws://{address}/bus?token=fixture-owner")
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert("host", host.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("origin", origin.parse().unwrap());
+        match tokio_tungstenite::connect_async(request).await {
+            Ok((mut socket, _)) => {
+                assert!(allowed, "{host} {origin}");
+                socket.close(None).await.unwrap();
+            }
+            Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                assert!(!allowed, "{host} {origin}: {}", response.status());
+                assert_eq!(response.status().as_u16(), 403);
+            }
+            Err(error) => panic!("{host} {origin}: {error}"),
+        }
+    }
+    hub.shutdown().unwrap();
+}
