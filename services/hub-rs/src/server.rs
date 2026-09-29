@@ -216,6 +216,9 @@ pub(crate) async fn serve(
         listener,
         router.into_make_service_with_connect_info::<policy::Socket>(),
     )
+    // Match Go net.TCPConn and our outbound clients: event subscribers have
+    // no application reply to carry an ACK, so Nagle can add a delayed-ACK wait.
+    .tcp_nodelay(true)
     .await?;
     Ok(())
 }

@@ -36,7 +36,7 @@ This is a local transport budget, not a whole-application rendering, agent laten
 throughput, memory or cross-language speedup claim. No provider process or user
 state is accessed by the fixture.
 
-## Verified optimized checkpoint
+## Historical optimized checkpoint
 
 [Linux CI run 36627270467](https://github.com/DJTouchette/workspacer/actions/runs/36627270467/job/109607363818)
 on `a271e4ff32d0283ce6c43879014ac5455fe0026e` executed the guard successfully:
@@ -45,3 +45,34 @@ was 406µs, hub p99 was 542µs, the echo p99 was 165µs, and the measured hub sh
 was 377µs against the retained 5,000µs budget. The receipt reported `pass`, with
 zero ignored tests in that optimized invocation. This is one source-revision
 checkpoint; the dedicated CI job continues to guard subsequent pushes.
+
+## Current regression and transport correction
+
+[Linux CI run 36637635374](https://github.com/DJTouchette/workspacer/actions/runs/36637635374/job/109642058103)
+on `a7e11447b5a8a9097401786e46b2d3b1e47f0048` **failed** the same real budget:
+hub p50 437µs, hub p99 40,037µs, echo p99 143µs and adjusted share 39,894µs.
+It ran 2,000/500 samples with the same 200-turn, 38,005-byte payload. This failure
+remains the current optimized receipt until a corrected run passes.
+
+The pinned transport sources show a configuration discrepancy. Go's TCP
+constructor enables TCP_NODELAY for both dialed and accepted sockets. Rust's
+production outbound Client already disables Nagle, but the benchmark used
+`connect_async`, whose default does not. The pinned Axum 0.7 accepted listener
+also leaves TCP_NODELAY unset unless its builder is configured explicitly.
+The hub HTTP/bus, MCP and claudemon API/hook listeners now set it; benchmark
+clients and bare echo sockets use the same option. Other discovered Axum serve
+calls are isolated test/example servers, not additional production listeners.
+
+`tests/tcp_options.rs` provides Linux accepted-socket configuration checks using
+kernel socket options, including a deliberate false/true control. The benchmark
+asserts its client/echo options and retains its existing debug payload exchange.
+These are configuration/functional evidence, not optimized timing evidence. The
+roughly 40ms stalls are consistent with Nagle/delayed ACK behavior, but that causal
+interpretation does not replace the next unchanged 5ms CI guard. No thresholds,
+sample counts, skip rules or payload workload have been relaxed.
+
+The Linux accepted-socket target passed both tests locally
+(`/tmp/workspacer-tcp-options-check.log`): actual hub/MCP health responses were
+observed and their accepted sockets had TCP_NODELAY set, while client sockets
+were deliberately unset. The false/true control also passed. This establishes
+socket configuration; the corrected optimized timing receipt remains pending.

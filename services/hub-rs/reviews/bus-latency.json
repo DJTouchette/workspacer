@@ -8,7 +8,8 @@
         ".github/workflows/ci.yml"
       ],
       "tests": [
-        "services/hub-rs/tests/bus_latency.rs"
+        "services/hub-rs/tests/bus_latency.rs",
+        "services/hub-rs/tests/tcp_options.rs"
       ],
       "review": {
         "verifiedCheckpoint": {
@@ -31,10 +32,46 @@
         "scope": "Transport propagation budget only; not whole-app latency/FPS, throughput, memory, or a Go-versus-Rust speedup.",
         "behaviors": [
           "Read the full retained benchmark/test source, including its real5ms p99-share assertion. Rust measures the same200-turn mature-snapshot fields/text (38005bytes),2000single-flight hub WebSocket roundtrips and500same-size bare text-WebSocket echoes. It uses the same len*99/100 quantile index and strict hubP99-floorP99<=5ms boundary.",
-          "The guard is actually invoked by make test-hub-latency and LinuxCI hub-latency in --release mode. The measured CI run executed1guard with0ignored tests and reported pass, not unmeasurable. The replacement source is byte-identical to the measured candidate.",
+          "The guard is actually invoked by make test-hub-latency and LinuxCI hub-latency in --release mode. The measured CI run executed1guard with0ignored tests and reported pass, not unmeasurable. That historical source was byte-identical to the then-measured candidate; the subsequent a7 failure and pending transport correction are recorded separately below.",
           "Bare echo floor greater than2.5ms is explicitly unmeasurable; Windows scheduler jitter and explicit instrumentation are also unmeasurable. An accidental debug budget invocation fails rather than comparing Rustdebug to optimizedGo. Three ordinarydebug tests verify the workload, threshold decisions, and actual3hub+3echo-frame functional exchange.",
           "Go testing.B status-only/20-turn/200-turn and16-subscriber informational microbenchmark wrappers are retired with the Go test framework; they asserted no additional pass/fail budget. The normative mature-snapshot budget is retained, and no replacement throughput/fanout performance claim is inferred from it. Real stream reads/writes and the whole measurement have deadlines, preventing dropped-frame hangs."
-        ]
+        ],
+        "latestRegression": {
+          "commit": "a7e11447b5a8a9097401786e46b2d3b1e47f0048",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36637635374",
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36637635374/job/109642058103",
+          "result": "fail",
+          "profile": "release",
+          "turns": 200,
+          "payloadBytes": 38005,
+          "hubSamples": 2000,
+          "floorSamples": 500,
+          "hubP50Micros": 437,
+          "hubP99Micros": 40037,
+          "floorP99Micros": 143,
+          "hubShareP99Micros": 39894,
+          "budgetMicros": 5000
+        },
+        "transportCorrection": {
+          "status": "Linux accepted-socket configuration tests2 passed; debug transport/protocol tests and corrected optimized CI still pending",
+          "sourceEvidence": [
+            "Production Client already passes disable_nagle=true to tokio-tungstenite0.24 connect_async_with_config. Benchmark connect_async defaulted false.",
+            "Pinned axum0.7.9 Serve defaults tcp_nodelay=None; Go net.newTCPConn calls setNoDelay(fd,true) for dialed and accepted sockets.",
+            "Hub HTTP/bus, MCP, embedded/standalone claudemon API and hook listener builders now explicitly set tcp_nodelay(true). Benchmark clients and bare echo accepted socket are matched to that policy."
+          ],
+          "proof": [
+            "tests/tcp_options.rs inspects actual accepted hub/MCP socket TCP_NODELAY through the Linux kernel, with a controlled false/true accepted-socket floor.",
+            "Benchmark client/echo assertions read the live socket option; existing debug functional test validates actual payload delivery.",
+            "Neither configuration proof nor the historical a271 pass establishes that the corrected current optimized run passes. The observed approximately40ms tail is consistent with delayed ACK/Nagle; measured follow-up is required."
+          ],
+          "budgetChanged": false,
+          "configurationReceipt": {
+            "command": "cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test tcp_options",
+            "result": "2 passed;0 failed;0 ignored",
+            "log": "/tmp/workspacer-tcp-options-check.log",
+            "scope": "Actual accepted hub/MCP socket options; deliberately opposite client option and raw accepted-socket false/true control. Not timing evidence."
+          }
+        }
       },
       "status": "ported"
     },
@@ -46,7 +83,8 @@
         ".github/workflows/ci.yml"
       ],
       "tests": [
-        "services/hub-rs/tests/bus_latency.rs"
+        "services/hub-rs/tests/bus_latency.rs",
+        "services/hub-rs/tests/tcp_options.rs"
       ],
       "review": {
         "verifiedCheckpoint": {
@@ -71,7 +109,43 @@
           "Retired only this Go-specific raceEnabled constant/build-tag helper, not the latency assertion it guarded.",
           "Rust requires release-mode measurement and uses WORKSPACER_BUS_LATENCY_INSTRUMENTED=1 for an explicitly instrumented run. This is not a claim to automatically detect every custom Rust sanitizer or profiling flag. LinuxCI invokes the uninstrumented release command; captured receipt passes the real budget.",
           "Windows and noisy bare-echo floors remain explicit unmeasurable outcomes. A skipped/unmeasurable run is never described as proof of the performance budget."
-        ]
+        ],
+        "latestRegression": {
+          "commit": "a7e11447b5a8a9097401786e46b2d3b1e47f0048",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36637635374",
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36637635374/job/109642058103",
+          "result": "fail",
+          "profile": "release",
+          "turns": 200,
+          "payloadBytes": 38005,
+          "hubSamples": 2000,
+          "floorSamples": 500,
+          "hubP50Micros": 437,
+          "hubP99Micros": 40037,
+          "floorP99Micros": 143,
+          "hubShareP99Micros": 39894,
+          "budgetMicros": 5000
+        },
+        "transportCorrection": {
+          "status": "Linux accepted-socket configuration tests2 passed; debug transport/protocol tests and corrected optimized CI still pending",
+          "sourceEvidence": [
+            "Production Client already passes disable_nagle=true to tokio-tungstenite0.24 connect_async_with_config. Benchmark connect_async defaulted false.",
+            "Pinned axum0.7.9 Serve defaults tcp_nodelay=None; Go net.newTCPConn calls setNoDelay(fd,true) for dialed and accepted sockets.",
+            "Hub HTTP/bus, MCP, embedded/standalone claudemon API and hook listener builders now explicitly set tcp_nodelay(true). Benchmark clients and bare echo accepted socket are matched to that policy."
+          ],
+          "proof": [
+            "tests/tcp_options.rs inspects actual accepted hub/MCP socket TCP_NODELAY through the Linux kernel, with a controlled false/true accepted-socket floor.",
+            "Benchmark client/echo assertions read the live socket option; existing debug functional test validates actual payload delivery.",
+            "Neither configuration proof nor the historical a271 pass establishes that the corrected current optimized run passes. The observed approximately40ms tail is consistent with delayed ACK/Nagle; measured follow-up is required."
+          ],
+          "budgetChanged": false,
+          "configurationReceipt": {
+            "command": "cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test tcp_options",
+            "result": "2 passed;0 failed;0 ignored",
+            "log": "/tmp/workspacer-tcp-options-check.log",
+            "scope": "Actual accepted hub/MCP socket options; deliberately opposite client option and raw accepted-socket false/true control. Not timing evidence."
+          }
+        }
       },
       "status": "retired",
       "reason": "Go race/non-race build-tag plumbing exists solely to tell the old Go latency test when Go race instrumentation makes its budget unmeasurable. There is no Go runtime or go test -race build in the replacement; the Rust guard is explicitly optimized and reports instrumentation/unsupported-platform runs as unmeasurable."
@@ -84,7 +158,8 @@
         ".github/workflows/ci.yml"
       ],
       "tests": [
-        "services/hub-rs/tests/bus_latency.rs"
+        "services/hub-rs/tests/bus_latency.rs",
+        "services/hub-rs/tests/tcp_options.rs"
       ],
       "review": {
         "verifiedCheckpoint": {
@@ -109,7 +184,43 @@
           "Retired only this Go-specific raceEnabled constant/build-tag helper, not the latency assertion it guarded.",
           "Rust requires release-mode measurement and uses WORKSPACER_BUS_LATENCY_INSTRUMENTED=1 for an explicitly instrumented run. This is not a claim to automatically detect every custom Rust sanitizer or profiling flag. LinuxCI invokes the uninstrumented release command; captured receipt passes the real budget.",
           "Windows and noisy bare-echo floors remain explicit unmeasurable outcomes. A skipped/unmeasurable run is never described as proof of the performance budget."
-        ]
+        ],
+        "latestRegression": {
+          "commit": "a7e11447b5a8a9097401786e46b2d3b1e47f0048",
+          "run": "https://github.com/DJTouchette/workspacer/actions/runs/36637635374",
+          "job": "https://github.com/DJTouchette/workspacer/actions/runs/36637635374/job/109642058103",
+          "result": "fail",
+          "profile": "release",
+          "turns": 200,
+          "payloadBytes": 38005,
+          "hubSamples": 2000,
+          "floorSamples": 500,
+          "hubP50Micros": 437,
+          "hubP99Micros": 40037,
+          "floorP99Micros": 143,
+          "hubShareP99Micros": 39894,
+          "budgetMicros": 5000
+        },
+        "transportCorrection": {
+          "status": "Linux accepted-socket configuration tests2 passed; debug transport/protocol tests and corrected optimized CI still pending",
+          "sourceEvidence": [
+            "Production Client already passes disable_nagle=true to tokio-tungstenite0.24 connect_async_with_config. Benchmark connect_async defaulted false.",
+            "Pinned axum0.7.9 Serve defaults tcp_nodelay=None; Go net.newTCPConn calls setNoDelay(fd,true) for dialed and accepted sockets.",
+            "Hub HTTP/bus, MCP, embedded/standalone claudemon API and hook listener builders now explicitly set tcp_nodelay(true). Benchmark clients and bare echo accepted socket are matched to that policy."
+          ],
+          "proof": [
+            "tests/tcp_options.rs inspects actual accepted hub/MCP socket TCP_NODELAY through the Linux kernel, with a controlled false/true accepted-socket floor.",
+            "Benchmark client/echo assertions read the live socket option; existing debug functional test validates actual payload delivery.",
+            "Neither configuration proof nor the historical a271 pass establishes that the corrected current optimized run passes. The observed approximately40ms tail is consistent with delayed ACK/Nagle; measured follow-up is required."
+          ],
+          "budgetChanged": false,
+          "configurationReceipt": {
+            "command": "cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test tcp_options",
+            "result": "2 passed;0 failed;0 ignored",
+            "log": "/tmp/workspacer-tcp-options-check.log",
+            "scope": "Actual accepted hub/MCP socket options; deliberately opposite client option and raw accepted-socket false/true control. Not timing evidence."
+          }
+        }
       },
       "status": "retired",
       "reason": "Go race/non-race build-tag plumbing exists solely to tell the old Go latency test when Go race instrumentation makes its budget unmeasurable. There is no Go runtime or go test -race build in the replacement; the Rust guard is explicitly optimized and reports instrumentation/unsupported-platform runs as unmeasurable."

@@ -17,6 +17,16 @@ const BUDGET: Duration = Duration::from_millis(5);
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
+fn assert_nodelay(socket: &Socket) {
+    let MaybeTlsStream::Plain(stream) = socket.get_ref() else {
+        panic!("the isolated latency fixture must use plaintext loopback TCP");
+    };
+    assert!(
+        stream.nodelay().unwrap(),
+        "benchmark must match Go and production outbound clients"
+    );
+}
+
 fn snapshot(turns: usize) -> Value {
     let conversation: Vec<_> = (0..turns).map(|i| json!({
         "role":"assistant",
@@ -76,11 +86,16 @@ async fn write(socket: &mut Socket, message: Message) {
 async fn connect(address: std::net::SocketAddr) -> Socket {
     let (mut socket, _) = tokio::time::timeout(
         IO_TIMEOUT,
-        tokio_tungstenite::connect_async(format!("ws://{address}/bus?token=latency-fixture-only")),
+        tokio_tungstenite::connect_async_with_config(
+            format!("ws://{address}/bus?token=latency-fixture-only"),
+            None,
+            true,
+        ),
     )
     .await
     .unwrap()
     .unwrap();
+    assert_nodelay(&socket);
     let Message::Text(hello) = receive(&mut socket).await else {
         panic!("missing hello")
     };
@@ -142,6 +157,8 @@ async fn floor_samples(payload_bytes: usize, count: usize) -> Vec<Duration> {
     let address = listener.local_addr().unwrap();
     let echo = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
+        stream.set_nodelay(true).unwrap();
+        assert!(stream.nodelay().unwrap());
         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
         for _ in 0..count {
             let message = socket.next().await.expect("echo client closed").unwrap();
@@ -150,9 +167,11 @@ async fn floor_samples(payload_bytes: usize, count: usize) -> Vec<Duration> {
         // Dropping the echo after its final write flushes the queued response
         // without leaving a server task alive past the measurement.
     });
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
-        .await
-        .unwrap();
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async_with_config(format!("ws://{address}"), None, true)
+            .await
+            .unwrap();
+    assert_nodelay(&socket);
     let payload = "\0".repeat(payload_bytes);
     let mut elapsed = Vec::with_capacity(count);
     for _ in 0..count {

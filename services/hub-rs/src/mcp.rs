@@ -781,7 +781,7 @@ pub(crate) async fn serve(
         crate::server::policy::guard,
     ));
     let result = tokio::select! {
-        result = axum::serve(listener, router.into_make_service_with_connect_info::<crate::server::policy::Socket>()) => result.map_err(anyhow::Error::from),
+        result = axum::serve(listener, router.into_make_service_with_connect_info::<crate::server::policy::Socket>()).tcp_nodelay(true) => result.map_err(anyhow::Error::from),
         result = plugins.run(catalog_hub) => result.and_then(|_|Err(anyhow::anyhow!("plugin catalog observer stopped"))),
     };
     legacy.shutdown().await;

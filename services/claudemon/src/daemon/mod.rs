@@ -258,8 +258,10 @@ async fn run_controlled(
 
     let command_task = control
         .map(|control| embedded::serve_commands(control, api_app.clone(), hook_addr, api_addr));
-    let mut hook_task = tokio::spawn(async move { axum::serve(hook_listener, hook_app).await });
-    let mut api_task = tokio::spawn(async move { axum::serve(api_listener, api_app).await });
+    let mut hook_task =
+        tokio::spawn(async move { axum::serve(hook_listener, hook_app).tcp_nodelay(true).await });
+    let mut api_task =
+        tokio::spawn(async move { axum::serve(api_listener, api_app).tcp_nodelay(true).await });
     let result = tokio::select! {
         result = &mut hook_task => result.context("hook listener task failed").and_then(|r| r.context("hook listener failed")),
         result = &mut api_task => result.context("API listener task failed").and_then(|r| r.context("API listener failed")),
