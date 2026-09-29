@@ -59,6 +59,20 @@ async fn local_service_calls_events_and_persistence_survive_restart() {
             .unwrap()["schedule"],
         "five_day"
     );
+    for params in [
+        json!({"schedule":"seven_day"}),
+        json!({"curve":"calendar"}),
+        json!({"url":"http://other"}),
+    ] {
+        assert!(
+            client
+                .call("usage.report", params)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("no parameters accepted")
+        );
+    }
     client
         .call("config.save", json!({"ui":{"theme":"persisted"}}))
         .await

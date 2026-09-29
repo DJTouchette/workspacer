@@ -341,3 +341,39 @@ async fn shell_context_can_ignore_an_exit_code_and_veto_without_starting_a_model
     );
     hub.shutdown().unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_cancels_shell_descendants_and_their_shared_output_pipe() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut options = Options::default();
+    options.jobs_file = Some(directory.path().join("jobs.json"));
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    let job=client.call("jobs.upsert",json!({"name":"owned shell","enabled":true,"trigger":{"kind":"manual"},"action":{"kind":"shell","shell":{"cwd":directory.path(),"command":"sh -c 'echo $$ > descendant.pid; touch ready; while [ ! -e release ]; do sleep 0.01; done; touch escaped' & wait"}}})).await.unwrap();
+    assert_eq!(
+        client
+            .call("jobs.run", json!({"id":job["id"]}))
+            .await
+            .unwrap()["started"],
+        true
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !directory.path().join("ready").exists() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let shutdown = hub.shutdown();
+    // Also release a surviving fixture on failure, so a failed test cannot
+    // leave its deliberate wait loop running indefinitely.
+    std::fs::write(directory.path().join("release"), "release").unwrap();
+    shutdown.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !directory.path().join("escaped").exists(),
+        "shell descendant survived hub shutdown"
+    );
+}

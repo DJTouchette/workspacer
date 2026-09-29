@@ -8,9 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Read,
     path::PathBuf,
-    process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -800,7 +798,6 @@ async fn perform(job: &Job, client: &impl Runner) -> Result<String> {
     }
 }
 async fn shell(action: &Value) -> Result<(String, bool)> {
-    let (reader, writer) = os_pipe::pipe()?;
     let mut command = if cfg!(windows) {
         let mut c = tokio::process::Command::new("cmd");
         c.args(["/C", string(action, "command")]);
@@ -810,36 +807,19 @@ async fn shell(action: &Value) -> Result<(String, bool)> {
         c.args(["-c", string(action, "command")]);
         c
     };
-    command
-        .stdin(Stdio::null())
-        .stdout(writer.try_clone()?)
-        .stderr(writer)
-        .kill_on_drop(true);
     if !string(action, "cwd").is_empty() {
         command.current_dir(string(action, "cwd"));
     }
-    let mut child = command.spawn()?;
-    drop(command);
-    // Refuse an excessive stream rather than truncate before context guards.
-    let read = tokio::task::spawn_blocking(move || {
-        let mut bytes = Vec::new();
-        reader.take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-        if bytes.len() > 64 * 1024 * 1024 {
-            bail!("job output exceeds 64 MiB");
-        }
-        Ok::<_, anyhow::Error>(String::from_utf8_lossy(&bytes).into_owned())
-    });
-    let result = tokio::try_join!(async { read.await? }, async {
-        Ok::<_, anyhow::Error>(child.wait().await?)
-    });
-    match result {
-        Ok((text, status)) => Ok((text, status.success())),
-        Err(error) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            Err(error)
-        }
-    }
+    let output = super::owned_process::capture_combined(
+        &mut command,
+        64 * 1024 * 1024,
+        Duration::from_secs(15 * 60),
+    )
+    .await?;
+    Ok((
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        output.status.success(),
+    ))
 }
 pub(crate) fn install(
     mut options: Options,

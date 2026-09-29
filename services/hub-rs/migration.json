@@ -2526,16 +2526,38 @@
       ]
     },
     "services/hub/cmd/hub/usageprefs.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs"
+      ],
+      "review": "Retains trusted-only write, any authorized read tier, explicit empty/unset schedule and configurable flag, no-parameter read, invalid/no-storage refusal with unchanged disk/value, stored normalized response and restart persistence. New actual preference-to-RoutingService projection test fixes UTC deterministically rather than skipping hosts without local timezone: Saturday five-day expectation exceeds calendar, observations and short window remain identical, Wednesday-reset weekend stays flat and resumes Monday. Matrix and routing.yaml bytes remain unchanged and exact directory inventory permits only preference sidecar creation. Real public RPC test rejects schedule/curve/URL params on usage.report even after saving preference. Portable source registration and composition witness tests preserve classified/no-parameter caller authority responsibilities. Old Go filesystem-call textual grep is replaced by real filesystem and unchanged-policy assertions plus the reviewed typed sidecar path; no claim that it scans arbitrary future writer code. Core pacing output fields also remain pinned by shared limits corpus tests.",
       "sha256": "8609d40e9895a0fe3d1657dabc00394fe35a2a2309ed4c52b5e32647bec6a59b",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/tests/services.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts"
+      ]
     },
     "services/hub/cmd/hub/usageprefs_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs"
+      ],
+      "review": "Retains trusted-only write, any authorized read tier, explicit empty/unset schedule and configurable flag, no-parameter read, invalid/no-storage refusal with unchanged disk/value, stored normalized response and restart persistence. New actual preference-to-RoutingService projection test fixes UTC deterministically rather than skipping hosts without local timezone: Saturday five-day expectation exceeds calendar, observations and short window remain identical, Wednesday-reset weekend stays flat and resumes Monday. Matrix and routing.yaml bytes remain unchanged and exact directory inventory permits only preference sidecar creation. Real public RPC test rejects schedule/curve/URL params on usage.report even after saving preference. Portable source registration and composition witness tests preserve classified/no-parameter caller authority responsibilities. Old Go filesystem-call textual grep is replaced by real filesystem and unchanged-policy assertions plus the reviewed typed sidecar path; no claim that it scans arbitrary future writer code. Core pacing output fields also remain pinned by shared limits corpus tests.",
       "sha256": "b30353c9dc7cc85d911c04f683c52332f63f9f030404330419ef586e5adc8c35",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/usage_prefs.rs",
+        "services/hub-rs/tests/services.rs",
+        "services/hub-rs/src/services/limits.rs",
+        "apps/desktop/src/main/services/compositionWitnesses.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts"
+      ]
     },
     "services/hub/cmd/hub/usagereport.go": {
       "replacement": [],

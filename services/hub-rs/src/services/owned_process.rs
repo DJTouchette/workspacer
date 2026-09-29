@@ -3,6 +3,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use claudemon::child_env::SanitizeChildEnvironment;
 use std::{
     process::{ExitStatus, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use tokio::{
@@ -84,7 +85,10 @@ impl Owner {
             job,
         })
     }
-    fn kill(&mut self) -> Result<()> {
+    // A successful signal submission is not proof that inherited pipes closed:
+    // a child can fork while the kernel traverses the group. Keep the original
+    // unreaped anchor and cancellation cleanup armed during the final drain.
+    fn signal_retained(&self) -> Result<()> {
         if !self.armed {
             return Ok(());
         }
@@ -106,6 +110,10 @@ impl Owner {
         }
         #[cfg(windows)]
         self.job.terminate()?;
+        Ok(())
+    }
+    fn kill(&mut self) -> Result<()> {
+        self.signal_retained()?;
         self.armed = false;
         Ok(())
     }
@@ -138,6 +146,21 @@ async fn bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>
     }
     Ok(data)
 }
+
+// Called only inside the exchange's existing overall timeout. Every repetition
+// must re-prove the original child anchor; no wait/reap occurs in this loop.
+async fn signal_until_drained(
+    mut signal: impl FnMut() -> Result<()>,
+    drained: &AtomicBool,
+) -> Result<()> {
+    loop {
+        signal()?;
+        if drained.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
 pub(crate) async fn capture(
     command: &mut Command,
     limit: usize,
@@ -151,7 +174,7 @@ pub(crate) async fn capture_limits(
     stderr_limit: usize,
     timeout: Duration,
 ) -> Result<Captured> {
-    capture_inner(command, None, stdout_limit, stderr_limit, timeout).await
+    capture_inner(command, None, stdout_limit, stderr_limit, timeout, false).await
 }
 pub(crate) async fn capture_input(
     command: &mut Command,
@@ -160,14 +183,96 @@ pub(crate) async fn capture_input(
     stderr_limit: usize,
     timeout: Duration,
 ) -> Result<Captured> {
-    capture_inner(command, Some(input), stdout_limit, stderr_limit, timeout).await
+    capture_inner(
+        command,
+        Some(input),
+        stdout_limit,
+        stderr_limit,
+        timeout,
+        false,
+    )
+    .await
 }
+/// Preserve the kernel pipe's combined stdout/stderr order with the same owned
+/// cancellation and descendant cleanup as ordinary capture. stderr is empty.
+pub(crate) async fn capture_combined(
+    command: &mut Command,
+    limit: usize,
+    timeout: Duration,
+) -> Result<Captured> {
+    capture_inner(command, None, limit, 0, timeout, true).await
+}
+
+/// Polling an anonymous pipe avoids a detached blocking reader on cancellation.
+/// The sole reader only reads available bytes; every wait remains cancellable.
+async fn combined_bounded(mut reader: os_pipe::PipeReader, limit: usize) -> Result<Vec<u8>> {
+    use std::io::Read;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let fd = reader.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+    }
+    let mut data = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        #[cfg(not(windows))]
+        let read_count = buffer.len();
+        #[cfg(windows)]
+        let read_count = {
+            use std::os::windows::io::AsRawHandle;
+            let mut available = 0;
+            let ok = unsafe {
+                windows_sys::Win32::System::Pipes::PeekNamedPipe(
+                    reader.as_raw_handle() as _,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                    &mut available,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                let error = std::io::Error::last_os_error();
+                if matches!(error.raw_os_error(), Some(109 | 233)) {
+                    return Ok(data);
+                }
+                return Err(error.into());
+            }
+            if available == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                continue;
+            }
+            (available as usize).min(buffer.len())
+        };
+        match reader.read(&mut buffer[..read_count]) {
+            Ok(0) => return Ok(data),
+            Ok(count) => {
+                if data.len().saturating_add(count) > limit {
+                    return Err(OutputLimit(limit).into());
+                }
+                data.extend_from_slice(&buffer[..count]);
+                tokio::task::yield_now().await;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                tokio::time::sleep(Duration::from_millis(5)).await
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 async fn capture_inner(
     command: &mut Command,
     input: Option<&[u8]>,
     stdout_limit: usize,
     stderr_limit: usize,
     timeout: Duration,
+    combined: bool,
 ) -> Result<Captured> {
     command
         .stdin(if input.is_some() {
@@ -178,6 +283,13 @@ async fn capture_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(false);
+    let combined_reader = if combined {
+        let (reader, writer) = os_pipe::pipe()?;
+        command.stdout(writer.try_clone()?).stderr(writer);
+        Some(reader)
+    } else {
+        None
+    };
     #[cfg(unix)]
     command.process_group(0);
     command.scrub_host_authority();
@@ -185,6 +297,11 @@ async fn capture_inner(
     let (mut child, job) = claudemon::child_job::Job::spawn_tokio(command, 0)?;
     #[cfg(not(windows))]
     let mut child = command.spawn()?;
+    if combined {
+        // Command retains its configured handles after spawn. Release the
+        // parent's write ends now, otherwise a finished child cannot yield EOF.
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
     let mut owner = match Owner::new(
         &child,
         #[cfg(windows)]
@@ -206,12 +323,24 @@ async fn capture_inner(
         }
     };
     let stdin = child.stdin.take();
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
     let result = tokio::time::timeout(timeout, async {
         let (stdout, stderr, status, ()) = tokio::try_join!(
-            bounded(stdout, stdout_limit),
-            bounded(stderr, stderr_limit),
+            async {
+                if let Some(reader) = combined_reader {
+                    combined_bounded(reader, stdout_limit).await
+                } else {
+                    bounded(stdout.expect("piped stdout"), stdout_limit).await
+                }
+            },
+            async {
+                if let Some(stderr) = stderr {
+                    bounded(stderr, stderr_limit).await
+                } else {
+                    Ok(Vec::new())
+                }
+            },
             owner.wait(&mut child),
             async {
                 if let (Some(mut stdin), Some(input)) = (stdin, input) {
@@ -294,6 +423,12 @@ pub(crate) async fn json_exchange(
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let result = tokio::time::timeout(timeout, async {
+        let stderr_drained = AtomicBool::new(false);
+        let drain_stderr = async {
+            let bytes = bounded(stderr, limit).await?;
+            stderr_drained.store(true, Ordering::Release);
+            Ok::<_, anyhow::Error>(bytes)
+        };
         let exchange = async {
             async fn write(
                 writer: &mut tokio::process::ChildStdin,
@@ -325,12 +460,12 @@ pub(crate) async fn json_exchange(
                 let (frames, answer) = next(frame)?;
                 write(&mut stdin, &frames).await?;
                 if let Some(answer) = answer {
-                    owner.kill()?;
+                    signal_until_drained(|| owner.signal_retained(), &stderr_drained).await?;
                     return Ok(answer);
                 }
             }
         };
-        let (answer, _) = tokio::try_join!(exchange, bounded(stderr, limit))?;
+        let (answer, _) = tokio::try_join!(exchange, drain_stderr)?;
         Ok::<_, anyhow::Error>(answer)
     })
     .await;
@@ -463,6 +598,62 @@ mod tests {
 #[cfg(all(test, unix))]
 mod retry_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn post_answer_drain_rechecks_anchor_and_stops_before_signaling_reaped_identity() {
+        let drained = AtomicBool::new(false);
+        let mut observed = 0;
+        let mut signals = 0;
+        let error = signal_until_drained(
+            || {
+                signal_with_anchor_retry(
+                    || {
+                        observed += 1;
+                        if observed == 1 {
+                            Ok(false)
+                        } else {
+                            Err(std::io::Error::from_raw_os_error(libc::ECHILD).into())
+                        }
+                    },
+                    || {
+                        signals += 1;
+                        Ok(())
+                    },
+                    0,
+                    || unreachable!(),
+                )
+            },
+            &drained,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(observed, 2);
+        assert_eq!(signals, 1);
+        assert!(error.to_string().contains("anchor was reaped"));
+    }
+
+    #[tokio::test]
+    async fn post_answer_drain_repeats_until_inherited_pipe_closes() {
+        let drained = AtomicBool::new(false);
+        let mut signals = 0;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            signal_until_drained(
+                || {
+                    signals += 1;
+                    if signals == 3 {
+                        drained.store(true, Ordering::Release);
+                    }
+                    Ok(())
+                },
+                &drained,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(signals, 3);
+    }
     use std::cell::Cell;
     #[test]
     fn transient_permission_retry_is_bounded_and_rechecks_anchor_before_every_signal() {
@@ -567,5 +758,122 @@ mod retry_tests {
             };
             assert!(error.downcast_ref::<OutputLimit>().is_some(), "{error:#}");
         }
+    }
+}
+
+#[cfg(test)]
+mod combined_tests {
+    use super::*;
+    use std::io::Write;
+    const MODE: &str = "WKS_COMBINED_CAPTURE_FIXTURE";
+    fn fixture_name() -> &'static str {
+        concat!(module_path!(), "::combined_fixture")
+            .split_once("::")
+            .unwrap()
+            .1
+    }
+    fn command(mode: &str, directory: &std::path::Path) -> Command {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", fixture_name(), "--nocapture"])
+            .env(MODE, mode)
+            .env("WKS_COMBINED_CAPTURE_DIRECTORY", directory);
+        command
+    }
+    #[test]
+    fn combined_fixture() {
+        let Ok(mode) = std::env::var(MODE) else {
+            return;
+        };
+        let directory =
+            std::path::PathBuf::from(std::env::var_os("WKS_COMBINED_CAPTURE_DIRECTORY").unwrap());
+        match mode.as_str() {
+            "ordered" => {
+                std::io::stdout().write_all(b"STDOUT-FIRST\n").unwrap();
+                std::io::stdout().flush().unwrap();
+                std::io::stderr().write_all(b"STDERR-MIDDLE\n").unwrap();
+                std::io::stderr().flush().unwrap();
+                std::io::stdout().write_all(b"STDOUT-LAST\n").unwrap();
+                std::io::stdout().flush().unwrap();
+                std::process::exit(7);
+            }
+            "parent" => {
+                let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", fixture_name(), "--nocapture"])
+                    .env(MODE, "descendant")
+                    .spawn()
+                    .unwrap();
+                std::fs::write(directory.join("pid"), child.id().to_string()).unwrap();
+                child.wait().unwrap();
+            }
+            "descendant" => {
+                std::fs::write(directory.join("ready"), "ready").unwrap();
+                while !directory.join("release").exists() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                std::fs::write(
+                    directory.join("escaped"),
+                    "descendant survived cancellation",
+                )
+                .unwrap();
+            }
+            _ => panic!("unknown fixture mode"),
+        }
+    }
+    #[tokio::test]
+    async fn combined_capture_preserves_cross_stream_order_and_nonzero_exit() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = capture_combined(
+            &mut command("ordered", directory.path()),
+            4096,
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.status.code(), Some(7));
+        assert!(output.stderr.is_empty());
+        assert!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("STDOUT-FIRST\nSTDERR-MIDDLE\nSTDOUT-LAST\n")
+        );
+    }
+    #[tokio::test]
+    async fn combined_capture_rejects_oversized_output_instead_of_partial_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let result = capture_combined(
+            &mut command("ordered", directory.path()),
+            8,
+            Duration::from_secs(3),
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("output limit ignored"),
+            Err(error) => error,
+        };
+        assert!(error.downcast_ref::<OutputLimit>().is_some(), "{error:#}");
+    }
+    #[tokio::test]
+    async fn cancelled_combined_capture_stops_descendants_holding_the_pipe() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = command("parent", directory.path());
+        let task = tokio::spawn(async move {
+            capture_combined(&mut command, 4096, Duration::from_secs(30)).await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !directory.path().join("ready").exists() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        std::fs::write(directory.path().join("release"), "release").unwrap();
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            !directory.path().join("escaped").exists(),
+            "descendant executed after cancellation"
+        );
     }
 }
