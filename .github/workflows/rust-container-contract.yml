@@ -31,6 +31,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Combined verifier requires owned launch readiness
+        run: node --test deploy/fly/combined/web-capability-contract.test.cjs
       - name: Generated deployment definitions are current
         run: python3 deploy/fly/rust/render-dockerfiles.py --check
       - name: Build the default Rust role images

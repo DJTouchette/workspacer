@@ -134,7 +134,7 @@ use futures_util::future::BoxFuture;
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -149,7 +149,11 @@ struct Host {
     bound: AtomicBool,
     spawned: AtomicUsize,
     fail_transfer: AtomicBool,
-    spawn_delay: AtomicU64,
+    hold_spawn: AtomicBool,
+    spawn_entered: tokio::sync::Notify,
+    spawn_release: tokio::sync::Semaphore,
+    transfer_attempts: AtomicUsize,
+    close_changed: tokio::sync::Notify,
     sent: Mutex<Vec<(String, String)>>,
     closed: Mutex<Vec<String>>,
     outcomes: Mutex<Vec<SendOutcome>>,
@@ -197,9 +201,9 @@ impl ReplacementHost for Host {
     fn spawn(&self, _: String, _: Value) -> BoxFuture<'_, Result<()>> {
         Box::pin(async move {
             self.spawned.fetch_add(1, Ordering::SeqCst);
-            let delay = self.spawn_delay.load(Ordering::SeqCst);
-            if delay > 0 {
-                tokio::time::sleep(Duration::from_millis(delay)).await;
+            self.spawn_entered.notify_one();
+            if self.hold_spawn.load(Ordering::SeqCst) {
+                self.spawn_release.acquire().await.unwrap().forget();
             }
             Ok(())
         })
@@ -209,6 +213,7 @@ impl ReplacementHost for Host {
     }
     fn reparent(&self, source: String, successor: String) -> BoxFuture<'_, Result<Vec<String>>> {
         Box::pin(async move {
+            self.transfer_attempts.fetch_add(1, Ordering::SeqCst);
             if self.fail_transfer.swap(false, Ordering::SeqCst) {
                 anyhow::bail!("worker transfer acknowledgement lost");
             }
@@ -247,6 +252,7 @@ impl ReplacementHost for Host {
     fn close(&self, id: String) -> BoxFuture<'_, Result<()>> {
         Box::pin(async move {
             self.closed.lock().unwrap().push(id);
+            self.close_changed.notify_one();
             Ok(())
         })
     }
@@ -269,6 +275,20 @@ fn service_fixture() -> (
     Arc<Host>,
     Arc<ReplacementService>,
 ) {
+    service_fixture_with_timing(Timing {
+        preparation: Duration::from_secs(1),
+        poll: Duration::from_millis(1),
+        delivery: Duration::from_millis(200),
+    })
+}
+fn service_fixture_with_timing(
+    timing: Timing,
+) -> (
+    tempfile::TempDir,
+    Arc<TaskStore>,
+    Arc<Host>,
+    Arc<ReplacementService>,
+) {
     let dir = tempfile::tempdir().unwrap();
     // Real coordinator launch records carry the canonical host cwd. On macOS
     // tempdir's /var spelling is a symlink; on Windows avoid verbatim aliases.
@@ -284,7 +304,11 @@ fn service_fixture() -> (
         bound: AtomicBool::new(false),
         spawned: AtomicUsize::new(0),
         fail_transfer: AtomicBool::new(false),
-        spawn_delay: AtomicU64::new(0),
+        hold_spawn: AtomicBool::new(false),
+        spawn_entered: tokio::sync::Notify::new(),
+        spawn_release: tokio::sync::Semaphore::new(0),
+        transfer_attempts: AtomicUsize::new(0),
+        close_changed: tokio::sync::Notify::new(),
         sent: Mutex::new(vec![]),
         closed: Mutex::new(vec![]),
         outcomes: Mutex::new(vec![]),
@@ -293,16 +317,7 @@ fn service_fixture() -> (
             json!({"sessionId":"worker","cwd":cwd,"parentSessionId":"old"}),
         ]),
     });
-    let service = ReplacementService::new(
-        state,
-        tasks.clone(),
-        host.clone(),
-        Timing {
-            preparation: Duration::from_secs(1),
-            poll: Duration::from_millis(1),
-            delivery: Duration::from_millis(200),
-        },
-    );
+    let service = ReplacementService::new(state, tasks.clone(), host.clone(), timing);
     (dir, tasks, host, service)
 }
 #[tokio::test]
@@ -531,13 +546,20 @@ fn finish_acknowledgement_is_fenced_by_stop_state_as_well_as_reply() {
 
 #[tokio::test]
 async fn interrupted_worker_transfer_rolls_task_ownership_forward_never_back() {
-    let (_dir, tasks, host, service) = service_fixture();
+    // This tests a lost transfer acknowledgement, not setup I/O completing
+    // within a one-second synthetic preparation deadline under Windows CI.
+    let (_dir, tasks, host, service) = service_fixture_with_timing(Timing::default());
     host.fail_transfer.store(true, Ordering::SeqCst);
     let response=service.request(json!({"action":"start","sourceSessionId":"old","paneId":"pane","workspaceId":"workspace"})).await;
     let id = response["operations"][0]["operationId"].as_str().unwrap();
     service.idle(id).await;
     let interrupted = service.state.get(id).unwrap();
-    assert_eq!(interrupted["phase"], "recovery-required");
+    assert_eq!(
+        host.transfer_attempts.load(Ordering::SeqCst),
+        1,
+        "{interrupted}"
+    );
+    assert_eq!(interrupted["phase"], "recovery-required", "{interrupted}");
     assert_eq!(interrupted["transferIntent"], true);
     assert_eq!(interrupted["taskTransferCommitted"], true);
     assert_eq!(
@@ -560,18 +582,50 @@ async fn interrupted_worker_transfer_rolls_task_ownership_forward_never_back() {
 }
 #[tokio::test]
 async fn late_successor_after_timeout_is_closed_without_kickoff() {
-    let (_dir, tasks, host, service) = service_fixture();
-    host.spawn_delay.store(350, Ordering::SeqCst);
+    let (_dir, tasks, host, service) = service_fixture_with_timing(Timing {
+        delivery: Duration::from_millis(200),
+        ..Timing::default()
+    });
+    host.hold_spawn.store(true, Ordering::SeqCst);
     let response=service.request(json!({"action":"start","sourceSessionId":"old","paneId":"pane","workspaceId":"workspace"})).await;
     let id = response["operations"][0]["operationId"].as_str().unwrap();
+    tokio::time::timeout(Duration::from_secs(15), host.spawn_entered.notified())
+        .await
+        .unwrap();
     service.idle(id).await;
     let failed = service.state.get(id).unwrap();
-    assert_eq!(failed["phase"], "failed");
+    assert_eq!(failed["phase"], "failed", "{failed}");
+    assert!(
+        failed["error"]
+            .as_str()
+            .unwrap()
+            .contains("Successor spawn timed out"),
+        "{failed}"
+    );
     assert_eq!(
         tasks.task("task").unwrap().unwrap()["ownerSessionId"],
         "old"
     );
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        host.closed.lock().unwrap().len(),
+        1,
+        "initial timeout cleanup"
+    );
+    // The candidate cannot complete before we have observed the timed-out
+    // operation. Its completion receipt, not another wall-clock sleep, allows
+    // the retained cleanup task to issue the second close.
+    host.spawn_release.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let notified = host.close_changed.notified();
+            if host.closed.lock().unwrap().len() >= 2 {
+                break;
+            }
+            notified.await;
+        }
+    })
+    .await
+    .unwrap();
     let closed = host.closed.lock().unwrap().clone();
     assert_eq!(closed.len(), 2);
     assert!(closed.iter().all(|id| failed["successorSessionId"] == *id));

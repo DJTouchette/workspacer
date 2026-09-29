@@ -147,6 +147,7 @@ check-hub-rust-windows-platform:
 check-hub-rust-assets:
 	python3 scripts/mcp-catalog.py --check
 	python3 scripts/generate-rust-launch-assets.py --check
+	python3 scripts/test-generate-rust-launch-assets.py
 	node scripts/generate-rust-library-assets.mjs --check
 	node scripts/generate-rust-workflow-assets.mjs --check
 	node scripts/generate-rust-fleet-assets.mjs --check

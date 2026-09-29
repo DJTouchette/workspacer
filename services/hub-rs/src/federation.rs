@@ -543,7 +543,54 @@ mod tests {
             vec![("peer".into(), "1".into())]
         );
         assert_eq!(forwarding_budget("agents.spawn"), Duration::from_secs(355));
+        assert_eq!(
+            forwarding_budget("claude.handoffAgentBrief"),
+            Duration::from_secs(175)
+        );
         assert_eq!(forwarding_budget("agents.list"), Duration::from_secs(25));
+    }
+
+    #[tokio::test]
+    async fn replacement_preserves_unchanged_link_and_retires_only_changed_or_removed_peers() {
+        let hub = crate::Hub::start(crate::Options::default()).unwrap();
+        hub.ready().await.unwrap();
+        let a = Peer {
+            name: "a".into(),
+            url: "ws://127.0.0.1:1/bus".into(),
+            token: "credential".into(),
+            dispatch: false,
+        };
+        let b = Peer {
+            name: "b".into(),
+            url: "ws://127.0.0.1:2/bus".into(),
+            ..Peer::default()
+        };
+        let mut manager = Manager::start(hub.handle(), vec![a.clone()]).unwrap();
+        let original = manager.routes.links.lock().unwrap()[0].clone();
+        manager.replace(vec![a.clone(), b.clone()]).unwrap();
+        assert!(Arc::ptr_eq(
+            &original,
+            &manager.routes.links.lock().unwrap()[0]
+        ));
+        let removed = manager.routes.links.lock().unwrap()[1].clone();
+        assert!(manager.replace(vec![a.clone(), a.clone()]).is_err());
+        assert_eq!(manager.peers().len(), 2);
+        assert!(!original.state.lock().unwrap().stopped);
+        let mut rotated = a;
+        rotated.token = "rotated".into();
+        rotated.dispatch = true;
+        manager.replace(vec![rotated]).unwrap();
+        assert!(!Arc::ptr_eq(
+            &original,
+            &manager.routes.links.lock().unwrap()[0]
+        ));
+        assert!(original.state.lock().unwrap().stopped);
+        assert!(removed.state.lock().unwrap().stopped);
+        assert_eq!(manager.peers().len(), 1);
+        assert!(manager.dispatch_enabled("a"));
+        assert!(!manager.dispatch_enabled("b"));
+        manager.shutdown().await;
+        hub.shutdown().unwrap();
     }
 }
 

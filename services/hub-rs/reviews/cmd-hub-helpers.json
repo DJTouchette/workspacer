@@ -1,0 +1,54 @@
+{
+  "records": {
+    "services/hub/cmd/hub/launchintegration.go": {
+      "replacement": [
+        "services/hub-rs/src/plugins/launch.rs",
+        "services/hub-rs/src/plugins/launch/codex.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/plugins/launch/tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "deploy/fly/combined/web-capability-contract.test.cjs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the full Go callback/authorization wrapper and traced its runtime caller to old brain replacementhost.go. The shipped Rust coordinator instead creates an opaque in-memory LaunchPermit for an active owner spawn, exact plugin/session/call identity and runtime generation. Core checks it before and after preparation and consumes it once; no JSON callId can manufacture this authority.",
+          "Preparation verifies enabled manifest, contribution version1, exact declared plugin-owned prepareMethod and supported agent; passes only version/agent/cwd/model/resume/provider facts with a20-second hook budget, rechecks both owner permit and current manifest afterward, validates returned env/argv and refuses host-owned routing/facade/identity overrides.",
+          "Existing enabled_hook_uses_bound_permit_after_facade_and_sends_only_context, revoked_owner_reply_cannot_apply_patch_and_claude_never_probes_codex, canceled_preparation_after_slow_hook_never_attempts_engine_and_revokes_credentials, no_selection_does_no_discovery_and_json_selection_cannot_forge_permit and Core launch-permit invalidation tests provide concrete proof."
+        ],
+        "intentionalDifference": "The Go plugins.prepareLaunch describe/prepare provider callback is retired, not re-exposed as an RPC. Manifest lookup and preparation are private owned stages. The only surviving shipped verifier expecting that method was adapted to authenticated health.launchReady===true plus public agents.spawn/plugins.manifests. It now has5 passing local contract/wrapper fixtures and retains its documented Node22 combined-image scope. Old Go brain callback clients belong to the retired component runtime and are not a promise of mixed-runtime launch-hook compatibility.",
+        "validation": "Named Rust launch preparation/Core authority tests passed in the existing library checkpoints, most recently the372-passing-tests merged library run whose unrelated new federation fixture initially failed (/tmp/workspacer-recent-federation-collaboration.log). Node verifier fixtures5 passed, including exact Python-assembled remote program with mocked network (/tmp/workspacer-web-capability-contract.log). No live provider process or cloud mutation was used."
+      },
+      "status": "ported",
+      "sha256": "83b00c652ccebf1f330ff7112062035db243d3b122543d96e5d487599e1d4e1c"
+    },
+    "services/hub/cmd/hub/routingceiling.go": {
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_ceiling.rs",
+        "services/hub-rs/src/runtime/routing_admission_tests.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/tests/agent_spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both complete thin Go adapters. Current RoutingService matrix is read for each admission; policy remains owned by routing rather than the transport. Rust owned coordinator, external-provider gate and source Origin cover every supported worker launch path with independent source/destination policy.",
+          "Canonical absolute/symlink cwd selects directory policy; absent, relative or unresolved cwd selects default. Concrete provider/model/effort tuple, capability and scrub markers are enforced; exact-model and fresh-resume requests are refused before launch, and explicitly unsupported provider cannot fall back silently.",
+          "SpawnAudit joins decisionId with canonical cwd, effective role/capability/provider/model/effort/toolScope, verified caller scope/fingerprint, ceiling/refusal flags and changed fields. Allowed/refused/clamped operations emit one local routing-phase row; source/destination are separate locations and owned double-preflight coalesces one outcome. The fixed because text names routing.yaml without serializing request/error secrets."
+        ],
+        "intentionalDifference": "Typed callback verdict structs and their duplicated nested tuple/retired tool-scope fields are not preserved as a separate API. Effective values live at spawn level; noncanonical cwd is absent with default ceiling key rather than emitting the old per-spawn console sentence. Safe replacement absence fails closed instead of Go callback deletion falling through to provider defaults. Sink remains bounded-file synchronous best effort as the original single-append implementation was; this is admission evidence, not launch success.",
+        "validation": "Library369 and actual bus_ceiling1 passed (/tmp/workspacer-bus-ceiling-audit.log); agent_spawn15 previously passed. New independent destination-policy real-hop test passed after correcting fixture-only permissive-source mode-shift flags and peer dispatch opt-in (/tmp/workspacer-federation-destination-fix.log). Full original-to-assertion mappings are in bus-ceiling/freshness/core review plans; these receipts do not certify cmd/hub main or the routing usage/preference adapters."
+      },
+      "status": "ported",
+      "sha256": "54d8f98b0e337243d7f37e2611ff2b766bb9e72ca4f7591051899885eefaac00"
+    }
+  }
+}

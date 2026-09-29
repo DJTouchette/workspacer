@@ -356,6 +356,32 @@ async fn two_hubs_forward_once_and_reconnect_without_replaying_calls() {
         json!({"id":"owned","cwd":"/peer-only"})
     );
     assert!(!event.id.is_empty());
+    // Selection, resolved limit and contradictory provider telemetry are
+    // independent facts; the federation layer must not complete or reconcile
+    // them. Equality is JSON semantics, not object-key/whitespace bytes.
+    let owner_snapshot = json!({
+        "sessionId":"remote-1","sparse":true,
+        "requestedSelection":{"model":"opus","contextWindow":1000000},
+        "resolvedContextWindow":1000000,
+        "usage":{"contextTokens":356380,"contextLimit":1000000},
+        "statusLine":{"contextWindowSize":200000,"contextUsedPct":178.19},
+        "peer":{"sessionId":"remote-2","requestedSelection":{"model":"sonnet","contextWindow":null}}
+    });
+    remote
+        .handle()
+        .publish_wait(Event::new(
+            "agent.snapshot",
+            "fixture",
+            owner_snapshot.clone(),
+        ))
+        .await
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.hub, "worker");
+    assert_eq!(event.data, Some(owner_snapshot));
     remote.shutdown().unwrap();
     wait_state(&manager, false).await;
     assert!(

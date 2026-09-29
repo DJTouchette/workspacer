@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only web capability inventory. Prints no tokens, prompts or config values."""
 import argparse
+from pathlib import Path
 import shlex
 import subprocess
 
@@ -36,6 +37,7 @@ const checks = [
       const health = await response.json();
       output.registeredMethods = health.methodNames ?? null;
       output.registeredCount = health.methods;
+      output.launchReady = health.launchReady;
     }
     if ((name === 'plugins' || name === 'examples') && response.ok) {
       const rows = await response.json();
@@ -51,14 +53,8 @@ const checks = [
   function finish() {
     clearTimeout(timer); ws.close();
     if (expectParity) {
-      const required=['git.stage','git.unstage','git.commit','git.push','git.commitDiff','git.commitNumstat','fs.watch','fs.unwatch','fleetWorkflows.request','desktop.managerReplacement','desktop.filePickerList','desktop.readFileBytes','desktop.sessionGrantReconcile','files.receiveUpload','plugins.prepareLaunch','federation.peersConfig','remote.tailscaleServe','ui.asset'];
-      const failures=required.filter(method=>!output.registeredMethods?.includes(method)).map(method=>'missing '+method);
-      for(const [method,result] of Object.entries(output.probes))if(result.status!=='ok')failures.push(method+': '+result.status);
-      if(output.idle?.mode!=='stop'||output.idle?.timeoutSeconds!==900)failures.push('idle stop policy changed');
-      if(output.http.pluginsCount<2||output.http.examplesCount<2)failures.push('bundled plugins unavailable');
-      if(!output.network?.available||!output.network?.serveActive||!output.network?.canServe)failures.push('network adapter unavailable');
-      if(output.runtime?.hub!=='ready'||output.runtime?.claudemon!=='ready'||output.runtime?.facade!=='ready')failures.push('runtime not ready');
-      output.validation={ok:failures.length===0,failures};if(failures.length)process.exitCode=1;
+      output.validation = validateWebCapabilityInventory(output);
+      if (!output.validation.ok) process.exitCode = 1;
     }
     console.log(JSON.stringify(output, null, 2));
   }
@@ -81,6 +77,7 @@ const checks = [
   ws.onerror = () => { clearTimeout(timer); console.error('Capability connection failed'); process.exitCode = 1; };
 })().catch(() => { console.error('Capability inventory failed'); process.exitCode = 1; });
 '''
+code = Path(__file__).with_name("web-capability-contract.cjs").read_text() + "\n" + code
 code = "const expectParity = " + ("true" if args.expect_parity else "false") + ";\n" + code
 code = "const expectPluginAdmin = " + ("true" if args.expect_plugin_admin else "false") + ";\n" + code
 subprocess.run(["flyctl", "ssh", "console", "-a", args.app, "--machine", args.machine,

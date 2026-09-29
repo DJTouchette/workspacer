@@ -218,8 +218,16 @@ event, and observes it — including across a forced reconnect.
 
 New `services/hub/internal/federation/`, wired in `cmd/hub/main.go`.
 
-A repeatable `-peer name=work,url=ws://host:7895/bus,token=…` flag matching the
-existing flag style, or a peers file if that gets unwieldy. Each peer gets a
+The original Go component exposed a repeatable `-peer` development flag. The
+Rust server uses `workspacer serve --peers-file /absolute/path/peers.json`
+(default: the Workspacer configuration directory), or the owner-only
+`federation.peersConfig` / `federation.savePeersConfig` capabilities. The file is
+a JSON array of `{ "name": "work", "url": "ws://host:7895/bus", "token": "…",
+"dispatch": false }`; omitted `dispatch` means false. Saving through the owner
+API updates the live links; editing the file directly takes effect at startup.
+The old credential-in-argv `-peer` parser is not part of the Rust CLI.
+
+In the original implementation plan, each peer gets a
 `busclient` running in a goroutine, subscribed to `*`, stamping `Hub` on every
 inbound envelope and republishing to the local broker. Mark the connection as a
 federation link so its events are never re-forwarded.
@@ -336,7 +344,8 @@ What shipped, and where reality corrected the proposal:
   - **Peers live in `peers.json` (0600), not flags or config.yaml.** A `-peer`
     flag token rides argv (`/proc` world-readable), and config.yaml is
     credential-free by design — that invariant is what keeps `config.get`
-    unguarded. The flag form remains for tests/dev.
+    unguarded. The old Go flag form was for tests/dev and is retired in the
+    Rust CLI; use `--peers-file` or the owner configuration capabilities above.
   - Forwarded envelopes get their broker `ID` cleared (per-broker id spaces)
     and `hub.peer.connected`/`disconnected` are classified open-by-decision in
     all four pinned registries (eventtopics.go, the consent fixture,

@@ -1,0 +1,248 @@
+{
+  "records": {
+    "services/hub/internal/federation/controller.go": {
+      "status": "ported",
+      "sha256": "848f135e35555d464d177f52d24f08e43816cf6a1c6c2f10d3fae6ae7b1da6eb",
+      "replacement": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ],
+      "review": {
+        "scope": "Controller constructor/Replace/manager/Peers/PeersInfo/HasPeer/DispatchEnabled/Forward source mapped to federation::Manager and Routes. Validation occurs before current links are changed; equal full Peer values retain their Arc/link/client, changed or removed links stop and publish disconnection, and old in-flight calls stay on old connections.",
+        "proof": [
+          "replacement_preserves_unchanged_link_and_retires_only_changed_or_removed_peers directly checks retained Arc identity, credential rotation creates a new link, removed/old links are stopped, invalid duplicate replacement leaves the current two-link set untouched, and dispatch/unknown-peer floors.",
+          "Existing owner configuration integration exercises live replacement through actual hub methods, including authenticated-host-only administration, redaction, omitted/empty token semantics, invalid config nonmutation and removal. Existing reconnect and power-pause tests prove no automatic mutation replay."
+        ],
+        "originalTests": [],
+        "intentionalDifferences": [
+          "Parent approved retirement of the original Go component -peer name=...,url=...,token=... dev/test flag after source/recon and docs/deploy/script sweeps found no surviving shipped launcher depending on it. Rust uses workspacer serve --peers-file PATH (default config/peers.json), a JSON array of name/url/token/dispatch objects, with dispatch default false. Owner federation.peersConfig redacts token to hasToken; savePeersConfig preserves omitted token, clears explicit empty token and reloads changed links. Direct file edits apply at startup. docs/hub-federation.md now records this CLI exception; no new credential-in-argv parser is added.",
+          "Rust owns Manager task handles and joins shutdown rather than exposing a mutable Go busclient pointer. Routes clones preserve old connection ownership for in-flight calls; replacement closes changed/removed links instead of rerouting or replaying their calls. Explicit power-stop pause/resume is additive and tested separately; replacing peer metadata does not implicitly wake a stopped machine.",
+          "Forwarded JSON payload values are preserved semantically, including absent versus explicit-null fields and contradictory owner/provider facts. serde_json may reorder object keys or normalize whitespace; raw JSON lexical byte identity asserted by the Go RawMessage test is deliberately not promised. No federation model/window reconciliation occurs.",
+          "Topic allowlist is agent.* and workflow.*; already-stamped events are dropped, peer stamp is assigned only internally, and peer event ID is cleared for local broker allocation. This enforces one-hop propagation, not an acyclic network topology. Go private forwarded/dropped counters and exact connected-log wording are not a public contract; lifecycle events and PeerInfo remain observable.",
+          "Rust validates duplicate names and URL host presence before mutating links, preserves peer=1 despite pre-existing query parameters, and never derives destination host authority from link authentication. Production network fixtures require explicit credentials; old anonymous Go loopback harness startup is retired.",
+          "Remote worker launch now requires explicit Peer.dispatch=true, including ownerless forwarded agents.spawn. Go used dispatch only to enable return-channel stamping and permitted an unowned fire-and-forget spawn without it. Linked visibility and ordinary qualified reads remain independent of dispatch. This is the stronger owned execution opt-in boundary; tests must opt in before claiming to exercise destination routing."
+        ],
+        "validation": "Root combined checkpoint: 372 library tests passed; the new destination-policy fixture failed before reaching its intended boundary; federation integration5 passed, including the complete semantic owner snapshot. Log /tmp/workspacer-recent-federation-collaboration.log also confirms exact unchanged-link identity regression passed. Corrected only fixture setup: disable both reviewer/deep_reviewer freshness at the permissive source (mode shifts count), and opt this peer into worker dispatch. The exact destination-policy regression then passed: 1 passed,0 failed,0 ignored,373 filtered out; /tmp/workspacer-federation-destination-fix.log. No new full-library green claim after those test-only corrections. Existing source-only policy regression had already passed the earlier full checkpoint."
+      }
+    },
+    "services/hub/internal/federation/controller_test.go": {
+      "status": "ported",
+      "sha256": "21f1cc4e32d2dc9067cf381a88c0ee6bf3465dc8bc78e3326caf6d757482c1af",
+      "replacement": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ],
+      "review": {
+        "scope": "Both original tests mapped independently.",
+        "proof": [
+          "TestControllerPreservesUnchangedLinks -> replacement_preserves_unchanged_link_and_retires_only_changed_or_removed_peers, matching the original retained-client identity assertion with exact Arc identity rather than merely peer-count equality.",
+          "TestForwardingBudgetPreservesLongOperations -> peer_marker_cannot_be_shadowed_by_existing_query_or_fragment explicitly asserts spawn355s, authored-brief175s and ordinary-read25s budgets."
+        ],
+        "originalTests": [
+          "TestControllerPreservesUnchangedLinks",
+          "TestForwardingBudgetPreservesLongOperations"
+        ],
+        "intentionalDifferences": [
+          "Parent approved retirement of the original Go component -peer name=...,url=...,token=... dev/test flag after source/recon and docs/deploy/script sweeps found no surviving shipped launcher depending on it. Rust uses workspacer serve --peers-file PATH (default config/peers.json), a JSON array of name/url/token/dispatch objects, with dispatch default false. Owner federation.peersConfig redacts token to hasToken; savePeersConfig preserves omitted token, clears explicit empty token and reloads changed links. Direct file edits apply at startup. docs/hub-federation.md now records this CLI exception; no new credential-in-argv parser is added.",
+          "Rust owns Manager task handles and joins shutdown rather than exposing a mutable Go busclient pointer. Routes clones preserve old connection ownership for in-flight calls; replacement closes changed/removed links instead of rerouting or replaying their calls. Explicit power-stop pause/resume is additive and tested separately; replacing peer metadata does not implicitly wake a stopped machine.",
+          "Forwarded JSON payload values are preserved semantically, including absent versus explicit-null fields and contradictory owner/provider facts. serde_json may reorder object keys or normalize whitespace; raw JSON lexical byte identity asserted by the Go RawMessage test is deliberately not promised. No federation model/window reconciliation occurs.",
+          "Topic allowlist is agent.* and workflow.*; already-stamped events are dropped, peer stamp is assigned only internally, and peer event ID is cleared for local broker allocation. This enforces one-hop propagation, not an acyclic network topology. Go private forwarded/dropped counters and exact connected-log wording are not a public contract; lifecycle events and PeerInfo remain observable.",
+          "Rust validates duplicate names and URL host presence before mutating links, preserves peer=1 despite pre-existing query parameters, and never derives destination host authority from link authentication. Production network fixtures require explicit credentials; old anonymous Go loopback harness startup is retired.",
+          "Remote worker launch now requires explicit Peer.dispatch=true, including ownerless forwarded agents.spawn. Go used dispatch only to enable return-channel stamping and permitted an unowned fire-and-forget spawn without it. Linked visibility and ordinary qualified reads remain independent of dispatch. This is the stronger owned execution opt-in boundary; tests must opt in before claiming to exercise destination routing."
+        ],
+        "validation": "Root combined checkpoint: 372 library tests passed; the new destination-policy fixture failed before reaching its intended boundary; federation integration5 passed, including the complete semantic owner snapshot. Log /tmp/workspacer-recent-federation-collaboration.log also confirms exact unchanged-link identity regression passed. Corrected only fixture setup: disable both reviewer/deep_reviewer freshness at the permissive source (mode shifts count), and opt this peer into worker dispatch. The exact destination-policy regression then passed: 1 passed,0 failed,0 ignored,373 filtered out; /tmp/workspacer-federation-destination-fix.log. No new full-library green claim after those test-only corrections. Existing source-only policy regression had already passed the earlier full checkpoint."
+      }
+    },
+    "services/hub/internal/federation/federation.go": {
+      "status": "ported",
+      "sha256": "195f2d19a49ccc7d6970ab159e633704bfa823e7cf7bc3a6e87917068b0436b4",
+      "replacement": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ],
+      "review": {
+        "scope": "Peer config/name validation/default path, Manager/Link/Controller lifecycle, curated forwarding, peer-qualified routing, peer marker, timeout budgets and PeerInfo source reviewed in full. CLI flag parser exception is explicit below.",
+        "proof": [
+          "federation.rs load_peers/Peer::validate/Peer::link_url plus tests peer_files_preserve_credentials_and_fail_loudly_on_corruption and peer-marker query replacement cover missing/null/corrupt data, name/URL normalization, preserved token bytes, duplicate rejection, safe dispatch default and unshadowable peer provenance.",
+          "Routes::forward retains unknown/disconnected refusal and peer credential enforcement; forwarding_budget is provider_timeout minus5seconds, preserving25/175/355-second operation budgets. Existing router_checks_both_scopes_and_sanitizes_before_the_remote_hop exercises bare-method scope, plugin refusal and downgraded owner provenance.",
+          "run_link subscribes before connected publication, reseeds on loss, maintains millisecond PeerInfo.lastSeen and RFC3339 disconnection payload, reconnects with bounded backoff and does not replay in-flight RPCs. two_hubs_forward_once_and_reconnect_without_replaying_calls proves curated event sentinel ordering, new local ID, peer stamp, qualified result, unknown/disconnected errors and post-reconnect delivery.",
+          "Manager replacement and owned shutdown map Controller behavior; config.rs saves commit-and-apply in one owned blocking operation, with independent tests for caller deadline/cancellation and shutdown joining."
+        ],
+        "originalTests": [],
+        "intentionalDifferences": [
+          "Parent approved retirement of the original Go component -peer name=...,url=...,token=... dev/test flag after source/recon and docs/deploy/script sweeps found no surviving shipped launcher depending on it. Rust uses workspacer serve --peers-file PATH (default config/peers.json), a JSON array of name/url/token/dispatch objects, with dispatch default false. Owner federation.peersConfig redacts token to hasToken; savePeersConfig preserves omitted token, clears explicit empty token and reloads changed links. Direct file edits apply at startup. docs/hub-federation.md now records this CLI exception; no new credential-in-argv parser is added.",
+          "Rust owns Manager task handles and joins shutdown rather than exposing a mutable Go busclient pointer. Routes clones preserve old connection ownership for in-flight calls; replacement closes changed/removed links instead of rerouting or replaying their calls. Explicit power-stop pause/resume is additive and tested separately; replacing peer metadata does not implicitly wake a stopped machine.",
+          "Forwarded JSON payload values are preserved semantically, including absent versus explicit-null fields and contradictory owner/provider facts. serde_json may reorder object keys or normalize whitespace; raw JSON lexical byte identity asserted by the Go RawMessage test is deliberately not promised. No federation model/window reconciliation occurs.",
+          "Topic allowlist is agent.* and workflow.*; already-stamped events are dropped, peer stamp is assigned only internally, and peer event ID is cleared for local broker allocation. This enforces one-hop propagation, not an acyclic network topology. Go private forwarded/dropped counters and exact connected-log wording are not a public contract; lifecycle events and PeerInfo remain observable.",
+          "Rust validates duplicate names and URL host presence before mutating links, preserves peer=1 despite pre-existing query parameters, and never derives destination host authority from link authentication. Production network fixtures require explicit credentials; old anonymous Go loopback harness startup is retired.",
+          "Remote worker launch now requires explicit Peer.dispatch=true, including ownerless forwarded agents.spawn. Go used dispatch only to enable return-channel stamping and permitted an unowned fire-and-forget spawn without it. Linked visibility and ordinary qualified reads remain independent of dispatch. This is the stronger owned execution opt-in boundary; tests must opt in before claiming to exercise destination routing."
+        ],
+        "validation": "Root combined checkpoint: 372 library tests passed; the new destination-policy fixture failed before reaching its intended boundary; federation integration5 passed, including the complete semantic owner snapshot. Log /tmp/workspacer-recent-federation-collaboration.log also confirms exact unchanged-link identity regression passed. Corrected only fixture setup: disable both reviewer/deep_reviewer freshness at the permissive source (mode shifts count), and opt this peer into worker dispatch. The exact destination-policy regression then passed: 1 passed,0 failed,0 ignored,373 filtered out; /tmp/workspacer-federation-destination-fix.log. No new full-library green claim after those test-only corrections. Existing source-only policy regression had already passed the earlier full checkpoint."
+      }
+    },
+    "services/hub/internal/federation/federation_test.go": {
+      "status": "ported",
+      "sha256": "a8be468f77251ec08391785ee4bccead374d9bfa0aa09136092342cafb1befe6",
+      "replacement": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ],
+      "review": {
+        "scope": "Original parser and real two-hub end-to-end assertions reviewed individually.",
+        "proof": [
+          "TestParsePeerFlag is intentionally retired with the original component dev flag, not claimed covered by an unrelated parser. Peer::validate and load_peers remain the retained configuration boundaries; owner APIs and --peers-file are the documented replacements, and no active launcher uses -peer.",
+          "TestFederationEndToEnd -> actual federation integrations: forwarded fleet snapshot retains data and peer stamp/new local ID; off-list layout and already-stamped events do not precede the sentinel; qualified method result and unknown peer error persist; scoped bare-method policy and plugin provenance are tested separately by real connected hubs."
+        ],
+        "originalTests": [
+          "TestParsePeerFlag",
+          "TestFederationEndToEnd"
+        ],
+        "intentionalDifferences": [
+          "Parent approved retirement of the original Go component -peer name=...,url=...,token=... dev/test flag after source/recon and docs/deploy/script sweeps found no surviving shipped launcher depending on it. Rust uses workspacer serve --peers-file PATH (default config/peers.json), a JSON array of name/url/token/dispatch objects, with dispatch default false. Owner federation.peersConfig redacts token to hasToken; savePeersConfig preserves omitted token, clears explicit empty token and reloads changed links. Direct file edits apply at startup. docs/hub-federation.md now records this CLI exception; no new credential-in-argv parser is added.",
+          "Rust owns Manager task handles and joins shutdown rather than exposing a mutable Go busclient pointer. Routes clones preserve old connection ownership for in-flight calls; replacement closes changed/removed links instead of rerouting or replaying their calls. Explicit power-stop pause/resume is additive and tested separately; replacing peer metadata does not implicitly wake a stopped machine.",
+          "Forwarded JSON payload values are preserved semantically, including absent versus explicit-null fields and contradictory owner/provider facts. serde_json may reorder object keys or normalize whitespace; raw JSON lexical byte identity asserted by the Go RawMessage test is deliberately not promised. No federation model/window reconciliation occurs.",
+          "Topic allowlist is agent.* and workflow.*; already-stamped events are dropped, peer stamp is assigned only internally, and peer event ID is cleared for local broker allocation. This enforces one-hop propagation, not an acyclic network topology. Go private forwarded/dropped counters and exact connected-log wording are not a public contract; lifecycle events and PeerInfo remain observable.",
+          "Rust validates duplicate names and URL host presence before mutating links, preserves peer=1 despite pre-existing query parameters, and never derives destination host authority from link authentication. Production network fixtures require explicit credentials; old anonymous Go loopback harness startup is retired.",
+          "Remote worker launch now requires explicit Peer.dispatch=true, including ownerless forwarded agents.spawn. Go used dispatch only to enable return-channel stamping and permitted an unowned fire-and-forget spawn without it. Linked visibility and ordinary qualified reads remain independent of dispatch. This is the stronger owned execution opt-in boundary; tests must opt in before claiming to exercise destination routing."
+        ],
+        "validation": "Root combined checkpoint: 372 library tests passed; the new destination-policy fixture failed before reaching its intended boundary; federation integration5 passed, including the complete semantic owner snapshot. Log /tmp/workspacer-recent-federation-collaboration.log also confirms exact unchanged-link identity regression passed. Corrected only fixture setup: disable both reviewer/deep_reviewer freshness at the permissive source (mode shifts count), and opt this peer into worker dispatch. The exact destination-policy regression then passed: 1 passed,0 failed,0 ignored,373 filtered out; /tmp/workspacer-federation-destination-fix.log. No new full-library green claim after those test-only corrections. Existing source-only policy regression had already passed the earlier full checkpoint."
+      }
+    },
+    "services/hub/internal/federation/ownerselection_test.go": {
+      "status": "ported",
+      "sha256": "e289c734e2f4043d45c4002b731821a84bf12e9fbf3494e796513e63ad6d81a8",
+      "replacement": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ],
+      "review": {
+        "scope": "TestFederatedSnapshotCarriesOwnerSelectionVerbatim retains the semantic owner-facts invariant through a real peer socket.",
+        "proof": [
+          "Expanded two_hubs_forward_once_and_reconnect_without_replaying_calls sends the original multi-row sparse snapshot: requestedSelection opus/1M, resolvedContextWindow1M, usage356380/1M, provider statusLine200k/178.19%, and nested sonnet requestedSelection with explicit contextWindow:null. Received Event.data equals the entire original JSON value and Event.hub equals worker. No missing field is synthesized and no contradictory provider field is reconciled.",
+          "Raw lexical RawMessage equality is retired as an encoding-specific assertion; object key order and whitespace do not define owner model facts. This is explicit rather than calling serde reserialization byte-identical."
+        ],
+        "originalTests": [
+          "TestFederatedSnapshotCarriesOwnerSelectionVerbatim"
+        ],
+        "intentionalDifferences": [
+          "Parent approved retirement of the original Go component -peer name=...,url=...,token=... dev/test flag after source/recon and docs/deploy/script sweeps found no surviving shipped launcher depending on it. Rust uses workspacer serve --peers-file PATH (default config/peers.json), a JSON array of name/url/token/dispatch objects, with dispatch default false. Owner federation.peersConfig redacts token to hasToken; savePeersConfig preserves omitted token, clears explicit empty token and reloads changed links. Direct file edits apply at startup. docs/hub-federation.md now records this CLI exception; no new credential-in-argv parser is added.",
+          "Rust owns Manager task handles and joins shutdown rather than exposing a mutable Go busclient pointer. Routes clones preserve old connection ownership for in-flight calls; replacement closes changed/removed links instead of rerouting or replaying their calls. Explicit power-stop pause/resume is additive and tested separately; replacing peer metadata does not implicitly wake a stopped machine.",
+          "Forwarded JSON payload values are preserved semantically, including absent versus explicit-null fields and contradictory owner/provider facts. serde_json may reorder object keys or normalize whitespace; raw JSON lexical byte identity asserted by the Go RawMessage test is deliberately not promised. No federation model/window reconciliation occurs.",
+          "Topic allowlist is agent.* and workflow.*; already-stamped events are dropped, peer stamp is assigned only internally, and peer event ID is cleared for local broker allocation. This enforces one-hop propagation, not an acyclic network topology. Go private forwarded/dropped counters and exact connected-log wording are not a public contract; lifecycle events and PeerInfo remain observable.",
+          "Rust validates duplicate names and URL host presence before mutating links, preserves peer=1 despite pre-existing query parameters, and never derives destination host authority from link authentication. Production network fixtures require explicit credentials; old anonymous Go loopback harness startup is retired.",
+          "Remote worker launch now requires explicit Peer.dispatch=true, including ownerless forwarded agents.spawn. Go used dispatch only to enable return-channel stamping and permitted an unowned fire-and-forget spawn without it. Linked visibility and ordinary qualified reads remain independent of dispatch. This is the stronger owned execution opt-in boundary; tests must opt in before claiming to exercise destination routing."
+        ],
+        "validation": "Root combined checkpoint: 372 library tests passed; the new destination-policy fixture failed before reaching its intended boundary; federation integration5 passed, including the complete semantic owner snapshot. Log /tmp/workspacer-recent-federation-collaboration.log also confirms exact unchanged-link identity regression passed. Corrected only fixture setup: disable both reviewer/deep_reviewer freshness at the permissive source (mode shifts count), and opt this peer into worker dispatch. The exact destination-policy regression then passed: 1 passed,0 failed,0 ignored,373 filtered out; /tmp/workspacer-federation-destination-fix.log. No new full-library green claim after those test-only corrections. Existing source-only policy regression had already passed the earlier full checkpoint."
+      }
+    },
+    "services/hub/internal/federation/spawnsanitizer_test.go": {
+      "status": "ported",
+      "sha256": "4f3a550a56ca37b97e526f1ec37dfb34ea6013b8869eac882b9b9168b548fda3",
+      "replacement": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/federation/config.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ],
+      "review": {
+        "scope": "All four original real-hop spawn assertions mapped to actual two-hub tests.",
+        "proof": [
+          "destination_policy_independently_refuses_fresh_resume_and_clamps_model_on_live_hop configures a permissive source and a destination with actual default policy. A direct source fresh-review resume succeeds, the qualified identical request is refused by the destination with session+fresh reason, and an ordered destination provider barrier proves zero forwarded spawn. Ordinary implementer resume succeeds unchanged.",
+          "The same destination receives a safe opus/frontier tuple for a request the source admits unchanged as fable/frontier_plus, proving destination policy independently clamps. Legacy yoloGranted is removed while skipPermissions remains true. Alias YoloGranted is refused with canonical spelling and provider call count unchanged. Destination audit records exactly refused/allowed/clamped operations.",
+          "Existing canonical_key_refusal_precedes_both_local_and_qualified_execution covers aliases; source_policy_refuses_before_peer_invocation_and_both_hubs_keep_distinct_audits separately proves the opposite source-only policy scenario with a permissive destination. Retired full-access grants are never restored from old test comments; current providers accept permission choices without those stamps."
+        ],
+        "originalTests": [
+          "TestAnAliasedAuthorityKeyNeverCrossesToALivePeer",
+          "TestAFederatedSpawnGetsNoFullAccessStampFromAnUngrantedLink",
+          "TestThePeerRefusesAFederatedResumeForAFreshRole",
+          "TestAnOrdinaryFederatedResumeStillReachesThePeer"
+        ],
+        "intentionalDifferences": [
+          "Parent approved retirement of the original Go component -peer name=...,url=...,token=... dev/test flag after source/recon and docs/deploy/script sweeps found no surviving shipped launcher depending on it. Rust uses workspacer serve --peers-file PATH (default config/peers.json), a JSON array of name/url/token/dispatch objects, with dispatch default false. Owner federation.peersConfig redacts token to hasToken; savePeersConfig preserves omitted token, clears explicit empty token and reloads changed links. Direct file edits apply at startup. docs/hub-federation.md now records this CLI exception; no new credential-in-argv parser is added.",
+          "Rust owns Manager task handles and joins shutdown rather than exposing a mutable Go busclient pointer. Routes clones preserve old connection ownership for in-flight calls; replacement closes changed/removed links instead of rerouting or replaying their calls. Explicit power-stop pause/resume is additive and tested separately; replacing peer metadata does not implicitly wake a stopped machine.",
+          "Forwarded JSON payload values are preserved semantically, including absent versus explicit-null fields and contradictory owner/provider facts. serde_json may reorder object keys or normalize whitespace; raw JSON lexical byte identity asserted by the Go RawMessage test is deliberately not promised. No federation model/window reconciliation occurs.",
+          "Topic allowlist is agent.* and workflow.*; already-stamped events are dropped, peer stamp is assigned only internally, and peer event ID is cleared for local broker allocation. This enforces one-hop propagation, not an acyclic network topology. Go private forwarded/dropped counters and exact connected-log wording are not a public contract; lifecycle events and PeerInfo remain observable.",
+          "Rust validates duplicate names and URL host presence before mutating links, preserves peer=1 despite pre-existing query parameters, and never derives destination host authority from link authentication. Production network fixtures require explicit credentials; old anonymous Go loopback harness startup is retired.",
+          "Remote worker launch now requires explicit Peer.dispatch=true, including ownerless forwarded agents.spawn. Go used dispatch only to enable return-channel stamping and permitted an unowned fire-and-forget spawn without it. Linked visibility and ordinary qualified reads remain independent of dispatch. This is the stronger owned execution opt-in boundary; tests must opt in before claiming to exercise destination routing."
+        ],
+        "validation": "Root combined checkpoint: 372 library tests passed; the new destination-policy fixture failed before reaching its intended boundary; federation integration5 passed, including the complete semantic owner snapshot. Log /tmp/workspacer-recent-federation-collaboration.log also confirms exact unchanged-link identity regression passed. Corrected only fixture setup: disable both reviewer/deep_reviewer freshness at the permissive source (mode shifts count), and opt this peer into worker dispatch. The exact destination-policy regression then passed: 1 passed,0 failed,0 ignored,373 filtered out; /tmp/workspacer-federation-destination-fix.log. No new full-library green claim after those test-only corrections. Existing source-only policy regression had already passed the earlier full checkpoint."
+      }
+    }
+  }
+}

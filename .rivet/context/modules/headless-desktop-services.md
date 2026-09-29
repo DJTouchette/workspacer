@@ -16,6 +16,28 @@ last_reviewed: 2026-09-26
 
 # Shared desktop services in the headless brain
 
+## Current Rust ownership
+
+The default standalone backend now lives in `services/hub-rs`; native embeds
+that same backend. Its owned Rust services replace the private Node companion.
+The companion entry point, callback adapters, bundle builder, and
+`build:desktop-host`/`test:desktop-host` scripts have been removed. Use
+`npm run test:desktop-services` from `apps/desktop` for the retained cross-stack
+service checks. The public desktop-service generator no longer requires Go.
+
+Electron still uses `nativeDesktopServices.ts` and the public dispatcher in
+`headless/desktopHost.ts`, with their shared service dependencies. The
+`headless` directory name does not make those live Electron implementations
+safe to delete. See [the companion retirement map](../../../services/hub-rs/COMPANION_RETIREMENT.md)
+for exact retained and removed owners. Remaining Go source is migration reference;
+source-review and final platform cutover gates remain separate from runtime use.
+
+## Retained Go/Node reference
+
+The remaining sections describe the former companion protocol and its reference
+behavior. They are historical migration context, not current launch instructions;
+in particular, the old build/test commands below are no longer available.
+
 ## Purpose and ownership
 
 The headless brain can execute shared TypeScript services in a private Node

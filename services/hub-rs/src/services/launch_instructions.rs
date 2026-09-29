@@ -41,7 +41,7 @@ fn directory(path: &Path) -> Result<()> {
 }
 /// A conflict fails the whole preflight, preserving user content. Installation
 /// failure should omit the pointer, as desktop does, rather than block a launch.
-pub fn install_skills(cwd: &Path, home: &Path) -> Result<PathBuf> {
+fn safe_project(cwd: &Path, home: &Path) -> Result<PathBuf> {
     if !cwd.is_absolute() || fs::symlink_metadata(cwd)?.file_type().is_symlink() {
         bail!("unsafe skill cwd");
     }
@@ -52,6 +52,10 @@ pub fn install_skills(cwd: &Path, home: &Path) -> Result<PathBuf> {
     if !fs::metadata(&cwd)?.is_dir() {
         bail!("skill cwd is not a directory");
     }
+    Ok(cwd)
+}
+pub fn install_skills(cwd: &Path, home: &Path) -> Result<PathBuf> {
+    let cwd = safe_project(cwd, home)?;
     let mut root = cwd.clone();
     for part in [".workspacer", "skills", skill_version()] {
         root.push(part);
@@ -112,6 +116,44 @@ pub fn install_skills(cwd: &Path, home: &Path) -> Result<PathBuf> {
     }
     Ok(root)
 }
+// Older releases installed these exact assets into harness discovery roots.
+// Remove only matching regular files, including before a manager launch; leave
+// user edits and symlinked parents alone. This is migration cleanup, not a purge.
+fn remove_legacy_skills(provider: &str, cwd: &Path, home: &Path) {
+    let native = match provider {
+        "" | "claude" => ".claude",
+        "codex" => ".agents",
+        _ => return,
+    };
+    let Ok(cwd) = safe_project(cwd, home) else {
+        return;
+    };
+    for (relative, content) in &assets().files {
+        let relative = Path::new(relative);
+        if relative
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            continue;
+        }
+        let mut parent = cwd.clone();
+        let parts = Path::new(native).join("skills").join(relative);
+        let Some(dirs) = parts.parent() else { continue };
+        if !dirs.components().all(|part| {
+            parent.push(part);
+            fs::symlink_metadata(&parent).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        }) {
+            continue;
+        }
+        let path = cwd.join(parts);
+        if fs::symlink_metadata(&path).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
+            && fs::read(&path).is_ok_and(|body| body == content.as_bytes())
+            && fs::remove_file(&path).is_ok()
+        {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+}
 pub fn instructions(
     session: &str,
     provider: &str,
@@ -119,6 +161,7 @@ pub fn instructions(
     home: &Path,
     manager: bool,
 ) -> String {
+    remove_legacy_skills(provider, cwd, home);
     let mut parts = vec![format!("You are running inside Workspacer session {session} with access to the local workspacer MCP facade."),"Use the workspacer MCP tools when they are relevant to the task. Your tool scope for this session is operator.".into()];
     if manager {
         parts.push(manager_doctrine().into());

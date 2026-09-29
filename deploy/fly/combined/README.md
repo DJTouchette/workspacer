@@ -220,7 +220,24 @@ use `deploy-upgrade.py ... --restart-idle` to apply it after the live-work guard
 
 `verify-web-capabilities.py APP MACHINE --expect-plugin-admin` checks the served
 plugin bundle, reads actual method registrations, and runs an allowlist of
-read-only probes without printing credentials or application content. See the
+read-only probes without printing credentials or application content.
+The wrapper runs locally with Python 3 and `flyctl`, then executes a read-only
+Node program inside this image. The generated combined role inherits
+`node:22-trixie-slim`; `deploy/fly/rust/verify-image.sh` explicitly requires
+`node` and `npm` as provider/plugin runtimes. This verifier is scoped to that
+image and its documented isolated `/data/hub/home` layout, not arbitrary
+Node-free standalone installations. It adds no runtime package.
+
+For the owned Rust backend, add `--expect-parity`: the verifier requires the
+public `agents.spawn` and `plugins.manifests` registrations **and** authenticated
+health's `launchReady: true`, along with the existing runtime, plugin, network,
+idle-policy and capability checks. The Go provider callback
+`plugins.prepareLaunch` is retired; Rust launch preparation uses an opaque
+in-process permit and is not exposed as a replacement RPC. Readiness proves the
+owned launch components are available, not that a provider login or a particular
+plugin launch has completed. Local positive/negative fixtures run with
+`node --test deploy/fly/combined/web-capability-contract.test.cjs`.
+ See the
 [web parity audit](../../../docs/web-parity-audit-2026-09-12.md) for the remaining
 functional gaps; browser and headless desktop parity is not complete.
 

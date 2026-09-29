@@ -6,3 +6,10 @@
 /apps/desktop/tests/fixtures/capability-parameter-vocabulary.json text eol=lf
 /tools/capability-source-check/go-reference.json text eol=lf
 /services/hub-rs/assets/mcp-*.json text eol=lf
+# Immutable collaboration assets share an exact content hash across launchers.
+/apps/desktop/assets/skills/project-brief/SKILL.md text eol=lf
+/apps/desktop/assets/skills/spawn-agent/SKILL.md text eol=lf
+/apps/desktop/src/main/services/agentCollaborationSkills.generated.json text eol=lf
+/apps/desktop/src/main/shared/managerDoctrine.ts text eol=lf
+/apps/desktop/src/main/shared/fleetWorkflow.ts text eol=lf
+/services/hub-rs/assets/launch-instructions.json text eol=lf

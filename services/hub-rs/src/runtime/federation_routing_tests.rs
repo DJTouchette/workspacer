@@ -210,3 +210,149 @@ async fn source_policy_refuses_before_peer_invocation_and_both_hubs_keep_distinc
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn destination_policy_independently_refuses_fresh_resume_and_clamps_model_on_live_hop() {
+    use crate::{client::Client, federation::Peer};
+    async fn echo(
+        options: Options,
+    ) -> (
+        Hub,
+        Client,
+        Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let token = options.token.clone();
+        let hub = Hub::start(options).unwrap();
+        let address = hub.ready().await.unwrap().unwrap();
+        let mut provider = hub.handle().connect().await.unwrap();
+        provider.recv().await.unwrap();
+        provider
+            .send(Frame {
+                methods: vec!["agents.spawn".into(), "fixture.barrier".into()],
+                ..Frame::op("register")
+            })
+            .unwrap();
+        assert_eq!(provider.recv().await.unwrap().op, "registered");
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = count.clone();
+        let task = tokio::spawn(async move {
+            while let Some(frame) = provider.recv().await {
+                assert_eq!(frame.op, "call");
+                if frame.method == "agents.spawn" {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                }
+                provider
+                    .send(Frame {
+                        id: frame.id,
+                        result: frame.params,
+                        ..Frame::op("result")
+                    })
+                    .unwrap();
+            }
+        });
+        let client = Client::connect_remote(&format!("ws://{address}/bus"), &token)
+            .await
+            .unwrap();
+        (hub, client, count, task)
+    }
+    let root = tempfile::tempdir().unwrap();
+    let destination_dir = root.path().join("destination");
+    std::fs::create_dir(&destination_dir).unwrap();
+    let tokens = destination_dir.join("tokens.json");
+    let link = crate::auth::mint(&tokens, crate::auth::Scope::Operator, "peer link").unwrap();
+    let mut destination_options = Options::default();
+    destination_options.control_plane_only = true;
+    destination_options.token = "destination-only-policy".into();
+    destination_options.listen = Some("127.0.0.1:0".parse().unwrap());
+    destination_options.config_dir = Some(destination_dir.clone());
+    destination_options.scoped_tokens = Some(tokens);
+    let (destination, direct, destination_calls, destination_task) =
+        echo(destination_options).await;
+    let source_dir = root.path().join("source");
+    std::fs::create_dir(&source_dir).unwrap();
+    std::fs::write(source_dir.join("routing.yaml"),"ceilings:\n  default: {max_capability: frontier_plus}\nprofiles:\n  mixed:\n    reviewer: {fresh: false}\n    deep_reviewer: {fresh: false}\n").unwrap();
+    let mut source_options = Options::default();
+    source_options.control_plane_only = true;
+    source_options.token = "source-permissive-policy".into();
+    source_options.listen = Some("127.0.0.1:0".parse().unwrap());
+    source_options.config_dir = Some(source_dir.clone());
+    source_options.remote_dispatch_delivery = Some(Arc::new(UnownedDelivery));
+    source_options.federation_peers = vec![Peer {
+        name: "destination".into(),
+        url: format!("ws://{}/bus", destination.ready().await.unwrap().unwrap()),
+        token: link.token,
+        dispatch: true,
+    }];
+    let (source, client, _, source_task) = echo(source_options).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while client.call("federation.peers", Value::Null).await.unwrap()[0]["connected"] != true {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let fresh = json!({"cwd":root.path(),"role":"reviewer","resumeSessionId":"implementer-existing","decisionId":"fresh-peer"});
+    // Same source admits the request locally; only destination policy refuses.
+    assert_eq!(
+        client.call("agents.spawn", fresh.clone()).await.unwrap(),
+        fresh
+    );
+    let error = client
+        .call("hub:destination/agents.spawn", fresh)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("implementer-existing") && error.contains("fresh"),
+        "{error}"
+    );
+    direct.call("fixture.barrier", json!({})).await.unwrap();
+    assert_eq!(destination_calls.load(Ordering::SeqCst), 0);
+    let ordinary = json!({"cwd":root.path(),"role":"implementer","resumeSessionId":"ordinary-existing","yoloGranted":true,"skipPermissions":true,"decisionId":"ordinary-peer"});
+    let result = client
+        .call("hub:destination/agents.spawn", ordinary)
+        .await
+        .unwrap();
+    assert_eq!(result["resumeSessionId"], "ordinary-existing");
+    assert_eq!(result["skipPermissions"], true);
+    assert!(result.get("yoloGranted").is_none());
+    let expensive = json!({"cwd":root.path(),"provider":"claude","model":"fable","capability":"frontier_plus","effort":"max","decisionId":"clamped-peer"});
+    assert_eq!(
+        client
+            .call("agents.spawn", expensive.clone())
+            .await
+            .unwrap(),
+        expensive
+    );
+    let result = client
+        .call("hub:destination/agents.spawn", expensive)
+        .await
+        .unwrap();
+    assert_eq!(result["model"], "opus");
+    assert_eq!(result["capability"], "frontier");
+    assert!(
+        result["escalationScrubbed"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("model"))
+    );
+    let error = client
+        .call("hub:destination/agents.spawn", json!({"YoloGranted":true}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("yoloGranted"));
+    direct.call("fixture.barrier", json!({})).await.unwrap();
+    assert_eq!(destination_calls.load(Ordering::SeqCst), 2);
+    let destination_rows = rows(&destination_dir);
+    assert_eq!(destination_rows.len(), 3);
+    assert_eq!(destination_rows[0]["spawn"]["outcome"], "refused");
+    assert_eq!(destination_rows[2]["spawn"]["outcome"], "clamped");
+    client.close();
+    direct.close();
+    source.shutdown().unwrap();
+    destination.shutdown().unwrap();
+    source_task.await.unwrap();
+    destination_task.await.unwrap();
+}
