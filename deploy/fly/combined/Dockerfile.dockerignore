@@ -7,6 +7,9 @@
 !services/hub
 !services/hub/examples
 !services/hub/examples/**
+!vendor
+!vendor/portable-pty
+!vendor/portable-pty/**
 !contracts
 !contracts/**
 !deploy

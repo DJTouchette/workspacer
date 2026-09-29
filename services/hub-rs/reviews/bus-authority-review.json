@@ -1,6 +1,6 @@
 {
   "reviewer": "routing_usage",
-  "validation": "TS busAuthorityRegistry2 + busPublicationSites4 PASS, including reverse36-row producer coverage and mutations/CRLF. Actual runtime topic identity matrix444 assertions PASS in237pass/1fail lib checkpoint; unrelated closed-peer delivery assertion exposed a now-fixed early-filter gap awaiting rerun. New routing event tests pending next lib build. No broad bus runtime certification.",
+  "validation": "TS busAuthorityRegistry2 + busPublicationSites4 PASS with reverse36-row producer coverage, counted dynamic/passthrough evidence, mutations and CRLF. Fresh full Rust lib246/246 PASS includes444 actual topic consume/publish identity assertions, closed-peer filter regression and routing public projection/real viewer delivery tests. Later desktop whitelist work is a separate pending slice; no blanket bus certification.",
   "records": {
     "services/hub/internal/bus/authorize_test.go": {
       "status": "retired",
@@ -74,7 +74,7 @@
         "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
         "services/hub-rs/src/runtime/bus_audit_tests.rs"
       ],
-      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint."
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests passed in the246-test lib checkpoint."
     },
     "services/hub/internal/capspec/eventtopics_test.go": {
       "status": "ported",
@@ -89,7 +89,7 @@
         "apps/desktop/src/main/services/busAuthorityRegistry.test.ts",
         "services/hub-rs/src/runtime/bus_audit_tests.rs"
       ],
-      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint."
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests passed in the246-test lib checkpoint."
     }
   }
 }

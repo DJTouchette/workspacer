@@ -102,7 +102,12 @@ impl Transport {
                     Some(Ok(Message::Close(frame))) => {
                         let reason = DisconnectReason::RemoteClose {
                             code: frame.as_ref().map(|f| u16::from(f.code)),
-                            reason: frame.map(|f| f.reason.into_owned()).unwrap_or_default(),
+                            // Close reasons are peer-controlled diagnostic text.
+                            // Clean before storing so Display, Debug and an
+                            // anyhow chain cannot expose URL query credentials.
+                            reason: frame
+                                .map(|f| crate::diagnostics::credential_queries(&f.reason))
+                                .unwrap_or_default(),
                         };
                         // Preserve the close reason even if the final acknowledgement
                         // cannot flush; importantly, never convert4001 to generic loss.

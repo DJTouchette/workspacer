@@ -1,0 +1,224 @@
+{
+  "records": {
+    "services/hub/cmd/workspacer/main.go": {
+      "sha256": "feffb5a51771b8be2e4e12ae1b37f68a9db8e5732997d0086add9df8c5c62d90",
+      "replacement": [
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/src/bin/workspacer-rust.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": "Command groups/help/error dispatch retained. Known Go single-dash options normalize with metadata-aware required-value handling, including short -f, inline booleans and -- termination. Required values remain literal OsStrings; former backend binary overrides fail with an explicit in-process ownership explanation. Existing token/jobs/fleet/install/status rows remain separately reviewed. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/plan.go": {
+      "sha256": "e93d28c4ebe3acacf8e76c99511ab60d2dcb6219eda100634bf7e242b7ebe5b2",
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/session_facade.rs"
+      ],
+      "review": "Child argv/env wiring is replaced by typed owned Backend/Hub options, not by finding Go executables. Preserved loopback daemon/MCP ports, actual hub listener addressing, explicit DB path, token pairing links, optional plugin/web paths, exact facade readiness and no-MCP absence of fabricated endpoint. Public banner keys/opaque token escaping and default string-map output are pinned. Missing-child reduced-mode heuristics retire; explicit hub-only/no-mcp roles replace them. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/plan_test.go": {
+      "sha256": "157716e6d0cb51b302e0136841c10e05e187eb5030955ab7c250599ef91825ee",
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/session_facade.rs"
+      ],
+      "review": "Reviewed every wiring subcase: default/custom ports, standalone auth, optional child/bundle presence, wildcard advertisement, plugin origin, exact facade status/service/listener/hub/catalog and URL-escaped token. Existing child-spec assertions retire with in-process ownership; real CLI startup/parent shutdown plus scalar/string-map banner and strict health matrices preserve operational outcomes. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/resolve.go": {
+      "sha256": "c0424b8bfd63711ec1b83d493c24e46cbf89376a3e8ed44053c2e39f15c469fe",
+      "replacement": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": "Explicit/sibling/PATH selection of claudemon/hub/brain/mcp child binaries is intentionally removed. Unsupported override flags cannot choose Go. Retained responsibilities are executable-symlink-aware shipped web discovery (sibling then parent, regular index required) and platform public workspacer executable name. Fake directory tests and actual standalone startup verify retained paths without system/PATH mutation. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/resolve_test.go": {
+      "sha256": "f8e1d48facf609524df82ff8c1383533701bed99f3498b374044056160bc2e79",
+      "replacement": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": "Retired binary resolver priority/missing/sibling-directory branches because no owned backend child is discovered. Kept public executable alias and webapp sibling/parent/index checks with isolated actual filesystem fixtures. Runtime standalone smoke does not require legacy backend binaries; removed binary flags explicitly refuse rather than silently resolving old executables. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/serve.go": {
+      "sha256": "8c61b9f72e34fac10a8282f53e7c811221477306a04306a0ca95db9df63e085d",
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/backend_hooks.rs",
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/src/cli/presentation.rs"
+      ],
+      "review": "Reviewed startup preflight, state identity, plugins/web env choices, hooks before startup, bounded readiness, JSON/text banners, parent signals and joined cleanup. Owned library runtime replaces four child processes and restart loops. CLI refuses occupied owned ports, alternate-port implicit DB sharing and relative inferred stores; warnings retain plugin/hooks partial availability. Bare external flag requires explicit hub-only, exact daemon health and read-only ownership. Actual CLI tests cover startup, SIGTERM on Unix, portable EOF/declared PID loss, source isolation, no engine/hooks for control-only, existing identity/data and quiet no-secret output. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/servedb_test.go": {
+      "sha256": "7403a6c0f2c9c4db8746aac4f0e5c6ce014f1d876b45be281c0d3351f59c0a94",
+      "replacement": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/backend/ownership.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": "Default data/home locations and explicit override retained; either alternate daemon port requires explicit DB, and empty/relative inferred XDG data is refused before startup. Subprocess tests cover env absent/empty OS-home fallback without actual-home writes, explicit home precedence and no accidental state creation. Actual owned CLI passes its pinned temporary SQLite path; database ownership/restart protections have separate backend-owner tests. Shell fake-daemon argv observation retires with direct ServeConfig handoff. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/serveinit_test.go": {
+      "sha256": "598c535f3b8b4063fd215f5f643acba356a106bf3dd92685e93d1224e80e7a1a",
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_hooks.rs"
+      ],
+      "review": "The claudemon-init child is retired; the same Rust hook merge library runs before CLI Backend preparation, with a15-second budget and nonfatal diagnostics. Actual CLI temporary-home test verifies written configured-hook-port settings before ready; opt-out and hub-only cases leave hook settings untouched. backend_hooks covers user-hook/status-line preservation and idempotence. Signal/EOF teardown does not require companion binaries. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/external_claudemon_test.go": {
+      "sha256": "21f437648ae986c962bf407f582fea722be8ad8f0824b2283b6ef653b64695a2",
+      "replacement": [
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/src/services/external_claudemon.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/services/external_claudemon.rs"
+      ],
+      "review": "Retained bare external flag resolves loopback at selected API port, now only with explicit hub-only ownership. Old full-stack Go/Node control topology is architecturally retired and refuses clearly rather than silently becoming a partial owner. Fake HTTP matrix requires exact200/maintenance1/bodyok and no redirects. Actual subprocess attaches, publishes borrowed endpoint, never writes external daemon/routes/hooks/database, keeps it alive after owned shutdown and refuses collisions on owned Hub/MCP ports without creating config. Read-only adapter has no remote stop ownership. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/dialhost_test.go": {
+      "sha256": "5995fc4a2f9fb0c6bceb0eb7ca5a0009fbc8fd9f2c91de6b5c52ae4c539a1099",
+      "replacement": [
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/server.rs"
+      ],
+      "review": "Wildcard addresses normalize for actual dial and advertise separately; concrete listener addresses remain themselves. Empty bind retains wildcard semantics and status probes use loopback. Owned Hub readiness avoids guessing a child HTTP listener. Actual wildcard IPv4/IPv6 plugin callback tests and real CLI trusted-host positive/untrusted negative HTTP requests cover address/policy forwarding; plugin-origin env/flag/explicit-empty matrix remains live. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/plugindev.go": {
+      "sha256": "ea7ef72aca299c346dd86006d8e44d5f823b26e727eb7de88b48dd024c670ad4",
+      "replacement": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/mod.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/plugin_manager.rs"
+      ],
+      "review": "Reviewed fail-fast manifest validation, isolated source, default build-before-reload, quiet scan debounce, ignore markers, lifecycle logs and cleanup. Temporary plugin manager plus explicit reload replaces symlink-only setup without deleting source. Real CLI fixture uses only a test-executable build, proves one dev plugin instead of installed plugins, successful build/reload, failed build keeps live plugin and shutdown preserves both source and installed tree. Watch stream is best-effort/owned, errors query-redacted, stderr logs retain marker; no private Node companion involved. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/plugindev_test.go": {
+      "sha256": "2ab74a4230dc7a21f66a194303005591c7a1a6d7d51604c62bac2a0bbfca96e0",
+      "replacement": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/plugins/mod.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/plugin_manager.rs"
+      ],
+      "review": "All original ignore names retained, including .install-source and .disabled; source edits/deletion and quiet-period burst coalescing pinned deterministically. Symlinks counted without following cycles. Actual CLI isolation/reload/build-failure/cleanup fixture replaces Go symlink-count setup test, preserving its real load/source survival assertion. Invalid manifest creates neither credential/config nor hook/home data. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/usagecfg.go": {
+      "sha256": "d0b0e2d99d9431300092b8430747d8598d15f512781a3ef6ac37821722292d15",
+      "replacement": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": "Raw YAML bool presence is handed through ServePlan into embedded EngineOptions. CLI keeps original config-first precedence over WORKSPACER_USAGE_POLL_ON_BOOT; absent/unreadable/malformed/wrong-type values remain None for engine env/default. No process-global env mutation. Shared native Backend helper intentionally keeps its separately established environment-first contract. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    },
+    "services/hub/cmd/workspacer/usagecfg_test.go": {
+      "sha256": "316c8729dfc1a897c21493267c551e992a36405972dda720ca207b993078ff70",
+      "replacement": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/tests/cli.rs"
+      ],
+      "review": "Matrix covers missing file/section/key, true/false, malformed YAML and string/other wrong types. Actual isolated subprocess sets ambient polling on and raw config off, then checks the populated ServePlan option without running a provider. EngineOptions uses that plan value directly; old child env argv inspection retires with owned engine construction. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
+      "status": "ported"
+    }
+  },
+  "validation": "Final source checkpoint: full Rust library plus CLI integration targets passed; see /tmp/workspacer-launcher-final-map.log. Windows/macOS runtime CI remains a separate final-head gate; no broad cutover claim."
+}

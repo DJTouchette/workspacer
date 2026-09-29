@@ -1243,13 +1243,13 @@ impl Core {
         session_id: String,
         plugin_id: String,
     ) -> Result<LaunchPermit> {
-        let identity = &self
+        let peer = self
             .peers
             .get(&caller.connection_id)
-            .ok_or_else(|| anyhow!("launch caller disconnected"))?
-            .identity;
+            .ok_or_else(|| anyhow!("launch caller disconnected"))?;
+        anyhow::ensure!(!*peer.closed.borrow(), "launch caller disconnected");
         anyhow::ensure!(
-            identity.authenticated_host(),
+            peer.identity.authenticated_host(),
             "launch preparation requires authenticated host authority"
         );
         let pending = self
@@ -1286,13 +1286,13 @@ impl Core {
         Ok(permit)
     }
     fn check_launch(&mut self, permit: &LaunchPermit, finish: bool) -> Result<()> {
-        let identity = &self
+        let peer = self
             .peers
             .get(&permit.connection_id)
-            .ok_or_else(|| anyhow!("launch caller disconnected"))?
-            .identity;
+            .ok_or_else(|| anyhow!("launch caller disconnected"))?;
+        anyhow::ensure!(!*peer.closed.borrow(), "launch caller disconnected");
         anyhow::ensure!(
-            identity.authenticated_host(),
+            peer.identity.authenticated_host(),
             "launch caller no longer has host authority"
         );
         let pending = self
@@ -2803,10 +2803,22 @@ mod launch_proof_tests {
     }
     #[test]
     fn proof_cannot_outlive_connection_deadline_or_owner_authority() {
+        let (mut closed, caller) = fixture();
+        closed.peers[&caller.connection_id]
+            .closed
+            .send_replace(true);
+        assert!(
+            closed
+                .begin_launch(&caller, "session".into(), "fixture".into())
+                .is_err()
+        );
         let (mut core, caller) = fixture();
         let permit = core
             .begin_launch(&caller, "session".into(), "fixture".into())
             .unwrap();
+        core.peers[&1].closed.send_replace(true);
+        assert!(core.check_launch(&permit, false).is_err());
+        core.peers[&1].closed.send_replace(false);
         core.peers.get_mut(&1).unwrap().identity.federated = true;
         assert!(core.check_launch(&permit, false).is_err());
         core.peers.get_mut(&1).unwrap().identity.federated = false;

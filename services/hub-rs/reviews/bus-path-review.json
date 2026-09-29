@@ -1,0 +1,40 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "files5 PASS in /tmp/workspacer-files-remote-checkpoint.log, including shared8 active path cases, component boundary/regular-file-parent checks and actual40/41 symlink chain. Latest lib260/264 checkpoints passed routing/path tests. Windows code is target-gated and must run in actual CI with Developer Mode; this local run was Linux. Scope/caller review used actual Go source and Rivet references; no inference from helper names alone.",
+  "records": {
+    "services/hub/internal/bus/policy.go": {
+      "status": "ported",
+      "sha256": "c4fc7d39a0a34e7b5a0e99c49e0b385d55b3658a58ac2b2263f8da5425ae00e9",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ],
+      "note": "Active component-wise canonicalization and selected-object containment are retained: resolve links before parent components, refuse relative/empty paths, retain prospective tails, refuse traversal through regular files, distinguish sibling prefixes, normalize existing Windows ancestors without weakening confinement, and enforce exactly40 link hops. Real filesystem regression reads the shared fixture budget and proves40accept/41refuse on supported platforms without Windows skips. Go CanonicalizeRoot callers are routing preference/selection and plugin UI selected-root derivation. Legacy anonymous fsRoots/secret-path filtering and paramString harness responsibility is retired by the current trust model: every real connection bypasses it; PathIsSecret only feeds unused plugin resolveRoots/expandScope compatibility helpers. Retired path-parameter-shapes corpus remains explicitly accounted for by ownership guards. This does not retire active selected-object path checks."
+    },
+    "services/hub/internal/bus/policy_test.go": {
+      "status": "ported",
+      "sha256": "f8bae3c449e5f909771fb9f10f45a7cd26ea46e1c1c9fd77b6f273ca4b21b920",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ],
+      "note": "Active component-wise canonicalization and selected-object containment are retained: resolve links before parent components, refuse relative/empty paths, retain prospective tails, refuse traversal through regular files, distinguish sibling prefixes, normalize existing Windows ancestors without weakening confinement, and enforce exactly40 link hops. Real filesystem regression reads the shared fixture budget and proves40accept/41refuse on supported platforms without Windows skips. Go CanonicalizeRoot callers are routing preference/selection and plugin UI selected-root derivation. Legacy anonymous fsRoots/secret-path filtering and paramString harness responsibility is retired by the current trust model: every real connection bypasses it; PathIsSecret only feeds unused plugin resolveRoots/expandScope compatibility helpers. Retired path-parameter-shapes corpus remains explicitly accounted for by ownership guards. This does not retire active selected-object path checks."
+    }
+  }
+}

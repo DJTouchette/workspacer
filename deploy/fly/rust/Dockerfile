@@ -11,6 +11,7 @@ WORKDIR /src
 COPY services/hub-rs/ services/hub-rs/
 COPY services/claudemon/ services/claudemon/
 COPY contracts/ contracts/
+COPY vendor/portable-pty/ vendor/portable-pty/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     CARGO_TARGET_DIR=/build/target cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin workspacer-rust && \

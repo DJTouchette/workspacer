@@ -570,6 +570,18 @@ mod tests {
             home: dir.path().into(),
             config: dir.path().into(),
         };
+        for invalid in ["../../outside".to_owned(), String::new(), "a".repeat(129)] {
+            assert!(
+                controls
+                    .call("claude.handoffAgentBrief", json!({"sessionId":invalid}))
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            !dir.path().join(".workspacer/handoffs").exists(),
+            "invalid session identity must be refused before preparing a target"
+        );
         assert_eq!(
             controls.call("claude.setEffort", json!({})).await?["ok"],
             false

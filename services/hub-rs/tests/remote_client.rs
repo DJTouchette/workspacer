@@ -3,6 +3,51 @@ use std::{collections::BTreeSet, time::Duration};
 use workspacer_hub::{Hub, Options, client::Client, protocol::Event};
 
 #[tokio::test]
+async fn prehello_close_keeps_typed_pause_identity_without_logging_query_credentials() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, protocol::CloseFrame};
+    use workspacer_hub::client::DisconnectReason;
+    for code in [4001u16, 4003] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            socket
+                .send(Message::Close(Some(CloseFrame {
+                    code: code.into(),
+                    reason: "peer failure ws://peer/bus?token=fixture-query-secret&keep=1".into(),
+                })))
+                .await
+                .unwrap();
+            let _ = tokio::time::timeout(Duration::from_secs(2), socket.next()).await;
+        });
+        let error = Client::connect_remote(&format!("ws://{address}/bus"), "fixture-header-secret")
+            .await
+            .err()
+            .expect("fixture must close before hello");
+        let typed = error
+            .downcast_ref::<DisconnectReason>()
+            .expect("close classification retained");
+        assert_eq!(typed.is_power_paused(), code == 4001);
+        for rendered in [
+            error.to_string(),
+            format!("{error:#}"),
+            format!("{error:?}"),
+            format!("{typed:?}"),
+        ] {
+            assert!(!rendered.contains("fixture-query-secret"), "{rendered}");
+            assert!(!rendered.contains("fixture-header-secret"), "{rendered}");
+            assert!(
+                rendered.contains("ws://peer/bus?token=REDACTED&keep=1"),
+                "{rendered}"
+            );
+        }
+        server.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn remote_calls_events_and_disconnect_preserve_the_same_client_contract() {
     let (started, mut starts) = tokio::sync::mpsc::channel(2);
     let mut options = Options::default();

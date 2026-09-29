@@ -10,7 +10,10 @@ pub(super) fn home_directory() -> Result<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("home directory unavailable"))
+        .or_else(|| directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()))
+        .ok_or_else(|| {
+            anyhow::anyhow!("home directory unavailable; pass --home-dir and --config-dir")
+        })
 }
 pub fn config_directory() -> Result<PathBuf> {
     #[cfg(windows)]

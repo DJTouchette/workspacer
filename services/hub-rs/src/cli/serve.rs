@@ -10,18 +10,27 @@ use std::{
 #[derive(Debug)]
 pub struct ServePlan {
     pub hub_only: bool,
+    pub external_claudemon: Option<String>,
     pub config: PathBuf,
     pub home: PathBuf,
     pub database: PathBuf,
+    pub usage_poll_on_boot: Option<bool>,
     pub listen: SocketAddr,
     pub api_port: u16,
     pub hook_port: u16,
     pub mcp: Option<SocketAddr>,
 }
 pub fn plan_serve(args: &CommandLine, serve: &ServeArgs) -> Result<ServePlan> {
+    anyhow::ensure!(
+        serve.external_claudemon.is_none() || serve.hub_only,
+        "--external-claudemon requires explicit --hub-only: borrowed daemons are read-only integrations; full standalone mode owns its Rust engine"
+    );
     if !serve.hub_only
         && (serve.claudemon_api_port != 7891 || serve.claudemon_hook_port != 7890)
-        && serve.claudemon_db_path.is_none()
+        && serve
+            .claudemon_db_path
+            .as_ref()
+            .is_none_or(|path| path.as_os_str().is_empty())
     {
         bail!(
             "alternate claudemon ports require explicit --claudemon-db-path; refusing accidental shared database"
@@ -32,7 +41,9 @@ pub fn plan_serve(args: &CommandLine, serve: &ServeArgs) -> Result<ServePlan> {
             "launcher claudemon ports must be nonzero so hook configuration names a stable endpoint"
         )
     }
-    let host: IpAddr = if args.host == "localhost" {
+    let host: IpAddr = if args.host.is_empty() {
+        "0.0.0.0".parse()?
+    } else if args.host == "localhost" {
         "127.0.0.1".parse()?
     } else {
         args.host.trim_matches(['[', ']']).parse()?
@@ -57,18 +68,34 @@ pub fn plan_serve(args: &CommandLine, serve: &ServeArgs) -> Result<ServePlan> {
                 && serve.push_dir.is_none()),
         "upstream worker mode uses central jobs, peers, plugins, nodes and push; configure those on the hub"
     );
+    let config = args.directory()?;
+    let home = match &serve.home_dir {
+        Some(home) => home.clone(),
+        None if serve.hub_only => super::identity::home_directory().unwrap_or_default(),
+        None => super::identity::home_directory()?,
+    };
+    let usage_poll_on_boot = super::usage::configured(&config);
     Ok(ServePlan {
+        usage_poll_on_boot,
         hub_only: serve.hub_only,
-        config: args.directory()?,
-        home: match &serve.home_dir {
-            Some(home) => home.clone(),
-            None if serve.hub_only => super::identity::home_directory().unwrap_or_default(),
-            None => super::identity::home_directory()?,
+        external_claudemon: serve.external_claudemon.as_ref().map(|url| {
+            if url.is_empty() {
+                format!("http://127.0.0.1:{}", serve.claudemon_api_port)
+            } else {
+                url.clone()
+            }
+        }),
+        config,
+        database: if serve.hub_only {
+            serve.claudemon_db_path.clone().unwrap_or_default()
+        } else {
+            super::launcher_paths::database(
+                serve.claudemon_db_path.as_deref(),
+                std::env::var_os("XDG_DATA_HOME").as_deref(),
+                || home.join(".claudemon/state.db"),
+            )?
         },
-        database: serve
-            .claudemon_db_path
-            .clone()
-            .unwrap_or_else(claudemon::store::default_db_path),
+        home,
         listen: SocketAddr::new(host, args.hub_port),
         api_port: serve.claudemon_api_port,
         hook_port: serve.claudemon_hook_port,
@@ -91,9 +118,7 @@ fn push_directory(selected: &Path, explicit: Option<&Path>) -> PathBuf {
 fn discover_webapp() -> Option<PathBuf> {
     let binary = std::env::current_exe().ok()?.canonicalize().ok()?;
     let directory = binary.parent()?;
-    [directory.join("web"), directory.join("../web")]
-        .into_iter()
-        .find(|path| path.join("index.html").is_file())
+    super::launcher_paths::webapp(directory)
 }
 fn discover_examples() -> Option<PathBuf> {
     if let Ok(executable) = std::env::current_exe().and_then(|path| path.canonicalize()) {
@@ -208,12 +233,30 @@ fn relay_config(serve: &ServeArgs) -> Result<Option<crate::provider_relay::Confi
 pub(super) async fn run(
     args: &CommandLine,
     serve: &ServeArgs,
-    dev: Option<(PathBuf, bool, u64)>,
+    dev: Option<(PathBuf, bool, Duration)>,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<i32> {
+    // Validate development inputs before minting identity, registering hooks or
+    // starting the backend; an invalid source tree must have no such side effects.
+    let dev = dev
+        .map(|(source, build, poll)| -> Result<_> {
+            let source = source.canonicalize()?;
+            crate::plugins::manifest::Manifest::load(&source.join("plugin.json"))?;
+            Ok((source, build, poll))
+        })
+        .transpose()?;
     let plan = plan_serve(args, serve)?;
     preflight(&plan)?;
+    let mut shutdown_signal = Box::pin(signal());
+    let mut parent_signal = Box::pin(super::parent::gone());
+    if let Some(external) = &plan.external_claudemon {
+        tokio::select! {
+            result=super::readiness::external(external,Duration::from_secs(20))=>result?,
+            result=&mut shutdown_signal=>return result.map(|_|0),
+            result=&mut parent_signal=>return result.map(|_|0),
+        }
+    }
     let relay = relay_config(serve)?;
     let supplied = if relay.is_some() {
         args.token.clone().unwrap_or_default()
@@ -223,8 +266,9 @@ pub(super) async fn run(
     let token = if supplied.is_empty() {
         super::load_or_create_host_token(
             &plan.config,
-            serve.allow_new_token
-                || std::env::var("WORKSPACER_ALLOW_NEW_TOKEN").is_ok_and(|v| v == "1"),
+            serve.allow_new_token.unwrap_or_else(|| {
+                std::env::var("WORKSPACER_ALLOW_NEW_TOKEN").is_ok_and(|v| v == "1")
+            }),
         )?
     } else {
         supplied
@@ -239,7 +283,7 @@ pub(super) async fn run(
         None
     };
     let mut options = crate::Options::default();
-    options.external_claudemon_url = serve.external_claudemon.clone();
+    options.external_claudemon_url = plan.external_claudemon.clone();
     options.mcp_static_token = match &serve.mcp_token {
         Some(token) => Some(token.clone()),
         None => std::env::var_os("WKS_MCP_TOKEN")
@@ -329,6 +373,7 @@ pub(super) async fn run(
     options.webapp_dir = serve
         .webapp_dir
         .clone()
+        .filter(|path| !path.as_os_str().is_empty())
         .or_else(|| {
             std::env::var_os("WORKSPACER_WEBAPP_DIR")
                 .filter(|path| !path.is_empty())
@@ -363,14 +408,23 @@ pub(super) async fn run(
         options.nodes_file = Some(PathBuf::new());
         options.peers_file = None;
     }
+    if let Some(directory) = &options.plugins_dir {
+        if let Err(error) = std::fs::create_dir_all(directory) {
+            writeln!(
+                err,
+                "cannot create plugins directory {}: {error}; continuing without plugins",
+                directory.display()
+            )?;
+            options.plugins_dir = None;
+        }
+    }
     let plugin_root = options.plugins_dir.clone();
-    if let Some((source, _, _)) = &dev {
-        crate::plugins::manifest::Manifest::load(&source.join("plugin.json"))?;
+    if dev.is_some() {
         options.plugin_examples_dir = None;
     }
     if !serve.hub_only && !serve.no_claudemon_init {
         match tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(15),
             claudemon::daemon::init::run_with_port_quiet(false, plan.hook_port),
         )
         .await
@@ -381,10 +435,8 @@ pub(super) async fn run(
         }
     }
     let engine_options = claudemon::daemon::embedded::Options {
-        usage_poll_on_boot: crate::backend::configured_usage_polling(Some(&plan.config)),
+        usage_poll_on_boot: plan.usage_poll_on_boot,
     };
-    let mut shutdown_signal = Box::pin(signal());
-    let mut parent_signal = Box::pin(super::parent::gone());
     let mut backend = if serve.hub_only {
         Owner::Hub(None)
     } else {
@@ -404,8 +456,12 @@ pub(super) async fn run(
         result=&mut parent_signal=>{let cleanup=backend.shutdown().await;return result.and(cleanup).map(|_|0)},
     };
     if let Err(error) = initialized {
-        let _ = backend.shutdown().await;
-        return Err(error);
+        return match backend.shutdown().await {
+            Ok(()) => Err(error),
+            Err(cleanup) => {
+                Err(error.context(format!("backend startup cleanup also failed: {cleanup:#}")))
+            }
+        };
     }
     let handle = backend.handle();
     let snapshot = handle.status().borrow().clone();
@@ -415,8 +471,13 @@ pub(super) async fn run(
             mcp_address,
         } => (address, mcp_address),
         _ => {
-            let _ = backend.shutdown().await;
-            bail!("backend has no ready listener")
+            let error = anyhow::anyhow!("backend has no ready listener");
+            return match backend.shutdown().await {
+                Ok(()) => Err(error),
+                Err(cleanup) => {
+                    Err(error.context(format!("backend startup cleanup also failed: {cleanup:#}")))
+                }
+            };
         }
     };
     let local_address = crate::net_address::dial_addr(address);
@@ -424,21 +485,19 @@ pub(super) async fn run(
     let advertised = crate::net_address::advertise_addr(address, &interfaces);
     let advertised_mcp =
         mcp.map(|address| crate::net_address::advertise_addr(address, &interfaces));
+    let expected_mcp_hub = serve
+        .upstream
+        .as_ref()
+        .filter(|_| serve.provider_scope == crate::provider_relay::Scope::Full)
+        .cloned()
+        .unwrap_or_else(|| format!("ws://{local_address}/bus"));
     let result:Result<()>=async {
-    if let Some(mcp)=mcp {tokio::select!{result=wait_mcp(mcp)=>result?,result=&mut shutdown_signal=>return result,result=&mut parent_signal=>return result}}
-
+    if let Some(mcp)=mcp {tokio::select!{result=wait_mcp(mcp,&expected_mcp_hub)=>result?,result=&mut shutdown_signal=>return result,result=&mut parent_signal=>return result}}
     if let Some((source,_,_))=&dev {reload(&format!("http://{local_address}"),&token,source).await?;}
-    let banner = json!({"service":"workspacer-rust","hubUrl":format!("http://{advertised}"),"busUrl":format!("ws://{advertised}/bus"),"mobileUrl":format!("http://{advertised}/m"),"remoteUrl":format!("http://{advertised}/remote"),"claudemonUrl":(!serve.hub_only).then(||format!("http://127.0.0.1:{}",plan.api_port)),"mcpUrl":advertised_mcp.map(|address|format!("http://{address}/mcp")),"token":token,"database":(!serve.hub_only).then_some(&plan.database),"mode":if serve.hub_only{"hub-only"}else if serve.upstream.is_some(){"worker"}else{"standalone"},"migrationComplete":false});
-    if serve.quiet {} else if args.json {
-        print_json(out, &banner)?
-    } else {
-        writeln!(
-            out,
-            "Workspacer Rust ready\nHub: ws://{advertised}/bus\nMobile: http://{advertised}/m\nPairing token: {token}"
-        )?;
-        if let Some(mcp) = advertised_mcp {
-            writeln!(out, "MCP: http://{mcp}/mcp")?
-        }
+    let banner = super::presentation::banner(&plan,advertised,advertised_mcp,&token,serve.upstream.is_some());
+    if !serve.quiet {
+        if args.json { print_json(out,&banner)?; }
+        else { super::presentation::print_banner(&banner,out)?; }
     }
     let mut status = handle.status();
     let ended = async {
@@ -515,7 +574,8 @@ async fn reload(base: &str, token: &str, source: &Path) -> Result<()> {
         .error_for_status()?;
     Ok(())
 }
-async fn wait_mcp(address: SocketAddr) -> Result<()> {
+async fn wait_mcp(address: SocketAddr, expected_hub: &str) -> Result<()> {
+    let listen = address;
     let address = crate::net_address::dial_addr(address);
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -525,9 +585,11 @@ async fn wait_mcp(address: SocketAddr) -> Result<()> {
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             if let Ok(response) = client.get(format!("http://{address}/health")).send().await {
-                if let Ok(value) = response.json::<serde_json::Value>().await {
-                    if value["hubConnected"] == true && value["pluginCatalogReady"] == true {
-                        return;
+                if response.status() == reqwest::StatusCode::OK {
+                    if let Ok(value) = response.json::<serde_json::Value>().await {
+                        if super::presentation::mcp_ready(&value, listen, expected_hub) {
+                            return;
+                        }
                     }
                 }
             }
@@ -538,74 +600,79 @@ async fn wait_mcp(address: SocketAddr) -> Result<()> {
     .map_err(|_| anyhow::anyhow!("MCP initial plugin catalog readiness timed out"))?;
     Ok(())
 }
-fn stamp(root: &Path) -> Result<Vec<(PathBuf, u64, std::time::SystemTime)>> {
-    fn walk(root: &Path, out: &mut Vec<(PathBuf, u64, std::time::SystemTime)>) -> Result<()> {
-        let Ok(entries) = std::fs::read_dir(root) else {
-            return Ok(());
-        };
-        for entry in entries {
-            let Ok(entry) = entry else { continue };
-            let name = entry.file_name();
-            if [
-                ".git",
-                "node_modules",
-                "target",
-                ".bus-token",
-                ".settings.json",
-            ]
-            .iter()
-            .any(|s| name == *s)
-            {
-                continue;
-            }
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.is_dir() {
-                walk(&entry.path(), out)?
-            } else if meta.is_file() {
-                out.push((entry.path(), meta.len(), meta.modified()?));
-            }
-        }
-        Ok(())
-    }
-    let mut out = vec![];
-    walk(root, &mut out)?;
-    out.sort();
-    Ok(out)
-}
 async fn watch_plugin(
     source: &Path,
     build: bool,
-    poll: u64,
+    poll: Duration,
     _root: &Path,
     base: &str,
     token: &str,
     err: &mut dyn Write,
     runtime: Option<String>,
 ) -> Result<()> {
+    struct BusOwner(Option<crate::client::Client>);
+    impl Drop for BusOwner {
+        fn drop(&mut self) {
+            if let Some(bus) = &self.0 {
+                bus.close()
+            }
+        }
+    }
     let bus = crate::client::Client::connect_remote(
         &format!("{}/bus", base.replacen("http", "ws", 1)),
         token,
     )
-    .await?;
-    let mut events = bus.events();
-    bus.topics(
-        ["plugin.*".to_owned(), "sidecar.*".to_owned()]
-            .into_iter()
-            .collect(),
-    )
-    .await?;
-    let mut previous = stamp(source)?;
-    let mut interval = tokio::time::interval(Duration::from_millis(poll.max(50)));
+    .await;
+    let mut problem = None;
+    let mut bus = BusOwner(match bus {
+        Ok(client) => Some(client),
+        Err(error) => {
+            problem = Some(format!("{error:#}"));
+            None
+        }
+    });
+    if let Some(client) = &bus.0 {
+        if let Err(error) = client
+            .topics(
+                ["plugin.*".to_owned(), "sidecar.*".to_owned()]
+                    .into_iter()
+                    .collect(),
+            )
+            .await
+        {
+            problem = Some(format!("{error:#}"));
+            client.close();
+            bus.0 = None;
+        }
+    }
+    if let Some(problem) = problem {
+        super::dev_watch::stream_unavailable(err, &problem)?;
+    }
+    let mut events = bus.0.as_ref().map(|client| client.events());
+    let mut changes = super::dev_watch::Debounce::new(super::dev_watch::stamp(source)?);
+    writeln!(err, "[plugin-dev] watching {}", source.display())?;
+    let mut interval = tokio::time::interval(if poll.is_zero() {
+        Duration::from_millis(400)
+    } else {
+        poll
+    });
     loop {
         tokio::select! {
-            event=events.recv()=>match event{
-                Ok(event)=>{let data=event.data.unwrap_or_default();if event.topic=="plugin.log"{writeln!(err,"[{}] {}",data["name"].as_str().unwrap_or("plugin"),data["line"].as_str().unwrap_or(""))?;}else if event.topic.starts_with("sidecar."){writeln!(err,"[{}] {} {}",data["name"].as_str().unwrap_or("plugin"),event.topic,data["err"].as_str().unwrap_or(""))?;}},
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{},Err(_)=>bail!("plugin event stream closed"),
+            event=async {match &mut events {Some(events)=>events.recv().await,None=>std::future::pending().await}}=>match event {
+                Ok(event)=>{
+                    let data=event.data.unwrap_or_default();
+                    if event.topic=="plugin.log" {
+                        writeln!(err,"[{}{}] {}",data["name"].as_str().unwrap_or("plugin"),if data["stream"]=="stderr"{" err"}else{""},data["line"].as_str().unwrap_or(""))?;
+                    }else{writeln!(err,"[plugin-dev] bus {} (from {}): {}",event.topic,event.source,data)?;}
+                },
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{},
+                Err(_)=>{events=None;if let Some(client)=bus.0.take(){client.close();}writeln!(err,"plugin lifecycle stream closed; continuing file watch")?;},
             },
             _=interval.tick()=>{
-                let current=stamp(source)?;if current==previous{continue}previous=current;
-                if build {if let Err(error)=build_dev(source, runtime.clone()).await{writeln!(err,"plugin build failed; keeping current sidecar: {error:#}")?;continue}}
-                if let Err(error)=reload(base,token,source).await{writeln!(err,"plugin reload failed: {error:#}")?;}else{writeln!(err,"reloaded {}",source.display())?;}previous=stamp(source)?;
+                if !changes.observe(super::dev_watch::stamp(source)?){continue}
+                if build {if let Err(error)=build_dev(source,runtime.clone()).await{writeln!(err,"plugin build failed; keeping current sidecar: {error:#}")?;continue}}
+                if let Err(error)=reload(base,token,source).await{writeln!(err,"plugin reload failed: {error:#}")?;}else{writeln!(err,"reloaded {}",source.display())?;}
+                changes.reset(super::dev_watch::stamp(source)?);
             }
         }
     }

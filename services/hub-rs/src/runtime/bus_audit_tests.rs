@@ -399,6 +399,28 @@ async fn passive_request_shapes_preserve_foreground_activity() {
         assert_eq!(core.peers[&1].last_interaction_ms == 1, passive, "{method}");
         let _ = mailbox.reliable.try_recv();
     }
+    core.peers.get_mut(&1).unwrap().last_active_ms = 1;
+    topics(&mut core, 1, "subscribe", &["agent.snapshot"]);
+    take(&mut mailbox);
+    assert_eq!(
+        core.peers[&1].last_active_ms, 1,
+        "subscriptions are not foreground use"
+    );
+    call(&mut core, 1, "clock", "layout.get", Value::Null);
+    take(&mut mailbox);
+    assert!(
+        core.peers[&1].last_active_ms > 1,
+        "legacy clients count even passive calls"
+    );
+    core.peers.get_mut(&1).unwrap().last_active_ms = 1;
+    core.frame(
+        1,
+        Frame {
+            event: Some(Event::new("fixture.activity", "fixture", Value::Null)),
+            ..Frame::op("publish")
+        },
+    );
+    assert!(core.peers[&1].last_active_ms > 1);
     assert!(mailbox.events.try_recv().is_err());
 }
 
@@ -515,4 +537,266 @@ async fn closed_identity_is_inert_before_physical_peer_eviction() {
     empty(&mut provider);
     assert!(core.pending.is_empty());
     assert_eq!(core.peers[&1].activity_seq, sequence);
+}
+
+#[tokio::test]
+async fn registered_private_desktop_names_remain_unreachable_even_to_owner() {
+    async fn receive(connection: &mut Connection) -> Frame {
+        tokio::time::timeout(Duration::from_secs(3), connection.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    }
+    let hub = Hub::start(Options::default()).unwrap();
+    hub.ready().await.unwrap();
+    let handle = hub.handle();
+    let mut owner = handle.connect().await.unwrap();
+    let mut provider = handle.connect().await.unwrap();
+    receive(&mut owner).await;
+    receive(&mut provider).await;
+    provider
+        .send(Frame {
+            methods: vec![
+                "desktop.internal.acceptSpawn".into(),
+                "desktop.worktreeInfo".into(),
+                "plugins.fixtureExtension".into(),
+            ],
+            ..Frame::op("register")
+        })
+        .unwrap();
+    assert_eq!(receive(&mut provider).await.methods.len(), 3);
+    owner
+        .send(Frame {
+            id: "private".into(),
+            method: "desktop.internal.acceptSpawn".into(),
+            params: Some(json!({"authenticatedHost":true})),
+            ..Frame::op("call")
+        })
+        .unwrap();
+    let refusal = receive(&mut owner).await;
+    assert_eq!(refusal.op, "error");
+    assert_eq!(refusal.id, "private");
+    assert!(refusal.error.contains("desktop services"));
+    for method in ["desktop.worktreeInfo", "plugins.fixtureExtension"] {
+        owner
+            .send(Frame {
+                id: method.into(),
+                method: method.into(),
+                ..Frame::op("call")
+            })
+            .unwrap();
+        let call = receive(&mut provider).await;
+        assert_eq!(
+            call.method, method,
+            "private call must never have reached provider"
+        );
+        provider
+            .send(Frame {
+                id: call.id,
+                result: Some(json!({"ok":true})),
+                ..Frame::op("result")
+            })
+            .unwrap();
+        let result = receive(&mut owner).await;
+        assert_eq!(result.id, method);
+        assert_eq!(result.result, Some(json!({"ok":true})));
+    }
+    handle
+        .register_plugin(
+            "fixture-plugin-token".into(),
+            "fixtureplugin".into(),
+            vec!["fixtureplugin.echo".into()],
+        )
+        .await
+        .unwrap();
+    let mut plugin = handle
+        .connect_authenticated("fixture-plugin-token".into(), false)
+        .await
+        .unwrap();
+    receive(&mut plugin).await;
+    plugin
+        .send(Frame {
+            methods: vec!["fixtureplugin.echo".into()],
+            ..Frame::op("register")
+        })
+        .unwrap();
+    assert_eq!(
+        receive(&mut plugin).await.methods,
+        vec!["fixtureplugin.echo"]
+    );
+    owner
+        .send(Frame {
+            id: "extension".into(),
+            method: "fixtureplugin.echo".into(),
+            ..Frame::op("call")
+        })
+        .unwrap();
+    let call = receive(&mut plugin).await;
+    assert_eq!(call.method, "fixtureplugin.echo");
+    plugin
+        .send(Frame {
+            id: call.id,
+            result: Some(json!("plugin result")),
+            ..Frame::op("result")
+        })
+        .unwrap();
+    assert_eq!(
+        receive(&mut owner).await.result,
+        Some(json!("plugin result"))
+    );
+    hub.shutdown().unwrap();
+}
+
+#[tokio::test]
+async fn canonical_key_refusal_precedes_both_local_and_qualified_execution() {
+    let mut core = core();
+    let mut caller = peer(&mut core, 1, scoped(Scope::Operator, vec![]), 16);
+    for method in ["agents.spawn", "hub:worker/agents.spawn"] {
+        for key in ["YoloGranted", "Model", "tasKId"] {
+            call(&mut core, 1, "alias", method, json!({key:"value"}));
+            let refusal = take(&mut caller);
+            assert_eq!(refusal.id, "alias");
+            assert!(
+                refusal.error.contains("non-canonical param"),
+                "{method}: {}",
+                refusal.error
+            );
+            assert!(core.pending.is_empty());
+        }
+        // A canonical request reaches the distinct execution-service guard;
+        // merely refusing every qualified request cannot satisfy this test.
+        call(&mut core, 1, "canonical", method, json!({"model":"opus"}));
+        assert!(
+            take(&mut caller)
+                .error
+                .contains("requires a configured execution service")
+        );
+    }
+}
+
+#[tokio::test]
+async fn live_inventory_uses_real_connection_ids_and_host_owned_infrastructure_flags() {
+    async fn receive(connection: &mut Connection) -> Frame {
+        tokio::time::timeout(Duration::from_secs(3), connection.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    }
+    let mut options = Options::default().handler("fixture.identity", |caller, _| async move {
+        Ok(json!({"connectionId":caller.connection_id,"sequence":caller.activity_seq}))
+    });
+    options.token = "PRIVATE_OWNER_TOKEN".into();
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let handle = hub.handle();
+    let mut user = handle.connect().await.unwrap();
+    let mut provider = handle.connect().await.unwrap();
+    let internal = handle.connect_service().await.unwrap();
+    receive(&mut user).await;
+    receive(&mut provider).await;
+    provider
+        .send(Frame {
+            methods: vec!["fixture.provider".into()],
+            ..Frame::op("register")
+        })
+        .unwrap();
+    receive(&mut provider).await;
+    handle
+        .register_plugin(
+            "PRIVATE_PLUGIN_TOKEN".into(),
+            "fixtureplugin".into(),
+            vec![],
+        )
+        .await
+        .unwrap();
+    let plugin = handle
+        .connect_authenticated("PRIVATE_PLUGIN_TOKEN".into(), false)
+        .await
+        .unwrap();
+    user.send(serde_json::from_value(json!({"op":"activity","internal":true})).unwrap())
+        .unwrap();
+    user.send(Frame {
+        id: "identity".into(),
+        method: "fixture.identity".into(),
+        params: Some(json!({"connectionId":999999,"internal":true})),
+        ..Frame::op("call")
+    })
+    .unwrap();
+    let identity = receive(&mut user).await.result.unwrap();
+    assert_eq!(identity["connectionId"], user.id);
+    assert!(identity["sequence"].as_u64().unwrap() > 1);
+    let rows = handle.quiescence_clients().await.unwrap();
+    assert!(
+        rows.windows(2)
+            .all(|pair| pair[0].connection_id < pair[1].connection_id)
+    );
+    let human = rows
+        .iter()
+        .find(|row| row.connection_id == user.id)
+        .unwrap();
+    assert!(!human.internal && !human.plugin && !human.provider);
+    assert!(human.idle_active_ms > 0 && !human.label.is_empty());
+    assert!(
+        rows.iter()
+            .find(|row| row.connection_id == provider.id)
+            .unwrap()
+            .provider
+    );
+    assert!(
+        rows.iter()
+            .find(|row| row.connection_id == plugin.id)
+            .unwrap()
+            .plugin
+    );
+    assert!(
+        rows.iter()
+            .find(|row| row.connection_id == internal.id)
+            .unwrap()
+            .internal
+    );
+    assert!(rows.iter().all(|row| !row.label.contains("PRIVATE_")));
+    hub.shutdown().unwrap();
+}
+
+#[tokio::test]
+async fn hello_permission_passthrough_tracks_call_authority_not_provider_registration_grants() {
+    let directory = tempfile::tempdir().unwrap();
+    let tokens = directory.path().join("tokens.json");
+    let operator = crate::auth::mint(&tokens, Scope::Operator, "operator").unwrap();
+    let triage = crate::auth::mint(&tokens, Scope::Triage, "triage").unwrap();
+    let provider = crate::auth::mint(&tokens, Scope::Provider, "provider").unwrap();
+    let mut options = Options::default();
+    options.token = "fixture-host".into();
+    options.scoped_tokens = Some(tokens);
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let handle = hub.handle();
+    handle
+        .register_plugin("fixture-plugin".into(), "fixtureplugin".into(), vec![])
+        .await
+        .unwrap();
+    for (token, federated, allowed) in [
+        ("fixture-host".to_owned(), false, true),
+        (operator.token, false, true),
+        (triage.token, false, false),
+        (provider.token, false, false),
+        ("fixture-plugin".into(), false, true),
+        ("fixture-host".into(), true, true),
+    ] {
+        let mut connection = handle
+            .connect_authenticated(token.clone(), federated)
+            .await
+            .unwrap();
+        let hello = tokio::time::timeout(Duration::from_secs(3), connection.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(hello.op, "hello");
+        assert_eq!(
+            hello.spawn_full_access, allowed,
+            "{} federated={federated}",
+            hello.scope
+        );
+    }
+    hub.shutdown().unwrap();
 }

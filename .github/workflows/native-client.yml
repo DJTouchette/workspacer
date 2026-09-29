@@ -2,10 +2,10 @@ name: native-client
 
 on:
   pull_request:
-    paths: ['apps/native/**', 'services/hub-rs/**', 'services/claudemon/**', '.github/workflows/native-client.yml']
+    paths: ['apps/native/**', 'services/hub-rs/**', 'services/claudemon/**', 'vendor/portable-pty/**', '.github/workflows/native-client.yml']
   push:
     branches: [main]
-    paths: ['apps/native/**', 'services/hub-rs/**', 'services/claudemon/**', '.github/workflows/native-client.yml']
+    paths: ['apps/native/**', 'services/hub-rs/**', 'services/claudemon/**', 'vendor/portable-pty/**', '.github/workflows/native-client.yml']
   workflow_dispatch:
 
 concurrency:

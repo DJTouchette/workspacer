@@ -64,6 +64,9 @@ pub fn spawn(
         cmd.env_remove(key);
     }
 
+    #[cfg(windows)]
+    cmd.set_windows_creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -190,4 +193,72 @@ pub async fn resize(handle: &PtyHandle, cols: u16, rows: u16) -> Result<()> {
     .await
     .context("join resize task")??;
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod windows_job_tests {
+    use super::*;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::{
+        Foundation::WAIT_OBJECT_0,
+        System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+    };
+
+    #[test]
+    fn conpty_job_confines_a_child_that_forks_immediately_without_input() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("descendant.pid");
+        let script="$p=Start-Process cmd.exe -ArgumentList '/D','/C','ping -n 30 127.0.0.1 >nul' -PassThru;Set-Content -LiteralPath $env:WORKSPACER_PTY_JOB_MARKER -Value $p.Id -Encoding ascii;Start-Sleep -Seconds 30";
+        let argv = [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ]
+        .map(str::to_owned);
+        let environment = std::collections::HashMap::from([(
+            "WORKSPACER_PTY_JOB_MARKER".into(),
+            marker.to_string_lossy().into_owned(),
+        )]);
+        let handle = spawn(
+            &argv,
+            directory.path().to_str().unwrap(),
+            PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+            &environment,
+        )
+        .unwrap();
+        // Drain ConPTY output concurrently so closing its console cannot wait
+        // for an unread screen buffer. The child itself has no stdin gate.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        start_reader(&handle, tx).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let descendant = loop {
+            if let Ok(text) = std::fs::read_to_string(&marker) {
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+                    assert!(!raw.is_null());
+                    break unsafe { OwnedHandle::from_raw_handle(raw) };
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ConPTY immediate-fork fixture did not start"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        signal_child(&handle, crate::protocol::Signal::Sigkill).unwrap();
+        assert_eq!(
+            unsafe { WaitForSingleObject(descendant.as_raw_handle(), 5000) },
+            WAIT_OBJECT_0,
+            "ConPTY descendant escaped its creation-time job ownership"
+        );
+        wait_child(&handle).unwrap();
+    }
 }

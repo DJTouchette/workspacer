@@ -1,17 +1,24 @@
 //! Standalone administration and the in-process Rust launcher.
 mod admin;
+mod compat;
+mod dev_watch;
 mod identity;
 mod install;
+mod launcher_paths;
 mod parent;
+mod presentation;
+mod readiness;
 mod serve;
+mod usage;
 use anyhow::Result;
+use clap::builder::TypedValueParser;
 use clap::{Args, Parser, Subcommand};
 pub use identity::{config_directory, load_or_create_host_token};
 pub use serve::{ServePlan, plan_serve};
 use std::{io::Write, path::PathBuf};
 #[derive(Parser, Debug)]
 #[command(
-    name = "workspacer-rust",
+    name = "workspacer",
     about = "Workspacer Rust launcher and host administration"
 )]
 pub struct CommandLine {
@@ -21,11 +28,11 @@ pub struct CommandLine {
     pub host: String,
     #[arg(long, global = true, default_value_t = 7895)]
     pub hub_port: u16,
-    #[arg(long, global = true)]
+    #[arg(long, global = true, allow_hyphen_values = true)]
     pub token: Option<String>,
     #[arg(long, global = true)]
     pub tokens_file: Option<PathBuf>,
-    #[arg(long, global = true)]
+    #[arg(long,global=true,action=clap::ArgAction::Set,num_args=0..=1,default_missing_value="true",require_equals=true,default_value_t=false,value_parser=compat::boolean)]
     pub json: bool,
     #[command(subcommand)]
     pub command: Command,
@@ -50,7 +57,7 @@ pub enum Command {
         command: FleetCommand,
     },
     InstallCli {
-        #[arg(long)]
+        #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
         dir: Option<PathBuf>,
     },
     Plugin {
@@ -62,7 +69,8 @@ pub enum Command {
 pub struct ServeArgs {
     #[arg(long, conflicts_with = "upstream")]
     pub hub_only: bool,
-    #[arg(long, requires = "hub_only")]
+    /// Borrow a daemon only in explicit --hub-only mode; a bare flag uses its API port.
+    #[arg(long, num_args=0..=1, default_missing_value="")]
     pub external_claudemon: Option<String>,
     #[arg(long)]
     pub quiet: bool,
@@ -84,7 +92,7 @@ pub struct ServeArgs {
     pub claudemon_api_port: u16,
     #[arg(long, default_value_t = 7890)]
     pub claudemon_hook_port: u16,
-    #[arg(long)]
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub claudemon_db_path: Option<PathBuf>,
     #[arg(long, default_value_t = 7897)]
     pub mcp_port: u16,
@@ -94,11 +102,11 @@ pub struct ServeArgs {
     pub untokened: Option<crate::mcp::UntokenedAccess>,
     #[arg(long)]
     pub mcp_token: Option<String>,
-    #[arg(long)]
+    #[arg(long,action=clap::ArgAction::Set,num_args=0..=1,default_missing_value="true",require_equals=true,default_value_t=false,value_parser=compat::boolean)]
     pub no_claudemon_init: bool,
-    #[arg(long)]
-    pub allow_new_token: bool,
-    #[arg(long)]
+    #[arg(long,action=clap::ArgAction::Set,num_args=0..=1,default_missing_value="true",require_equals=true,value_parser=compat::boolean)]
+    pub allow_new_token: Option<bool>,
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub plugins_dir: Option<PathBuf>,
     #[arg(long)]
     pub examples_dir: Option<PathBuf>,
@@ -108,7 +116,7 @@ pub struct ServeArgs {
     pub plugin_origin: Option<String>,
     #[arg(long, value_delimiter = ',')]
     pub trusted_host: Vec<String>,
-    #[arg(long)]
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub webapp_dir: Option<PathBuf>,
     #[arg(long)]
     pub push_dir: Option<PathBuf>,
@@ -146,7 +154,7 @@ impl Default for ServeArgs {
             untokened: None,
             mcp_token: None,
             no_claudemon_init: false,
-            allow_new_token: false,
+            allow_new_token: None,
             plugins_dir: None,
             examples_dir: None,
             sidecar_node: None,
@@ -175,7 +183,7 @@ pub enum TokenCommand {
         scope: String,
         #[arg(long, default_value = "")]
         label: String,
-        #[arg(long,hide=true,num_args=0..=1,default_missing_value="true")]
+        #[arg(long,hide=true,num_args=0..=1,default_missing_value="true",require_equals=true,value_parser=compat::boolean)]
         full_access: Option<bool>,
     },
     List,
@@ -186,7 +194,7 @@ pub enum TokenCommand {
     FacadeAuthority {
         #[arg(long)]
         label: String,
-        #[arg(long,required=true,action=clap::ArgAction::Set)]
+        #[arg(long,required=true,action=clap::ArgAction::Set,value_parser=compat::boolean)]
         enabled: bool,
     },
 }
@@ -208,7 +216,7 @@ pub enum JobsCommand {
     },
     Approve {
         id: String,
-        #[arg(long)]
+        #[arg(long,action=clap::ArgAction::Set,num_args=0..=1,default_missing_value="true",require_equals=true,default_value_t=false,value_parser=compat::boolean)]
         disabled: bool,
     },
     Enable {
@@ -224,11 +232,11 @@ pub enum JobsCommand {
 #[derive(Subcommand, Debug)]
 pub enum FleetCommand {
     Quiescence {
-        #[arg(long)]
+        #[arg(long,action=clap::ArgAction::Set,num_args=0..=1,default_missing_value="true",require_equals=true,default_value_t=false,value_parser=compat::boolean)]
         quiet: bool,
     },
     Idle {
-        #[arg(long)]
+        #[arg(long,action=clap::ArgAction::Set,num_args=0..=1,default_missing_value="true",require_equals=true,default_value_t=false,value_parser=compat::boolean)]
         quiet: bool,
     },
 }
@@ -238,13 +246,25 @@ pub enum PluginCommand {
         directory: PathBuf,
         #[arg(long,default_value_t=true,action=clap::ArgAction::Set)]
         build: bool,
-        #[arg(long, default_value_t = 500)]
+        #[arg(long, default_value_t = 400)]
         poll_ms: u64,
+        #[arg(long, value_parser=dev_watch::duration, allow_hyphen_values=true, conflicts_with="poll_ms")]
+        debounce: Option<std::time::Duration>,
         #[command(flatten)]
         serve: ServeArgs,
     },
 }
 impl CommandLine {
+    pub fn try_parse_compatible_from<I, T>(args: I) -> std::result::Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString>,
+    {
+        Self::try_parse_from(compat::normalize(args)?)
+    }
+    pub fn parse_compatible() -> Self {
+        Self::try_parse_compatible_from(std::env::args_os()).unwrap_or_else(|error| error.exit())
+    }
     pub fn directory(&self) -> Result<PathBuf> {
         self.config_dir
             .clone()
@@ -261,9 +281,11 @@ impl CommandLine {
         if let Some(token) = self.token.as_ref().filter(|s| !s.is_empty()) {
             return Ok(token.clone());
         }
-        if let Ok(token) = std::env::var("HUB_TOKEN") {
-            if !token.is_empty() {
-                return Ok(token);
+        if self.token.is_none() {
+            if let Ok(token) = std::env::var("HUB_TOKEN") {
+                if !token.is_empty() {
+                    return Ok(token);
+                }
             }
         }
         match std::fs::read_to_string(self.directory()?.join("remote-token")) {
@@ -273,6 +295,9 @@ impl CommandLine {
         }
     }
     pub fn authority(&self, port: u16) -> String {
+        if self.host.is_empty() {
+            return format!("127.0.0.1:{port}");
+        }
         if let Ok(ip) = self
             .host
             .trim_matches(['[', ']'])
@@ -302,13 +327,18 @@ pub async fn execute(args: &CommandLine, out: &mut dyn Write, err: &mut dyn Writ
                     directory,
                     build,
                     poll_ms,
+                    debounce,
                     serve,
                 },
         } => {
             serve::run(
                 args,
                 serve,
-                Some((directory.clone(), *build, *poll_ms)),
+                Some((
+                    directory.clone(),
+                    *build,
+                    debounce.unwrap_or_else(|| std::time::Duration::from_millis(*poll_ms)),
+                )),
                 out,
                 err,
             )

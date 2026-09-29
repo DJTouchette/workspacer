@@ -1,6 +1,6 @@
 {
   "reviewer": "routing_usage",
-  "validation": "Fresh full lib snapshot:237 passed,1 new closed-peer regression failed separately. The named demand replay/entitlement/clear,40-call ordering/bounded provider and slow caller sibling tests in these3 records all passed. Closed-peer production filter has since been corrected and awaits rerun; it does not certify extra legacy files here. Log /tmp/workspacer-wake-controls-lib-retry.log.",
+  "validation": "Fresh full Rust lib246/246 PASS (/tmp/workspacer-current-full-lib.log), including bounded delivery/order, exact demand replay/clear/entitlement, no-provider outage diagnostics, activity shape/clock cases, all-topic identity matrix and closed-peer pre-eviction refusal. Routing event projection and actual viewer delivery/audit correlation also passed. Later desktop whitelist changes are a separate pending slice.",
   "records": {
     "services/hub/internal/bus/demand.go": {
       "status": "ported",
@@ -42,6 +42,48 @@
         "services/hub-rs/src/runtime/bus_audit_tests.rs"
       ],
       "note": "Direct actor regressions prove40 forwarded calls preserve order/correlation, full reliable provider queues cannot block another caller control frame, pending calls fail after provider eviction, and saturated caller cannot stall sibling response/error delivery. Rust closes bounded reliable consumers on overflow rather than reproducing Go goroutine queue internals; no unbounded buffering or silent abandoned pending calls."
+    },
+    "services/hub/internal/bus/activity.go": {
+      "status": "ported",
+      "sha256": "312109ac7af1413452d18ef132c9b7738b4f4b4f0ff55783f673b8d77a4cc484",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ],
+      "note": "Server-owned activity sequence and active/input clocks retained. Input-reporting peers ignore passive polls; legacy peers conservatively project the last call/publication clock, and trusted internal peers remain separately identified. Static background-read names and parameter-sensitive workflow/readiness/manager-list policy match the original cases. New request classifier preserves absent versus explicit-null values, validates all known field types, and supports encoding/json ASCII/Unicode SimpleFold aliases. Unknown/mutation operations count as input. Ambiguous duplicate case aliases conservatively count activity because serde Value has no original member order; malformed wire JSON is refused before the actor rather than becoming a passive request."
+    },
+    "services/hub/internal/bus/activity_test.go": {
+      "status": "ported",
+      "sha256": "a417a3b9d41390fdf1d193b3a8489aeee3dd1a5999d055315f3451e4259fe20d",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ],
+      "note": "Server-owned activity sequence and active/input clocks retained. Input-reporting peers ignore passive polls; legacy peers conservatively project the last call/publication clock, and trusted internal peers remain separately identified. Static background-read names and parameter-sensitive workflow/readiness/manager-list policy match the original cases. New request classifier preserves absent versus explicit-null values, validates all known field types, and supports encoding/json ASCII/Unicode SimpleFold aliases. Unknown/mutation operations count as input. Ambiguous duplicate case aliases conservatively count activity because serde Value has no original member order; malformed wire JSON is refused before the actor rather than becoming a passive request."
+    },
+    "services/hub/internal/bus/desktopactivity_test.go": {
+      "status": "ported",
+      "sha256": "4eed43e84518b7a7565a570498affd29a645fa860e17d0d3a56ce1498735bccd",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ],
+      "note": "Server-owned activity sequence and active/input clocks retained. Input-reporting peers ignore passive polls; legacy peers conservatively project the last call/publication clock, and trusted internal peers remain separately identified. Static background-read names and parameter-sensitive workflow/readiness/manager-list policy match the original cases. New request classifier preserves absent versus explicit-null values, validates all known field types, and supports encoding/json ASCII/Unicode SimpleFold aliases. Unknown/mutation operations count as input. Ambiguous duplicate case aliases conservatively count activity because serde Value has no original member order; malformed wire JSON is refused before the actor rather than becoming a passive request."
     }
   }
 }

@@ -141,3 +141,48 @@ fn selected_store_entry_cannot_redirect_through_a_symlink() {
         std::fs::canonicalize(&store).unwrap().join("new.yaml")
     );
 }
+
+#[test]
+#[cfg(any(unix, windows))]
+fn canonical_walk_accepts_exact_fixture_link_budget_and_refuses_one_more() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../contracts/path-containment-cases.json"
+    ))
+    .unwrap();
+    let limit = fixture["maxLinkHops"].as_u64().unwrap() as usize;
+    assert_eq!(limit, 40, "review any change to the shared link budget");
+    let directory = tempfile::tempdir().unwrap();
+    // Resolve ambient /var or runner junction aliases first: this test counts
+    // exactly the links it creates, not a platform's temporary-root spelling.
+    let root = std::fs::canonicalize(directory.path()).unwrap();
+    let target = root.join("target");
+    std::fs::create_dir(&target).unwrap();
+    assert!(paths::contained(&target.join("child"), &target));
+    assert!(!paths::contained(
+        &root.join("target-sibling").join("child"),
+        &target
+    ));
+    let ordinary_file = root.join("ordinary-file");
+    std::fs::write(&ordinary_file, b"fixture").unwrap();
+    assert!(paths::canonicalize(&ordinary_file.join("child")).is_err());
+    for index in (0..=limit).rev() {
+        let link = root.join(format!("link-{index}"));
+        let next = if index == limit {
+            target.clone()
+        } else {
+            root.join(format!("link-{}", index + 1))
+        };
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&next, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&next, &link).expect(
+            "Windows contract CI must enable Developer Mode rather than skip the hop boundary",
+        );
+    }
+    assert_eq!(paths::canonicalize(&root.join("link-1")).unwrap(), target);
+    let error = paths::canonicalize(&root.join("link-0")).unwrap_err();
+    assert!(
+        error.to_string().contains("too many symbolic links"),
+        "{error}"
+    );
+}

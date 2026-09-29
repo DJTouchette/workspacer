@@ -1,0 +1,141 @@
+{
+  "records": {
+    "services/hub/internal/parentwatch/parentwatch.go": {
+      "sha256": "58ab43f64a1bda3b90397756b8752bf536e2af78bb564fbf980bc33f8b23618d",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original triggers and platform branches: absent/empty WORKSPACER_PARENT_PID disables watching, malformed text retains stdin EOF only, valid parent uses Unix signal0/EPERM liveness or one pinned Windows SYNCHRONIZE handle; first completed trigger shuts down standalone ownership.",
+          "Rust CLI preserves these decisions using cancellable nonblocking probes plus bounded reads; the embedded Backend never installs this CLI parent watcher or takes over host stdin/signals. Parent-handle RAII closes on cancellation instead of leaving a detached goroutine."
+        ],
+        "verifiedCheckpoint": "Actual standalone SIGTERM/parent-pipe and supervised hub-only EOF smoke tests passed on Unix. Windows parent watcher is source-compared and compiled with the standalone CLI; actual Windows native ownership/job/package tests cover separate ownership primitives, not this stdin watcher. A dedicated Windows CLI parent-death runtime check is still needed for the final platform gate."
+      }
+    },
+    "services/hub/internal/parentwatch/parentwatch_unix.go": {
+      "sha256": "c72fc173d49a4a91adda932e04bd07319c75ca6a61335842e7aa78a5ecda9539",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original triggers and platform branches: absent/empty WORKSPACER_PARENT_PID disables watching, malformed text retains stdin EOF only, valid parent uses Unix signal0/EPERM liveness or one pinned Windows SYNCHRONIZE handle; first completed trigger shuts down standalone ownership.",
+          "Rust CLI preserves these decisions using cancellable nonblocking probes plus bounded reads; the embedded Backend never installs this CLI parent watcher or takes over host stdin/signals. Parent-handle RAII closes on cancellation instead of leaving a detached goroutine."
+        ],
+        "verifiedCheckpoint": "Actual standalone SIGTERM/parent-pipe and supervised hub-only EOF smoke tests passed on Unix. Windows parent watcher is source-compared and compiled with the standalone CLI; actual Windows native ownership/job/package tests cover separate ownership primitives, not this stdin watcher. A dedicated Windows CLI parent-death runtime check is still needed for the final platform gate."
+      }
+    },
+    "services/hub/internal/parentwatch/parentwatch_windows.go": {
+      "sha256": "0d4fbb1503662f367e1fa81a7a13c8ceeec4ef72af811d23d7fe208dd4520492",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original triggers and platform branches: absent/empty WORKSPACER_PARENT_PID disables watching, malformed text retains stdin EOF only, valid parent uses Unix signal0/EPERM liveness or one pinned Windows SYNCHRONIZE handle; first completed trigger shuts down standalone ownership.",
+          "Rust CLI preserves these decisions using cancellable nonblocking probes plus bounded reads; the embedded Backend never installs this CLI parent watcher or takes over host stdin/signals. Parent-handle RAII closes on cancellation instead of leaving a detached goroutine."
+        ],
+        "verifiedCheckpoint": "Actual standalone SIGTERM/parent-pipe and supervised hub-only EOF smoke tests passed on Unix. Windows parent watcher is source-compared and compiled with the standalone CLI; actual Windows native ownership/job/package tests cover separate ownership primitives, not this stdin watcher. A dedicated Windows CLI parent-death runtime check is still needed for the final platform gate."
+      }
+    },
+    "services/hub/internal/jobobject/jobobject.go": {
+      "sha256": "907a7de6dd7523c4ac74aa9a63c675138ae7febe011e3fcf266e9e1657486468",
+      "status": "retired",
+      "replacement": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "tests": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs",
+        "services/hub-rs/tests/pty_ownership.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared CreateJob/extended KILL_ON_JOB_CLOSE/assignment/failure-close/lifetime semantics. Rust Job owns one spawned child and explicitly refuses the embedding process; closing the owned handle terminates assigned child and inherited descendants. This replaces the Go hub process-wide job, which would be unsafe to impose on an embedded GUI.",
+          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim."
+        ],
+        "intentionalChanges": [
+          "Job ownership errors are propagated by owned launch helpers rather than merely logged while continuing unconfined. Non-Windows uses existing owned process-group cleanup rather than a dummy Confine no-op. This does not promise cleanup of arbitrary deliberately escaped Unix descendants."
+        ],
+        "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending."
+      },
+      "reason": "The comment-only Go package and non-Windows Confine no-op have no executable responsibility after removing the Go process owner; real platform ownership lives in Rust per-child guards."
+    },
+    "services/hub/internal/jobobject/jobobject_unix.go": {
+      "sha256": "fb2c25488c035b7adc116adb38b4ebb1b0ab83b0935dcd47e0e5099c5059ddc1",
+      "status": "retired",
+      "replacement": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "tests": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs",
+        "services/hub-rs/tests/pty_ownership.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared CreateJob/extended KILL_ON_JOB_CLOSE/assignment/failure-close/lifetime semantics. Rust Job owns one spawned child and explicitly refuses the embedding process; closing the owned handle terminates assigned child and inherited descendants. This replaces the Go hub process-wide job, which would be unsafe to impose on an embedded GUI.",
+          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim."
+        ],
+        "intentionalChanges": [
+          "Job ownership errors are propagated by owned launch helpers rather than merely logged while continuing unconfined. Non-Windows uses existing owned process-group cleanup rather than a dummy Confine no-op. This does not promise cleanup of arbitrary deliberately escaped Unix descendants."
+        ],
+        "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending."
+      },
+      "reason": "The comment-only Go package and non-Windows Confine no-op have no executable responsibility after removing the Go process owner; real platform ownership lives in Rust per-child guards."
+    }
+  },
+  "pending_review": {
+    "services/hub/internal/jobobject/jobobject_windows.go": {
+      "sha256": "e42e644e88dc5ef1eb532238fd6772b684077c4a288f158a24fa57fe3d70feed",
+      "status": "pending",
+      "replacement": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "tests": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs",
+        "services/hub-rs/tests/pty_ownership.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared CreateJob/extended KILL_ON_JOB_CLOSE/assignment/failure-close/lifetime semantics. Rust Job owns one spawned child and explicitly refuses the embedding process; closing the owned handle terminates assigned child and inherited descendants. This replaces the Go hub process-wide job, which would be unsafe to impose on an embedded GUI.",
+          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim."
+        ],
+        "intentionalChanges": [
+          "Job ownership errors are propagated by owned launch helpers rather than merely logged while continuing unconfined. Non-Windows uses existing owned process-group cleanup rather than a dummy Confine no-op. This does not promise cleanup of arbitrary deliberately escaped Unix descendants."
+        ],
+        "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending.",
+        "followup": "Spawn-before-assignment race is under lifecycle-agent investigation; not recordable until a Windows job-at-creation or suspended-launch regression proves immediate descendants cannot escape."
+      }
+    }
+  }
+}

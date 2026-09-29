@@ -44,8 +44,28 @@ fn exited(pid: u32) -> Result<bool> {
     }
     Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
+#[cfg(unix)]
+fn signal_with_anchor_retry(
+    mut observe: impl FnMut() -> Result<bool>,
+    mut signal: impl FnMut() -> std::io::Result<()>,
+    retries: usize,
+    mut pause: impl FnMut(),
+) -> Result<()> {
+    for attempt in 0..=retries {
+        // WNOWAIT proof is required again before EVERY numeric group signal.
+        // A false result still proves a live unreaped child; an error proves
+        // nothing and must stop even a previously admitted retry sequence.
+        observe().context("command anchor was reaped; refusing a numeric group signal")?;
+        match signal() {
+            Ok(()) => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(libc::EPERM) && attempt < retries => pause(),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    unreachable!("the last attempt always returns")
+}
 impl Owner {
-    fn new(child: &Child) -> Result<Self> {
+    fn new(child: &Child, #[cfg(windows)] job: claudemon::child_job::Job) -> Result<Self> {
         let pid = child.id().context("new command lacks process identity")?;
         #[cfg(target_os = "macos")]
         claudemon::child_group::verify_anchor(pid)?;
@@ -57,12 +77,6 @@ impl Owner {
         {
             bail!("command does not own a separate process group");
         }
-        #[cfg(windows)]
-        let job = claudemon::child_job::Job::assign(
-            child
-                .raw_handle()
-                .context("new command lacks process handle")?,
-        )?;
         Ok(Self {
             pid,
             armed: true,
@@ -76,9 +90,19 @@ impl Owner {
         }
         #[cfg(unix)]
         {
-            exited(self.pid)
-                .context("command anchor was reaped; refusing a numeric group signal")?;
-            claudemon::child_group::signal(self.pid as i32, libc::SIGKILL)?;
+            // XNU can return EPERM while a fast command is passing through
+            // exit: killpg filters zombies, while libproc's complete group
+            // observation may not yet establish that all members exited.
+            // Keep the direct-child PID anchor unreaped during a bounded retry.
+            // This is deliberately NOT in the shared foreground-group helper:
+            // a foreground group need not own this direct-child PID anchor.
+            let retries = if cfg!(target_os = "macos") { 20 } else { 0 };
+            signal_with_anchor_retry(
+                || exited(self.pid),
+                || claudemon::child_group::signal(self.pid as i32, libc::SIGKILL),
+                retries,
+                || std::thread::sleep(Duration::from_millis(5)),
+            )?;
         }
         #[cfg(windows)]
         self.job.terminate()?;
@@ -156,8 +180,16 @@ async fn capture_inner(
         .kill_on_drop(false);
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = command.scrub_host_authority().spawn()?;
-    let mut owner = match Owner::new(&child) {
+    command.scrub_host_authority();
+    #[cfg(windows)]
+    let (mut child, job) = claudemon::child_job::Job::spawn_tokio(command, 0)?;
+    #[cfg(not(windows))]
+    let mut child = command.spawn()?;
+    let mut owner = match Owner::new(
+        &child,
+        #[cfg(windows)]
+        job,
+    ) {
         Ok(owner) => owner,
         Err(error) => {
             // A failed Windows assignment still has the original process handle.
@@ -235,8 +267,16 @@ pub(crate) async fn json_exchange(
         .kill_on_drop(false);
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = command.scrub_host_authority().spawn()?;
-    let mut owner = match Owner::new(&child) {
+    command.scrub_host_authority();
+    #[cfg(windows)]
+    let (mut child, job) = claudemon::child_job::Job::spawn_tokio(command, 0)?;
+    #[cfg(not(windows))]
+    let mut child = command.spawn()?;
+    let mut owner = match Owner::new(
+        &child,
+        #[cfg(windows)]
+        job,
+    ) {
         Ok(owner) => owner,
         Err(error) => {
             #[cfg(unix)]
@@ -409,5 +449,115 @@ mod tests {
         let mut owner = Owner::new(&child).unwrap();
         child.wait().await.unwrap();
         assert!(owner.kill().is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod retry_tests {
+    use super::*;
+    use std::cell::Cell;
+    #[test]
+    fn transient_permission_retry_is_bounded_and_rechecks_anchor_before_every_signal() {
+        let probes = Cell::new(0);
+        let signals = Cell::new(0);
+        let waits = Cell::new(0);
+        signal_with_anchor_retry(
+            || {
+                probes.set(probes.get() + 1);
+                Ok(false)
+            },
+            || {
+                signals.set(signals.get() + 1);
+                if signals.get() < 3 {
+                    Err(std::io::Error::from_raw_os_error(libc::EPERM))
+                } else {
+                    Ok(())
+                }
+            },
+            2,
+            || waits.set(waits.get() + 1),
+        )
+        .unwrap();
+        assert_eq!((probes.get(), signals.get(), waits.get()), (3, 3, 2));
+        signals.set(0);
+        let error = signal_with_anchor_retry(
+            || Ok(true),
+            || {
+                signals.set(signals.get() + 1);
+                Err(std::io::Error::from_raw_os_error(libc::EPERM))
+            },
+            2,
+            || {},
+        )
+        .unwrap_err();
+        assert_eq!(signals.get(), 3);
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(libc::EPERM)
+        );
+    }
+    #[test]
+    fn lost_anchor_or_other_error_never_authorizes_an_extra_numeric_signal() {
+        let probes = Cell::new(0);
+        let signals = Cell::new(0);
+        let error = signal_with_anchor_retry(
+            || {
+                probes.set(probes.get() + 1);
+                if probes.get() == 1 {
+                    Ok(true)
+                } else {
+                    Err(std::io::Error::from_raw_os_error(libc::ECHILD).into())
+                }
+            },
+            || {
+                signals.set(signals.get() + 1);
+                Err(std::io::Error::from_raw_os_error(libc::EPERM))
+            },
+            20,
+            || {},
+        )
+        .unwrap_err();
+        assert_eq!(signals.get(), 1);
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(libc::ECHILD)
+        );
+        signals.set(0);
+        let error = signal_with_anchor_retry(
+            || Ok(false),
+            || {
+                signals.set(signals.get() + 1);
+                Err(std::io::Error::from_raw_os_error(libc::EACCES))
+            },
+            20,
+            || panic!("non-EPERM cannot retry"),
+        )
+        .unwrap_err();
+        assert_eq!(signals.get(), 1);
+        assert_eq!(
+            error
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(libc::EACCES)
+        );
+    }
+    #[tokio::test]
+    async fn repeated_fast_oversized_commands_preserve_output_limit_after_owned_cleanup() {
+        for _ in 0..16 {
+            let mut command = Command::new("/bin/sh");
+            command.args(["-c", "printf '%65536s' x"]);
+            let error = match capture(&mut command, 128, Duration::from_secs(3)).await {
+                Ok(_) => panic!("oversized command cannot produce a successful partial capture"),
+                Err(error) => error,
+            };
+            assert!(error.downcast_ref::<OutputLimit>().is_some(), "{error:#}");
+        }
     }
 }

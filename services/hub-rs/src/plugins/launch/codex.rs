@@ -211,10 +211,15 @@ async fn read(plan: &Plan) -> Result<Provider> {
         .kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
+    command.scrub_host_authority();
     #[cfg(windows)]
-    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    let (mut child, _job) = crate::plugins::supervisor::windows_job::Job::spawn_tokio(
+        &mut command,
+        windows_sys::Win32::System::Threading::CREATE_NO_WINDOW,
+    )
+    .map_err(|_| anyhow!("Could not start Codex with owned process supervision"))?;
+    #[cfg(not(windows))]
     let mut child = command
-        .scrub_host_authority()
         .spawn()
         .map_err(|_| anyhow!("Could not start Codex to read routing configuration"))?;
     #[cfg(unix)]
@@ -223,16 +228,6 @@ async fn read(plan: &Plan) -> Result<Provider> {
             .id()
             .ok_or_else(|| anyhow!("Codex probe process id unavailable"))?,
     );
-    #[cfg(windows)]
-    let _job = child.raw_handle().and_then(|handle| {
-        match crate::plugins::supervisor::windows_job::Job::assign_raw(handle) {
-            Ok(job) => Some(job),
-            Err(error) => {
-                eprintln!("Codex probe job confinement unavailable: {error}");
-                None
-            }
-        }
-    });
     let mut stdin = child
         .stdin
         .take()

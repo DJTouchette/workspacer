@@ -227,7 +227,6 @@ async fn jobs_approval_uses_host_authority_and_does_not_enable_proposals_implici
     drop(saved);
     hub.shutdown().unwrap();
 }
-#[cfg(unix)]
 fn standalone_smoke(parent_pipe: bool) {
     use std::{
         io::{BufRead, BufReader},
@@ -316,6 +315,8 @@ fn standalone_smoke(parent_pipe: bool) {
             .env_remove("HUB_TOKEN")
             .env_remove("WORKSPACER_ALLOW_NEW_TOKEN")
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", &xdg)
             .env("XDG_CONFIG_HOME", &xdg)
             .env("WORKSPACER_USAGE_POLL_ON_BOOT", "0")
             .stdout(Stdio::piped())
@@ -386,9 +387,12 @@ fn standalone_smoke(parent_pipe: bool) {
     if parent_pipe {
         drop(child.0.stdin.take());
     } else {
+        #[cfg(unix)]
         unsafe {
             libc::kill(child.0.id() as libc::pid_t, libc::SIGTERM);
         }
+        #[cfg(not(unix))]
+        panic!("SIGTERM fixture is Unix-only");
     }
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -411,7 +415,6 @@ fn standalone_smoke(parent_pipe: bool) {
 fn standalone_rust_serve_reports_ready_and_handles_sigterm_without_other_binaries() {
     standalone_smoke(false);
 }
-#[cfg(unix)]
 #[test]
 fn standalone_rust_serve_handles_parent_pipe_eof_even_while_parent_pid_lives() {
     standalone_smoke(true);
@@ -510,7 +513,6 @@ fn desktop_hub_only_flags_and_worker_roles_are_explicit() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
     use std::{
@@ -548,6 +550,8 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
                 "--quiet",
                 "--json",
                 "--no-mcp",
+                "--trusted-host",
+                "client.fixture",
                 "--hub-port",
                 &port.to_string(),
             ])
@@ -564,6 +568,8 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             )
             .env("WORKSPACER_PARENT_PID", std::process::id().to_string())
             .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", root.path().join("xdg"))
             .env("XDG_CONFIG_HOME", root.path().join("xdg"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -592,6 +598,24 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             assert!(Instant::now() < deadline, "control plane readiness timeout");
             std::thread::sleep(Duration::from_millis(25));
         }
+        assert!(
+            client
+                .get(format!("http://127.0.0.1:{port}/health"))
+                .header("host", "client.fixture")
+                .send()
+                .unwrap()
+                .status()
+                .is_success()
+        );
+        assert_eq!(
+            client
+                .get(format!("http://127.0.0.1:{port}/health"))
+                .header("host", "untrusted.fixture")
+                .send()
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::FORBIDDEN
+        );
         let origin: Value = client
             .get(format!("http://127.0.0.1:{port}/plugins/origin"))
             .send()
@@ -599,6 +623,7 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             .json()
             .unwrap();
         assert_eq!(origin["origin"], expected_origin);
+        assert!(config.join("plugins").is_dir());
         assert!(!db.exists());
         assert!(!home.join(".claude/settings.json").exists());
         drop(child.0.stdin.take());
@@ -792,4 +817,660 @@ async fn status_preserves_string_details_counts_and_rejects_a_different_http_ser
     hub.shutdown().unwrap();
     server.abort();
     let _ = server.await;
+}
+
+#[tokio::test]
+async fn invalid_plugin_dev_manifest_has_no_identity_or_hook_side_effects() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("plugin");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("plugin.json"), "{}").unwrap();
+    let config = root.path().join("config");
+    let home = root.path().join("home");
+    let args = CommandLine::try_parse_from([
+        "workspacer",
+        "plugin",
+        "dev",
+        source.to_str().unwrap(),
+        "--config-dir",
+        config.to_str().unwrap(),
+        "--home-dir",
+        home.to_str().unwrap(),
+    ])
+    .unwrap();
+    assert!(
+        execute(&args, &mut Vec::new(), &mut Vec::new())
+            .await
+            .is_err()
+    );
+    assert!(!config.exists());
+    assert!(!home.exists());
+}
+
+#[test]
+fn launcher_refuses_inferred_relative_database_and_explains_external_ownership() {
+    let root = tempfile::tempdir().unwrap();
+    for xdg in ["", "relative-data"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+            .args(["serve", "--no-claudemon-init", "--config-dir"])
+            .arg(root.path().join("config"))
+            .arg("--home-dir")
+            .arg(root.path())
+            .env("XDG_DATA_HOME", xdg)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let message = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            message.contains("XDG_DATA_HOME") && message.contains("--claudemon-db-path"),
+            "{message}"
+        );
+        assert!(!root.path().join("config").exists());
+    }
+    let args =
+        CommandLine::try_parse_from(["workspacer", "serve", "--external-claudemon"]).unwrap();
+    let Command::Serve(serve) = &args.command else {
+        panic!()
+    };
+    let error = plan_serve(&args, serve).unwrap_err().to_string();
+    assert!(
+        error.contains("--hub-only") && error.contains("borrowed"),
+        "{error}"
+    );
+    let args = CommandLine::try_parse_from([
+        "workspacer",
+        "serve",
+        "--hub-only",
+        "--external-claudemon",
+        "--claudemon-api-port",
+        "19091",
+    ])
+    .unwrap();
+    let Command::Serve(serve) = &args.command else {
+        panic!()
+    };
+    assert_eq!(
+        plan_serve(&args, serve)
+            .unwrap()
+            .external_claudemon
+            .as_deref(),
+        Some("http://127.0.0.1:19091")
+    );
+    assert!(
+        CommandLine::try_parse_from(["workspacer", "plugin", "dev", ".", "--debounce", "400ms"])
+            .is_ok()
+    );
+}
+
+#[test]
+fn disposable_declared_parent_fixture() {
+    let Some(marker) = std::env::var_os("WKS_DISPOSABLE_PARENT_MARKER") else {
+        return;
+    };
+    std::fs::write(marker, "ready").unwrap();
+    use std::io::Read;
+    let mut byte = [0];
+    let _ = std::io::stdin().read(&mut byte);
+}
+
+#[test]
+fn standalone_parent_death_stops_hub_even_while_its_stdin_writer_remains_open() {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let marker = root.path().join("parent-ready");
+    let mut parent = Child(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "disposable_declared_parent_fixture",
+                "--nocapture",
+            ])
+            .env("WKS_DISPOSABLE_PARENT_MARKER", &marker)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !marker.exists() {
+        assert!(Instant::now() < deadline);
+        assert!(parent.0.try_wait().unwrap().is_none());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    drop(socket);
+    let mut launcher = Child(
+        Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+            .args([
+                "serve",
+                "--hub-only",
+                "--quiet",
+                "--no-mcp",
+                "--no-jobs",
+                "--plugins-dir",
+                "",
+                "--hub-port",
+                &port.to_string(),
+                "--token",
+                "parent-fixture",
+                "--config-dir",
+            ])
+            .arg(root.path().join("config"))
+            .arg("--home-dir")
+            .arg(&home)
+            .env("WORKSPACER_PARENT_PID", parent.0.id().to_string())
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("APPDATA", root.path().join("appdata"))
+            .env("XDG_CONFIG_HOME", root.path().join("xdg"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let held_writer = launcher.0.stdin.take().unwrap();
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_millis(500))
+        .build()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(25);
+    while !client
+        .get(format!("http://127.0.0.1:{port}/health"))
+        .send()
+        .is_ok_and(|response| response.status().is_success())
+    {
+        assert!(launcher.0.try_wait().unwrap().is_none());
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(parent.0.stdin.take());
+    assert!(parent.0.wait().unwrap().success());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = launcher.0.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "parent PID death did not stop launcher while stdin stayed open"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(held_writer);
+    std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+}
+
+#[tokio::test]
+async fn bare_external_daemon_flag_attaches_read_only_and_never_owns_its_ports_or_store() {
+    use axum::{Router, body::Body, http::Request, response::IntoResponse, routing::any};
+    use std::{
+        process::Stdio,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+    use tokio::io::AsyncBufReadExt;
+    let writes = Arc::new(AtomicUsize::new(0));
+    let observed = writes.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fake = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().fallback(any(move |request: Request<Body>| {
+                let observed = observed.clone();
+                async move {
+                    if request.method() != axum::http::Method::GET {
+                        observed.fetch_add(1, Ordering::SeqCst);
+                    }
+                    if request.uri().path() == "/health" {
+                        ([("X-Workspacer-Maintenance", "1")], "ok").into_response()
+                    } else {
+                        axum::Json(json!([])).into_response()
+                    }
+                }
+            })),
+        )
+        .await
+        .unwrap();
+    });
+    let hook = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let hook_port = hook.local_addr().unwrap().port();
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let database = root.path().join("must-not-open.sqlite");
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+        .args([
+            "serve",
+            "--hub-only",
+            "--external-claudemon",
+            "--claudemon-api-port",
+            &address.port().to_string(),
+            "--claudemon-hook-port",
+            &hook_port.to_string(),
+            "--hub-port",
+            "0",
+            "--no-mcp",
+            "--no-jobs",
+            "--plugins-dir",
+            "",
+            "--json",
+            "--token",
+            "borrowed-fixture",
+            "--config-dir",
+        ])
+        .arg(root.path().join("config"))
+        .arg("--home-dir")
+        .arg(&home)
+        .arg("--claudemon-db-path")
+        .arg(&database)
+        .env("WORKSPACER_PARENT_PID", std::process::id().to_string())
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("APPDATA", root.path().join("appdata"))
+        .env("XDG_CONFIG_HOME", root.path().join("xdg"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let line = tokio::time::timeout(Duration::from_secs(30), lines.next_line())
+        .await
+        .unwrap()
+        .unwrap();
+    let Some(line) = line else {
+        let output = child.wait_with_output().await.unwrap();
+        panic!(
+            "launcher exited before readiness: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let banner: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(banner["mode"], "hub-only");
+    assert_eq!(banner["claudemonUrl"], format!("http://{address}"));
+    assert!(banner["database"].is_null());
+    assert!(!database.exists());
+    assert!(!home.join(".claude/settings.json").exists());
+    drop(child.stdin.take());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(10), child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
+    let probe = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
+        .get(format!("http://{address}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(probe.status(), reqwest::StatusCode::OK);
+    for mcp_collision in [false, true] {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_workspacer-rust"));
+        let port = address.port().to_string();
+        command
+            .args([
+                "serve",
+                "--hub-only",
+                "--external-claudemon",
+                "--claudemon-api-port",
+                &port,
+                "--token",
+                "borrowed-fixture",
+                "--config-dir",
+            ])
+            .arg(root.path().join("collision-config"))
+            .arg("--home-dir")
+            .arg(&home)
+            .env_remove("WORKSPACER_PARENT_PID")
+            .kill_on_drop(true);
+        if mcp_collision {
+            command.args(["--hub-port", "0", "--mcp-port", &port]);
+        } else {
+            command.args(["--hub-port", &port, "--no-mcp"]);
+        }
+        let output = tokio::time::timeout(Duration::from_secs(10), command.output())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("refusing to kill"));
+        assert!(!root.path().join("collision-config").exists());
+    }
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
+    fake.abort();
+    let _ = fake.await;
+}
+
+#[test]
+fn launcher_environment_precedence_uses_explicit_token_clear_and_raw_config_poll_choice() {
+    const KEY: &str = "WKS_CLI_SELECTION_FIXTURE";
+    if let Some(root) = std::env::var_os(KEY) {
+        let root = std::path::PathBuf::from(root);
+        let args = CommandLine::try_parse_compatible_from([
+            "workspacer",
+            "-config-dir",
+            root.to_str().unwrap(),
+            "-token",
+            "",
+            "serve",
+        ])
+        .unwrap();
+        assert_eq!(args.credential().unwrap(), "persisted-fixture");
+        let Command::Serve(serve) = &args.command else {
+            panic!()
+        };
+        assert_eq!(
+            plan_serve(&args, serve).unwrap().usage_poll_on_boot,
+            Some(false)
+        );
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("remote-token"), "persisted-fixture").unwrap();
+    std::fs::write(
+        root.path().join("config.yaml"),
+        "usage: {pollOnBoot: false}",
+    )
+    .unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "launcher_environment_precedence_uses_explicit_token_clear_and_raw_config_poll_choice",
+            "--nocapture",
+        ])
+        .env(KEY, root.path())
+        .env("HUB_TOKEN", "ambient-fixture")
+        .env("WORKSPACER_USAGE_POLL_ON_BOOT", "1")
+        .env("HOME", root.path())
+        .env("USERPROFILE", root.path())
+        .env("XDG_DATA_HOME", root.path().join("data"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let help = std::process::Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+        .args(["serve", "-help"])
+        .output()
+        .unwrap();
+    assert!(
+        help.status.success(),
+        "{}",
+        String::from_utf8_lossy(&help.stderr)
+    );
+    let unsupported = std::process::Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+        .args(["serve", "-brain-bin", "obsolete"])
+        .output()
+        .unwrap();
+    assert!(!unsupported.status.success());
+    assert!(String::from_utf8_lossy(&unsupported.stderr).contains("in process"));
+    let lost = root.path().join("lost");
+    std::fs::create_dir(&lost).unwrap();
+    std::fs::write(lost.join("existing-state"), "retain").unwrap();
+    let refused = std::process::Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+        .args([
+            "serve",
+            "--hub-only",
+            "--hub-port",
+            "0",
+            "--no-mcp",
+            "--allow-new-token=false",
+            "--config-dir",
+        ])
+        .arg(&lost)
+        .env("WORKSPACER_ALLOW_NEW_TOKEN", "1")
+        .env_remove("HUB_TOKEN")
+        .env("HOME", root.path())
+        .env("USERPROFILE", root.path())
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("STATE LOSS"));
+    assert!(!lost.join("remote-token").exists());
+}
+
+#[test]
+fn launcher_home_fallback_is_read_only_and_explicit_home_still_wins() {
+    const KEY: &str = "WKS_CLI_HOME_FIXTURE";
+    if let Some(root) = std::env::var_os(KEY) {
+        let root = std::path::PathBuf::from(root);
+        let mut args = CommandLine::try_parse_compatible_from([
+            "workspacer",
+            "serve",
+            "--config-dir",
+            root.to_str().unwrap(),
+        ])
+        .unwrap();
+        let Command::Serve(serve) = &args.command else {
+            panic!()
+        };
+        let plan = plan_serve(&args, serve).unwrap();
+        assert_eq!(plan.home, directories::BaseDirs::new().unwrap().home_dir());
+        assert!(plan.home.is_absolute());
+        assert_eq!(plan.database, plan.home.join(".claudemon/state.db"));
+        if let Command::Serve(serve) = &mut args.command {
+            serve.home_dir = Some(root.join("selected-home"));
+        }
+        let Command::Serve(serve) = &args.command else {
+            panic!()
+        };
+        let explicit = plan_serve(&args, serve).unwrap();
+        assert_eq!(explicit.home, root.join("selected-home"));
+        assert_eq!(explicit.database, explicit.home.join(".claudemon/state.db"));
+        assert!(
+            !root.join("selected-home").exists(),
+            "planning must not create home data"
+        );
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    for empty in [false, true] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "launcher_home_fallback_is_read_only_and_explicit_home_still_wins",
+                "--nocapture",
+            ])
+            .env(KEY, root.path())
+            .env_remove("HOME")
+            .env_remove("USERPROFILE")
+            .env_remove("XDG_DATA_HOME");
+        if empty {
+            child.env("HOME", "").env("USERPROFILE", "");
+        }
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn isolated_plugin_build_fixture() {
+    let Some(root) = std::env::var_os("WKS_CLI_PLUGIN_BUILD_FIXTURE") else {
+        return;
+    };
+    let root = std::path::PathBuf::from(root);
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("builds.txt"))
+        .unwrap();
+    writeln!(file, "build").unwrap();
+    assert!(
+        !root.join("fail-build").exists(),
+        "isolated fixture build failure"
+    );
+}
+
+#[tokio::test]
+async fn plugin_dev_isolates_source_reloads_after_build_and_preserves_live_plugin_on_failed_build()
+{
+    use std::{process::Stdio, time::Duration};
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let config = root.path().join("config");
+    let home = root.path().join("home");
+    std::fs::create_dir_all(config.join("plugins/other")).unwrap();
+    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(
+        config.join("plugins/other/plugin.json"),
+        json!({"id":"other","name":"Other","apiVersion":"1"}).to_string(),
+    )
+    .unwrap();
+    let install = json!([
+        std::env::current_exe().unwrap(),
+        "--exact",
+        "isolated_plugin_build_fixture",
+        "--nocapture"
+    ]);
+    let write = |name: &str| {
+        std::fs::write(
+            source.join("plugin.json"),
+            json!({"id":"fixture.dev","name":name,"apiVersion":"1","install":install}).to_string(),
+        )
+        .unwrap()
+    };
+    write("Initial");
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_workspacer-rust"))
+        .args(["plugin", "dev"])
+        .arg(&source)
+        .args([
+            "--hub-only",
+            "--no-mcp",
+            "--no-jobs",
+            "--hub-port",
+            "0",
+            "--debounce",
+            "20ms",
+            "--json",
+            "--token",
+            "dev-fixture",
+            "--config-dir",
+        ])
+        .arg(&config)
+        .arg("--home-dir")
+        .arg(&home)
+        .env("WKS_CLI_PLUGIN_BUILD_FIXTURE", root.path())
+        .env("WORKSPACER_PARENT_PID", std::process::id().to_string())
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("APPDATA", root.path().join("appdata"))
+        .env("XDG_CONFIG_HOME", root.path().join("xdg"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
+    let banner = tokio::time::timeout(Duration::from_secs(30), stdout.next_line())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let banner: Value = serde_json::from_str(&banner).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(line) = stderr.next_line().await.unwrap() {
+            if line.contains("[plugin-dev] watching ") {
+                return;
+            }
+        }
+        panic!("watcher never became ready")
+    })
+    .await
+    .unwrap();
+    let client = workspacer_hub::client::Client::connect_remote(
+        banner["busUrl"].as_str().unwrap(),
+        "dev-fixture",
+    )
+    .await
+    .unwrap();
+    let listed = client.call("plugins.list", json!({})).await.unwrap();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["id"], "fixture.dev");
+    write("Updated by successful build");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let list = client.call("plugins.list", json!({})).await.unwrap();
+            if list[0]["name"] == "Updated by successful build" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("builds.txt")).unwrap(),
+        "build\n"
+    );
+    std::fs::write(root.path().join("fail-build"), "fail").unwrap();
+    write("Must not replace live plugin");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(line) = stderr.next_line().await.unwrap() {
+            if line.contains("plugin build failed; keeping current sidecar") {
+                return;
+            }
+        }
+        panic!("failed build was not reported")
+    })
+    .await
+    .unwrap();
+    let list = client.call("plugins.list", json!({})).await.unwrap();
+    assert_eq!(list[0]["name"], "Updated by successful build");
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("builds.txt")).unwrap(),
+        "build\nbuild\n"
+    );
+    client.close();
+    drop(child.stdin.take());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(10), child.wait())
+            .await
+            .unwrap()
+            .unwrap()
+            .success()
+    );
+    assert!(source.join("plugin.json").exists());
+    assert!(config.join("plugins/other/plugin.json").exists());
 }

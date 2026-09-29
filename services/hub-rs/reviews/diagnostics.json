@@ -1,0 +1,72 @@
+{
+  "records": {
+    "services/hub/internal/redact/redact.go": {
+      "sha256": "ab93cbb75a42919153288d74c1e73cdb529195a816ff07d2ea415e44757a3403",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every URL/text/error helper and all original cases. Same credential-query vocabulary, case-insensitive matching, quoted/trailing prose delimiters, empty values, multiple occurrences and idempotence are retained in Rust diagnostic masking. Noncredential host/path/query text remains visible.",
+          "Found and fixed received pre-hello Close reason leaking query credentials through DisconnectReason. Sanitization happens before storage, so Display, derived Debug and anyhow-chain formatting are safe while typed close code4001 pause classification remains intact. Plugin-dev diagnostic log uses the same helper; deliberate local pairing URLs are unchanged."
+        ],
+        "intentionalChanges": [
+          "Private Go brain/MCP dial hops no longer exist. Rust remote authentication uses an Authorization header and handshake failures expose controlled diagnostics rather than a raw token-bearing transport error chain; typed disconnect classification is retained instead of emulating Go errors.Is on an obsolete helper wrapper."
+        ],
+        "verifiedCheckpoint": "Exact-source Rust helper1 passed; actual remote_client4 passed including4001/4003 prehello close through real WebSocket. Full library266 and CLI21 passed helper and plugin diagnostic logger units before unrelated later CLI presentation changes."
+      }
+    },
+    "services/hub/internal/redact/redact_test.go": {
+      "sha256": "a0d12f047a991c0e23871f9cce1eb1ed61b2aa04b242fad9bca201950079731c",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every URL/text/error helper and all original cases. Same credential-query vocabulary, case-insensitive matching, quoted/trailing prose delimiters, empty values, multiple occurrences and idempotence are retained in Rust diagnostic masking. Noncredential host/path/query text remains visible.",
+          "Found and fixed received pre-hello Close reason leaking query credentials through DisconnectReason. Sanitization happens before storage, so Display, derived Debug and anyhow-chain formatting are safe while typed close code4001 pause classification remains intact. Plugin-dev diagnostic log uses the same helper; deliberate local pairing URLs are unchanged."
+        ],
+        "intentionalChanges": [
+          "Private Go brain/MCP dial hops no longer exist. Rust remote authentication uses an Authorization header and handshake failures expose controlled diagnostics rather than a raw token-bearing transport error chain; typed disconnect classification is retained instead of emulating Go errors.Is on an obsolete helper wrapper."
+        ],
+        "verifiedCheckpoint": "Exact-source Rust helper1 passed; actual remote_client4 passed including4001/4003 prehello close through real WebSocket. Full library266 and CLI21 passed helper and plugin diagnostic logger units before unrelated later CLI presentation changes."
+      }
+    },
+    "services/hub/cmd/brain/busredact_test.go": {
+      "sha256": "1a9a2dcb9baf1b916754fcee09515fe560ea4e136daf2e229ae6e5814f4b5a20",
+      "status": "retired",
+      "reason": "The private Go brain-to-hub tokened WebSocket reconnect loop is removed by in-process owned services. No replacement internal credential URL or reconnect-log shim is introduced solely to satisfy this obsolete transport fixture.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/diagnostics.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/src/diagnostics.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original real-dead-port tests and token-bearing dialURL precondition. That local process hop is absent in embedded Rust. Actual external remote-client authentication/refusal and prehello diagnostic redaction remain exercised, rather than retiring credential secrecy itself."
+        ]
+      }
+    }
+  }
+}

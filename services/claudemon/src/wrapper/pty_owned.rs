@@ -62,7 +62,7 @@ impl Scope {
             }
         }
         #[cfg(windows)]
-        let job = windows_job::Job::assign(
+        let job = windows_job::Job::assign_suspended(
             child
                 .as_raw_handle()
                 .context("PTY child lacks Windows process handle")?,

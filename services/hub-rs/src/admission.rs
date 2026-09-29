@@ -4,6 +4,15 @@ use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+// encoding/json's legacy spawn guard used strings.ToLower, which maps each
+// rune independently. Rust str::to_lowercase applies contextual final sigma and
+// expands dotted I; neither may change which two authority keys collide.
+fn lower_key(key: &str) -> String {
+    key.chars()
+        .map(|c| c.to_lowercase().next().unwrap_or(c))
+        .collect()
+}
+
 pub(crate) fn sanitize(identity: &Identity, method: &str, mut params: Value) -> Result<Value> {
     if method == "fleetWorkflows.request" && !identity.may_assert_session() {
         bail!("Fleet workflow management is local host only");
@@ -30,15 +39,16 @@ pub(crate) fn sanitize(identity: &Identity, method: &str, mut params: Value) -> 
     };
     let mut folded = BTreeMap::new();
     for key in map.keys() {
-        let lower = key.to_lowercase();
+        let lower = lower_key(key);
         if let Some(previous) = folded.insert(lower, key) {
             bail!("agents.spawn: params carry {previous:?} and {key:?}, which differ only by case");
         }
     }
     for key in map.keys() {
+        let lower = lower_key(key);
         if let Some(canonical) = spawn_keys()
             .iter()
-            .find(|known| known.eq_ignore_ascii_case(key))
+            .find(|known| known.eq_ignore_ascii_case(&lower))
             && key != canonical
         {
             bail!("agents.spawn: non-canonical param {key:?}; use {canonical:?}");
@@ -113,6 +123,54 @@ mod tests {
         }
         assert!(sanitize(&caller, "agents.spawn", json!({"unknown":1,"UNKNOWN":2})).is_err());
     }
+    #[test]
+    fn canonical_spawn_keys_use_reference_simple_unicode_lowercase() {
+        let identity = Identity::host("fixture");
+        for method in ["agents.spawn", "agents.dispatchPrepare"] {
+            assert!(spawn_keys().len() >= 46);
+            for key in spawn_keys() {
+                let alias = key.to_ascii_uppercase();
+                assert_ne!(&alias, key);
+                assert!(
+                    sanitize(&identity, method, json!({alias: null})).is_err(),
+                    "{method}: {key}"
+                );
+                assert!(
+                    sanitize(&identity, method, json!({key: null})).is_ok(),
+                    "canonical {method}: {key}"
+                );
+            }
+            for params in [
+                Value::Null,
+                json!([]),
+                json!(7),
+                json!("provider-owned scalar"),
+            ] {
+                assert_eq!(sanitize(&identity, method, params.clone()).unwrap(), params);
+            }
+            for key in ["tasKId", "profileİd", "TASKID"] {
+                assert!(
+                    sanitize(&identity, method, json!({key:"value"})).is_err(),
+                    "{method}: {key}"
+                );
+            }
+            for params in [
+                json!({"ΟΣ":1,"οσ":2}),
+                json!({"İ":1,"i":2}),
+                json!({"K":1,"k":2}),
+            ] {
+                assert!(sanitize(&identity, method, params).is_err(), "{method}");
+            }
+            let unknown = json!({"singleUnknown":"preserved", "taskId":"task"});
+            assert_eq!(
+                sanitize(&identity, method, unknown.clone()).unwrap(),
+                unknown
+            );
+        }
+        assert_eq!(lower_key("ΟΣ"), "οσ");
+        assert_eq!(lower_key("İ"), "i");
+    }
+
     #[test]
     fn only_local_host_or_provisioned_facade_can_assert_local_session_lineage() {
         let raw = json!({"dispatchOwnerSessionId":"parent"});

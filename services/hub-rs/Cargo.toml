@@ -6,6 +6,7 @@ description = "Workspacer's shared embedded and standalone Rust control plane"
 license = "MIT"
 
 [dependencies]
+directories = "5"
 json5 = "0.4"
 web-push-native = { version = "0.5", default-features = false, features = ["vapid"] }
 anyhow = "1"
@@ -64,3 +65,6 @@ test-support = []
 name = "hub_contract_fixture"
 path = "examples/hub_contract_fixture.rs"
 required-features = ["test-support"]
+
+[patch.crates-io]
+portable-pty = { path = "../../vendor/portable-pty" }

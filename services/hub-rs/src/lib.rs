@@ -7,6 +7,7 @@ pub mod auth;
 pub mod backend;
 pub mod cli;
 pub mod client;
+mod diagnostics;
 pub mod federation;
 pub mod mcp;
 pub mod model_selection;

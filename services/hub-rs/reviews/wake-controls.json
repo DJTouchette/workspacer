@@ -1,0 +1,358 @@
+{
+  "records": {
+    "services/hub/cmd/brain/blockwake.go": {
+      "sha256": "bacfdf1e4f71741481d59f90a644d86236f87f1ca48b65cc057e2d69429a56dc",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all producer branches and all27 tests:20-second survival then1500ms coalescing, latest approval/question kind, all live managers except self, ordinary direct parent, and remote-origin return beside local fanout.",
+          "Matched first blocked sighting versus boot prime; continuous approval/question block; clear/reblock/flapping generation fencing; forgotten, vanished, or ended workers at both boundaries; late/dead managers; failed-recipient isolation; coalescing and cwd labels. Production-method wake matrices exercise these, including explicit self-manager/unparented/timing/wire tests.",
+          "Wakes21 integration and latest library257 passed. Shared message corpus/generator pins exact static headers, bullets and instruction tails."
+        ],
+        "intentionalChanges": [
+          "One owned timer queue replaces Go time.Timer objects; fired-block latches are not active timers and clear on clear/forget. Typed engine subscriptions replace local SSE.",
+          "Durable replacement holds/current lineage preserve authorized handoff delivery; ordinary parents remain restricted to their own children and ordinary doctrine."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/blockwake_test.go": {
+      "sha256": "a71d5402bb3d12c24ae3133b3a0eb4069855d835c83e0cc80bcca7309899cde9",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all producer branches and all27 tests:20-second survival then1500ms coalescing, latest approval/question kind, all live managers except self, ordinary direct parent, and remote-origin return beside local fanout.",
+          "Matched first blocked sighting versus boot prime; continuous approval/question block; clear/reblock/flapping generation fencing; forgotten, vanished, or ended workers at both boundaries; late/dead managers; failed-recipient isolation; coalescing and cwd labels. Production-method wake matrices exercise these, including explicit self-manager/unparented/timing/wire tests.",
+          "Wakes21 integration and latest library257 passed. Shared message corpus/generator pins exact static headers, bullets and instruction tails."
+        ],
+        "intentionalChanges": [
+          "One owned timer queue replaces Go time.Timer objects; fired-block latches are not active timers and clear on clear/forget. Typed engine subscriptions replace local SSE.",
+          "Durable replacement holds/current lineage preserve authorized handoff delivery; ordinary parents remain restricted to their own children and ordinary doctrine."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/finishwake.go": {
+      "sha256": "0b3309eed7571f9e3c4a0f5f33f756a7c07b22f593c4586042d9b1a14ac7eb53",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/task_store.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/tests/worker_results.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete producer and26 test functions: prime/first sighting, working-to-idle only, direct-parent containment, separate per-parent windows, latest reply reread, boot without user task, unavailable conversation fallback, resumed workers/dead parents and delivered-signature dedup.",
+          "Matched stopped versus FAILED,400-unit excerpt and32768-unit full reply, escalation/result separation,1500ms coalescing and2-minute backstop with3-minute grace and parent activity/busy predicates. Dedicated wake matrices cover long/short/stopped/error/malformed replies and ordinary-parent tails.",
+          "Review fixed first failed escalation group suppressing completions: delivery groups now proceed independently and only accepted signatures commit. FAILED prose remains separate from valid schema contracts; persisted valid negative outcomes and blocked escalation JSON survive. Wakes21 passed, including refreshed workflow-owner instructions and partial group failure."
+        ],
+        "intentionalChanges": [
+          "Rust directly owns former companion result/review/task transactions, with ownership/liveness rechecked across awaits and durable held wakes. Unknown effects never authorize a blind message replay.",
+          "Combined implementation follows active TypeScript UTF-16/JS whitespace rather than Go rune counts."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/finishwake_test.go": {
+      "sha256": "101e4327fb4c0d69c325ec0016695825fde7b217276464e8dec198c773df6e75",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/task_store.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/tests/worker_results.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete producer and26 test functions: prime/first sighting, working-to-idle only, direct-parent containment, separate per-parent windows, latest reply reread, boot without user task, unavailable conversation fallback, resumed workers/dead parents and delivered-signature dedup.",
+          "Matched stopped versus FAILED,400-unit excerpt and32768-unit full reply, escalation/result separation,1500ms coalescing and2-minute backstop with3-minute grace and parent activity/busy predicates. Dedicated wake matrices cover long/short/stopped/error/malformed replies and ordinary-parent tails.",
+          "Review fixed first failed escalation group suppressing completions: delivery groups now proceed independently and only accepted signatures commit. FAILED prose remains separate from valid schema contracts; persisted valid negative outcomes and blocked escalation JSON survive. Wakes21 passed, including refreshed workflow-owner instructions and partial group failure."
+        ],
+        "intentionalChanges": [
+          "Rust directly owns former companion result/review/task transactions, with ownership/liveness rechecked across awaits and durable held wakes. Unknown effects never authorize a blind message replay.",
+          "Combined implementation follows active TypeScript UTF-16/JS whitespace rather than Go rune counts."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/workerfailure.go": {
+      "sha256": "d3694593926c7ccf59c55feefe04e1c94c04cd6623e196fe66e2811f09548b47",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/assets/fleet-messages.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/claudemon/src/providers/mod.rs",
+        "apps/desktop/src/main/shared/workerFailure.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all marker, flatten, usage-limit and credit-balance branches and all5 tests. New Rust READER replays the entire agent-error-marker corpus: failure/nonfailure, exact reason, standing-overage enrichment and marker-gated remedy. Independent daemon WRITER remains pinned.",
+          "Explicit separator-forgery and200-character-cap assertions preserve bullet grammar; terminal wake matrix verifies the actual credit-balance remedy, while ordinary success/account overage and transient overload are not mislabelled. Wakes21 and fleet_messages3 passed."
+        ],
+        "intentionalChanges": [
+          "Unicode clipping/whitespace follows current TypeScript UTF-16/JS behavior instead of Go rune/Unicode-space differences. Provider failure prose does not invalidate an otherwise valid schema contract."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/workerfailure_test.go": {
+      "sha256": "701509910b66b4f3c64545368b9bc9d8c1e8e3c559eff02000ff112dfde9adf2",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/assets/fleet-messages.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/claudemon/src/providers/mod.rs",
+        "apps/desktop/src/main/shared/workerFailure.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all marker, flatten, usage-limit and credit-balance branches and all5 tests. New Rust READER replays the entire agent-error-marker corpus: failure/nonfailure, exact reason, standing-overage enrichment and marker-gated remedy. Independent daemon WRITER remains pinned.",
+          "Explicit separator-forgery and200-character-cap assertions preserve bullet grammar; terminal wake matrix verifies the actual credit-balance remedy, while ordinary success/account overage and transient overload are not mislabelled. Wakes21 and fleet_messages3 passed."
+        ],
+        "intentionalChanges": [
+          "Unicode clipping/whitespace follows current TypeScript UTF-16/JS behavior instead of Go rune/Unicode-space differences. Provider failure prose does not invalidate an otherwise valid schema contract."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/workerescalation.go": {
+      "sha256": "78ec9ad8a0d7e6d0423cff4bee51258976e81e140e462755fe60615264791a3d",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/wakes.rs",
+        "apps/desktop/src/main/shared/structuredResult.test.ts",
+        "apps/desktop/src/main/shared/workerEscalation.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read fixed contract, last case-insensitive tagged block,4096 limit, strict keys/type/status/nonempty strings/changed boolean and normalized output, plus both valid/malformed/absent tests. Ordinary prose and a JSON-tag example cannot assert escalation.",
+          "Shared TS/Rust corpus checks valid normalization, extra authority, wrong status and missing changed. Fixed JS trim compatibility for BOM/NEL with three shared cases; TS29 and Rust worker_results2 passed. Wakes21 verifies distinct escalation and result-schema alternative semantics, including a simultaneous failure marker."
+        ],
+        "intentionalChanges": [
+          "Use active TypeScript UTF-16 limits/JS trim instead of Go byte/Unicode-space conventions. Normalized JSON is compared as parsed values; object key order is not a contract."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/workerescalation_test.go": {
+      "sha256": "f8b27524b371763bd4566b1bb1c624b08d7bcdf8cedef8b71d72bf01aeb40999",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/wakes.rs",
+        "apps/desktop/src/main/shared/structuredResult.test.ts",
+        "apps/desktop/src/main/shared/workerEscalation.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read fixed contract, last case-insensitive tagged block,4096 limit, strict keys/type/status/nonempty strings/changed boolean and normalized output, plus both valid/malformed/absent tests. Ordinary prose and a JSON-tag example cannot assert escalation.",
+          "Shared TS/Rust corpus checks valid normalization, extra authority, wrong status and missing changed. Fixed JS trim compatibility for BOM/NEL with three shared cases; TS29 and Rust worker_results2 passed. Wakes21 verifies distinct escalation and result-schema alternative semantics, including a simultaneous failure marker."
+        ],
+        "intentionalChanges": [
+          "Use active TypeScript UTF-16 limits/JS trim instead of Go byte/Unicode-space conventions. Normalized JSON is compared as parsed values; object key order is not a contract."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/livecontrol.go": {
+      "sha256": "a2246fe3e70d0d610aa0d1a2f568b38013e16271b081017efd19cef96f99eccc",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all switch/provider/metadata/mechanical-handoff methods and all13 tests. Permission modes forward unchanged and confirmed modes are recorded; daemon errors return ok:false. Claude effort uses the queued slash-message route; managed effort uses effort-only model endpoint. Missing/blank fields preserve each method envelope.",
+          "Tests cover canonical identity/context, conflicting pairs/control-character refusal, omitted blank effort, accepted owner choice over request, absent versus null window and queued disposition without a live metadata patch. Mechanical handoff remains a session-ID relay; actual local_spawn validates its persisted path.",
+          "Fixed hook/manual confirmed controls disappearing on the next daemon row. Real embedded hook regression checks immediate liveEffort, a newer canonical update, restart reset and late ACK refusal; direct stamp matrix covers remote, ended, disappeared and changed identities. Current controls units passed library257."
+        ],
+        "intentionalChanges": [
+          "A linked embedded engine cannot exhibit an independently installed pre-Phase5 daemon version, so that upgrade-error remapping test is retired on this path. External hub-only mode delegates to its actual provider.",
+          "Accepted changes remain successful with a bookkeeping warning when metadata/publication fails. Stale generation or observation stamps never assert a new live switch.",
+          "Old comments claiming a permission escalation clamp do not match the active Go handler; no removed child-grant clamp is restored."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/livecontrol_test.go": {
+      "sha256": "2dd9d47c3e35b4732ed7fb85f8d28f6836ba1737ec4d7c5cbfacc8573060d429",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all switch/provider/metadata/mechanical-handoff methods and all13 tests. Permission modes forward unchanged and confirmed modes are recorded; daemon errors return ok:false. Claude effort uses the queued slash-message route; managed effort uses effort-only model endpoint. Missing/blank fields preserve each method envelope.",
+          "Tests cover canonical identity/context, conflicting pairs/control-character refusal, omitted blank effort, accepted owner choice over request, absent versus null window and queued disposition without a live metadata patch. Mechanical handoff remains a session-ID relay; actual local_spawn validates its persisted path.",
+          "Fixed hook/manual confirmed controls disappearing on the next daemon row. Real embedded hook regression checks immediate liveEffort, a newer canonical update, restart reset and late ACK refusal; direct stamp matrix covers remote, ended, disappeared and changed identities. Current controls units passed library257."
+        ],
+        "intentionalChanges": [
+          "A linked embedded engine cannot exhibit an independently installed pre-Phase5 daemon version, so that upgrade-error remapping test is retired on this path. External hub-only mode delegates to its actual provider.",
+          "Accepted changes remain successful with a bookkeeping warning when metadata/publication fails. Stale generation or observation stamps never assert a new live switch.",
+          "Old comments claiming a permission escalation clamp do not match the active Go handler; no removed child-grant clamp is restored."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/agenthandoff.go": {
+      "sha256": "c74559b0434629fa5ff132a0a6c6bebb86334de2fb25dafb0d730670884cf67c",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read exact six-section instruction and full orchestration: bounded alphanumeric/underscore/dash identity, host handoff directory, nonce filename, one submission,150-second wait/one-second poll, nonempty regular file and mechanical fallback on refusal/deadline.",
+          "New helper uses unchanged production timing with real-file tests for authored success/exact host path/all six sections, refuse/timeout/empty with one fallback, fallback/preparation failures, cancellation without fallback, and linked-file refusal. New directories use0700 as Go MkdirAll did.",
+          "Five helper tests passed library246 and257. Latest real manual-hook fixture additionally rejects traversal, empty and overlong IDs through Controls.call and asserts no target directory was prepared; library257 passed."
+        ],
+        "intentionalChanges": [
+          "The owned Rust future replaces Go context/timers. Future cancellation stops polling without starting fallback; it does not claim an accepted source-agent turn was undone."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/agenthandoff_test.go": {
+      "sha256": "d375f7c0775f49e0a3311a0666b79de1f0df78c6b2dc0482c1df9b1dcd2992b2",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read exact six-section instruction and full orchestration: bounded alphanumeric/underscore/dash identity, host handoff directory, nonce filename, one submission,150-second wait/one-second poll, nonempty regular file and mechanical fallback on refusal/deadline.",
+          "New helper uses unchanged production timing with real-file tests for authored success/exact host path/all six sections, refuse/timeout/empty with one fallback, fallback/preparation failures, cancellation without fallback, and linked-file refusal. New directories use0700 as Go MkdirAll did.",
+          "Five helper tests passed library246 and257. Latest real manual-hook fixture additionally rejects traversal, empty and overlong IDs through Controls.call and asserts no target directory was prepared; library257 passed."
+        ],
+        "intentionalChanges": [
+          "The owned Rust future replaces Go context/timers. Future cancellation stops polling without starting fallback; it does not claim an accepted source-agent turn was undone."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/permissionmode.go": {
+      "sha256": "a23a239299096189f11f908d4baf824c651215b26805653d3893f17b601f7c47",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/live_controls.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Traced every reference: permissionModeMeansBypass is the only active brain helper, recognizing exactly bypassPermissions/yolo for spawn defaults. Rust spawn-plan matrix covers these, ordinary/unknown values and explicit skipPermissions presence.",
+          "isPermissionEscalation/busSettablePermissionModes are referenced only by their own Go tests; current livecontrol forwards modes unchanged. Active config bypass semantics remain; the unused former caller-grant classifier is not reintroduced. Spawn_plan8 and agent_spawn14 passed."
+        ],
+        "intentionalChanges": [
+          "Retire the unused historical request-escalation classifier; provider permission modes and host capability authentication remain distinct."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/permissionmode_test.go": {
+      "sha256": "3f89c1c8b0c4e2b407bc01e7fb5ea1a3f783728b3714ba5c52c355ef756d50f2",
+      "status": "retired",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/live_controls.rs",
+        "apps/desktop/src/main/lib/permissionBypass.ts"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both tests and all caller references. They test only the unused Go isPermissionEscalation classifier and duplicate TS allowlist vocabulary, not any reachable brain handler. Active config bypass behavior has independent spawn-default regression coverage."
+        ],
+        "intentionalChanges": [
+          "Retained Electron TypeScript helper source is not deleted; removing a dead Go classifier does not restore a removed backend grant policy."
+        ]
+      },
+      "reason": "Architectural retirement of a test-only Go classifier/twin with no reachable brain call path. Active narrow config bypass behavior is preserved and tested in Rust; no dummy runtime helper is added for the old test shape."
+    }
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "Full lib269/269 +CLI21/21 PASS in /tmp/workspacer-launcher-final-map.log, including all new inventory,hello,canonical-key/qualified gate and marked-closed launch-proof assertions. Earlier files5/remote_client4 remain green. No platform execution inferred from Linux results.",
+  "records": {
+    "services/hub/internal/bus/clients.go": {
+      "status": "ported",
+      "sha256": "c2e2bbc5bf76a41a24d686048a41acb8a0d988b75eebc3cb1fac7d36ac7dd3e7",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ],
+      "note": "Live sorted inventory retains verified connection IDs, nonsecret labels, monotonic activity sequence, conservative legacy call/publication clocks and reported-input clocks. Actual broker test distinguishes a registered provider, plugin, private service client and real user; caller params cannot forge its ID or infrastructure flag. Private connect_service replaces Go self-dial nonce/query serialization, so no wire URL can claim internal provenance. Subscription frames do not refresh activity. The old InternalDialURL string-builder responsibility is eliminated by this owned in-process connection seam; other inventory/activity behavior remains active."
+    },
+    "services/hub/internal/bus/clients_test.go": {
+      "status": "ported",
+      "sha256": "5f5b2ab11a610e75b38b95e72dc087907231ecf8331b076b3f023aded53388b4",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ],
+      "note": "Live sorted inventory retains verified connection IDs, nonsecret labels, monotonic activity sequence, conservative legacy call/publication clocks and reported-input clocks. Actual broker test distinguishes a registered provider, plugin, private service client and real user; caller params cannot forge its ID or infrastructure flag. Private connect_service replaces Go self-dial nonce/query serialization, so no wire URL can claim internal provenance. Subscription frames do not refresh activity. The old InternalDialURL string-builder responsibility is eliminated by this owned in-process connection seam; other inventory/activity behavior remains active."
+    },
+    "services/hub/internal/bus/spawn_capabilities_test.go": {
+      "status": "ported",
+      "sha256": "b2e5f727426303fd48056b05a0fd95cc5e753c3a3d78704d9dd751ad4f8246e3",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "note": "Actual hello frames preserve spawnFullAccess as agents.spawn call authority for host, scoped operator, triage, enabled plugin and federated host. Provider-tier register grants explicitly do not imply spawn call authority; the new matrix also verifies that negative case."
+    },
+    "services/hub/internal/bus/spawnkeys.go": {
+      "status": "ported",
+      "sha256": "22c7b834054c821d137dbafca9ca8cf585fe6040468cbbf7d581f77958c268cd",
+      "replacement": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "note": "All46 canonical spawn keys are tested: uppercase aliases refuse and canonical spellings pass for spawn and dispatchPrepare; unknown single fields and non-object params remain intact, while duplicate folded unknown keys refuse. The audit corrected Rust contextual/ASCII-only comparison to Go-compatible per-character simple lowercase, with Kelvin-sign,dotted-I and Greek-sigma cases. Direct broker tests prove local and qualified calls reject aliases before execution routing, while canonical calls reach the distinct execution gate. Existing frozen key vocabulary remains the provider-union reference; this record does not certify the separate provider-field/source-enumeration guards."
+    },
+    "services/hub/internal/bus/spawnkeys_test.go": {
+      "status": "ported",
+      "sha256": "6a33d6e539d439f00f729d6a7b2984953dcface09ea4a0765838fefd68089816",
+      "replacement": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "note": "All46 canonical spawn keys are tested: uppercase aliases refuse and canonical spellings pass for spawn and dispatchPrepare; unknown single fields and non-object params remain intact, while duplicate folded unknown keys refuse. The audit corrected Rust contextual/ASCII-only comparison to Go-compatible per-character simple lowercase, with Kelvin-sign,dotted-I and Greek-sigma cases. Direct broker tests prove local and qualified calls reject aliases before execution routing, while canonical calls reach the distinct execution gate. Existing frozen key vocabulary remains the provider-union reference; this record does not certify the separate provider-field/source-enumeration guards."
+    },
+    "services/hub/internal/bus/launchintegration.go": {
+      "status": "ported",
+      "sha256": "f99a18e6bfd25e770f55995e333d93ac46ba304c014b443236d5ef6c61c6f1f7",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "note": "The former provider callback RPC becomes an in-process typed launch permit owned by the broker. It binds the exact pending local owner call, selected plugin, generated session and nonce, deadline and live connection, and is one-use. Provider/scoped/federated callers cannot manufacture the grant. Tests reject mismatched sessions/nonces/plugin selection, completed/cancelled calls, expired/disconnected callers and changed owner authority. Audit added explicit marked-closed refusal before physical peer eviction to both begin_launch and check_launch, preserving the original revoked-owner assertion. Accepted engine effects remain owned/tracked; this only revokes preparation before admission."
+    },
+    "services/hub/internal/bus/launchintegration_test.go": {
+      "status": "ported",
+      "sha256": "11a5514921d14b7feb803b67c3e4695936b0484d82bb830f0f8053ee85afa064",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs",
+        "services/hub-rs/src/admission.rs"
+      ],
+      "note": "The former provider callback RPC becomes an in-process typed launch permit owned by the broker. It binds the exact pending local owner call, selected plugin, generated session and nonce, deadline and live connection, and is one-use. Provider/scoped/federated callers cannot manufacture the grant. Tests reject mismatched sessions/nonces/plugin selection, completed/cancelled calls, expired/disconnected callers and changed owner authority. Audit added explicit marked-closed refusal before physical peer eviction to both begin_launch and check_launch, preserving the original revoked-owner assertion. Accepted engine effects remain owned/tracked; this only revokes preparation before admission."
+    }
+  }
+}

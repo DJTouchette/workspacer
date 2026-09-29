@@ -476,17 +476,17 @@ mod windows_tests {
 
     use super::*;
     #[test]
-    fn only_plain_local_windows_spellings_can_be_checkpoint_candidates() {
+    fn only_local_disk_windows_spellings_can_be_checkpoint_candidates() {
         for path in [
             r"C:\Work\project\brief.md",
             r"c:/Work/project/brief.md",
+            r"\\?\C:\Work\brief.md",
             r"C:\",
         ] {
             assert!(plain(Path::new(path)), "{path}");
         }
         for path in [
             r"\\server\share\brief.md",
-            r"\\?\C:\Work\brief.md",
             r"\Work\brief.md",
             r"C:Work\brief.md",
             r"C:\Work\..\brief.md",

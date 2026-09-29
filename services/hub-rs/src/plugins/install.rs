@@ -431,27 +431,23 @@ fn prepare_staged(
         progress("building");
         // A child is always reaped, including timeout; no shell evaluation.
         let (command, env) = runtime_command(command, runtime);
-        let child = Command::new(command)
+        let mut command = Command::new(command);
+        command
             .scrub_host_authority()
             .envs(env)
             .args(args.iter().map(|a| platform(a)))
             .current_dir(&source)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()?;
+            .stderr(Stdio::null());
         #[cfg(windows)]
-        let job = match super::supervisor::windows_job::Job::assign(&child) {
-            Ok(job) => Some(job),
-            Err(error) => {
-                eprintln!("plugin install job confinement unavailable: {error}");
-                None
-            }
-        };
+        let (child, job) = super::supervisor::windows_job::Job::spawn(&mut command, 0)?;
+        #[cfg(not(windows))]
+        let child = command.spawn()?;
         let mut child = InstallChild {
             process: child,
             #[cfg(windows)]
-            _job: job,
+            _job: Some(job),
         };
         let start = std::time::Instant::now();
         loop {

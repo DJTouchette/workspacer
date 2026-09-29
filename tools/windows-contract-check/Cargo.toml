@@ -8,8 +8,8 @@ publish = false
 junction = "=2.0.0"
 anyhow = "1"
 tempfile = "3"
-tokio = {version="1",features=["time","process","io-util","macros","rt"]}
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Memory"] }
+tokio = {version="1",features=["time","process","io-util","macros","rt","sync"]}
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Memory"] }
 
 serde_json = "1"
 portable-pty = "0.8"
@@ -22,3 +22,6 @@ uuid = {version="1",features=["v4"]}
 [profile.dev]
 debug = 0
 incremental = false
+
+[patch.crates-io]
+portable-pty = { path = "../../vendor/portable-pty" }

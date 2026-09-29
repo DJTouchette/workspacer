@@ -6,22 +6,17 @@ use crate::{
     services::{agent_lifecycle::Operation, config::Config, files::GIT_NO_EXEC, models, paths},
 };
 use anyhow::{Result, anyhow, bail};
-use claudemon::{
-    child_env::SanitizeChildEnvironment,
-    daemon::{
-        WorktreeMaintenance,
-        embedded::{Command as EngineCommand, EmbeddedClient},
-    },
+use claudemon::daemon::{
+    WorktreeMaintenance,
+    embedded::{Command as EngineCommand, EmbeddedClient},
 };
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
     time::Duration,
 };
-use tokio::io::AsyncReadExt;
 pub type Spawn =
     Arc<dyn Fn(Caller, RemoteAdmission, Value) -> Operation<'static, Value> + Send + Sync>;
 pub struct Native {
@@ -77,62 +72,21 @@ async fn capture(
     timeout: Duration,
     limit: u64,
 ) -> Result<Output> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .scrub_host_authority();
-    #[cfg(unix)]
-    command.process_group(0);
-    let mut child = command.spawn()?;
-    #[cfg(unix)]
-    let mut group = Group(child.id().unwrap());
-    #[cfg(windows)]
-    let _job = child
-        .raw_handle()
-        .and_then(|handle| crate::plugins::supervisor::windows_job::Job::assign_raw(handle).ok());
-    let mut stdout = child.stdout.take().unwrap().take(limit + 1);
-    let mut stderr = child.stderr.take().unwrap().take(limit + 1);
-    let result = tokio::time::timeout(timeout, async {
-        let mut out = vec![];
-        let mut err = vec![];
-        let (a, b) = tokio::try_join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err))?;
-        if a + b > limit as usize {
-            bail!("command output exceeded limit")
-        }
-        let status = child.wait().await?;
-        anyhow::Ok(Output {
-            success: status.success(),
-            stdout: out,
-            stderr: err,
-        })
+    let output = super::super::owned_process::capture_limits(
+        command,
+        limit as usize,
+        limit as usize,
+        timeout,
+    )
+    .await?;
+    if output.stdout.len().saturating_add(output.stderr.len()) > limit as usize {
+        bail!("command output exceeded limit");
+    }
+    Ok(Output {
+        success: output.status.success(),
+        stdout: output.stdout,
+        stderr: output.stderr,
     })
-    .await;
-    #[cfg(unix)]
-    group.kill();
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-    result.map_err(|_| anyhow!("execution-host command timed out"))?
-}
-#[cfg(unix)]
-struct Group(u32);
-#[cfg(unix)]
-impl Group {
-    fn kill(&mut self) {
-        if self.0 != 0 {
-            unsafe {
-                libc::kill(-(self.0 as i32), libc::SIGKILL);
-            }
-            self.0 = 0;
-        }
-    }
-}
-#[cfg(unix)]
-impl Drop for Group {
-    fn drop(&mut self) {
-        self.kill();
-    }
 }
 async fn login(binary: &str, provider: &str) -> Option<bool> {
     let args = match provider {

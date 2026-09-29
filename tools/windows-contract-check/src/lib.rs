@@ -13,6 +13,17 @@ mod windows_audit;
 #[path = "../../../services/hub-rs/src/plugins/windows_job.rs"]
 mod windows_job;
 
+// Exercise the plugin alias's actual launch API rather than suppressing an
+// unused-import warning in this deliberately narrow source probe.
+const _: fn(
+    &mut std::process::Command,
+    u32,
+) -> anyhow::Result<(std::process::Child, windows_job::Job)> = windows_job::Job::spawn;
+const _: fn(
+    &mut tokio::process::Command,
+    u32,
+) -> anyhow::Result<(tokio::process::Child, windows_job::Job)> = windows_job::Job::spawn_tokio;
+
 #[path = "../../../services/hub-rs/src/cli/parent.rs"]
 mod cli_parent;
 
@@ -26,8 +37,8 @@ mod filewatch_sample;
 
 #[path = "../../../services/claudemon/src/protocol.rs"]
 mod protocol;
-#[path = "../../../services/claudemon/src/wrapper/pty_owned.rs"]
-mod pty_owned;
+#[path = "../../../services/claudemon/src/wrapper/pty.rs"]
+mod pty;
 
 #[path = "../../../services/hub-rs/src/services/nodes/exposure.rs"]
 mod node_exposure;

@@ -1,0 +1,36 @@
+{
+  "reviewer": "routing_usage",
+  "validation": "Fresh lib257/257 PASS /tmp/workspacer-cli-parity-checkpoint.log explicitly includes registered_private_desktop_names_remain_unreachable_even_to_owner. The same batch CLI15/17 had two independent empty --plugins-dir parser failures owned by plugin_system. Later Unicode spawn-key helper is unvalidated and excluded from these records.",
+  "records": {
+    "services/hub/internal/bus/desktop.go": {
+      "status": "ported",
+      "sha256": "56bfaa28cac3ff51e2ed6787705dc51bf498845b435e3429bec41d886eb83a97",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs",
+        "contracts/desktop-service-methods.json"
+      ],
+      "tests": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "note": "Exact public owner-method membership and authenticated-local-owner authority are both required. The migration audit caught and fixed the former broad desktop.* owner allowance. Real broker regression registers a private-shaped endpoint and proves even owner cannot forward to it; a public desktop method succeeds, plugins.* extension routing remains unchanged, and an actual plugin namespace registration still routes. Contract authority cases reject operator/facade/provider and federated owner across every owner method. files.receiveUpload retains its separate actual-owner gate; closed peers cannot call before physical eviction. This record covers the bus transport gate/manifest assertions, not all service implementations or capspec source-witness/path-reason metadata."
+    },
+    "services/hub/internal/bus/desktop_test.go": {
+      "status": "ported",
+      "sha256": "c8dd883165801a5b3aaf968857b752db3358034aa0811bd5a459a32189efea4a",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs",
+        "contracts/desktop-service-methods.json"
+      ],
+      "tests": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "note": "Exact public owner-method membership and authenticated-local-owner authority are both required. The migration audit caught and fixed the former broad desktop.* owner allowance. Real broker regression registers a private-shaped endpoint and proves even owner cannot forward to it; a public desktop method succeeds, plugins.* extension routing remains unchanged, and an actual plugin namespace registration still routes. Contract authority cases reject operator/facade/provider and federated owner across every owner method. files.receiveUpload retains its separate actual-owner gate; closed peers cannot call before physical eviction. This record covers the bus transport gate/manifest assertions, not all service implementations or capspec source-witness/path-reason metadata."
+    }
+  }
+}

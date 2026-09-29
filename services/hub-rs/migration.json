@@ -86,16 +86,58 @@
       "tests": []
     },
     "services/hub/cmd/brain/agenthandoff.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read exact six-section instruction and full orchestration: bounded alphanumeric/underscore/dash identity, host handoff directory, nonce filename, one submission,150-second wait/one-second poll, nonempty regular file and mechanical fallback on refusal/deadline.",
+          "New helper uses unchanged production timing with real-file tests for authored success/exact host path/all six sections, refuse/timeout/empty with one fallback, fallback/preparation failures, cancellation without fallback, and linked-file refusal. New directories use0700 as Go MkdirAll did.",
+          "Five helper tests passed library246 and257. Latest real manual-hook fixture additionally rejects traversal, empty and overlong IDs through Controls.call and asserts no target directory was prepared; library257 passed."
+        ],
+        "intentionalChanges": [
+          "The owned Rust future replaces Go context/timers. Future cancellation stops polling without starting fallback; it does not claim an accepted source-agent turn was undone."
+        ]
+      },
       "sha256": "c74559b0434629fa5ff132a0a6c6bebb86334de2fb25dafb0d730670884cf67c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ]
     },
     "services/hub/cmd/brain/agenthandoff_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read exact six-section instruction and full orchestration: bounded alphanumeric/underscore/dash identity, host handoff directory, nonce filename, one submission,150-second wait/one-second poll, nonempty regular file and mechanical fallback on refusal/deadline.",
+          "New helper uses unchanged production timing with real-file tests for authored success/exact host path/all six sections, refuse/timeout/empty with one fallback, fallback/preparation failures, cancellation without fallback, and linked-file refusal. New directories use0700 as Go MkdirAll did.",
+          "Five helper tests passed library246 and257. Latest real manual-hook fixture additionally rejects traversal, empty and overlong IDs through Controls.call and asserts no target directory was prepared; library257 passed."
+        ],
+        "intentionalChanges": [
+          "The owned Rust future replaces Go context/timers. Future cancellation stops polling without starting fallback; it does not claim an accepted source-agent turn was undone."
+        ]
+      },
       "sha256": "d375f7c0775f49e0a3311a0666b79de1f0df78c6b2dc0482c1df9b1dcd2992b2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/live_controls/handoff.rs"
+      ]
     },
     "services/hub/cmd/brain/agentops.go": {
       "replacement": [
@@ -156,16 +198,54 @@
       "tests": []
     },
     "services/hub/cmd/brain/blockwake.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all producer branches and all27 tests:20-second survival then1500ms coalescing, latest approval/question kind, all live managers except self, ordinary direct parent, and remote-origin return beside local fanout.",
+          "Matched first blocked sighting versus boot prime; continuous approval/question block; clear/reblock/flapping generation fencing; forgotten, vanished, or ended workers at both boundaries; late/dead managers; failed-recipient isolation; coalescing and cwd labels. Production-method wake matrices exercise these, including explicit self-manager/unparented/timing/wire tests.",
+          "Wakes21 integration and latest library257 passed. Shared message corpus/generator pins exact static headers, bullets and instruction tails."
+        ],
+        "intentionalChanges": [
+          "One owned timer queue replaces Go time.Timer objects; fired-block latches are not active timers and clear on clear/forget. Typed engine subscriptions replace local SSE.",
+          "Durable replacement holds/current lineage preserve authorized handoff delivery; ordinary parents remain restricted to their own children and ordinary doctrine."
+        ]
+      },
       "sha256": "bacfdf1e4f71741481d59f90a644d86236f87f1ca48b65cc057e2d69429a56dc",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ]
     },
     "services/hub/cmd/brain/blockwake_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all producer branches and all27 tests:20-second survival then1500ms coalescing, latest approval/question kind, all live managers except self, ordinary direct parent, and remote-origin return beside local fanout.",
+          "Matched first blocked sighting versus boot prime; continuous approval/question block; clear/reblock/flapping generation fencing; forgotten, vanished, or ended workers at both boundaries; late/dead managers; failed-recipient isolation; coalescing and cwd labels. Production-method wake matrices exercise these, including explicit self-manager/unparented/timing/wire tests.",
+          "Wakes21 integration and latest library257 passed. Shared message corpus/generator pins exact static headers, bullets and instruction tails."
+        ],
+        "intentionalChanges": [
+          "One owned timer queue replaces Go time.Timer objects; fired-block latches are not active timers and clear on clear/forget. Typed engine subscriptions replace local SSE.",
+          "Durable replacement holds/current lineage preserve authorized handoff delivery; ordinary parents remain restricted to their own children and ordinary doctrine."
+        ]
+      },
       "sha256": "a71d5402bb3d12c24ae3133b3a0eb4069855d835c83e0cc80bcca7309899cde9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ]
     },
     "services/hub/cmd/brain/bootdoc.go": {
       "replacement": [],
@@ -234,10 +314,24 @@
       "tests": []
     },
     "services/hub/cmd/brain/busredact_test.go": {
-      "replacement": [],
+      "reason": "The private Go brain-to-hub tokened WebSocket reconnect loop is removed by in-process owned services. No replacement internal credential URL or reconnect-log shim is introduced solely to satisfy this obsolete transport fixture.",
+      "replacement": [
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/diagnostics.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original real-dead-port tests and token-bearing dialURL precondition. That local process hop is absent in embedded Rust. Actual external remote-client authentication/refusal and prehello diagnostic redaction remain exercised, rather than retiring credential secrecy itself."
+        ]
+      },
       "sha256": "1a9a2dcb9baf1b916754fcee09515fe560ea4e136daf2e229ae6e5814f4b5a20",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/src/diagnostics.rs"
+      ]
     },
     "services/hub/cmd/brain/cachepin_test.go": {
       "reason": "This Go-AST analysis enforces using a Go-cache workaround in retiring Go test packages; those readers and their result cache disappear.",
@@ -860,16 +954,60 @@
       "tests": []
     },
     "services/hub/cmd/brain/finishwake.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/task_store.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete producer and26 test functions: prime/first sighting, working-to-idle only, direct-parent containment, separate per-parent windows, latest reply reread, boot without user task, unavailable conversation fallback, resumed workers/dead parents and delivered-signature dedup.",
+          "Matched stopped versus FAILED,400-unit excerpt and32768-unit full reply, escalation/result separation,1500ms coalescing and2-minute backstop with3-minute grace and parent activity/busy predicates. Dedicated wake matrices cover long/short/stopped/error/malformed replies and ordinary-parent tails.",
+          "Review fixed first failed escalation group suppressing completions: delivery groups now proceed independently and only accepted signatures commit. FAILED prose remains separate from valid schema contracts; persisted valid negative outcomes and blocked escalation JSON survive. Wakes21 passed, including refreshed workflow-owner instructions and partial group failure."
+        ],
+        "intentionalChanges": [
+          "Rust directly owns former companion result/review/task transactions, with ownership/liveness rechecked across awaits and durable held wakes. Unknown effects never authorize a blind message replay.",
+          "Combined implementation follows active TypeScript UTF-16/JS whitespace rather than Go rune counts."
+        ]
+      },
       "sha256": "0b3309eed7571f9e3c4a0f5f33f756a7c07b22f593c4586042d9b1a14ac7eb53",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/tests/worker_results.rs"
+      ]
     },
     "services/hub/cmd/brain/finishwake_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/task_store.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete producer and26 test functions: prime/first sighting, working-to-idle only, direct-parent containment, separate per-parent windows, latest reply reread, boot without user task, unavailable conversation fallback, resumed workers/dead parents and delivered-signature dedup.",
+          "Matched stopped versus FAILED,400-unit excerpt and32768-unit full reply, escalation/result separation,1500ms coalescing and2-minute backstop with3-minute grace and parent activity/busy predicates. Dedicated wake matrices cover long/short/stopped/error/malformed replies and ordinary-parent tails.",
+          "Review fixed first failed escalation group suppressing completions: delivery groups now proceed independently and only accepted signatures commit. FAILED prose remains separate from valid schema contracts; persisted valid negative outcomes and blocked escalation JSON survive. Wakes21 passed, including refreshed workflow-owner instructions and partial group failure."
+        ],
+        "intentionalChanges": [
+          "Rust directly owns former companion result/review/task transactions, with ownership/liveness rechecked across awaits and durable held wakes. Unknown effects never authorize a blind message replay.",
+          "Combined implementation follows active TypeScript UTF-16/JS whitespace rather than Go rune counts."
+        ]
+      },
       "sha256": "101e4327fb4c0d69c325ec0016695825fde7b217276464e8dec198c773df6e75",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/tests/worker_results.rs"
+      ]
     },
     "services/hub/cmd/brain/fleet_workflows.go": {
       "replacement": [],
@@ -1106,16 +1244,58 @@
       "tests": []
     },
     "services/hub/cmd/brain/livecontrol.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all switch/provider/metadata/mechanical-handoff methods and all13 tests. Permission modes forward unchanged and confirmed modes are recorded; daemon errors return ok:false. Claude effort uses the queued slash-message route; managed effort uses effort-only model endpoint. Missing/blank fields preserve each method envelope.",
+          "Tests cover canonical identity/context, conflicting pairs/control-character refusal, omitted blank effort, accepted owner choice over request, absent versus null window and queued disposition without a live metadata patch. Mechanical handoff remains a session-ID relay; actual local_spawn validates its persisted path.",
+          "Fixed hook/manual confirmed controls disappearing on the next daemon row. Real embedded hook regression checks immediate liveEffort, a newer canonical update, restart reset and late ACK refusal; direct stamp matrix covers remote, ended, disappeared and changed identities. Current controls units passed library257."
+        ],
+        "intentionalChanges": [
+          "A linked embedded engine cannot exhibit an independently installed pre-Phase5 daemon version, so that upgrade-error remapping test is retired on this path. External hub-only mode delegates to its actual provider.",
+          "Accepted changes remain successful with a bookkeeping warning when metadata/publication fails. Stale generation or observation stamps never assert a new live switch.",
+          "Old comments claiming a permission escalation clamp do not match the active Go handler; no removed child-grant clamp is restored."
+        ]
+      },
       "sha256": "a2246fe3e70d0d610aa0d1a2f568b38013e16271b081017efd19cef96f99eccc",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/livecontrol_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all switch/provider/metadata/mechanical-handoff methods and all13 tests. Permission modes forward unchanged and confirmed modes are recorded; daemon errors return ok:false. Claude effort uses the queued slash-message route; managed effort uses effort-only model endpoint. Missing/blank fields preserve each method envelope.",
+          "Tests cover canonical identity/context, conflicting pairs/control-character refusal, omitted blank effort, accepted owner choice over request, absent versus null window and queued disposition without a live metadata patch. Mechanical handoff remains a session-ID relay; actual local_spawn validates its persisted path.",
+          "Fixed hook/manual confirmed controls disappearing on the next daemon row. Real embedded hook regression checks immediate liveEffort, a newer canonical update, restart reset and late ACK refusal; direct stamp matrix covers remote, ended, disappeared and changed identities. Current controls units passed library257."
+        ],
+        "intentionalChanges": [
+          "A linked embedded engine cannot exhibit an independently installed pre-Phase5 daemon version, so that upgrade-error remapping test is retired on this path. External hub-only mode delegates to its actual provider.",
+          "Accepted changes remain successful with a bookkeeping warning when metadata/publication fails. Stale generation or observation stamps never assert a new live switch.",
+          "Old comments claiming a permission escalation clamp do not match the active Go handler; no removed child-grant clamp is restored."
+        ]
+      },
       "sha256": "2dd9d47c3e35b4732ed7fb85f8d28f6836ba1737ec4d7c5cbfacc8573060d429",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/live_controls/confirmation.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/local_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/main.go": {
       "replacement": [],
@@ -1190,16 +1370,46 @@
       "tests": []
     },
     "services/hub/cmd/brain/permissionmode.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/live_controls.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Traced every reference: permissionModeMeansBypass is the only active brain helper, recognizing exactly bypassPermissions/yolo for spawn defaults. Rust spawn-plan matrix covers these, ordinary/unknown values and explicit skipPermissions presence.",
+          "isPermissionEscalation/busSettablePermissionModes are referenced only by their own Go tests; current livecontrol forwards modes unchanged. Active config bypass semantics remain; the unused former caller-grant classifier is not reintroduced. Spawn_plan8 and agent_spawn14 passed."
+        ],
+        "intentionalChanges": [
+          "Retire the unused historical request-escalation classifier; provider permission modes and host capability authentication remain distinct."
+        ]
+      },
       "sha256": "a23a239299096189f11f908d4baf824c651215b26805653d3893f17b601f7c47",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_spawn.rs"
+      ]
     },
     "services/hub/cmd/brain/permissionmode_test.go": {
-      "replacement": [],
+      "reason": "Architectural retirement of a test-only Go classifier/twin with no reachable brain call path. Active narrow config bypass behavior is preserved and tested in Rust; no dummy runtime helper is added for the old test shape.",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/live_controls.rs",
+        "apps/desktop/src/main/lib/permissionBypass.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both tests and all caller references. They test only the unused Go isPermissionEscalation classifier and duplicate TS allowlist vocabulary, not any reachable brain handler. Active config bypass behavior has independent spawn-default regression coverage."
+        ],
+        "intentionalChanges": [
+          "Retained Electron TypeScript helper source is not deleted; removing a dead Go classifier does not restore a removed backend grant policy."
+        ]
+      },
       "sha256": "3f89c1c8b0c4e2b407bc01e7fb5ea1a3f783728b3714ba5c52c355ef756d50f2",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs"
+      ]
     },
     "services/hub/cmd/brain/profilegrant_test.go": {
       "replacement": [],
@@ -1793,28 +2003,102 @@
       "tests": []
     },
     "services/hub/cmd/brain/workerescalation.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read fixed contract, last case-insensitive tagged block,4096 limit, strict keys/type/status/nonempty strings/changed boolean and normalized output, plus both valid/malformed/absent tests. Ordinary prose and a JSON-tag example cannot assert escalation.",
+          "Shared TS/Rust corpus checks valid normalization, extra authority, wrong status and missing changed. Fixed JS trim compatibility for BOM/NEL with three shared cases; TS29 and Rust worker_results2 passed. Wakes21 verifies distinct escalation and result-schema alternative semantics, including a simultaneous failure marker."
+        ],
+        "intentionalChanges": [
+          "Use active TypeScript UTF-16 limits/JS trim instead of Go byte/Unicode-space conventions. Normalized JSON is compared as parsed values; object key order is not a contract."
+        ]
+      },
       "sha256": "78ec9ad8a0d7e6d0423cff4bee51258976e81e140e462755fe60615264791a3d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/wakes.rs",
+        "apps/desktop/src/main/shared/structuredResult.test.ts",
+        "apps/desktop/src/main/shared/workerEscalation.test.ts"
+      ]
     },
     "services/hub/cmd/brain/workerescalation_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/worker_results.rs",
+        "services/hub-rs/src/services/session_facade.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read fixed contract, last case-insensitive tagged block,4096 limit, strict keys/type/status/nonempty strings/changed boolean and normalized output, plus both valid/malformed/absent tests. Ordinary prose and a JSON-tag example cannot assert escalation.",
+          "Shared TS/Rust corpus checks valid normalization, extra authority, wrong status and missing changed. Fixed JS trim compatibility for BOM/NEL with three shared cases; TS29 and Rust worker_results2 passed. Wakes21 verifies distinct escalation and result-schema alternative semantics, including a simultaneous failure marker."
+        ],
+        "intentionalChanges": [
+          "Use active TypeScript UTF-16 limits/JS trim instead of Go byte/Unicode-space conventions. Normalized JSON is compared as parsed values; object key order is not a contract."
+        ]
+      },
       "sha256": "f8b27524b371763bd4566b1bb1c624b08d7bcdf8cedef8b71d72bf01aeb40999",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/tests/session_facade.rs",
+        "services/hub-rs/tests/wakes.rs",
+        "apps/desktop/src/main/shared/structuredResult.test.ts",
+        "apps/desktop/src/main/shared/workerEscalation.test.ts"
+      ]
     },
     "services/hub/cmd/brain/workerfailure.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/assets/fleet-messages.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all marker, flatten, usage-limit and credit-balance branches and all5 tests. New Rust READER replays the entire agent-error-marker corpus: failure/nonfailure, exact reason, standing-overage enrichment and marker-gated remedy. Independent daemon WRITER remains pinned.",
+          "Explicit separator-forgery and200-character-cap assertions preserve bullet grammar; terminal wake matrix verifies the actual credit-balance remedy, while ordinary success/account overage and transient overload are not mislabelled. Wakes21 and fleet_messages3 passed."
+        ],
+        "intentionalChanges": [
+          "Unicode clipping/whitespace follows current TypeScript UTF-16/JS behavior instead of Go rune/Unicode-space differences. Provider failure prose does not invalidate an otherwise valid schema contract."
+        ]
+      },
       "sha256": "d3694593926c7ccf59c55feefe04e1c94c04cd6623e196fe66e2811f09548b47",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/claudemon/src/providers/mod.rs",
+        "apps/desktop/src/main/shared/workerFailure.test.ts"
+      ]
     },
     "services/hub/cmd/brain/workerfailure_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/wakes.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/assets/fleet-messages.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all marker, flatten, usage-limit and credit-balance branches and all5 tests. New Rust READER replays the entire agent-error-marker corpus: failure/nonfailure, exact reason, standing-overage enrichment and marker-gated remedy. Independent daemon WRITER remains pinned.",
+          "Explicit separator-forgery and200-character-cap assertions preserve bullet grammar; terminal wake matrix verifies the actual credit-balance remedy, while ordinary success/account overage and transient overload are not mislabelled. Wakes21 and fleet_messages3 passed."
+        ],
+        "intentionalChanges": [
+          "Unicode clipping/whitespace follows current TypeScript UTF-16/JS behavior instead of Go rune/Unicode-space differences. Provider failure prose does not invalidate an otherwise valid schema contract."
+        ]
+      },
       "sha256": "701509910b66b4f3c64545368b9bc9d8c1e8e3c559eff02000ff112dfde9adf2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/wakes.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/claudemon/src/providers/mod.rs",
+        "apps/desktop/src/main/shared/workerFailure.test.ts"
+      ]
     },
     "services/hub/cmd/brain/yologrant_test.go": {
       "replacement": [],
@@ -2738,16 +3022,36 @@
       ]
     },
     "services/hub/cmd/workspacer/dialhost_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Wildcard addresses normalize for actual dial and advertise separately; concrete listener addresses remain themselves. Empty bind retains wildcard semantics and status probes use loopback. Owned Hub readiness avoids guessing a child HTTP listener. Actual wildcard IPv4/IPv6 plugin callback tests and real CLI trusted-host positive/untrusted negative HTTP requests cover address/policy forwarding; plugin-origin env/flag/explicit-empty matrix remains live. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "5995fc4a2f9fb0c6bceb0eb7ca5a0009fbc8fd9f2c91de6b5c52ae4c539a1099",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/server.rs"
+      ]
     },
     "services/hub/cmd/workspacer/external_claudemon_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/src/services/external_claudemon.rs"
+      ],
+      "review": "Retained bare external flag resolves loopback at selected API port, now only with explicit hub-only ownership. Old full-stack Go/Node control topology is architecturally retired and refuses clearly rather than silently becoming a partial owner. Fake HTTP matrix requires exact200/maintenance1/bodyok and no redirects. Actual subprocess attaches, publishes borrowed endpoint, never writes external daemon/routes/hooks/database, keeps it alive after owned shutdown and refuses collisions on owned Hub/MCP ports without creating config. Read-only adapter has no remote stop ownership. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "21f437648ae986c962bf407f582fea722be8ad8f0824b2283b6ef653b64695a2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/services/external_claudemon.rs"
+      ]
     },
     "services/hub/cmd/workspacer/fleetcmd.go": {
       "replacement": [
@@ -2815,64 +3119,163 @@
       ]
     },
     "services/hub/cmd/workspacer/main.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/src/bin/workspacer-rust.rs"
+      ],
+      "review": "Command groups/help/error dispatch retained. Known Go single-dash options normalize with metadata-aware required-value handling, including short -f, inline booleans and -- termination. Required values remain literal OsStrings; former backend binary overrides fail with an explicit in-process ownership explanation. Existing token/jobs/fleet/install/status rows remain separately reviewed. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "feffb5a51771b8be2e4e12ae1b37f68a9db8e5732997d0086add9df8c5c62d90",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/workspacer/plan.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": "Child argv/env wiring is replaced by typed owned Backend/Hub options, not by finding Go executables. Preserved loopback daemon/MCP ports, actual hub listener addressing, explicit DB path, token pairing links, optional plugin/web paths, exact facade readiness and no-MCP absence of fabricated endpoint. Public banner keys/opaque token escaping and default string-map output are pinned. Missing-child reduced-mode heuristics retire; explicit hub-only/no-mcp roles replace them. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "e93d28c4ebe3acacf8e76c99511ab60d2dcb6219eda100634bf7e242b7ebe5b2",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/session_facade.rs"
+      ]
     },
     "services/hub/cmd/workspacer/plan_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs"
+      ],
+      "review": "Reviewed every wiring subcase: default/custom ports, standalone auth, optional child/bundle presence, wildcard advertisement, plugin origin, exact facade status/service/listener/hub/catalog and URL-escaped token. Existing child-spec assertions retire with in-process ownership; real CLI startup/parent shutdown plus scalar/string-map banner and strict health matrices preserve operational outcomes. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "157716e6d0cb51b302e0136841c10e05e187eb5030955ab7c250599ef91825ee",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/presentation.rs",
+        "services/hub-rs/src/net_address.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/session_facade.rs"
+      ]
     },
     "services/hub/cmd/workspacer/plugindev.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/plugins/install.rs",
+        "services/hub-rs/src/plugins/mod.rs"
+      ],
+      "review": "Reviewed fail-fast manifest validation, isolated source, default build-before-reload, quiet scan debounce, ignore markers, lifecycle logs and cleanup. Temporary plugin manager plus explicit reload replaces symlink-only setup without deleting source. Real CLI fixture uses only a test-executable build, proves one dev plugin instead of installed plugins, successful build/reload, failed build keeps live plugin and shutdown preserves both source and installed tree. Watch stream is best-effort/owned, errors query-redacted, stderr logs retain marker; no private Node companion involved. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "ea7ef72aca299c346dd86006d8e44d5f823b26e727eb7de88b48dd024c670ad4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/cmd/workspacer/plugindev_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/plugins/mod.rs"
+      ],
+      "review": "All original ignore names retained, including .install-source and .disabled; source edits/deletion and quiet-period burst coalescing pinned deterministically. Symlinks counted without following cycles. Actual CLI isolation/reload/build-failure/cleanup fixture replaces Go symlink-count setup test, preserving its real load/source survival assertion. Invalid manifest creates neither credential/config nor hook/home data. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "2ab74a4230dc7a21f66a194303005591c7a1a6d7d51604c62bac2a0bbfca96e0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/dev_watch.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/plugin_manager.rs"
+      ]
     },
     "services/hub/cmd/workspacer/resolve.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs"
+      ],
+      "review": "Explicit/sibling/PATH selection of claudemon/hub/brain/mcp child binaries is intentionally removed. Unsupported override flags cannot choose Go. Retained responsibilities are executable-symlink-aware shipped web discovery (sibling then parent, regular index required) and platform public workspacer executable name. Fake directory tests and actual standalone startup verify retained paths without system/PATH mutation. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "c0424b8bfd63711ec1b83d493c24e46cbf89376a3e8ed44053c2e39f15c469fe",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/workspacer/resolve_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs"
+      ],
+      "review": "Retired binary resolver priority/missing/sibling-directory branches because no owned backend child is discovered. Kept public executable alias and webapp sibling/parent/index checks with isolated actual filesystem fixtures. Runtime standalone smoke does not require legacy backend binaries; removed binary flags explicitly refuse rather than silently resolving old executables. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "f8e1d48facf609524df82ff8c1383533701bed99f3498b374044056160bc2e79",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/install.rs",
+        "services/hub-rs/src/cli/compat.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/cmd/workspacer/serve.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": "Reviewed startup preflight, state identity, plugins/web env choices, hooks before startup, bounded readiness, JSON/text banners, parent signals and joined cleanup. Owned library runtime replaces four child processes and restart loops. CLI refuses occupied owned ports, alternate-port implicit DB sharing and relative inferred stores; warnings retain plugin/hooks partial availability. Bare external flag requires explicit hub-only, exact daemon health and read-only ownership. Actual CLI tests cover startup, SIGTERM on Unix, portable EOF/declared PID loss, source isolation, no engine/hooks for control-only, existing identity/data and quiet no-secret output. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "8c61b9f72e34fac10a8282f53e7c811221477306a04306a0ca95db9df63e085d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/backend_hooks.rs",
+        "services/hub-rs/src/cli/readiness.rs",
+        "services/hub-rs/src/cli/presentation.rs"
+      ]
     },
     "services/hub/cmd/workspacer/servedb_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/identity.rs",
+        "services/hub-rs/src/backend/ownership.rs"
+      ],
+      "review": "Default data/home locations and explicit override retained; either alternate daemon port requires explicit DB, and empty/relative inferred XDG data is refused before startup. Subprocess tests cover env absent/empty OS-home fallback without actual-home writes, explicit home precedence and no accidental state creation. Actual owned CLI passes its pinned temporary SQLite path; database ownership/restart protections have separate backend-owner tests. Shell fake-daemon argv observation retires with direct ServeConfig handoff. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "7403a6c0f2c9c4db8746aac4f0e5c6ce014f1d876b45be281c0d3351f59c0a94",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/cmd/workspacer/serveinit_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": "The claudemon-init child is retired; the same Rust hook merge library runs before CLI Backend preparation, with a15-second budget and nonfatal diagnostics. Actual CLI temporary-home test verifies written configured-hook-port settings before ready; opt-out and hub-only cases leave hook settings untouched. backend_hooks covers user-hook/status-line preservation and idempotence. Signal/EOF teardown does not require companion binaries. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "598c535f3b8b4063fd215f5f643acba356a106bf3dd92685e93d1224e80e7a1a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_hooks.rs"
+      ]
     },
     "services/hub/cmd/workspacer/status.go": {
       "replacement": [
@@ -2955,16 +3358,32 @@
       ]
     },
     "services/hub/cmd/workspacer/usagecfg.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": "Raw YAML bool presence is handed through ServePlan into embedded EngineOptions. CLI keeps original config-first precedence over WORKSPACER_USAGE_POLL_ON_BOOT; absent/unreadable/malformed/wrong-type values remain None for engine env/default. No process-global env mutation. Shared native Backend helper intentionally keeps its separately established environment-first contract. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "d0b0e2d99d9431300092b8430747d8598d15f512781a3ef6ac37821722292d15",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/src/backend.rs"
+      ]
     },
     "services/hub/cmd/workspacer/usagecfg_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": "Matrix covers missing file/section/key, true/false, malformed YAML and string/other wrong types. Actual isolated subprocess sets ambient polling on and raw config off, then checks the populated ServePlan option without running a provider. EngineOptions uses that plan value directly; old child env argv inspection retires with owned engine construction. Final Linux launcher checkpoint passed the full library and all21 CLI tests; platform runtime execution remains separately gated.",
       "sha256": "316c8729dfc1a897c21493267c551e992a36405972dda720ca207b993078ff70",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/cli/usage.rs",
+        "services/hub-rs/tests/cli.rs"
+      ]
     },
     "services/hub/internal/authtoken/authtoken.go": {
       "note": "Persisted credential/scopes/24-byte base64url mint/atomic private writes/revoke/read-through Store and default paths ported. Rust store serializes cooperating writers and preserves unknown metadata. Legacy profiles/yolo/role metadata remains inert; authenticated host identity remains distinct from operator scope.",
@@ -3083,16 +3502,32 @@
       "tests": []
     },
     "services/hub/internal/bus/activity.go": {
-      "replacement": [],
+      "note": "Server-owned activity sequence and active/input clocks retained. Input-reporting peers ignore passive polls; legacy peers conservatively project the last call/publication clock, and trusted internal peers remain separately identified. Static background-read names and parameter-sensitive workflow/readiness/manager-list policy match the original cases. New request classifier preserves absent versus explicit-null values, validates all known field types, and supports encoding/json ASCII/Unicode SimpleFold aliases. Unknown/mutation operations count as input. Ambiguous duplicate case aliases conservatively count activity because serde Value has no original member order; malformed wire JSON is refused before the actor rather than becoming a passive request.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
       "sha256": "312109ac7af1413452d18ef132c9b7738b4f4b4f0ff55783f673b8d77a4cc484",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ]
     },
     "services/hub/internal/bus/activity_test.go": {
-      "replacement": [],
+      "note": "Server-owned activity sequence and active/input clocks retained. Input-reporting peers ignore passive polls; legacy peers conservatively project the last call/publication clock, and trusted internal peers remain separately identified. Static background-read names and parameter-sensitive workflow/readiness/manager-list policy match the original cases. New request classifier preserves absent versus explicit-null values, validates all known field types, and supports encoding/json ASCII/Unicode SimpleFold aliases. Unknown/mutation operations count as input. Ambiguous duplicate case aliases conservatively count activity because serde Value has no original member order; malformed wire JSON is refused before the actor rather than becoming a passive request.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
       "sha256": "a417a3b9d41390fdf1d193b3a8489aeee3dd1a5999d055315f3451e4259fe20d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ]
     },
     "services/hub/internal/bus/authorize_edges_test.go": {
       "note": "Architectural retirement of the synthetic anonymous conn{caps:...} filesystem-grant harness. The retained Go conn.authorize immediately bypasses that harness for EVERY real wire identity: trusted host/operator, non-nil scoped methods, or pluginID. Rust Identity::Kind exhaustively models those same Host/Scoped/Plugin identities; it cannot construct the obsolete anonymous filesystem-grant identity. authorize_edges tests paramString/canonRoots and resolver-denial wiring exclusively through that dead harness; hostgate_test is solely skip accounting for its two symlink tests. Active object/owner guards, selected-project confinement and component-wise symlink resolution remain in Rust paths and their separate tests, and are not retired by this record.",
@@ -3143,16 +3578,32 @@
       "tests": []
     },
     "services/hub/internal/bus/clients.go": {
-      "replacement": [],
+      "note": "Live sorted inventory retains verified connection IDs, nonsecret labels, monotonic activity sequence, conservative legacy call/publication clocks and reported-input clocks. Actual broker test distinguishes a registered provider, plugin, private service client and real user; caller params cannot forge its ID or infrastructure flag. Private connect_service replaces Go self-dial nonce/query serialization, so no wire URL can claim internal provenance. Subscription frames do not refresh activity. The old InternalDialURL string-builder responsibility is eliminated by this owned in-process connection seam; other inventory/activity behavior remains active.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
       "sha256": "c2e2bbc5bf76a41a24d686048a41acb8a0d988b75eebc3cb1fac7d36ac7dd3e7",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ]
     },
     "services/hub/internal/bus/clients_test.go": {
-      "replacement": [],
+      "note": "Live sorted inventory retains verified connection IDs, nonsecret labels, monotonic activity sequence, conservative legacy call/publication clocks and reported-input clocks. Actual broker test distinguishes a registered provider, plugin, private service client and real user; caller params cannot forge its ID or infrastructure flag. Private connect_service replaces Go self-dial nonce/query serialization, so no wire URL can claim internal provenance. Subscription frames do not refresh activity. The old InternalDialURL string-builder responsibility is eliminated by this owned in-process connection seam; other inventory/activity behavior remains active.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
       "sha256": "5f5b2ab11a610e75b38b95e72dc087907231ecf8331b076b3f023aded53388b4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ]
     },
     "services/hub/internal/bus/delivery_layers_test.go": {
       "replacement": [],
@@ -3189,22 +3640,48 @@
       ]
     },
     "services/hub/internal/bus/desktop.go": {
-      "replacement": [],
+      "note": "Exact public owner-method membership and authenticated-local-owner authority are both required. The migration audit caught and fixed the former broad desktop.* owner allowance. Real broker regression registers a private-shaped endpoint and proves even owner cannot forward to it; a public desktop method succeeds, plugins.* extension routing remains unchanged, and an actual plugin namespace registration still routes. Contract authority cases reject operator/facade/provider and federated owner across every owner method. files.receiveUpload retains its separate actual-owner gate; closed peers cannot call before physical eviction. This record covers the bus transport gate/manifest assertions, not all service implementations or capspec source-witness/path-reason metadata.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs",
+        "contracts/desktop-service-methods.json"
+      ],
       "sha256": "56bfaa28cac3ff51e2ed6787705dc51bf498845b435e3429bec41d886eb83a97",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/uploads.rs"
+      ]
     },
     "services/hub/internal/bus/desktop_test.go": {
-      "replacement": [],
+      "note": "Exact public owner-method membership and authenticated-local-owner authority are both required. The migration audit caught and fixed the former broad desktop.* owner allowance. Real broker regression registers a private-shaped endpoint and proves even owner cannot forward to it; a public desktop method succeeds, plugins.* extension routing remains unchanged, and an actual plugin namespace registration still routes. Contract authority cases reject operator/facade/provider and federated owner across every owner method. files.receiveUpload retains its separate actual-owner gate; closed peers cannot call before physical eviction. This record covers the bus transport gate/manifest assertions, not all service implementations or capspec source-witness/path-reason metadata.",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime.rs",
+        "contracts/desktop-service-methods.json"
+      ],
       "sha256": "c8dd883165801a5b3aaf968857b752db3358034aa0811bd5a459a32189efea4a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/services/uploads.rs"
+      ]
     },
     "services/hub/internal/bus/desktopactivity_test.go": {
-      "replacement": [],
+      "note": "Server-owned activity sequence and active/input clocks retained. Input-reporting peers ignore passive polls; legacy peers conservatively project the last call/publication clock, and trusted internal peers remain separately identified. Static background-read names and parameter-sensitive workflow/readiness/manager-list policy match the original cases. New request classifier preserves absent versus explicit-null values, validates all known field types, and supports encoding/json ASCII/Unicode SimpleFold aliases. Unknown/mutation operations count as input. Ambiguous duplicate case aliases conservatively count activity because serde Value has no original member order; malformed wire JSON is refused before the actor rather than becoming a passive request.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/quiescence.rs"
+      ],
       "sha256": "4eed43e84518b7a7565a570498affd29a645fa860e17d0d3a56ce1498735bccd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/quiescence.rs"
+      ]
     },
     "services/hub/internal/bus/evictconn_test.go": {
       "replacement": [],
@@ -3265,16 +3742,34 @@
       "tests": []
     },
     "services/hub/internal/bus/launchintegration.go": {
-      "replacement": [],
+      "note": "The former provider callback RPC becomes an in-process typed launch permit owned by the broker. It binds the exact pending local owner call, selected plugin, generated session and nonce, deadline and live connection, and is one-use. Provider/scoped/federated callers cannot manufacture the grant. Tests reject mismatched sessions/nonces/plugin selection, completed/cancelled calls, expired/disconnected callers and changed owner authority. Audit added explicit marked-closed refusal before physical peer eviction to both begin_launch and check_launch, preserving the original revoked-owner assertion. Accepted engine effects remain owned/tracked; this only revokes preparation before admission.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
       "sha256": "f99a18e6bfd25e770f55995e333d93ac46ba304c014b443236d5ef6c61c6f1f7",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs",
+        "services/hub-rs/src/admission.rs"
+      ]
     },
     "services/hub/internal/bus/launchintegration_test.go": {
-      "replacement": [],
+      "note": "The former provider callback RPC becomes an in-process typed launch permit owned by the broker. It binds the exact pending local owner call, selected plugin, generated session and nonce, deadline and live connection, and is one-use. Provider/scoped/federated callers cannot manufacture the grant. Tests reject mismatched sessions/nonces/plugin selection, completed/cancelled calls, expired/disconnected callers and changed owner authority. Audit added explicit marked-closed refusal before physical peer eviction to both begin_launch and check_launch, preserving the original revoked-owner assertion. Accepted engine effects remain owned/tracked; this only revokes preparation before admission.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/plugins/launch.rs"
+      ],
       "sha256": "11a5514921d14b7feb803b67c3e4695936b0484d82bb830f0f8053ee85afa064",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/plugins/launch/tests.rs",
+        "services/hub-rs/src/admission.rs"
+      ]
     },
     "services/hub/internal/bus/local_test.go": {
       "replacement": [],
@@ -3313,16 +3808,38 @@
       "tests": []
     },
     "services/hub/internal/bus/policy.go": {
-      "replacement": [],
+      "note": "Active component-wise canonicalization and selected-object containment are retained: resolve links before parent components, refuse relative/empty paths, retain prospective tails, refuse traversal through regular files, distinguish sibling prefixes, normalize existing Windows ancestors without weakening confinement, and enforce exactly40 link hops. Real filesystem regression reads the shared fixture budget and proves40accept/41refuse on supported platforms without Windows skips. Go CanonicalizeRoot callers are routing preference/selection and plugin UI selected-root derivation. Legacy anonymous fsRoots/secret-path filtering and paramString harness responsibility is retired by the current trust model: every real connection bypasses it; PathIsSecret only feeds unused plugin resolveRoots/expandScope compatibility helpers. Retired path-parameter-shapes corpus remains explicitly accounted for by ownership guards. This does not retire active selected-object path checks.",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
       "sha256": "c4fc7d39a0a34e7b5a0e99c49e0b385d55b3658a58ac2b2263f8da5425ae00e9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ]
     },
     "services/hub/internal/bus/policy_test.go": {
-      "replacement": [],
+      "note": "Active component-wise canonicalization and selected-object containment are retained: resolve links before parent components, refuse relative/empty paths, retain prospective tails, refuse traversal through regular files, distinguish sibling prefixes, normalize existing Windows ancestors without weakening confinement, and enforce exactly40 link hops. Real filesystem regression reads the shared fixture budget and proves40accept/41refuse on supported platforms without Windows skips. Go CanonicalizeRoot callers are routing preference/selection and plugin UI selected-root derivation. Legacy anonymous fsRoots/secret-path filtering and paramString harness responsibility is retired by the current trust model: every real connection bypasses it; PathIsSecret only feeds unused plugin resolveRoots/expandScope compatibility helpers. Retired path-parameter-shapes corpus remains explicitly accounted for by ownership guards. This does not retire active selected-object path checks.",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/plugins/http.rs"
+      ],
       "sha256": "f8bae3c449e5f909771fb9f10f45a7cd26ea46e1c1c9fd77b6f273ca4b21b920",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/path.rs",
+        "services/hub-rs/tests/corpus_ownership.rs"
+      ]
     },
     "services/hub/internal/bus/profilegrant_revalidate_test.go": {
       "replacement": [],
@@ -3447,10 +3964,16 @@
       "tests": []
     },
     "services/hub/internal/bus/spawn_capabilities_test.go": {
-      "replacement": [],
+      "note": "Actual hello frames preserve spawnFullAccess as agents.spawn call authority for host, scoped operator, triage, enabled plugin and federated host. Provider-tier register grants explicitly do not imply spawn call authority; the new matrix also verifies that negative case.",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs"
+      ],
       "sha256": "b2e5f727426303fd48056b05a0fd95cc5e753c3a3d78704d9dd751ad4f8246e3",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/bus/spawnceiling_test.go": {
       "replacement": [],
@@ -3465,16 +3988,32 @@
       "tests": []
     },
     "services/hub/internal/bus/spawnkeys.go": {
-      "replacement": [],
+      "note": "All46 canonical spawn keys are tested: uppercase aliases refuse and canonical spellings pass for spawn and dispatchPrepare; unknown single fields and non-object params remain intact, while duplicate folded unknown keys refuse. The audit corrected Rust contextual/ASCII-only comparison to Go-compatible per-character simple lowercase, with Kelvin-sign,dotted-I and Greek-sigma cases. Direct broker tests prove local and qualified calls reject aliases before execution routing, while canonical calls reach the distinct execution gate. Existing frozen key vocabulary remains the provider-union reference; this record does not certify the separate provider-field/source-enumeration guards.",
+      "replacement": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
       "sha256": "22c7b834054c821d137dbafca9ca8cf585fe6040468cbbf7d581f77958c268cd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/bus/spawnkeys_test.go": {
-      "replacement": [],
+      "note": "All46 canonical spawn keys are tested: uppercase aliases refuse and canonical spellings pass for spawn and dispatchPrepare; unknown single fields and non-object params remain intact, while duplicate folded unknown keys refuse. The audit corrected Rust contextual/ASCII-only comparison to Go-compatible per-character simple lowercase, with Kelvin-sign,dotted-I and Greek-sigma cases. Direct broker tests prove local and qualified calls reject aliases before execution routing, while canonical calls reach the distinct execution gate. Existing frozen key vocabulary remains the provider-union reference; this record does not certify the separate provider-field/source-enumeration guards.",
+      "replacement": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/assets/hub-vocabulary.json"
+      ],
       "sha256": "6a33d6e539d439f00f729d6a7b2984953dcface09ea4a0765838fefd68089816",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/bus/topiccap_test.go": {
       "replacement": [],
@@ -3584,7 +4123,7 @@
       "tests": []
     },
     "services/hub/internal/capspec/eventtopics.go": {
-      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint.",
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests passed in the246-test lib checkpoint.",
       "replacement": [
         "services/hub-rs/assets/hub-vocabulary.json",
         "services/hub-rs/src/auth.rs",
@@ -3599,7 +4138,7 @@
       ]
     },
     "services/hub/internal/capspec/eventtopics_test.go": {
-      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests still await next lib checkpoint.",
+      "note": "Registry data/reasons and exact-before-prefix matching ported to Rust authorization. Actual Rust production constructors (including dynamic families), every variable-envelope publication site and retained Electron syntax-tree publications are independently enumerated, with floors, counted/stale exceptions, reverse registry-to-producer coverage and source-derived sidecar host-only rule. Mutation tests reject new unclassified modules, unresolved variables, aliases/raw envelope structs, comments/string decoys, hidden test imports, stale passthroughs and CRLF sensitivity. Every36 topic row plus unknowns is checked through actual Rust may_consume/may_publish for six identity classes;444 assertions passed in lib snapshot. Newly discovered missing routing.decision producer was implemented in actual handler; source guard now passes, its new runtime delivery/projection tests passed in the246-test lib checkpoint.",
       "replacement": [
         "services/hub-rs/assets/hub-vocabulary.json",
         "services/hub-rs/src/auth.rs",
@@ -3812,22 +4351,82 @@
       "tests": []
     },
     "services/hub/internal/jobobject/jobobject.go": {
-      "replacement": [],
+      "reason": "The comment-only Go package and non-Windows Confine no-op have no executable responsibility after removing the Go process owner; real platform ownership lives in Rust per-child guards.",
+      "replacement": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared CreateJob/extended KILL_ON_JOB_CLOSE/assignment/failure-close/lifetime semantics. Rust Job owns one spawned child and explicitly refuses the embedding process; closing the owned handle terminates assigned child and inherited descendants. This replaces the Go hub process-wide job, which would be unsafe to impose on an embedded GUI.",
+          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim."
+        ],
+        "intentionalChanges": [
+          "Job ownership errors are propagated by owned launch helpers rather than merely logged while continuing unconfined. Non-Windows uses existing owned process-group cleanup rather than a dummy Confine no-op. This does not promise cleanup of arbitrary deliberately escaped Unix descendants."
+        ],
+        "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending."
+      },
       "sha256": "907a7de6dd7523c4ac74aa9a63c675138ae7febe011e3fcf266e9e1657486468",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs",
+        "services/hub-rs/tests/pty_ownership.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/internal/jobobject/jobobject_unix.go": {
-      "replacement": [],
+      "reason": "The comment-only Go package and non-Windows Confine no-op have no executable responsibility after removing the Go process owner; real platform ownership lives in Rust per-child guards.",
+      "replacement": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared CreateJob/extended KILL_ON_JOB_CLOSE/assignment/failure-close/lifetime semantics. Rust Job owns one spawned child and explicitly refuses the embedding process; closing the owned handle terminates assigned child and inherited descendants. This replaces the Go hub process-wide job, which would be unsafe to impose on an embedded GUI.",
+          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim."
+        ],
+        "intentionalChanges": [
+          "Job ownership errors are propagated by owned launch helpers rather than merely logged while continuing unconfined. Non-Windows uses existing owned process-group cleanup rather than a dummy Confine no-op. This does not promise cleanup of arbitrary deliberately escaped Unix descendants."
+        ],
+        "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending."
+      },
       "sha256": "fb2c25488c035b7adc116adb38b4ebb1b0ab83b0935dcd47e0e5099c5059ddc1",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs",
+        "services/hub-rs/tests/pty_ownership.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/internal/jobobject/jobobject_windows.go": {
-      "replacement": [],
+      "replacement": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/backend.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Compared CreateJob/extended KILL_ON_JOB_CLOSE/assignment/failure-close/lifetime semantics. Rust Job owns one spawned child and explicitly refuses the embedding process; closing the owned handle terminates assigned child and inherited descendants. This replaces the Go hub process-wide job, which would be unsafe to impose on an embedded GUI.",
+          "Existing actual Windows tests prove host-process refusal, assigned child exit and a descendant created after assignment dying when the job closes. Native installer/backend shutdown also passed on Windows; no cross-compilation-only claim."
+        ],
+        "followup": "Further source review found ordinary Rust child/plugin spawn precedes per-child Windows job assignment. Existing tests cover descendants created after assignment only; preserve original hub-wide early confinement responsibility with race-free per-child creation before certifying this file.",
+        "intentionalChanges": [
+          "Job ownership errors are propagated by owned launch helpers rather than merely logged while continuing unconfined. Non-Windows uses existing owned process-group cleanup rather than a dummy Confine no-op. This does not promise cleanup of arbitrary deliberately escaped Unix descendants."
+        ],
+        "verifiedCheckpoint": "Actual Windows contract job tests passed repeatedly, including ab2ce6b4 run; that job had an unrelated stale artifact path assertion. Final whole-platform gate remains pending."
+      },
       "sha256": "e42e644e88dc5ef1eb532238fd6772b684077c4a288f158a24fa57fe3d70feed",
       "status": "pending",
-      "tests": []
+      "tests": [
+        "services/claudemon/src/wrapper/pty_windows_job.rs",
+        "tools/windows-contract-check/src/lib.rs",
+        "services/hub-rs/tests/pty_ownership.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/internal/jobs/context_test.go": {
       "replacement": [],
@@ -4438,22 +5037,61 @@
       ]
     },
     "services/hub/internal/parentwatch/parentwatch.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original triggers and platform branches: absent/empty WORKSPACER_PARENT_PID disables watching, malformed text retains stdin EOF only, valid parent uses Unix signal0/EPERM liveness or one pinned Windows SYNCHRONIZE handle; first completed trigger shuts down standalone ownership.",
+          "Rust CLI preserves these decisions using cancellable nonblocking probes plus bounded reads; the embedded Backend never installs this CLI parent watcher or takes over host stdin/signals. Parent-handle RAII closes on cancellation instead of leaving a detached goroutine."
+        ],
+        "verifiedCheckpoint": "Actual standalone SIGTERM/parent-pipe and supervised hub-only EOF smoke tests passed on Unix. Windows parent watcher is source-compared and compiled with the standalone CLI; actual Windows native ownership/job/package tests cover separate ownership primitives, not this stdin watcher. A dedicated Windows CLI parent-death runtime check is still needed for the final platform gate."
+      },
       "sha256": "58ab43f64a1bda3b90397756b8752bf536e2af78bb564fbf980bc33f8b23618d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/internal/parentwatch/parentwatch_unix.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original triggers and platform branches: absent/empty WORKSPACER_PARENT_PID disables watching, malformed text retains stdin EOF only, valid parent uses Unix signal0/EPERM liveness or one pinned Windows SYNCHRONIZE handle; first completed trigger shuts down standalone ownership.",
+          "Rust CLI preserves these decisions using cancellable nonblocking probes plus bounded reads; the embedded Backend never installs this CLI parent watcher or takes over host stdin/signals. Parent-handle RAII closes on cancellation instead of leaving a detached goroutine."
+        ],
+        "verifiedCheckpoint": "Actual standalone SIGTERM/parent-pipe and supervised hub-only EOF smoke tests passed on Unix. Windows parent watcher is source-compared and compiled with the standalone CLI; actual Windows native ownership/job/package tests cover separate ownership primitives, not this stdin watcher. A dedicated Windows CLI parent-death runtime check is still needed for the final platform gate."
+      },
       "sha256": "c72fc173d49a4a91adda932e04bd07319c75ca6a61335842e7aa78a5ecda9539",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/internal/parentwatch/parentwatch_windows.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original triggers and platform branches: absent/empty WORKSPACER_PARENT_PID disables watching, malformed text retains stdin EOF only, valid parent uses Unix signal0/EPERM liveness or one pinned Windows SYNCHRONIZE handle; first completed trigger shuts down standalone ownership.",
+          "Rust CLI preserves these decisions using cancellable nonblocking probes plus bounded reads; the embedded Backend never installs this CLI parent watcher or takes over host stdin/signals. Parent-handle RAII closes on cancellation instead of leaving a detached goroutine."
+        ],
+        "verifiedCheckpoint": "Actual standalone SIGTERM/parent-pipe and supervised hub-only EOF smoke tests passed on Unix. Windows parent watcher is source-compared and compiled with the standalone CLI; actual Windows native ownership/job/package tests cover separate ownership primitives, not this stdin watcher. A dedicated Windows CLI parent-death runtime check is still needed for the final platform gate."
+      },
       "sha256": "0d4fbb1503662f367e1fa81a7a13c8ceeec4ef72af811d23d7fe208dd4520492",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs"
+      ]
     },
     "services/hub/internal/plugin/install.go": {
       "replacement": [
@@ -4787,16 +5425,52 @@
       ]
     },
     "services/hub/internal/redact/redact.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every URL/text/error helper and all original cases. Same credential-query vocabulary, case-insensitive matching, quoted/trailing prose delimiters, empty values, multiple occurrences and idempotence are retained in Rust diagnostic masking. Noncredential host/path/query text remains visible.",
+          "Found and fixed received pre-hello Close reason leaking query credentials through DisconnectReason. Sanitization happens before storage, so Display, derived Debug and anyhow-chain formatting are safe while typed close code4001 pause classification remains intact. Plugin-dev diagnostic log uses the same helper; deliberate local pairing URLs are unchanged."
+        ],
+        "intentionalChanges": [
+          "Private Go brain/MCP dial hops no longer exist. Rust remote authentication uses an Authorization header and handshake failures expose controlled diagnostics rather than a raw token-bearing transport error chain; typed disconnect classification is retained instead of emulating Go errors.Is on an obsolete helper wrapper."
+        ],
+        "verifiedCheckpoint": "Exact-source Rust helper1 passed; actual remote_client4 passed including4001/4003 prehello close through real WebSocket. Full library266 and CLI21 passed helper and plugin diagnostic logger units before unrelated later CLI presentation changes."
+      },
       "sha256": "ab93cbb75a42919153288d74c1e73cdb529195a816ff07d2ea415e44757a3403",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ]
     },
     "services/hub/internal/redact/redact_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read every URL/text/error helper and all original cases. Same credential-query vocabulary, case-insensitive matching, quoted/trailing prose delimiters, empty values, multiple occurrences and idempotence are retained in Rust diagnostic masking. Noncredential host/path/query text remains visible.",
+          "Found and fixed received pre-hello Close reason leaking query credentials through DisconnectReason. Sanitization happens before storage, so Display, derived Debug and anyhow-chain formatting are safe while typed close code4001 pause classification remains intact. Plugin-dev diagnostic log uses the same helper; deliberate local pairing URLs are unchanged."
+        ],
+        "intentionalChanges": [
+          "Private Go brain/MCP dial hops no longer exist. Rust remote authentication uses an Authorization header and handshake failures expose controlled diagnostics rather than a raw token-bearing transport error chain; typed disconnect classification is retained instead of emulating Go errors.Is on an obsolete helper wrapper."
+        ],
+        "verifiedCheckpoint": "Exact-source Rust helper1 passed; actual remote_client4 passed including4001/4003 prehello close through real WebSocket. Full library266 and CLI21 passed helper and plugin diagnostic logger units before unrelated later CLI presentation changes."
+      },
       "sha256": "a0d12f047a991c0e23871f9cce1eb1ed61b2aa04b242fad9bca201950079731c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/diagnostics.rs",
+        "services/hub-rs/tests/remote_client.rs",
+        "services/hub-rs/src/cli/dev_watch.rs"
+      ]
     },
     "services/hub/internal/routing/alternatives.go": {
       "note": "Matrix load/normalization, selection/alternatives, effort transitions, forecast modes, canonical project ceilings, availability and freshness are consolidated in select/sanitize and portable fixture tests.",

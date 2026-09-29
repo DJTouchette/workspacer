@@ -287,6 +287,24 @@ fn vocabulary() -> &'static Vocabulary {
 pub(crate) fn spawn_keys() -> &'static [String] {
     &vocabulary().spawn_keys
 }
+fn desktop_service(method: &str) -> bool {
+    static METHODS: OnceLock<Vec<String>> = OnceLock::new();
+    METHODS
+        .get_or_init(|| {
+            let manifest: Value = serde_json::from_str(include_str!(
+                "../../../contracts/desktop-service-methods.json"
+            ))
+            .expect("validated desktop service manifest");
+            manifest["ownerMethods"]
+                .as_array()
+                .expect("owner methods")
+                .iter()
+                .map(|method| method.as_str().expect("desktop method name").to_owned())
+                .collect()
+        })
+        .iter()
+        .any(|name| name == method)
+}
 fn topic_spec(topic: &str) -> Option<&'static Topic> {
     let rows = &vocabulary().topics;
     // The Go registry chooses exact names before wildcard patterns.
@@ -436,7 +454,7 @@ impl Identity {
     }
     pub fn may_call(&self, method: &str) -> bool {
         if method.starts_with("desktop.") {
-            return self.authenticated_host();
+            return self.authenticated_host() && desktop_service(method);
         }
         if method == "files.receiveUpload" {
             return self.authenticated_host();
