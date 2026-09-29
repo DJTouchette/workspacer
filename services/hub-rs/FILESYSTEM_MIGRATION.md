@@ -31,7 +31,10 @@ Invalid filename bytes are rendered lossily for JSON as before; text file conten
 itself is never decoded lossily. Platform filesystem behavior still requires the
 Windows/macOS CI gates, separately from local Linux evidence.
 
-The remaining `fsguard.go` production review is deliberately open. It also supplies
-live-cwd inventory to dispatch readiness and library polling, beyond filesystem
-authorization. Removing obsolete secret grants does not establish parity for
-those non-authorization consumers or their freshness behavior.
+The production `fsguard.go` review also traced its non-authorization live-cwd
+consumers. Library polling now observes external writes through redacted public
+projections and leaves stopped projects; dispatch readiness uses process
+liveness and canonical directory identity. The owned engine uses its live
+snapshot map instead of the old process-global HTTP cwd cache. Catalog polling
+retains its last known roots when a bounded inventory read fails. Details and
+exact source hashes are in `reviews/brain-live-directories.json`.

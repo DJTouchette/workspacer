@@ -1,5 +1,106 @@
 use serde_json::{Value, json};
-use workspacer_hub::services::snapshots::{compat, layout_ids, visible};
+use workspacer_hub::services::snapshots::{compat, layout_ids, live, visible};
+
+#[test]
+fn missing_layout_and_explicitly_empty_curation_are_distinct() {
+    for value in [
+        Value::Null,
+        json!({}),
+        json!({"data":null}),
+        json!({"data":{}}),
+        json!({"data":{"agents":null}}),
+        json!({"data":{"agents":{}}}),
+        json!({"data":{"agents":[{"sessionId":17}]}}),
+        json!({"data":{"agents":[{"global":true,"tabs":false}]}}),
+        json!({"data":{"agents":[{"tabs":[{"panes":[{"attachSessionId":false}]}]}]}}),
+    ] {
+        assert_eq!(layout_ids(&value), (Default::default(), false), "{value}");
+    }
+    assert_eq!(
+        layout_ids(&json!({"version":1,"data":{"agents":[]}})),
+        (Default::default(), true)
+    );
+    let layout = json!({"version":7,"data":{"agents":[{"global":true,"lastSessionId":"global-last"},{"sessionId":"live-1","tabs":[{"panes":[{"attachSessionId":"attached-1"}]}]},{"lastSessionId":"stopped-2"},null]}});
+    assert_eq!(
+        layout_ids(&layout),
+        (
+            ["live-1".into(), "attached-1".into(), "stopped-2".into()].into(),
+            true
+        )
+    );
+    let now = time::OffsetDateTime::parse(
+        "2026-07-10T12:00:00Z",
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    let stopped =
+        json!({"session_id":"recent","mode":"stopped","updated_at":"2026-07-10T11:00:00Z"});
+    assert!(visible(&stopped, &json!({"data":{}}), now));
+    assert!(!visible(&stopped, &json!({"data":{"agents":[]}}), now));
+}
+
+#[test]
+fn legacy_visibility_and_process_liveness_vectors_remain_separate() {
+    let now = time::OffsetDateTime::parse(
+        "2026-07-10T12:00:00Z",
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    let layout = json!({"data":{"agents":[{"sessionId":"cur"}]}});
+    for (mode, id, date, archived, has_layout, expected) in [
+        ("input", "a", "2026-07-10T11:00:00Z", false, false, true),
+        ("responding", "a", "2026-07-10T11:00:00Z", false, true, true),
+        ("approval", "a", "2026-07-08T12:00:00Z", false, true, true),
+        ("unknown", "a", "2026-07-10T11:00:00Z", false, true, false),
+        ("unknown", "a", "2026-07-10T11:00:00Z", false, false, false),
+        ("stopped", "cur", "2026-07-08T12:00:00Z", false, true, true),
+        ("stopped", "a", "2026-07-10T11:00:00Z", false, true, false),
+        ("stopped", "a", "2026-07-10T11:00:00Z", false, false, true),
+        ("stopped", "a", "2026-07-08T12:00:00Z", false, false, false),
+        ("stopped", "a", "2026-07-10T11:00:00Z", true, false, false),
+        ("stopped", "a", "", false, false, false),
+    ] {
+        let row = json!({"session_id":id,"mode":mode,"updated_at":date,"archived":archived});
+        assert_eq!(
+            visible(&row, if has_layout { &layout } else { &Value::Null }, now),
+            expected,
+            "{row}"
+        );
+    }
+    for (row, expected) in [
+        (json!({"cwd":"/w/p","status":"active"}), true),
+        (json!({"cwd":"/w/p"}), true),
+        (json!({"status":"ended"}), false),
+        (json!({"mode":"stopped"}), false),
+        (json!({"mode":"running","archived":true}), false),
+        (json!({"mode":"unknown"}), false),
+        (json!({"mode":"running","status":"ended"}), true),
+        (json!({"mode":"running"}), true),
+        (json!("broken"), false),
+    ] {
+        assert_eq!(live(&row), expected, "{row}");
+    }
+    let curated = json!({"session_id":"cur","mode":"stopped","archived":true});
+    assert!(visible(&curated, &layout, now));
+    assert!(!live(&curated));
+    for field in ["session_id", "mode", "status", "updated_at", "archived"] {
+        let mut row = json!({"session_id":"s","mode":"input"});
+        row[field] = json!(17);
+        assert!(!visible(&row, &Value::Null, now), "{field}");
+    }
+    for row in [
+        Value::Null,
+        json!([]),
+        json!({"mode":false}),
+        json!({"status":17}),
+        json!({"archived":"false"}),
+    ] {
+        assert!(!live(&row), "{row}");
+    }
+    assert!(live(
+        &json!({"mode":null,"status":"active","archived":null})
+    ));
+}
 
 #[test]
 fn shared_snapshot_projection_matches_go_reference() {

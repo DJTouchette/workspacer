@@ -40,12 +40,14 @@ async fn catalog_relay_preserves_remote_identity_and_named_liveness() {
     };
     let mut options = Options::default();
     options.token = "different-local-owner".into();
+    let last_exit_file = root.path().join("last-exit.json");
+    std::fs::write(&last_exit_file,r#"{"bootId":"fixture-previous","reason":"claudemon-died","exitCode":1,"at":"2026-08-24T21:00:00Z","machine":"fixture-node"}"#).unwrap();
     options.provider_relay = Some(Config {
         url: format!("ws://{address}/bus"),
         token: provider.token,
         scope: Scope::Catalog,
         node_id: "worker-1".into(),
-        last_exit_file: None,
+        last_exit_file: Some(last_exit_file.clone()),
         caller_token: None,
     });
     let writes = Arc::new(AtomicUsize::new(0));
@@ -108,6 +110,16 @@ async fn catalog_relay_preserves_remote_identity_and_named_liveness() {
     let info = host.call("brain.info", json!({})).await.unwrap();
     assert_eq!(info["node"], "worker-1");
     assert_eq!(info["runtime"], "rust");
+    assert_eq!(
+        info["lastExit"],
+        json!({"reason":"claudemon-died","exitCode":1,"at":"2026-08-24T21:00:00Z"})
+    );
+    std::fs::write(&last_exit_file, r#"{"reason":"signal-TERM","exitCode":0}"#).unwrap();
+    assert_eq!(
+        host.call("brain.info", json!({})).await.unwrap()["lastExit"],
+        info["lastExit"],
+        "previous-run evidence is cached for this relay lifetime"
+    );
     assert!(
         worker
             .handle()

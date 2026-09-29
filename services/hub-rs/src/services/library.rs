@@ -247,7 +247,7 @@ impl Library {
         if !metadata.is_file() || metadata.len() > 5 * 1024 * 1024 {
             bail!("library item is not a bounded regular file");
         }
-        let raw = std::fs::read_to_string(&path)?;
+        let raw = String::from_utf8(super::files::bounded_bytes(&path, 5 * 1024 * 1024)?)?;
         let (metadata, body) = parse(&raw);
         Ok((path, metadata, strip_leading_blank(&body)))
     }
@@ -611,6 +611,11 @@ pub(crate) fn install(
     hub: crate::Handle,
 ) -> crate::Options {
     let service = std::sync::Arc::new(Library::new(directory));
+    options.library_watcher = Some(super::library_watch::Watcher::new(
+        service.clone(),
+        options.session_snapshots.clone(),
+        options.engine.is_some(),
+    ));
     for method in ["library.list", "library.save", "library.remove"] {
         let service = service.clone();
         let hub = hub.clone();

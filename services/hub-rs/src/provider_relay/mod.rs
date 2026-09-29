@@ -2,6 +2,7 @@
 //! brain socket, not the engine: incoming calls retain broker-verified identity
 //! and dispatch into the same local Rust services used by native/standalone.
 mod caller;
+mod last_exit;
 mod methods;
 use crate::{
     Handle, Options,
@@ -11,6 +12,7 @@ use crate::{
 use anyhow::{Result, anyhow, bail};
 pub use caller::UpstreamCaller;
 use futures_util::{SinkExt, StreamExt};
+pub(crate) use last_exit::path as last_exit_path;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -127,16 +129,7 @@ impl Relay {
         let last_exit = config
             .last_exit_file
             .as_ref()
-            .and_then(|path| {
-                std::fs::metadata(path)
-                    .ok()
-                    .filter(|metadata| metadata.is_file() && metadata.len() <= 64 * 1024)
-                    .and_then(|_| std::fs::read(path).ok())
-            })
-            .and_then(|bytes| {
-                serde_json::from_slice::<crate::services::nodes::ExitRecord>(&bytes).ok()
-            })
-            .filter(|record| !record.reason.is_empty());
+            .and_then(|path| last_exit::read(path));
         let caller = config
             .caller_token
             .as_ref()

@@ -24,6 +24,7 @@ pub mod jobs;
 pub mod launch_instructions;
 pub mod layout;
 pub mod library;
+pub(crate) mod library_watch;
 pub mod limits;
 pub mod live_controls;
 pub mod machine_power;

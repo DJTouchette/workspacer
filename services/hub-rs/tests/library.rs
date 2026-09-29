@@ -173,7 +173,6 @@ fn selected_library_directory_cannot_redirect_into_another_project_or_config_sto
         .unwrap();
     assert!(!library.join("notes.md").exists());
 }
-#[cfg(unix)]
 #[test]
 fn derived_symlinks_cannot_escape_semantic_library_roots() {
     let dir = tempfile::tempdir().unwrap();
@@ -182,7 +181,11 @@ fn derived_symlinks_cannot_escape_semantic_library_roots() {
     std::fs::create_dir_all(&lib).unwrap();
     let secret = dir.path().join("secret.md");
     std::fs::write(&secret, "never expose").unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&secret, lib.join("escape.md")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&secret, lib.join("escape.md"))
+        .expect("Windows contract CI must provide symlink privilege");
     let service = Library::new(dir.path().join("config"));
     assert!(
         service
@@ -240,4 +243,59 @@ async fn bus_library_mutations_publish_changes_and_persist() {
             .is_err()
     );
     hub.shutdown().unwrap();
+}
+
+#[tokio::test]
+async fn owned_runtime_observes_external_library_edits_and_joins_polling() {
+    use std::time::Duration;
+    use workspacer_hub::{Hub, Options, client::Client};
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    let mut options = Options::default();
+    options.config_dir = Some(config.clone());
+    options = options.handler("sessions.snapshots", |_, _| async { Ok(json!([])) });
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    let mut events = client.events();
+    client
+        .topics(["library.changed".into()].into())
+        .await
+        .unwrap();
+    client.call("library.list", json!({})).await.unwrap();
+    let path = config.join("library/edited-outside-hub.md");
+    tokio::time::timeout(Duration::from_secs(7), async {
+        for n in 0.. {
+            std::fs::write(
+                &path,
+                format!("---\ntitle: External edit {n}\n---\neditor content\n"),
+            )
+            .unwrap();
+            if let Ok(Ok(event)) =
+                tokio::time::timeout(Duration::from_millis(150), events.recv()).await
+            {
+                assert_eq!(event.topic, "library.changed");
+                assert_eq!(event.data, Some(json!({})));
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let listed = client
+        .call("library.list", json!({"id":"edited-outside-hub"}))
+        .await
+        .unwrap();
+    assert_eq!(listed[0]["body"], "editor content\n");
+    drop(client);
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::task::spawn_blocking(move || hub.shutdown()),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    // The runtime joined its watcher before releasing the owner.
+    std::fs::remove_dir_all(config).unwrap();
 }

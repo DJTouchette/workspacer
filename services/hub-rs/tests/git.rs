@@ -190,7 +190,6 @@ async fn review_reads_and_mutations_use_the_selected_repository_and_cwd() {
 }
 
 #[tokio::test]
-#[cfg(unix)]
 async fn diff_refuses_symlink_escape_and_disables_external_diff_program() {
     if isolated("diff_refuses_symlink_escape_and_disables_external_diff_program") {
         return;
@@ -198,7 +197,11 @@ async fn diff_refuses_symlink_escape_and_disables_external_diff_program() {
     let directory = setup();
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("private"), "private").unwrap();
+    #[cfg(unix)]
     std::os::unix::fs::symlink(outside.path(), directory.path().join("escape")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(outside.path(), directory.path().join("escape"))
+        .expect("Windows contract CI must provide symlink privilege");
     assert!(
         call(
             "git.diff",

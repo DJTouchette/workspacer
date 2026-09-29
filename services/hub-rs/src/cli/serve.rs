@@ -218,14 +218,10 @@ fn relay_config(serve: &ServeArgs) -> Result<Option<crate::provider_relay::Confi
             serve.node_id.clone()
         },
         caller_token,
-        last_exit_file: std::env::var_os("WKS_LAST_EXIT_FILE")
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("WKS_DATA")
-                    .filter(|path| !path.is_empty())
-                    .map(|path| PathBuf::from(path).join("state/last-exit.json"))
-            }),
+        last_exit_file: crate::provider_relay::last_exit_path(
+            std::env::var_os("WKS_LAST_EXIT_FILE"),
+            std::env::var_os("WKS_DATA"),
+        ),
     };
     config.validate()?;
     Ok(Some(config))

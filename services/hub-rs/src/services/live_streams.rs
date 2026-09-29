@@ -471,6 +471,57 @@ mod tests {
         ])
     }
     #[test]
+    fn status_delivery_requires_a_known_object_and_never_overwrites_remote_rows() {
+        let source = FixtureSource::new(8, vec![]);
+        let rows = Arc::new(RwLock::new(shown()));
+        rows.write().unwrap().insert("null".into(), Value::Null);
+        rows.write().unwrap().insert(
+            "remote".into(),
+            json!({"session_id":"remote","mode":"input","hub":"peer"}),
+        );
+        let service = LiveStreams::from_source(source, rows.clone(), None, None);
+        let before = rows.read().unwrap().clone();
+        for id in ["unknown", "null", "remote"] {
+            assert!(
+                service
+                    .accept_delivery(Delivery {
+                        session: id.into(),
+                        generation: 0,
+                        kind: Kind::StatusLine,
+                        data: json!({"cost_usd":41.72})
+                    })
+                    .is_none()
+            );
+        }
+        assert_eq!(*rows.read().unwrap(), before);
+        let event = service
+            .accept_delivery(Delivery {
+                session: "s1".into(),
+                generation: 0,
+                kind: Kind::StatusLine,
+                data: json!({"cost_usd":41.72}),
+            })
+            .unwrap();
+        assert_eq!(event.topic, "agent.statusline");
+        assert_eq!(
+            event.data.unwrap(),
+            json!({"sessionId":"s1","statusLine":{"cost_usd":41.72}})
+        );
+        assert_eq!(rows.read().unwrap()["s1"]["mode"], "input");
+        assert_eq!(rows.read().unwrap()["s1"]["status_line"]["cost_usd"], 41.72);
+        service.close();
+        assert!(
+            service
+                .accept_delivery(Delivery {
+                    session: "s1".into(),
+                    generation: 0,
+                    kind: Kind::StatusLine,
+                    data: json!({"cost_usd":99})
+                })
+                .is_none()
+        );
+    }
+    #[test]
     fn stale_ready_cannot_activate_replacement_demand() {
         let source = FixtureSource::new(8, vec![]);
         let service = LiveStreams::from_source(source, Arc::new(RwLock::new(shown())), None, None);

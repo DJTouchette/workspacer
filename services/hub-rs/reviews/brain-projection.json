@@ -1,0 +1,150 @@
+{
+  "records": {
+    "services/hub/cmd/brain/visibility.go": {
+      "sha256": "7b3928428f64b70634d23d11ab896623b89317c3f10a720ded4a1f48639537e5",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/services/layout.rs",
+        "services/hub-rs/src/provider_relay/caller.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed visibility, liveness, layout-ID extraction and cached layout branches. Live signalled rows remain visible; unknown mode hides; stopped rows use non-global sessionId/lastSessionId/pane attachSessionId curation; absent layout uses24h non-archived fallback; explicit empty agents array means deliberately closed cards.",
+          "Fixed empty data object/null agents being incorrectly treated as a layout. All legacy known nested field types are checked; malformed fields cause no-layout fallback as the Go typed decoder did. Visibility rejects malformed known scalar types instead of coercing them into active state.",
+          "Added snapshots::live separate from curation: archived/unknown/stopped rows are not live; empty mode with ended status is not live; a nonempty running mode wins stale ended status. Locality remains a caller rule. Root readiness/library watchers now consume this helper; its exact legacy vector tests passed.",
+          "Actual registered agents.list and sessions.snapshots test seeds raw typed-owner rows under a real embedded engine and asserts the same three live/curated IDs, then immediately reflects an explicitly cleared layout."
+        ],
+        "intentionalChanges": [
+          "Local layout is an in-process owner document; per-event Go loopback fetch/TTL caching is retired. The separate upstream caller refreshes centrally owned layout with bounded requests and retains the last good object after failures/disconnects; existing real central-layout test proves disconnect retention. This is not an identical TTL-implementation claim.",
+          "JSON null/nonobject snapshots fail closed rather than benefiting from Go null-to-zero-struct decoding. Canonical JSON field spellings are retained; exhaustive Go case-insensitive aliases are not claimed."
+        ],
+        "validation": "2026-09-29 Linux: full library361 passed on final source after canonical last-exit reader fix and root library watcher update, log /tmp/workspacer-projection-final-lib.log. Earlier same projection checkpoint passed snapshots7 plus actual embedded live_streams integration1, log /tmp/workspacer-projection-audit.log; these targets are unaffected by the subsequent metadata-reader-only fix. Total scoped evidence369 tests, zero ignored, without counting child subprocesses twice. Commands used CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test snapshots --test live_streams, then --lib for final metadata/watcher changes. Witness left source files unmapped; explicit owning targets ran. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/visibility_test.go": {
+      "sha256": "8b1294d03693ef909e279d66a908bbee5f35b1aa600ffba109a0501fb05aaf59",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/provider_relay/caller.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/client.rs",
+        "services/hub-rs/src/provider_relay/tests.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Retains live/unknown/curated/recent/old/archived/no-time visibility, layout global exclusion/attached/last IDs/explicit empty versus missing layout, and all nine distinct process-liveness vectors. New malformed-layout/scalar vectors catch the two discovered gaps.",
+          "Go compat overlay assertions map to complete captured hub-snapshot cases plus explicit usage/cache/context-limit absence, status/ambient, pending approval/question and non-daemon pass-through tests; recent provider window fixes remain untouched.",
+          "Actual registered list/snapshots test exercises production handlers, not a test-only filter. Existing live-stream tests exercise visible/hidden/unknown status and conversation data through the real broker; real-engine integration verifies typed status updates and retained state.",
+          "The embedded client dropped-call test routes a live sibling reply while dropping a late abandoned result, retaining the legacy reply-correlation assertion. Local direct layout ownership and upstream retained-object tests replace Go fetch-count/TTL machinery."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library361 passed on final source after canonical last-exit reader fix and root library watcher update, log /tmp/workspacer-projection-final-lib.log. Earlier same projection checkpoint passed snapshots7 plus actual embedded live_streams integration1, log /tmp/workspacer-projection-audit.log; these targets are unaffected by the subsequent metadata-reader-only fix. Total scoped evidence369 tests, zero ignored, without counting child subprocesses twice. Commands used CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test snapshots --test live_streams, then --lib for final metadata/watcher changes. Witness left source files unmapped; explicit owning targets ran. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/statusline_test.go": {
+      "sha256": "2823e64d973e6b75b18561c873793c8d20fa2939c7b9a77ff0b0f8b90e5c8dc6",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_streams.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Known status-line updates merge raw and camelCase telemetry without changing mode or creating unknown sessions. The real typed producer/broker test publishes exact status payload for the known visible row; hidden and absent rows do not leak.",
+          "The real embedded integration posts a statusline HTTP fixture, compares canonical typed status output to forwarded agent.statusline payload, then confirms sessions.snapshots contains modelDisplay. No external provider process/API is used."
+        ],
+        "intentionalChanges": [
+          "An owned typed broadcast stream replaces the Go external SSE statusline reader/reconnect loop for native/full standalone mode. Broadcast lag/closure behavior is owned explicitly; raw JSON byte preservation and external HTTP backoff are not claimed for this new internal transport."
+        ],
+        "validation": "2026-09-29 Linux: full library361 passed on final source after canonical last-exit reader fix and root library watcher update, log /tmp/workspacer-projection-final-lib.log. Earlier same projection checkpoint passed snapshots7 plus actual embedded live_streams integration1, log /tmp/workspacer-projection-audit.log; these targets are unaffected by the subsequent metadata-reader-only fix. Total scoped evidence369 tests, zero ignored, without counting child subprocesses twice. Commands used CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test snapshots --test live_streams, then --lib for final metadata/watcher changes. Witness left source files unmapped; explicit owning targets ran. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/statuslinepublish_test.go": {
+      "sha256": "f272d79867fff5c1fa6a1a188a1d5523e7eff487330498798734eb959fc2fbbe",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/live_streams.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/live_streams.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Existing broker fixture publishes unknown/hidden/known status samples and requires only the known visible event with its exact model/cost payload. New direct delivery test proves unknown and null rows are never manufactured, remote rows are never overwritten with local telemetry, and known-row mode survives the merge.",
+          "The new direct test compares the entire row map before/after refused deliveries, so a hidden publication guard cannot accidentally mask mutation of a remote/invalid row. Positive known-row delivery and closed-owner refusal prevent a mute-all implementation from passing."
+        ],
+        "intentionalChanges": [
+          "Rust has no optional injected fleet-rule pointer: the owner always invokes the concrete visibility predicate. The Go nil-rule state retires structurally; absent/closed owned service cannot emit owned status frames. A separately registered external provider is its own authenticated producer."
+        ],
+        "validation": "2026-09-29 Linux: full library361 passed on final source after canonical last-exit reader fix and root library watcher update, log /tmp/workspacer-projection-final-lib.log. Earlier same projection checkpoint passed snapshots7 plus actual embedded live_streams integration1, log /tmp/workspacer-projection-audit.log; these targets are unaffected by the subsequent metadata-reader-only fix. Total scoped evidence369 tests, zero ignored, without counting child subprocesses twice. Commands used CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test snapshots --test live_streams, then --lib for final metadata/watcher changes. Witness left source files unmapped; explicit owning targets ran. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/lastexit.go": {
+      "sha256": "e028f694d95590ee28d8574700e48a35bb29cc8cdb281a4c6cafc57016432e2a",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/provider_relay/last_exit.rs",
+        "services/hub-rs/src/provider_relay/mod.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/provider_relay/last_exit.rs",
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "WKS_DATA is trimmed and only selects state/last-exit.json when nonblank. Missing, unreadable, malformed, reasonless or wrong-typed records remain no record; reason/exitCode/at project exactly, including exitCode0 and nullable optional fields. bootId/machine extras are ignored.",
+          "Fixed serde positional-array acceptance with strict object parsing and restored optional at:null zero default. Selected paths are OS-canonicalized before the existing bounded regular-file reader; actual relative override and file-symlink aliases now work while reads remain capped64KiB.",
+          "Relay reads once at owner construction. Direct cache test keeps old evidence after file replacement and refreshes on a new owner; actual remote brain.info test verifies payload shape and unchanged cached evidence after file mutation."
+        ],
+        "intentionalChanges": [
+          "Existing Rust WKS_LAST_EXIT_FILE override retains precedence over the legacy volume default. Caching is per owned relay lifetime instead of a process-global Go sync.Once, supporting embedded owner recreation. The prior64KiB guard is now enforced on actual reads with regular-file identity checks; unknown metadata is never presented as clean exit."
+        ],
+        "validation": "2026-09-29 Linux: full library361 passed on final source after canonical last-exit reader fix and root library watcher update, log /tmp/workspacer-projection-final-lib.log. Earlier same projection checkpoint passed snapshots7 plus actual embedded live_streams integration1, log /tmp/workspacer-projection-audit.log; these targets are unaffected by the subsequent metadata-reader-only fix. Total scoped evidence369 tests, zero ignored, without counting child subprocesses twice. Commands used CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test snapshots --test live_streams, then --lib for final metadata/watcher changes. Witness left source files unmapped; explicit owning targets ran. Windows runtime remains a platform gate."
+      }
+    },
+    "services/hub/cmd/brain/lastexit_test.go": {
+      "sha256": "54ebf365d0b51e3ab591104ff5fba60fa14df1e43dd0d8829a483d02aa035a1e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/provider_relay/last_exit.rs",
+        "services/hub-rs/src/provider_relay/mod.rs",
+        "services/hub-rs/src/cli/serve.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/provider_relay/last_exit.rs",
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Retains inert empty volume, exact /data/state/last-exit.json derivation, exact entrypoint JSON fields, missing/corrupt/empty-reason refusal. Adds whitespace volume, override precedence, valid oversized JSON rejection, optional-null defaults, positional-array rejection and cached wire response coverage.",
+          "Relative read runs in an isolated child cwd and requires an execution marker so a misspelled test filter cannot pass over zero tests. File-symlink read and non-file directory rejection exercise the actual bounded reader. Windows symlink privilege is an explicit platform test requirement."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full library361 passed on final source after canonical last-exit reader fix and root library watcher update, log /tmp/workspacer-projection-final-lib.log. Earlier same projection checkpoint passed snapshots7 plus actual embedded live_streams integration1, log /tmp/workspacer-projection-audit.log; these targets are unaffected by the subsequent metadata-reader-only fix. Total scoped evidence369 tests, zero ignored, without counting child subprocesses twice. Commands used CARGO_HOME=/tmp/workspacer-hub-cargo CARGO_TARGET_DIR=/tmp/workspacer-hub-target CARGO_INCREMENTAL=0 cargo test --locked --manifest-path services/hub-rs/Cargo.toml -j2 --lib --test snapshots --test live_streams, then --lib for final metadata/watcher changes. Witness left source files unmapped; explicit owning targets ran. Windows runtime remains a platform gate."
+      }
+    }
+  }
+}

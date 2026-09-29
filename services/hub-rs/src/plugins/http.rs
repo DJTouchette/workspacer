@@ -68,6 +68,13 @@ fn host_denied(
     if !authorized(s, h, q) {
         return denied();
     }
+    if let Some(hint) = credential(h, q).and_then(|token| {
+        crate::auth::scoped_diagnostic(&s.host_token, s.scoped_tokens.as_deref(), token)
+    }) {
+        eprintln!("refused {action}: scoped credential does not hold host authority {hint}");
+    } else {
+        eprintln!("refused {action}: caller does not hold host authority");
+    }
     (StatusCode::FORBIDDEN, Json(json!({"error":format!("{action} requires host authority: it runs code on the hub's own machine, so it is refused to every scoped bus token, the operator tier included. Run it from the machine that owns the hub.")}))).into_response()
 }
 fn enabled_value(body: &Value) -> anyhow::Result<bool> {
@@ -632,5 +639,94 @@ struct CancelOnDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[tokio::test]
+    async fn host_denial_diagnostic_child() {
+        if std::env::var_os("WKS_TEST_HOST_DENIAL_DIAGNOSTIC").is_none() {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tokens.json");
+        let token = "SECRET_HTTP_DIAGNOSTIC_TOKEN";
+        crate::auth::save(
+            &path,
+            &[crate::auth::Record {
+                token: token.into(),
+                scope: "operator".into(),
+                label: "node\n\"quoted\"".into(),
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        let hub = crate::Hub::start(crate::Options::default()).unwrap();
+        hub.ready().await.unwrap();
+        let state = HttpState {
+            manager: std::sync::Arc::new(tokio::sync::Mutex::new(crate::plugins::Manager::new(
+                root.path().join("plugins"),
+                hub.handle(),
+                String::new(),
+            ))),
+            policy: crate::server::policy::Policy::local(),
+            host_token: "host-fixture".into(),
+            scoped_tokens: Some(path),
+            plugin_origin: String::new(),
+            examples_dir: None,
+        };
+        // Both credential transports must identify the same refused operator.
+        for header in [false, true] {
+            let mut headers = HeaderMap::new();
+            let mut query = BTreeMap::new();
+            if header {
+                headers.insert(
+                    header::AUTHORIZATION,
+                    format!("Bearer {token}").parse().unwrap(),
+                );
+            } else {
+                query.insert("token".into(), token.into());
+            }
+            let response = host_denied(&state, &headers, &query, "plugin install");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body = String::from_utf8(body.to_vec()).unwrap();
+            assert!(body.contains("requires host authority"));
+            assert!(!body.contains("quoted") && !body.contains(token) && !body.contains("tokenId"));
+        }
+        let owner_query = BTreeMap::from([("token".into(), "host-fixture".into())]);
+        assert!(host(&state, &HeaderMap::new(), &owner_query));
+        assert!(authorized(&state, &HeaderMap::new(), &owner_query));
+        let mut unconfigured = state.clone();
+        unconfigured.host_token.clear();
+        assert!(host(&unconfigured, &HeaderMap::new(), &BTreeMap::new()));
+        hub.shutdown().unwrap();
+    }
+    #[test]
+    fn host_refusal_logs_scope_and_label_without_credentials_or_label_in_response() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "plugins::http::diagnostic_tests::host_denial_diagnostic_child",
+                "--nocapture",
+            ])
+            .env("WKS_TEST_HOST_DENIAL_DIAGNOSTIC", "1")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert_eq!(stderr.matches("refused plugin install").count(), 2);
+        assert!(stderr.contains("\"scope\":\"operator\""));
+        assert!(stderr.contains("node\\n\\\"quoted\\\""));
+        assert!(!stderr.contains("SECRET_HTTP_DIAGNOSTIC_TOKEN"));
+        assert!(!stderr.contains("node\n"));
     }
 }

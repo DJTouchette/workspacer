@@ -1,0 +1,34 @@
+{
+  "records": {
+    "services/hub/internal/bus/hostauthority_test.go": {
+      "status": "ported",
+      "sha256": "6e7265b28c5e6e45d713e543398c857ff60b50f8ef67613675122d82fe2147ac",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/server.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/bus_remaining.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestHostAuthorizedRefusesOperatorScopedTokens",
+          "TestHostAuthorizedReadsTheQueryTokenToo",
+          "TestHostAuthorizedIsOpenWhenNoTokenIsConfigured",
+          "TestScopedIdentForNamesTheRefusedCredential"
+        ],
+        "behaviors": [
+          "Preserved operator-versus-host distinction: real guarded plugin routes refuse operator scope with403 while invalid/view/triage/provider credentials receive401 and the host performs the allowed operation. Existing plugin_manager suite supplies those positive and negative network floors.",
+          "The actual host-denial function is invoked in an isolated subprocess with both header and query scoped credentials. Parent captures two denial logs with actual scope and JSON-escaped label; response contains neither identity details nor bearer. Pure projection test verifies exact scope/label/fingerprint, host/unknown/empty refusal, bounded long labels and unlabelled fallback.",
+          "Child regression explicitly checks host query-token authorization and the unconfigured direct HTTP predicate. Hub::start still separately refuses tokenless network listeners; no admission or caller grants are widened.",
+          "ScopedIdentFor diagnostic behavior is restored as auth::scoped_diagnostic, an allowlisted metadata projection rather than a serialized credential Record. Unknown metadata, presented bearer and request URI are never logged."
+        ],
+        "validation": "Root integrated library checkpoint: 360 tests passed, including final owner-query/unconfigured host diagnostic assertions (/tmp/workspacer-projection-audit.log). Real plugin_manager boundary suite: 21 passed (/tmp/workspacer-library-git-plugins-audit.log). Earlier focused diagnostic suite: 4 passed (/tmp/workspacer-hostauthority-diagnostic-tests.log)."
+      }
+    }
+  }
+}

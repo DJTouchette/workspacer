@@ -119,6 +119,43 @@ async fn git_text(repo: &str, args: &[&str]) -> Result<String> {
     };
     Ok(String::from_utf8(output.stdout)?.trim().into())
 }
+fn directory_choices(config: &Value, sessions: &Value) -> Result<Vec<Directory>> {
+    let rows = sessions
+        .as_array()
+        .ok_or_else(|| anyhow!("invalid execution-host session inventory"))?;
+    let mut directories = BTreeMap::new();
+    let mut insert = |raw: &str, source: &str| {
+        let Ok(path) = paths::canonicalize(Path::new(raw)) else {
+            return;
+        };
+        if !path.is_dir() {
+            return;
+        }
+        directories.entry(path).or_insert_with(|| source.to_owned());
+    };
+    // Resolve identities before deduplicating; configured project provenance
+    // wins even when an active row uses another symlink/case spelling.
+    if let Some(projects) = config["projects"].as_object() {
+        for raw in projects.keys() {
+            insert(raw, "project");
+        }
+    }
+    for row in rows {
+        if super::super::snapshots::live(row) && row.get("hub").is_none_or(Value::is_null) {
+            if let Some(cwd) = row["cwd"].as_str() {
+                insert(cwd, "active");
+            }
+        }
+    }
+    Ok(directories
+        .into_iter()
+        .map(|(path, source)| Directory {
+            git: path.join(".git").exists(),
+            path: path.to_string_lossy().into_owned(),
+            source,
+        })
+        .collect())
+}
 impl Execution for Native {
     fn capabilities(&self) -> Operation<'_, Capabilities> {
         Box::pin(async move {
@@ -155,42 +192,8 @@ impl Execution for Native {
                     }
                 }))
                 .await;
-            let mut directories = BTreeMap::new();
-            if let Some(projects) = config["projects"].as_object() {
-                for path in projects.keys() {
-                    directories.insert(path.clone(), "project");
-                }
-            }
             let sessions = self.sessions().await?;
-            for session in sessions
-                .as_array()
-                .ok_or_else(|| anyhow!("invalid execution-host session inventory"))?
-            {
-                if session["mode"] == "stopped"
-                    || session.get("hub").is_some_and(|hub| !hub.is_null())
-                {
-                    continue;
-                }
-                if let Some(cwd) = session["cwd"].as_str().filter(|cwd| !cwd.is_empty()) {
-                    directories.entry(cwd.into()).or_insert("active");
-                }
-            }
-            let mut cwds = vec![];
-            for (directory, source) in directories {
-                let Ok(path) = paths::canonicalize(Path::new(&directory)) else {
-                    continue;
-                };
-                if !path.is_dir() {
-                    continue;
-                }
-                cwds.push(Directory {
-                    path: path.to_string_lossy().into_owned(),
-                    source: source.into(),
-                    git: path.join(".git").exists(),
-                });
-            }
-            cwds.sort_by(|a, b| a.path.cmp(&b.path));
-            cwds.dedup_by(|a, b| a.path == b.path);
+            let cwds = directory_choices(&config, &sessions)?;
             Ok(Capabilities {
                 protocol: PROTOCOL,
                 exact_model: true,
@@ -312,5 +315,111 @@ impl Execution for Native {
                 .or_else(|| row["ambientState"].as_str());
             Ok(state.map(|state| matches!(state, "waiting_approval" | "waiting_input")))
         })
+    }
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    use serde_json::json;
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn actual_login_probe_uses_provider_arguments_and_bounded_output() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("auth-fixture");
+        let write = |body: &str| {
+            std::fs::write(&binary, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let name = binary.to_str().unwrap();
+        write("[ \"$1 $2\" = 'auth status' ] || exit 17\nprintf '%s' '{\"loggedIn\":true}'");
+        assert_eq!(login(name, "claude").await, Some(true));
+        write(
+            "[ \"$1 $2\" = 'login status' ] || exit 17\nprintf '%s' 'Logged in using fixture' >&2",
+        );
+        assert_eq!(login(name, "codex").await, Some(true));
+        write("printf '%s' '{\"loggedIn\":true}'\nexit 1");
+        assert_eq!(login(name, "claude").await, None);
+        write("printf '%s' 'Not logged in' >&2\nexit 1");
+        assert_eq!(login(name, "codex").await, Some(false));
+        // No actual provider, login, credentials, or network is involved.
+        write(
+            "printf '%s' 'Logged in'\ni=0\nwhile [ $i -lt 7000 ]; do printf '0123456789'; i=$((i + 1)); done",
+        );
+        assert_eq!(login(name, "codex").await, None);
+        assert_eq!(login("/missing/workspacer-fixture", "claude").await, None);
+        assert_eq!(login(name, "copilot").await, None);
+    }
+    #[test]
+    fn retained_login_vectors_keep_unknown_and_negative_separate() {
+        for (provider, raw, success, want) in [
+            ("codex", "Not logged in", true, Some(false)),
+            ("codex", "Not logged in", false, Some(false)),
+            ("codex", "Logged in using ChatGPT", true, Some(true)),
+            ("codex", "Logged in using ChatGPT", false, None),
+            ("claude", r#"{"loggedIn":true}"#, true, Some(true)),
+            ("claude", r#"{"loggedIn":true}"#, false, None),
+            ("claude", r#"{"loggedIn":false}"#, true, Some(false)),
+            (
+                "claude",
+                r#"{"oauthAccount":{"email":"stale@example.invalid"}}"#,
+                true,
+                None,
+            ),
+            ("claude", "unrecognized command", false, None),
+            ("claude", "[true]", true, None),
+            ("claude", r#"{"loggedIn":"true"}"#, true, None),
+            ("copilot", "Logged in", true, None),
+        ] {
+            assert_eq!(
+                login_from_output(provider, raw.as_bytes(), success),
+                want,
+                "{provider}: {raw}"
+            );
+        }
+    }
+    #[test]
+    fn cwd_menu_excludes_shells_stopped_and_remote_rows_and_keeps_project_precedence() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        for name in [
+            "project", "active", "shell", "stopped", "archived", "remote", "bad", "ended",
+        ] {
+            std::fs::create_dir(root.join(name)).unwrap();
+        }
+        std::fs::write(root.join("project/.git"), "gitdir: fixture").unwrap();
+        let config = json!({"projects":{(root.join("project").to_str().unwrap()):{},(root.join("missing").to_str().unwrap()):{}}});
+        let rows = json!([
+            {"cwd":root.join("project"),"mode":"input"},
+            {"cwd":root.join("active"),"mode":"approval"},
+            {"cwd":root.join("shell"),"mode":"unknown"},
+            {"cwd":root.join("stopped"),"mode":"stopped"},
+            {"cwd":root.join("archived"),"mode":"input","archived":true},
+            {"cwd":root.join("remote"),"mode":"input","hub":"peer"},
+            {"cwd":root.join("bad"),"mode":true},
+            {"cwd":root.join("ended"),"status":"ended"}
+        ]);
+        let selected = directory_choices(&config, &rows).unwrap();
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].path, root.join("active").to_str().unwrap());
+        assert_eq!(selected[0].source, "active");
+        assert!(!selected[0].git);
+        assert_eq!(selected[1].source, "project");
+        assert!(selected[1].git);
+        assert!(directory_choices(&config, &json!({})).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("project"), root.join("z-project-alias")).unwrap();
+            let config = json!({"projects":{(root.join("z-project-alias").to_str().unwrap()):{}}});
+            let selected = directory_choices(
+                &config,
+                &json!([{ "cwd":root.join("project"), "mode":"input"}]),
+            )
+            .unwrap();
+            assert_eq!(selected.len(), 1);
+            assert_eq!(selected[0].path, root.join("project").to_str().unwrap());
+            assert_eq!(selected[0].source, "project");
+        }
     }
 }

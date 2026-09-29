@@ -262,6 +262,73 @@ impl Store {
     }
 }
 
+/// Operator-facing refusal context only; never serialize a credential Record
+/// or return these details to the HTTP caller. Labels remain bounded and JSON
+/// encoding at the log site escapes newlines/control characters.
+pub(crate) fn scoped_diagnostic(
+    host_token: &str,
+    path: Option<&Path>,
+    token: &str,
+) -> Option<Value> {
+    if token.is_empty() || (!host_token.is_empty() && credential_eq(host_token, token)) {
+        return None;
+    }
+    let record = Store {
+        path: path?.to_owned(),
+    }
+    .lookup(token)?;
+    let scope = record.scope()?;
+    let mut label = record.label.chars().take(128).collect::<String>();
+    if record.label.chars().count() > 128 {
+        label.push('…');
+    }
+    if label.is_empty() {
+        label = "(unlabelled)".into();
+    }
+    Some(serde_json::json!({"scope":scope.name(),"label":label,"tokenId":fingerprint(token)}))
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    #[test]
+    fn scoped_refusal_hint_contains_only_bounded_label_scope_and_fingerprint() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("tokens.json");
+        let mut record = Record {
+            token: "secret-scoped-fixture".into(),
+            scope: "operator".into(),
+            label: "fly-node".into(),
+            ..Default::default()
+        };
+        record
+            .metadata
+            .insert("private".into(), serde_json::json!("must-not-copy"));
+        save(&path, &[record.clone()]).unwrap();
+        let hint = scoped_diagnostic("host", Some(&path), &record.token).unwrap();
+        assert_eq!(
+            hint,
+            serde_json::json!({"scope":"operator","label":"fly-node","tokenId":fingerprint(&record.token)})
+        );
+        for token in ["host", "unknown", ""] {
+            assert!(scoped_diagnostic("host", Some(&path), token).is_none());
+        }
+        assert!(scoped_diagnostic("host", None, &record.token).is_none());
+        record.label = "\n".repeat(1000);
+        save(&path, &[record.clone()]).unwrap();
+        let hint = scoped_diagnostic("host", Some(&path), &record.token).unwrap();
+        assert_eq!(hint["label"].as_str().unwrap().chars().count(), 129);
+        assert!(hint.to_string().len() < 1024);
+        assert!(!hint.to_string().contains(&record.token));
+        record.label.clear();
+        save(&path, &[record.clone()]).unwrap();
+        assert_eq!(
+            scoped_diagnostic("host", Some(&path), &record.token).unwrap()["label"],
+            "(unlabelled)"
+        );
+    }
+}
+
 #[derive(Deserialize)]
 struct Vocabulary {
     scopes: BTreeMap<String, Vec<String>>,

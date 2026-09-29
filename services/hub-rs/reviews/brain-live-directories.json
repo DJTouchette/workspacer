@@ -1,0 +1,106 @@
+{
+  "records": {
+    "services/hub/cmd/brain/librarywatch.go": {
+      "sha256": "83b26a169af742c77732e3139f8d4992cf6c65755b95ed9d6be8edae301c6f8b",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/library_watch.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/library_watch.rs",
+        "services/hub-rs/tests/library.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All49 source lines reviewed. The original observer hashes public library projections for global plus live-session project roots every2seconds, deduplicates roots and emits only an empty library.changed refetch signal when the projection changes.",
+          "Restored missing Rust external-edit observation: explicit save/remove events existed, but outside editor or agent filesystem changes never triggered refresh. The owned watcher now samples redacted library.list outputs; actual tests prove external create/edit/delete, stable no-event floor, live root entry, stopped-root departure and joined shutdown.",
+          "Actual runtime wiring test observes an external write through a real Hub/Client subscription, reads the updated entry and shuts down before removing its config tree. Secret-only MCP credential changes leave the public projection hash unchanged.",
+          "A malformed project cwd is skipped without suppressing global or other valid project changes; negative projection-hash control pins this isolation."
+        ],
+        "intentionalChanges": [
+          "Owned engine inventory uses the existing live snapshot map instead of redundant daemon HTTP reads and a process-global2second cwd cache. Catalog mode requests registered sessions.snapshots with a2second timeout; an unavailable/malformed inventory retains known roots while global changes remain observable.",
+          "Only local process-live rows contribute local paths; remote hub paths do not become local project selections. Roots are sorted/deduplicated and framed before hashing. Sampling failures retain the last good revision. Polling is joined on shutdown, including blocking sample completion.",
+          "Library reads now reuse the existing bounded regular-file reader to prevent post-stat growth/FIFO replacement from leaving the new polling owner with an unbounded read. No general atomic parent-replacement guarantee is claimed."
+        ],
+        "validation": "2026-09-29 Linux: full integrated library360, snapshots7 and live_streams1 passed (/tmp/workspacer-projection-audit.log). Before that, watcher2 and readiness3 units plus library7/Git8/plugin_manager21 integration targets passed in /tmp/workspacer-library-watch-unit.log, /tmp/workspacer-readiness-audit.log and /tmp/workspacer-library-git-plugins-audit.log. Witness left3 changed service files unmapped; explicit owning targets and full library were run. Windows runtime remains a separate platform gate. Final integrated rerun passed361 library tests after trusted exit-path canonicalization and invalid-project watcher isolation (/tmp/workspacer-projection-final-lib.log)."
+      }
+    },
+    "services/hub/cmd/brain/dispatchreadiness.go": {
+      "sha256": "009affefc023643a2fa6734a126ddc87237de2edfbbe5f290b5dac66827f0522",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs",
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs",
+        "services/hub-rs/src/services/remote_dispatch/tests.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Allprovider readiness, login probe and directory menu source read. Managed-provider status, missing-provider false, nullable unknown login, exact explanatory notes, Claude auth status and Codex login status arguments are retained. Outputs remain private and bounded64KiB/3seconds.",
+          "Actual authored executables verify provider argv, stdout/stderr parsing, failure/negative distinction, oversized output and missing executable. Retained9 login vectors plus malformed/unsupported cases run independently.",
+          "Directory menu now applies process liveness consistently: terminal unknown, stopped, archived, malformed and remote rows do not advertise active local projects. Configured existing directories remain valid independently of running agents. Missing paths are excluded and .git directory/file presence is preserved.",
+          "Canonical identities are deduplicated after resolution, with configured-project provenance winning an alternate active spelling. Actual symlink alias and sorted project/active menu tests pin that behavior."
+        ],
+        "intentionalChanges": [
+          "Provider probes run concurrently with per-probe bounds; no stale credential file is treated as authentication. Unsupported providers remain unknown instead of accepting a login-like text from an unrelated command.",
+          "Literal absolute paths are canonicalized component by component rather than trimmed and lexically cleaned before symlink resolution. Remote proxy paths are excluded from this local-host menu. Owned process capture cleans descendants and scrubs authority environment."
+        ],
+        "validation": "2026-09-29 Linux: full integrated library360, snapshots7 and live_streams1 passed (/tmp/workspacer-projection-audit.log). Before that, watcher2 and readiness3 units plus library7/Git8/plugin_manager21 integration targets passed in /tmp/workspacer-library-watch-unit.log, /tmp/workspacer-readiness-audit.log and /tmp/workspacer-library-git-plugins-audit.log. Witness left3 changed service files unmapped; explicit owning targets and full library were run. Windows runtime remains a separate platform gate. Final integrated rerun passed361 library tests after trusted exit-path canonicalization and invalid-project watcher isolation (/tmp/workspacer-projection-final-lib.log)."
+      }
+    },
+    "services/hub/cmd/brain/dispatchreadiness_test.go": {
+      "sha256": "af1c8c64e66f87424bb0f4df9f21bcca3cc6c470bd3165dfb85483005195ad29",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Every9 retained login tuple has an explicit Rust counterpart: negative Codex with either exit status, positive Codex only on success, Claude true only on success, false retained, stale account JSON unknown, invalid command unknown. Additional malformed JSON shape/type and unsupported-provider cases are included."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: full integrated library360, snapshots7 and live_streams1 passed (/tmp/workspacer-projection-audit.log). Before that, watcher2 and readiness3 units plus library7/Git8/plugin_manager21 integration targets passed in /tmp/workspacer-library-watch-unit.log, /tmp/workspacer-readiness-audit.log and /tmp/workspacer-library-git-plugins-audit.log. Witness left3 changed service files unmapped; explicit owning targets and full library were run. Windows runtime remains a separate platform gate. Final integrated rerun passed361 library tests after trusted exit-path canonicalization and invalid-project watcher isolation (/tmp/workspacer-projection-final-lib.log)."
+      }
+    },
+    "services/hub/cmd/brain/fsguard.go": {
+      "sha256": "e0853619769687946280181aaa096374e4476c52815c4db849b2dc2322feddaa",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/paths.rs",
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/snapshots.rs",
+        "services/hub-rs/src/services/library_watch.rs",
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/git.rs",
+        "services/hub-rs/src/services/library_watch.rs",
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All1016 source lines read and active callers traced. Absolute per-component canonicalization, no tilde expansion, symlink-before-parent, missing-tail continuation,40-hop ceiling, existing nondirectory refusal, Windows component normalization and selected-object containment map to paths.rs and owning service guards.",
+          "Empty-root containment bug was corrected and tested with volume-root positive controls. Canonical paths are opened verbatim; existing files/parents retain literal trailing spaces on POSIX. Windows canonical identity uses OS ordinal comparison, with platform-specific runtime checks retained separately.",
+          "Caller audit distinguished obsolete secret/workspace authorization from still-live inventory consumers. assertPathAllowed ignores roots in the retained Go source. Secret basename/config/git/provider denylist helpers are not resurrected as authenticated permissions. Actual filesystem operations outside picker home and selected-object escape refusals prove the active distinction.",
+          "Live cwd inventory still feeds library polling and dispatch readiness. Both migrated consumers now use shared process liveness; library polling refreshes on live project changes and removes stopped projects, and directory readiness excludes unknown/shell/archived/remote rows. This row was deliberately left pending until those consumers had concrete behavior tests."
+        ],
+        "intentionalChanges": [
+          "Global HTTP cwd-cache/legacy root-list plumbing is retired with the standalone Go registry and Node desktop companion. Owned runtime uses its current session map; catalog library observation uses a bounded capability read, with explicit failure retention rather than claiming a failed inventory is empty.",
+          "Workspace/browse/setup lists remain discovery context where needed, never authorization grants. Store/library/repository/replay containment remains at the specific semantic object. No universal Git hook sandbox or secret-file denylist is claimed.",
+          "Windows runtime acceptance is a platform gate; local Linux results alone do not certify all Windows branches. Shared active path corpus, exact hop boundary and hard-failing Windows symlink fixtures are retained."
+        ],
+        "validation": "2026-09-29 Linux: full integrated library360, snapshots7 and live_streams1 passed (/tmp/workspacer-projection-audit.log). Before that, watcher2 and readiness3 units plus library7/Git8/plugin_manager21 integration targets passed in /tmp/workspacer-library-watch-unit.log, /tmp/workspacer-readiness-audit.log and /tmp/workspacer-library-git-plugins-audit.log. Witness left3 changed service files unmapped; explicit owning targets and full library were run. Windows runtime remains a separate platform gate. Final integrated rerun passed361 library tests after trusted exit-path canonicalization and invalid-project watcher isolation (/tmp/workspacer-projection-final-lib.log)."
+      }
+    }
+  }
+}

@@ -80,6 +80,7 @@ pub struct Options {
     pub(crate) terminals: Option<Arc<crate::services::terminals::Terminals>>,
     pub machine_power_provider: Option<Arc<dyn crate::services::machine_power::PowerProvider>>,
     pub(crate) analytics_watcher: Option<Arc<crate::services::analytics::Watcher>>,
+    pub(crate) library_watcher: Option<Arc<crate::services::library_watch::Watcher>>,
     pub federation_peers: Vec<crate::federation::Peer>,
     pub peers_file: Option<std::path::PathBuf>,
     pub plugins_dir: Option<std::path::PathBuf>,
@@ -155,6 +156,7 @@ impl Default for Options {
             jobs_file: None,
             jobs_service: None,
             analytics_watcher: None,
+            library_watcher: None,
             terminals: None,
             machine_power_provider: None,
             federation_peers: Vec::new(),
@@ -2227,6 +2229,11 @@ async fn run(
         .clone()
         .map(|receiver| tokio::spawn(receiver.run()));
     let analytics_watcher = options.analytics_watcher.clone();
+    let library_watcher = options.library_watcher.clone();
+    let mut library_task = library_watcher.clone().map(|watcher| {
+        let hub = handle.clone();
+        tokio::spawn(async move { watcher.run(hub).await })
+    });
     let mut analytics_task = analytics_watcher.clone().map(|watcher| {
         let hub = handle.clone();
         tokio::spawn(async move { watcher.run(hub).await })
@@ -2471,6 +2478,10 @@ async fn run(
                 result=match analytics_result{Ok(Ok(()))=>Err(anyhow!("analytics observer stopped unexpectedly")),Ok(Err(error))=>Err(error),Err(error)=>Err(error.into())};
                 analytics_task=None;break;
             }
+            library_result=async{library_task.as_mut().unwrap().await},if library_task.is_some()=>{
+                result=match library_result{Ok(Ok(()))=>Err(anyhow!("library observer stopped unexpectedly")),Ok(Err(error))=>Err(error),Err(error)=>Err(error.into())};
+                library_task=None;break;
+            }
             filewatch_result=async{filewatch_task.as_mut().unwrap().await},if filewatch_task.is_some()=>{
                 result=match filewatch_result{Ok(Ok(()))=>Err(anyhow!("file watcher stopped unexpectedly")),Ok(Err(error))=>Err(error),Err(error)=>Err(error.into())};
                 filewatch_task=None;break;
@@ -2637,6 +2648,12 @@ async fn run(
         watcher.close();
     }
     if let Some(task) = analytics_task {
+        let _ = task.await;
+    }
+    if let Some(watcher) = library_watcher {
+        watcher.close();
+    }
+    if let Some(task) = library_task {
         let _ = task.await;
     }
     if let Some(watches) = file_watches {

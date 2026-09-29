@@ -146,39 +146,90 @@ fn parse_time(raw: &str) -> Option<time::OffsetDateTime> {
 }
 
 pub fn layout_ids(layout: &Value) -> (BTreeSet<String>, bool) {
-    let Some(data) = layout.get("data").filter(|v| v.is_object()) else {
-        return (BTreeSet::new(), false);
-    };
-    let mut ids = BTreeSet::new();
-    if let Some(agents) = data["agents"].as_array() {
+    fn text<'a>(row: &'a Value, key: &str) -> Result<Option<&'a str>, ()> {
+        match row.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(value)) => Ok(Some(value)),
+            _ => Err(()),
+        }
+    }
+    fn rows(value: &Value) -> Result<&[Value], ()> {
+        if value.is_null() {
+            Ok(&[])
+        } else {
+            value.as_array().map(Vec::as_slice).ok_or(())
+        }
+    }
+    fn object(value: &Value) -> Result<(), ()> {
+        if value.is_object() || value.is_null() {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+    let parsed = (|| -> Result<BTreeSet<String>, ()> {
+        // Only a present agents array is a curation decision. Empty data or a
+        // null/malformed agents field retains the no-layout fallback.
+        let agents = layout
+            .get("data")
+            .and_then(|data| data.get("agents"))
+            .and_then(Value::as_array)
+            .ok_or(())?;
+        let mut ids = BTreeSet::new();
         for agent in agents {
-            if agent["global"] == true {
-                continue;
-            }
+            object(agent)?;
+            let global = match agent.get("global") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(global)) => *global,
+                _ => return Err(()),
+            };
+            let mut selected = Vec::new();
             for key in ["sessionId", "lastSessionId"] {
-                if let Some(id) = agent[key].as_str().filter(|s| !s.is_empty()) {
-                    ids.insert(id.into());
+                if let Some(id) = text(agent, key)?.filter(|id| !id.is_empty()) {
+                    selected.push(id);
                 }
             }
-            if let Some(tabs) = agent["tabs"].as_array() {
-                for tab in tabs {
-                    if let Some(panes) = tab["panes"].as_array() {
-                        for pane in panes {
-                            if let Some(id) =
-                                pane["attachSessionId"].as_str().filter(|s| !s.is_empty())
-                            {
-                                ids.insert(id.into());
-                            }
-                        }
+            for tab in rows(&agent["tabs"])? {
+                object(tab)?;
+                for pane in rows(&tab["panes"])? {
+                    object(pane)?;
+                    if let Some(id) = text(pane, "attachSessionId")?.filter(|id| !id.is_empty()) {
+                        selected.push(id);
                     }
                 }
             }
+            // Validate even ignored Overview rows, as the Go typed decoder did.
+            if !global {
+                ids.extend(selected.into_iter().map(str::to_owned));
+            }
         }
+        Ok(ids)
+    })();
+    match parsed {
+        Ok(ids) => (ids, true),
+        Err(()) => (BTreeSet::new(), false),
     }
-    (ids, true)
 }
+fn state_fields_valid(snapshot: &Value, strings: &[&str]) -> bool {
+    snapshot.is_object()
+        && strings
+            .iter()
+            .all(|key| snapshot[*key].is_null() || snapshot[*key].is_string())
+        && (snapshot["archived"].is_null() || snapshot["archived"].is_boolean())
+}
+/// Process liveness without UI curation or a caller-specific locality rule.
+pub fn live(snapshot: &Value) -> bool {
+    if !state_fields_valid(snapshot, &["mode", "status"]) || snapshot["archived"] == true {
+        return false;
+    }
+    let mode = snapshot["mode"].as_str().unwrap_or("");
+    !matches!(mode, "unknown" | "stopped") && !(mode.is_empty() && snapshot["status"] == "ended")
+}
+
 pub fn visible(snapshot: &Value, layout: &Value, now: time::OffsetDateTime) -> bool {
-    if !snapshot.is_object() || snapshot["mode"] == "unknown" {
+    if !state_fields_valid(snapshot, &["session_id", "mode", "status", "updated_at"])
+        || snapshot["mode"] == "unknown"
+    {
         return false;
     }
     let mode = snapshot["mode"].as_str().unwrap_or("");
@@ -291,5 +342,80 @@ mod confirmed_control_tests {
             with_host_metadata(remote.clone(), Some(&lifecycle), Some(&state)),
             remote
         );
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    #[tokio::test]
+    async fn registered_list_and_snapshots_use_the_same_live_and_curated_set() {
+        let _engine_guard = crate::backend::ENGINE_TEST_LOCK.lock().await;
+        use claudemon::daemon::{
+            ServeConfig,
+            embedded::{EmbeddedDaemon, Options as EngineOptions},
+        };
+        use std::sync::{Arc, RwLock};
+        let root = tempfile::tempdir().unwrap();
+        let mut engine = EmbeddedDaemon::start_with_options(
+            ServeConfig {
+                host: "127.0.0.1".into(),
+                hook_port: 0,
+                api_port: 0,
+                db_path: root.path().join("state.db"),
+            },
+            EngineOptions {
+                usage_poll_on_boot: Some(false),
+            },
+        )
+        .unwrap();
+        engine.ready().await.unwrap();
+        let mut options = crate::Options::default();
+        options.engine = Some(engine.client());
+        options.home_dir = Some(root.path().into());
+        options.config_dir = Some(root.path().join("config"));
+        let layout = Arc::new(RwLock::new(
+            json!({"version":1,"data":{"agents":[{"lastSessionId":"stopped-curated"}]}}),
+        ));
+        options.upstream_layout = Some(layout.clone());
+        let rows = options.session_snapshots.clone();
+        let hub = crate::Hub::start(options).unwrap();
+        hub.ready().await.unwrap();
+        for (id, mode) in [
+            ("live-idle", "input"),
+            ("live-working", "responding"),
+            ("terminal", "unknown"),
+            ("stopped-curated", "stopped"),
+            ("stopped-old", "stopped"),
+        ] {
+            rows.write().unwrap().insert(
+                id.into(),
+                compat(json!({"session_id":id,"mode":mode,"updated_at":"2020-01-01T00:00:00Z"})),
+            );
+        }
+        let client = crate::client::Client::connect(&hub.handle()).await.unwrap();
+        for method in ["agents.list", "sessions.snapshots"] {
+            let rows = client.call(method, json!({})).await.unwrap();
+            let ids: BTreeSet<_> = rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["sessionId"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                ids,
+                ["live-idle", "live-working", "stopped-curated"].into(),
+                "{method}"
+            );
+        }
+        *layout.write().unwrap() = json!({"version":2,"data":{"agents":[]}});
+        let rows = client.call("sessions.snapshots", json!({})).await.unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 2);
+        client.close();
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        engine.shutdown().await.unwrap();
     }
 }
