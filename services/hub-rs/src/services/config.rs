@@ -359,6 +359,160 @@ mod failure_tests {
     use super::*;
 
     #[test]
+    fn shared_lock_contract_diagnostic_failure_and_error_release_are_exact() {
+        let contract: Value =
+            serde_json::from_str(include_str!("../../../../contracts/config-lock.json")).unwrap();
+        assert_eq!(
+            CONFIG_LOCK_SUFFIX,
+            contract["lockFileSuffix"].as_str().unwrap()
+        );
+        assert_eq!(
+            CONFIG_LOCK_STALE.as_millis() as u64,
+            contract["staleMs"].as_u64().unwrap()
+        );
+        let owner = &contract["owners"]["services/hub/cmd/brain/configlock.go"];
+        assert_eq!(
+            CONFIG_LOCK_WAIT.as_millis() as u64,
+            owner["maxWaitMs"].as_u64().unwrap()
+        );
+        assert_eq!(
+            CONFIG_LOCK_RETRY.as_millis() as u64,
+            owner["retryMs"].as_u64().unwrap()
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new/config.yaml");
+        let lock = dir.path().join("new/config.yaml.lock");
+        let recorded = std::cell::Cell::new(false);
+        let result: Result<()> = (|| {
+            let _guard = ConfigLock::take_recording(&path, |_| {
+                recorded.set(true);
+                Err(std::io::Error::other("diagnostic write failed"))
+            })?;
+            assert!(
+                lock.is_file(),
+                "lock must surround protected body even without diagnostic text"
+            );
+            bail!("protected body failed")
+        })();
+        assert!(recorded.get());
+        assert_eq!(result.unwrap_err().to_string(), "protected body failed");
+        assert!(
+            !lock.exists(),
+            "diagnostic failure must not orphan the acquired lock"
+        );
+        let guard = ConfigLock::take(&path).unwrap();
+        assert!(lock.is_file());
+        drop(guard);
+        assert!(!lock.exists());
+    }
+
+    #[test]
+    fn config_lock_contention_classifies_delete_pending_and_bounds_failed_stale_removal() {
+        use std::io::{Error, ErrorKind};
+        for (error, want) in [
+            (Error::from(ErrorKind::AlreadyExists), true),
+            (Error::from(ErrorKind::PermissionDenied), cfg!(windows)),
+            (Error::from_raw_os_error(32), cfg!(windows)),
+            (Error::from(ErrorKind::NotFound), false),
+            (Error::from(ErrorKind::InvalidInput), false),
+        ] {
+            assert_eq!(config_lock_contention(&error), want, "{error}");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let lock = dir.path().join("config.yaml.lock");
+        fs::create_dir(&lock).unwrap();
+        fs::write(lock.join("child"), "must remain").unwrap();
+        // A directory is an unremovable lock on every platform. Even if it
+        // becomes stale during the wait, removal cannot authorize entry.
+        let started = Instant::now();
+        assert!(
+            ConfigLock::take_with_policy(
+                &path,
+                Duration::from_millis(50),
+                Duration::ZERO,
+                |_| panic!("unremovable stale lock admitted its writer")
+            )
+            .is_err()
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            fs::read_to_string(lock.join("child")).unwrap(),
+            "must remain"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lock_filename_preserves_non_unicode_host_path_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join(std::ffi::OsString::from_vec(b"config-\xff.yaml".to_vec()));
+        let expected = dir.path().join(std::ffi::OsString::from_vec(
+            b"config-\xff.yaml.lock".to_vec(),
+        ));
+        let lock = ConfigLock::take(&path).unwrap();
+        assert!(expected.is_file());
+        drop(lock);
+        assert!(!expected.exists());
+    }
+
+    #[test]
+    fn real_atomic_write_errors_propagate_and_unreadable_sources_never_reach_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("file-not-directory");
+        fs::write(&parent, "keep bytes").unwrap();
+        assert!(write_config(&parent.join("config.yaml"), &defaults()).is_err());
+        assert_eq!(fs::read_to_string(&parent).unwrap(), "keep bytes");
+        let unreadable = dir.path().join("config.yaml");
+        fs::create_dir(&unreadable).unwrap();
+        fs::write(unreadable.join("recoverable"), "original").unwrap();
+        let config = Config::open(unreadable.clone());
+        let called = std::cell::Cell::new(false);
+        config
+            .save_using(
+                json!({"ui":{"theme":"memory-only"}}),
+                false,
+                || {},
+                |_, _| {
+                    called.set(true);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert!(
+            !called.get(),
+            "a read failure must block the writer, not merely hope its replacement fails"
+        );
+        assert_eq!(
+            fs::read_to_string(unreadable.join("recoverable")).unwrap(),
+            "original"
+        );
+    }
+
+    #[test]
+    fn same_timestamp_length_changes_invalidate_cached_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "ui:\n  theme: original\n").unwrap();
+        let config = Config::open(path.clone());
+        let before = stamp(&path).unwrap();
+        fs::write(&path, "ui:\n  theme: different-length\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(before.0))
+            .unwrap();
+        let after = stamp(&path).unwrap();
+        assert_eq!(after.0, before.0);
+        assert_ne!(after.1, before.1);
+        assert_eq!(config.get()["ui"]["theme"], "different-length");
+    }
+
+    #[test]
     fn failed_write_never_reports_or_caches_unpersisted_settings_and_releases_lock() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.yaml");
@@ -617,11 +771,39 @@ pub(crate) fn atomic_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
 pub(crate) struct ConfigLock {
     path: PathBuf,
 }
+const CONFIG_LOCK_SUFFIX: &str = ".lock";
+const CONFIG_LOCK_STALE: Duration = Duration::from_secs(10);
+const CONFIG_LOCK_WAIT: Duration = Duration::from_secs(2);
+const CONFIG_LOCK_RETRY: Duration = Duration::from_millis(10);
+fn config_lock_contention(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::AlreadyExists
+        || (cfg!(windows)
+            && (error.kind() == std::io::ErrorKind::PermissionDenied
+                || error.raw_os_error() == Some(32)))
+}
 impl ConfigLock {
     pub(crate) fn take(path: &Path) -> Result<Self> {
-        let lock = PathBuf::from(format!("{}.lock", path.display()));
+        Self::take_recording(path, |file| {
+            writeln!(file, "{} {}", std::process::id(), crate::protocol::now())
+        })
+    }
+    fn take_recording(
+        path: &Path,
+        record: impl FnMut(&mut fs::File) -> std::io::Result<()>,
+    ) -> Result<Self> {
+        Self::take_with_policy(path, CONFIG_LOCK_WAIT, CONFIG_LOCK_STALE, record)
+    }
+    fn take_with_policy(
+        path: &Path,
+        max_wait: Duration,
+        stale_after: Duration,
+        mut record: impl FnMut(&mut fs::File) -> std::io::Result<()>,
+    ) -> Result<Self> {
+        let mut lock = path.as_os_str().to_os_string();
+        lock.push(CONFIG_LOCK_SUFFIX);
+        let lock = PathBuf::from(lock);
         fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))?;
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = Instant::now() + max_wait;
         loop {
             match fs::OpenOptions::new()
                 .write(true)
@@ -629,21 +811,19 @@ impl ConfigLock {
                 .open(&lock)
             {
                 Ok(mut file) => {
-                    writeln!(file, "{} {}", std::process::id(), crate::protocol::now())?;
+                    // The exclusive file, not its diagnostic text, owns the
+                    // lock. Go/TS also ignore a failed PID/timestamp write.
+                    let _ = record(&mut file);
                     return Ok(Self { path: lock });
                 }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::AlreadyExists
-                        || (cfg!(windows)
-                            && (e.kind() == std::io::ErrorKind::PermissionDenied
-                                || e.raw_os_error() == Some(32))) => {}
+                Err(e) if config_lock_contention(&e) => {}
                 Err(e) => return Err(e.into()),
             }
             if fs::metadata(&lock)
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.elapsed().ok())
-                .is_some_and(|age| age > Duration::from_secs(10))
+                .is_some_and(|age| age > stale_after)
                 && fs::remove_file(&lock).is_ok()
             {
                 continue;
@@ -651,7 +831,7 @@ impl ConfigLock {
             if Instant::now() >= deadline {
                 bail!("config.yaml is locked by another process");
             }
-            std::thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(CONFIG_LOCK_RETRY);
         }
     }
 }

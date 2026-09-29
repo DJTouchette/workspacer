@@ -535,6 +535,34 @@ pub(crate) fn install(
 mod tests {
     use super::*;
     #[test]
+    fn unremovable_stale_lock_still_obeys_the_writer_deadline() {
+        let root = tempfile::tempdir().unwrap();
+        let lock = root.path().join("brief.md.lock");
+        std::fs::create_dir(&lock).unwrap();
+        std::fs::write(lock.join("child"), "preserve").unwrap();
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.access_mode(0x0100); // FILE_WRITE_ATTRIBUTES permits setting mtime.
+            options.custom_flags(0x02000000); // FILE_FLAG_BACKUP_SEMANTICS opens directories.
+        }
+        options
+            .open(&lock)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(60))
+            .unwrap();
+        let started = std::time::Instant::now();
+        let error = Lock::take(&root.path().join("brief.md")).err().unwrap();
+        assert!(error.to_string().contains("locked by another writer"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(
+            std::fs::read_to_string(lock.join("child")).unwrap(),
+            "preserve"
+        );
+    }
+    #[test]
     fn archive_retries_outside_writes_without_duplicate_side_effects() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(".workspacer/brief.md");

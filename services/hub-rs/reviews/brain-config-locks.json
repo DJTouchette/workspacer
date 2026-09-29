@@ -1,0 +1,84 @@
+{
+  "records": {
+    "services/hub/cmd/brain/configlock.go": {
+      "sha256": "a637b56066b6a7395d0cffb54eea504c2adff47ccc49989aafd75088996094b1",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/lib/fileLock.ts"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/tests/config.rs",
+        "apps/desktop/src/main/lib/fileLock.test.ts",
+        "apps/desktop/src/main/lib/configLock.test.ts",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "O_EXCL acquisition, fresh parent creation, shared .lock suffix/stale10s/retry10ms and hub2s wait, stale takeover, held-lock refusal, body-error release and timeout recovery match the shared contract.",
+          "Fixed Rust diagnostic PID write failure orphaning an acquired lock: record contents are best-effort, while the guard still encloses and releases the protected operation. Lock suffix now preserves raw OS path bytes.",
+          "Factored Windows delete-pending contention classification without broadening admission; only successful exclusive create admits writing. Failed stale removal remains bounded. Fixed the active TS twin unconditional stale-retry loop after fault injection proved it skipped the deadline."
+        ],
+        "intentionalChanges": [
+          "RAII replaces callback-scoped Go release. Config diagnostic text is not an ownership token; existing brief owner-token behavior is unchanged. Per-side wait budgets remain intentionally different."
+        ],
+        "validation": "2026-09-29 Linux: eight services::config unit tests passed in /tmp/workspacer-configlock-rust-audit.log; all20 config integration tests passed in /tmp/workspacer-configlock-integration-audit.log (separate unfiltered invocation). Direct brief stale-directory deadline test passed in /tmp/workspacer-configlock-brief-audit.log. Desktop new fault-injected test first failed against old code (/tmp/workspacer-filelock-before.log), then92 tests in fileLock/configLock/configService passed (/tmp/workspacer-configlock-ts-audit.log); remaining350 witness-selected consumer tests passed (/tmp/workspacer-lock-consumers-ts-audit.log). Rust witness mapping incomplete, so owning targets were selected explicitly. Windows runtime/ACL behavior remains a platform gate; OS error classification is checked for the compiled host."
+      }
+    },
+    "services/hub/cmd/brain/configlock_test.go": {
+      "sha256": "fc2b021cc8f4b364aac4a2fd6d30572a13b53cd310116f1e0c578ccfcaad7f08",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/lib/fileLock.ts",
+        "services/hub-rs/src/services/briefs/mod.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/tests/config.rs",
+        "apps/desktop/src/main/lib/fileLock.test.ts",
+        "apps/desktop/src/main/lib/configLock.test.ts",
+        "apps/desktop/src/main/services/configService.test.ts",
+        "services/hub-rs/src/services/briefs/mod.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Mapped every legacy assertion: successful body and release, error release, held refusal, stale steal, shared contract constants, timeout recovery, OS-specific contention classification, and failed stale cleanup for both config and brief.",
+          "Real nonempty lock-directory fixture exercises Rust config with a50ms injected wait/zero stale threshold; independent brief fixture backdates its actual lock directory and exercises the real3s deadline. No callback/guard is admitted; protected child remains unchanged.",
+          "New TS fault-injected failure has a watchdog so the old infinite retry deterministically fails instead of hanging the runner. Positive diagnostic-failure test and existing acquisition/release/steal tests retain admission floors."
+        ],
+        "intentionalChanges": [
+          "RAII replaces callback-scoped Go release. Config diagnostic text is not an ownership token; existing brief owner-token behavior is unchanged. Per-side wait budgets remain intentionally different."
+        ],
+        "validation": "2026-09-29 Linux: eight services::config unit tests passed in /tmp/workspacer-configlock-rust-audit.log; all20 config integration tests passed in /tmp/workspacer-configlock-integration-audit.log (separate unfiltered invocation). Direct brief stale-directory deadline test passed in /tmp/workspacer-configlock-brief-audit.log. Desktop new fault-injected test first failed against old code (/tmp/workspacer-filelock-before.log), then92 tests in fileLock/configLock/configService passed (/tmp/workspacer-configlock-ts-audit.log); remaining350 witness-selected consumer tests passed (/tmp/workspacer-lock-consumers-ts-audit.log). Rust witness mapping incomplete, so owning targets were selected explicitly. Windows runtime/ACL behavior remains a platform gate; OS error classification is checked for the compiled host."
+      }
+    },
+    "services/hub/cmd/brain/config_writefailure_test.go": {
+      "sha256": "d00b45e83ad305dd75dfea1209ee5175b1fb44839fe730e057b20e8ae1bfb09b",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "apps/desktop/src/main/lib/fileLock.ts"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/tests/config.rs",
+        "apps/desktop/src/main/lib/fileLock.test.ts",
+        "apps/desktop/src/main/lib/configLock.test.ts",
+        "apps/desktop/src/main/services/configService.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Failed writes retain old reported/cached state, release lock, and recover on later save. Real atomic writer fails when its parent is a regular file. Unreadable directory source prevents writer invocation and preserves recoverable child content.",
+          "Equal timestamp with changed length invalidates cached reads; existing integration verifies unconditional under-lock reread merges external writes even when timestamp AND length are identical. Existing retry fixture proves intervening writes merge and repeated churn exhausts bounded attempts.",
+          "Legacy chmod cases skipped privileged users and Windows. Portable real I/O failures plus injected write failure exercise those failure branches on this host without claiming an ACL/permission simulation."
+        ],
+        "intentionalChanges": [
+          "RAII replaces callback-scoped Go release. Config diagnostic text is not an ownership token; existing brief owner-token behavior is unchanged. Per-side wait budgets remain intentionally different."
+        ],
+        "validation": "2026-09-29 Linux: eight services::config unit tests passed in /tmp/workspacer-configlock-rust-audit.log; all20 config integration tests passed in /tmp/workspacer-configlock-integration-audit.log (separate unfiltered invocation). Direct brief stale-directory deadline test passed in /tmp/workspacer-configlock-brief-audit.log. Desktop new fault-injected test first failed against old code (/tmp/workspacer-filelock-before.log), then92 tests in fileLock/configLock/configService passed (/tmp/workspacer-configlock-ts-audit.log); remaining350 witness-selected consumer tests passed (/tmp/workspacer-lock-consumers-ts-audit.log). Rust witness mapping incomplete, so owning targets were selected explicitly. Windows runtime/ACL behavior remains a platform gate; OS error classification is checked for the compiled host."
+      }
+    }
+  }
+}

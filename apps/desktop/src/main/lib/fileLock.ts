@@ -88,10 +88,10 @@ export function withFileLock<T>(targetPath: string, opts: FileLockOptions, fn: (
       if (lockIsStale(lockPath, opts.staleMs)) {
         try {
           fs.rmSync(lockPath, { force: true });
+          continue;
         } catch {
-          /* another waiter got there first — the retry below re-races fairly */
+          /* Reclaim failed; retain the same bounded wait as any held lock. */
         }
-        continue;
       }
       if (Date.now() >= deadline) throw opts.onTimeout(targetPath, opts.maxWaitMs);
       sleepSync(retryMs);

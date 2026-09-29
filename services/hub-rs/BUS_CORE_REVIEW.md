@@ -1,7 +1,7 @@
 # Core bus source review notes
 
 This records source-level review alongside the assertion mappings in
-`BUS_MIGRATION.md`. It is not a completion certificate for `bus.go` or `rpc.go`.
+`BUS_MIGRATION.md`. The completed exact-hash accounting is in `reviews/bus-core.json`; this note summarizes its boundaries.
 
 | Retained implementation responsibilities | Rust owner and evidence |
 | --- | --- |
@@ -37,25 +37,23 @@ reviews:
   Go's local callback goroutine itself had no provider timer. Cancellation and
   negotiated provider context are additive Rust protocol facilities.
 
-Open source obligations before recording the two large files:
+Completed source accounting is recorded in `reviews/bus-core.json` with separate
+responsibility maps for the connection/HTTP/event plane and the RPC/admission
+plane. Both Go files were read in full, their production wiring and callback
+consumers were traced, and the Rust actor/auth/server/service owners were
+compared. Each responsibility names concrete assertions; aggregate receipts
+alone are not the justification.
 
-Completed bounded obligations: qualified/paired source routing, host-only
-scope/label diagnostics, third-sanitizer extension equivalence and the invoked
-optimized mature-snapshot latency budget. Exact row evidence lives in
-`reviews/bus-hostauthority.json`, `reviews/bus-freshness.json`,
-`reviews/bus-sanitizer-drift.json` and `reviews/bus-latency.json`. The latest
-local library checkpoint passed 369 tests; performance has its separate
-optimized CI receipt and is not inferred from that functional suite.
+Bounded residual reviews remain linked in `reviews/bus-hostauthority.json`,
+`reviews/bus-freshness.json`, `reviews/bus-sanitizer-drift.json` and
+`reviews/bus-ceiling.json`. The latest library checkpoint passed 369 tests and
+the new real WebSocket `bus_ceiling` target passed. Performance has its separate
+optimized CI receipt in `reviews/bus-latency.json`.
 
-Still open before recording the two large files:
-
-1. Review/record the now-tested `reviews/bus-ceiling.json` mapping. The relative
-   cwd mismatch is fixed and tested: non-absolute cwd retains default policy.
-   New `bus_ceiling` real WebSocket/provider regression passed alongside the
-   369-test library checkpoint. Allowed clamps now record a fixed routing.yaml
-   remedy; no raw request/error text is added to the audit.
-2. Preserve the documented fail-closed Rust behavior when no safe concrete
-   routed model exists, versus Go dropping model/effort and letting the provider
-   default. The new provider-barrier regression explicitly proves refusal.
-3. Complete the residual source/checklist comparison and record concrete
-   architectural exceptions rather than certifying from passing aggregates.
+Additional explicit differences in the final plan include total resource bounds,
+strict malformed credentials/origins, fixed production scope lists rather than
+arbitrary injected grant fixtures, stronger execution-provider receipt ownership,
+and refusal when routing cannot name a safe concrete model. These are not claims
+of byte-identical arbitrary Go callback behavior. `agents.dispatchPrepare` only
+allocates a credential-bound lease; the actual worker spawn has its own retained
+policy gate. No Go source is deleted by this accounting.

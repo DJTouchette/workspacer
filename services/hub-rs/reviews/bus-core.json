@@ -1,0 +1,168 @@
+{
+  "records": {
+    "services/hub/internal/bus/bus.go": {
+      "status": "ported",
+      "sha256": "d88bc1ee2c81d5245e987770d65dd2001e01f6dea38d7fe3227577453b48c6a4",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/protocol.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/paired.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/http.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/tests/lifecycle.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/bus_ceiling.rs",
+        "services/hub-rs/src/runtime/routing_admission_tests.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs"
+      ],
+      "review": {
+        "sourceAccounting": [
+          {
+            "go": "Frame; TokenFingerprint; Server/NewServer/Handler/AddRoute; writeTimeout",
+            "rust": "protocol::{Frame,Event}; auth::fingerprint; runtime::{Hub,Options,Handle}; server::{serve,connected}",
+            "proof": "Shared compatibility corpus asserts exact hello, event and RPC frames over both embedded and WebSocket transports, including null carriers; server preserves64MiB reads and5second writes. lifecycle shutdown/listener-collision assertions prove listener ownership rather than treating route construction as readiness."
+          },
+          {
+            "go": "ScopedIdent/operator; SetScopedTokenLookup/lookupScoped; Authorized/HostAuthorized/ScopedIdentFor/AuthorizedForPlugin; presentedToken/presentedPluginTokens",
+            "rust": "auth::{Scope,Record,Store,Identity,scoped_diagnostic}; server credentials; plugins/http host/operator/plugin-own UI gates",
+            "proof": "auth scopes_use_ascii_trimming_and_exact_stored_names plus scoped consumer/grant tests; bus_remaining scoped_calls_and_hello_are_exact_while_registered_unknown_methods_fail_closed; plugin_manager owner/operator/view/triage and per-plugin settings/UI cases. Captured diagnostic subprocess checks escaped bounded scope/label and no credential or response identity leak. Production main.go builds Methods from rec.Scope.Methods and passes AuthorizedForPlugin as pluginSettingsForRequest callback (a method-value use not returned by recon.callers)."
+          },
+          {
+            "go": "RegisterPluginToken/pluginOwnProviderPattern; UnregisterPluginToken/trackPluginConn/untrackPluginConn; lookupPluginToken; revalidateScoped",
+            "rust": "Core Command::Plugin/Connect/disconnect/sweep; auth::Identity; plugins manager Handle registration",
+            "proof": "bus_remaining revocation_serializes_with_admission_and_suppresses_already_queued_streams tests both orderings, every live socket and queued PTY/desync; plugin_ambient_calls_keep_paths_but_host_events_and_foreign_provider_names_are_refused tests namespace boundaries; runtime bus_audit disk_revalidation_closes_revoked_downgraded_and_facade_or_provider_narrowed_peers and editing_legacy_profile_metadata_neither_disconnects_nor_narrows_spawn_selection exercise live replacement. Production manager.go invokes registrar for sidecars and pane tokens; Rust manager uses same actor boundary."
+          },
+          {
+            "go": "SetTrustedHosts/isTrustedHost; requireHost/hostAllowed/localAddrOf/hostWithoutPort; originAllowed/isLoopbackHost; handleHealth",
+            "rust": "server/policy::Policy and whole-router guard; server::health; Core Command::Health",
+            "proof": "policy reference_host_origin_matrix_preserves_authority_spelling_and_socket_identity plus real http actual_proxy_authorities_preserve_explicit_ports_and_host_pin_every_hub_route; anonymous health liveness-only vs operator methodNames floor. Wildcard-bind test passes actual landed loopback address, not just listener0.0.0.0."
+          },
+          {
+            "go": "handleBus/tooManyTopics; helloFrame/identity/markActive; subscription/publish/demand/register/call/result dispatch",
+            "rust": "server::bus/connected; Core::frame/topics; Command::Connect; Caller and Connection",
+            "proof": "bus_remaining real WebSocket256/257 atomic topic-limit test; runtime bus_audit demand_replay_clear_entitlement_and_distinct_subscription_counts, passive_request_shapes_preserve_foreground_activity, live_inventory_uses_real_connection_ids_and_host_owned_infrastructure_flags, hello_permission_passthrough_tracks_call_authority_not_provider_registration_grants. Identity comes from authenticated connection, never request parameters."
+          },
+          {
+            "go": "mayPublish/mayConsume/mayProvide/mayCall/callDenied; pumpEvents; forward/dispatchForwards/send",
+            "rust": "auth::Identity methods and compiled vocabulary; Core::publish/send; Connection::recv/disconnect; broker queues",
+            "proof": "runtime every_registered_topic_has_the_reference_identity_policy checks all registry rows and all identity kinds; bus_remaining provider_publish_uses_declared_grant_even_when_registration_is_shadowed distinguishes grant from slot ownership for ordinary topics. Slow-provider and slow-caller actor tests, auth private-topic/desync tests and lifecycle slow_stream_consumer_gets_desync_without_blocking_rpc prove delivery independence and closed-peer suppression."
+          },
+          {
+            "go": "capGrant/canonRoots/authorize; caller-tool metadata retained in conn",
+            "rust": "Ambient authenticated paths plus service-owned selected-object containment; compatibility metadata retained by auth Record",
+            "proof": "Production Go authorize immediately returns for host/scoped/plugin identities; only synthetic anonymous capGrant fixtures reach the old filesystem-grant branch. That branch and canonRoots logging are retired with the anonymous harness, not reconstructed as an extra filesystem sandbox. Actual selected-object protections live in reviewed files/library/git services and are not removed."
+          }
+        ],
+        "intentionalDifferences": [
+          "Go Server/router/broker mutexes, one connection forward goroutine and WebSocket write mutex become one owned Core actor, typed embedded Connection and optional network adapter. Actor operations preserve per-caller provider order and correlate replies independently. Reliable-queue saturation closes the slow peer rather than waiting on its socket; other peers continue. Local handlers also receive bounded deadlines and owned shutdown, unlike the unbounded Go local callback goroutine.",
+          "Go tokenless loopback listener is intentionally retired: every Rust network listener requires a host credential; embedded owner/service connections remain socket-free. Direct unconfigured HTTP helper predicates retain their compatibility truth value but are not a way to start an anonymous listener.",
+          "Go separately injected local/plain and local/identity maps become one startup Options.handler map whose later insertion replaces the earlier one. Live method inventory is a sorted unique union, and shadowed network registrations are withheld. Public runtime mutation of handler maps is not retained; production Go registration happens before Handler starts.",
+          "Rust credential identity is immutable per connection: plugin replacement/revocation serializes with admission and closes live peers; scoped tokens are reread every5seconds for scope/facade/provides changes. Legacy profile/yolo metadata remains inert and does not trigger revocation. Provider provides never becomes a caller method grant.",
+          "Rust adds explicit finite connection/pending/subscription/demand limits (1024/4096/512/4096) beyond the retained per-frame256 topic cap. Subscription acknowledgements report the actual retained set. Go per-caller forwarding queue256 is replaced by bounded actor/reliable channels; unbounded aggregate capacity is not a compatibility promise.",
+          "Host/Origin syntax fails closed more strictly in Rust: malformed nonempty Authorization is authoritative instead of falling through to query credentials; only valid HTTP(S) browser origins are accepted, malformed proxy configuration is rejected instead of silently ignored. Explicit proxy names, authority spelling, socket-local address and loopback/shared-bind behavior remain tested.",
+          "Only the Rust internal federation adapter stamps event.hub; wire publishers cannot assert peer provenance. Dispatch updates additionally require the currently registered negotiated execution provider; Go allowed host/spawn-granted publishers without that ownership proof. Negotiated ProviderCaller/cancel/callerClosed metadata is opt-in, preserving legacy ordinary frames while adding owned execution receipts."
+        ],
+        "scope": "Full source-level bus/router responsibilities only. Associated subsystem implementations and already-recorded helper/test rows retain their separate review evidence. No Go deletion, no claim of arbitrary injected Go test API compatibility, and no live deployment assertion.",
+        "validation": "Source review 2026-09-29 after bounded residual guards closed: latest library369 and bus_ceiling1 passed with zero failed/ignored (/tmp/workspacer-bus-ceiling-audit.log); prior real-network bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integrations; compatibility Go-reference subprocess remains explicitly ignored by the Rust invocation, while Go internal/bus -short including its fixture passed separately). These totals are receipts, not the behavioral mapping: named assertions are listed per responsibility below. No new compiler invocation was needed for this source-only accounting."
+      }
+    },
+    "services/hub/internal/bus/rpc.go": {
+      "status": "ported",
+      "sha256": "1daac8ee740e6a1ee7da7160bc97c1bbb737c67e6c3003d15f1da1e799ac0bce",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/auth.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/server/policy.rs",
+        "services/hub-rs/src/protocol.rs",
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/src/federation.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/paired.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_remaining.rs",
+        "services/hub-rs/src/runtime/bus_audit_tests.rs",
+        "services/hub-rs/tests/auth.rs",
+        "services/hub-rs/tests/http.rs",
+        "services/hub-rs/tests/compatibility.rs",
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/tests/lifecycle.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/bus_ceiling.rs",
+        "services/hub-rs/src/runtime/routing_admission_tests.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs"
+      ],
+      "review": {
+        "sourceAccounting": [
+          {
+            "go": "router/newRouter/addConn/dropConn; pendingCall; result/timeoutCall/failCall",
+            "rust": "Core peers/providers/pending; disconnect/finish/sweep/cancel_pending",
+            "proof": "compatibility correlation/provider-forgery fixture; lifecycle provider_timeout_is_bounded_and_late_reply_cannot_complete_another_call; runtime slow_caller_cannot_stall_sibling_replies_and_provider_errors_keep_correlation. Caller disconnect cancels/drops only its calls; provider loss fails dependent calls and releases ownership. Numeric broker IDs cannot impersonate another provider."
+          },
+          {
+            "go": "registerLocal/registerLocalIdent/register; methodCount/providedMethods; noProviderSeen",
+            "rust": "Options::handler; Core::frame register; Command::Health; missing_reported",
+            "proof": "bus_remaining local_handlers_replace_count_once_and_keep_identity_errors_and_publications plus provider shadow/grant assertions; runtime missing_provider_diagnostics_are_once_per_outage_and_never_log_parameters. First-live-owner rule applies even to host credentials; same owner registration is idempotent; accepted registration clears outage suppression."
+          },
+          {
+            "go": "call/splitQualified/federatedCall; Federation/setFederation; withField/publishDispatchEvent interactions",
+            "rust": "Core::call; federation::Routes; remote_dispatch Origin/Receiver/paired services",
+            "proof": "federation router_checks_both_scopes_and_sanitizes_before_the_remote_hop plus runtime canonical_key_refusal_precedes_both_local_and_qualified_execution and third_sanitizer_is_shared_by_local_and_qualified_dispatch_before_the_hop. Plugins cannot federate; source checks bare method; peer credential independently constrains destination. Runtime source_policy_refuses_before_peer_invocation_and_both_hubs_keep_distinct_audits and paired-origin local-project test prove source routing before peer execution with permissive-destination positive floors."
+          },
+          {
+            "go": "sanitizeCallParams/methodSanitizers; sanitizeSpawnParams/sanitizeReportProgressParams; mayUseProfile/mayBypassPermissions",
+            "rust": "admission::sanitize; auth::Identity lineage; Core admission before branch; owned agent_spawn::routed",
+            "proof": "admission unit/canonical key corpus covers every shared authority key, case aliases and Unicode folding; bus_remaining control_plane_provider_keeps_spawn_payloads_but_replaces_asserted_authority asserts payload/grant passthrough and removal of retired stamps. Replay originKey and federated remoteOrigin.ownerKey are verified-identity stamps; ordinary operator/plugin cannot forge session lineage or host launch integration. Third test-only sanitizer proves arbitrary new shared sanitizer execution locally and before qualified hop without production registry mutation."
+          },
+          {
+            "go": "SpawnCeilingRequest/Verdict/Record; SetSpawnCeiling/ceilingHooks/clampSpawnAuthority; auditFn",
+            "rust": "RoutingService, SpawnAudit guard, runtime external-provider gate, owned agent_spawn preflight and Origin source policy",
+            "proof": "bus_ceiling actual WebSocket/provider matrix covers canonical/symlink and absent/relative cwd, safe concrete tuple and scrub markers, unchanged below-ceiling fields, policy remedy and deterministic pre-provider refusal for bad policy/unsupported provider. Full freshness matrix covers host/operator, role/capability refusal, ordinary resumes/new sessions and absent resolver. Exactly one local routing-phase audit joins decisionId; owned repeated preflight coalesces one row, source/destination receipts have separate location. Plan bus-ceiling/freshness gives individual retained original tests."
+          },
+          {
+            "go": "callerToolScopeCeiling/toolScopeRank; legacy profile/yolo/child fields; optional callback injection API",
+            "rust": "Retained inert metadata and fixed production scope registry; typed configured services",
+            "proof": "Go callerToolScopeCeiling returns no restriction and production source ignores profile/yolo grants. Hand-edited test scope methods are not a production callback capability. Rust does not introduce caller-tier clamp. Missing safe model intentionally refuses instead of Go callback fallback deleting model/effort and leaving provider default. Test dispatchPrepare only prepares a lease; full routing/freshness is enforced by owned spawn coordinator before process start; no arbitrary external callback resolver API is promised."
+          }
+        ],
+        "intentionalDifferences": [
+          "Go Server/router/broker mutexes, one connection forward goroutine and WebSocket write mutex become one owned Core actor, typed embedded Connection and optional network adapter. Actor operations preserve per-caller provider order and correlate replies independently. Reliable-queue saturation closes the slow peer rather than waiting on its socket; other peers continue. Local handlers also receive bounded deadlines and owned shutdown, unlike the unbounded Go local callback goroutine.",
+          "Go tokenless loopback listener is intentionally retired: every Rust network listener requires a host credential; embedded owner/service connections remain socket-free. Direct unconfigured HTTP helper predicates retain their compatibility truth value but are not a way to start an anonymous listener.",
+          "Go separately injected local/plain and local/identity maps become one startup Options.handler map whose later insertion replaces the earlier one. Live method inventory is a sorted unique union, and shadowed network registrations are withheld. Public runtime mutation of handler maps is not retained; production Go registration happens before Handler starts.",
+          "Rust credential identity is immutable per connection: plugin replacement/revocation serializes with admission and closes live peers; scoped tokens are reread every5seconds for scope/facade/provides changes. Legacy profile/yolo metadata remains inert and does not trigger revocation. Provider provides never becomes a caller method grant.",
+          "Rust adds explicit finite connection/pending/subscription/demand limits (1024/4096/512/4096) beyond the retained per-frame256 topic cap. Subscription acknowledgements report the actual retained set. Go per-caller forwarding queue256 is replaced by bounded actor/reliable channels; unbounded aggregate capacity is not a compatibility promise.",
+          "Host/Origin syntax fails closed more strictly in Rust: malformed nonempty Authorization is authoritative instead of falling through to query credentials; only valid HTTP(S) browser origins are accepted, malformed proxy configuration is rejected instead of silently ignored. Explicit proxy names, authority spelling, socket-local address and loopback/shared-bind behavior remain tested.",
+          "Only the Rust internal federation adapter stamps event.hub; wire publishers cannot assert peer provenance. Dispatch updates additionally require the currently registered negotiated execution provider; Go allowed host/spawn-granted publishers without that ownership proof. Negotiated ProviderCaller/cancel/callerClosed metadata is opt-in, preserving legacy ordinary frames while adding owned execution receipts.",
+          "Malformed or recursively qualified hub: names are explicitly refused rather than being treated as arbitrary local method names. Production peer forwarding never grants local host/session provenance; peer=1 is downgrade-only.",
+          "Independent nil spawn-audit callback plumbing is retired in favor of optional configured RoutingService and its owned receipt sink. Audit is routing admission, not a claim a process successfully launched. The existing Rust sink is synchronous best effort; Go callback documentation requested nonblocking but does not create a separate runtime worker promise.",
+          "Non-object spawn parameters retain shared-admission passthrough and are validated at the owned service boundary; the new owned execution lifecycle can refuse an unavailable service before a generic provider lookup. Receipt/launch proof ownership is stronger than the old transparent router and does not broaden caller grants."
+        ],
+        "scope": "Full source-level bus/router responsibilities only. Associated subsystem implementations and already-recorded helper/test rows retain their separate review evidence. No Go deletion, no claim of arbitrary injected Go test API compatibility, and no live deployment assertion.",
+        "validation": "Source review 2026-09-29 after bounded residual guards closed: latest library369 and bus_ceiling1 passed with zero failed/ignored (/tmp/workspacer-bus-ceiling-audit.log); prior real-network bus_remaining8, auth7, compatibility4, federation5, http2, plugins1, plugin_manager21 and lifecycle8 passed (56 integrations; compatibility Go-reference subprocess remains explicitly ignored by the Rust invocation, while Go internal/bus -short including its fixture passed separately). These totals are receipts, not the behavioral mapping: named assertions are listed per responsibility below. No new compiler invocation was needed for this source-only accounting."
+      }
+    }
+  }
+}
