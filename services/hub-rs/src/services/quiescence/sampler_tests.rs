@@ -15,8 +15,12 @@ struct Source {
 impl EvidenceSource for Source {
     fn read(&self) -> BoxFuture<'_, Result<Evidence>> {
         Box::pin(async {
+            // Match NativeSources: timestamp at read start, before provider I/O.
+            // A read already in flight when the synthetic clock crosses the
+            // demand cutoff must not be retimestamped as a fresh later sample.
+            let sampled_at = self.clock.load(Ordering::SeqCst);
             let mut evidence = self.native.read().await?;
-            evidence.now_ms = self.clock.load(Ordering::SeqCst);
+            evidence.now_ms = sampled_at;
             evidence.jobs = Ok(self.jobs.lock().unwrap().clone());
             self.reads.fetch_add(1, Ordering::SeqCst);
             Ok(evidence)
