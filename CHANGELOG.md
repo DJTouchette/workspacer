@@ -12,11 +12,20 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - Experimental native Windows x64 installer, separate from the Electron app.
   The Start menu shortcut launches the Rust/GPUI interface with its embedded
-  local engine and bundled backend services, Node runtime and C++ runtime.
+  local engine, shared Rust backend and C++ runtime.
   The installer is unsigned and updates are manual; agent CLIs and Git remain
   separate prerequisites. Uninstall preserves sessions and shared settings.
 - Native client themes, project and settings views, keyboard navigation, and
   live session creation for Claude and Codex against local or existing hubs.
+
+### Improved
+- Native chat has floating controls, syntax-highlighted tool cards, stable
+  reading positions across updates, and persisted turn durations.
+
+### Fixed
+- MCP tool catalogs include the cache metadata required by modern clients,
+  preventing Claude Code from rejecting all Workspacer tools after connecting.
+- Context-window recognition for Claude Opus 5.5's default 1M window.
 
 ## [0.169.0] - 2026-09-26
 
