@@ -32,9 +32,10 @@ use axum::{
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock as Content,
-        Implementation, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
-        Tool,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult,
+        ContentBlock as Content, Implementation, ListPromptsResult, ListResourceTemplatesResult,
+        ListResourcesResult, ListToolsResult, PaginatedRequestParams, ServerCapabilities,
+        ServerConfig, Tool,
     },
     service::RequestContext,
     transport::streamable_http_server::{
@@ -327,7 +328,12 @@ impl ServerHandler for Adapter {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        let mut result = ListToolsResult::default();
+        // MCP 2026-07-28 requires both cache hints. rmcp's list defaults omit
+        // them, unlike server/discover. Catalogs depend on caller identity and
+        // live registrations, so never share or retain them across requests.
+        let mut result = ListToolsResult::default()
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private);
         result.tools = catalogs()
             .get(identity.scope.name())
             .into_iter()
@@ -345,6 +351,33 @@ impl ServerHandler for Adapter {
             result.tools.extend(self.plugins.tools());
         }
         Ok(result)
+    }
+    async fn list_prompts(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(ListPromptsResult::default()
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private))
+    }
+    async fn list_resources(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::default()
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private))
+    }
+    async fn list_resource_templates(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        Ok(ListResourceTemplatesResult::default()
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private))
     }
     async fn call_tool(
         &self,

@@ -1,0 +1,109 @@
+{
+  "records": {
+    "services/hub/internal/jobs/jobs.go": {
+      "sha256": "e05b6a9d0c119ff1fedd5718ba2d82a332c711b122e5467055f623df975b4546",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/src/services/jobs/docs_tests.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ],
+      "review": "Spec/action validation, local-only call namespaces, owner-only six-method RPCs, four-context limit, interval/daily/once/manual scheduling, private atomic spec/history, content hashes, identity/stamp normalization, stable reload anchors, proposals and capped history are implemented in the Rust Service. Tests inspect real persisted files and runtime calls, not only registrations. Nullable typed fields now use Go defaults; valid null/empty schedule documents clear while malformed/missing files retain last good state. Fixed omitted Run detail/finishedAt deserialization that could otherwise discard history on restart. Canonical ASCII/Unicode-fold aliases are intentionally refused; source-format and resource differences are explicit in JOBS_MIGRATION.md. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    },
+    "services/hub/internal/jobs/scheduler.go": {
+      "sha256": "8f9dee061afa51b23423fed3aaf4545b8a66d45a9bdc794bb8cba830dbe1e2c7",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/services/jobs/go_regex.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/tests/jobs.rs",
+        "services/hub-rs/src/services/jobs/go_regex.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ],
+      "review": "Retains 30-second production polling, one invocation per job, skip-not-queue overlap, missed interval reanchor, once disarm before effects, fifteen-minute shared run budget, context-before-spawn, exact prompt substitution, guarded outputs, prompt-after-spawn and no blind spawn replay, newest 30 run history, quiet vetoes/error notifications. Owned combined capture replaces detached shell reading and preserves cross-stream order while bounding output and cleaning descendants. Windows raw cmd quoting has a real platform fixture. Go regex ASCII classes/boundaries and repeat syntax use a 79-case independent oracle plus 200 compile-verified property names; Unicode table-version differences and UTF-8 cap differences are explicit, so this is not a universal byte/engine equivalence claim. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    },
+    "services/hub/internal/jobs/jobs_test.go": {
+      "sha256": "e8758c58cdff4ce6b918fe72eee9a7f837644ee586b009bc3ca698af17f3dee9",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ],
+      "review": "Mapped malformed trigger/action cases, all next-run shapes and fixed-offset corpus, real store/reopen/remove, due interval reschedule, once durable disarm, overlap skip, spawn-then-prompt order, failed-run history, already-running refusal and 30-record history cap. Added live runtime shell shutdown and explicit empty-history-field persistence coverage. Daily timezone gap/repeated-hour cases pin the two-lookup normalization. Core test fixtures use fake bus handlers or controlled child processes, never a model. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    },
+    "services/hub/internal/jobs/context_test.go": {
+      "sha256": "8d036459af9fe504d59286be2e23b86dda8b79098644e5a859ab64b36313111f",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/tests/jobs.rs",
+        "services/hub-rs/src/services/jobs/go_regex.rs"
+      ],
+      "review": "Mapped ordered context collection/placeholder append, empty and empty-JSON vetoes with no agent call, matching/nonmatching regex, ignoreExitCode limited to an actual exit-status result, failed start/call rejection, quiet skipped runs versus notify.post errors, full-output guard before middle elision, malformed step/count validation. Proposal tests prove disarmed/fresh-ID creation, no overwrite of approved argv, 20-proposal cap, review notification click target, explicit approval and manual-run admission. Actual HTTP-independent broker events and persisted history are observed; Rune/Unicode behavior differences are documented. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    },
+    "services/hub/internal/jobs/handedit_test.go": {
+      "sha256": "667989cde861be51b2a1dcd7a70e78dadb7d385c39fe2d080622271228220c09",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ],
+      "review": "Real filesystem regressions cover handwritten missing IDs/timestamps and durable writeback, duplicate-ID split, content detection despite unchanged size/mtime, owner mutation preserving an already visible external row, malformed/missing-file retention then explicit clear, dropping a semantically invalid row while preserving valid rows, rename preserving both anchors and trigger edit moving only its own, proposal staying disarmed, immediate RunNow loading a handwritten manual job, and own-write hash/id/anchor stability. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    },
+    "services/hub/internal/jobs/handedit_e2e_test.go": {
+      "sha256": "e77483f27fa5eb966a28bf48be2fd641e64497adcc74dd8a59a1c2c9acf2bac4",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs"
+      ],
+      "review": "The real Service run loop uses the same private run_with_clock implementation as production (production wrapper fixes 30 seconds/Utc::now). Test changes actual files while that loop runs, observes schedule through state without read RPC reloads, advances an atomic clock, sees an actual owned bus callback fire, edits the interval, merges an owner upsert with an external row, clears and advances 48 hours without another run, then proves RunNow sees a handwritten manual row. Missing identity is minted and written back; test task is explicitly aborted/joined. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    },
+    "services/hub/internal/jobs/docs_test.go": {
+      "sha256": "8508224eabd3aa034f6091ab1278933bdd875275747a1746d40547b8a3f14ae8",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/docs_tests.rs",
+        "services/hub-rs/src/services/jobs/authored_cases.json"
+      ],
+      "review": "All marked landing-page JSON examples run through the Rust validator, as do the 10 captured authored specs with original source hash. Canonical field inventories are shared with production admission; full typed Job/Trigger literals and serializer-key comparison catch additions rather than a standalone test-only field list. All four trigger and three action shapes/context guards are validated. Placeholder/cap/file-mode, hand-edit/reload/failure/storage/script-convention phrases and scoped no-restart instruction are pinned. Reflection itself retires with the Go structs; current valid-null clearing semantics are accurately documented in JOBS_MIGRATION.md and hub-jobs context. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    },
+    "services/hub/internal/jobs/preset_test.go": {
+      "sha256": "3662b023dfefdb5cc41faf01fdfa5482f61927deac7c9e346fca278ecd12c893",
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/jobs/docs_tests.rs",
+        "apps/desktop/src/renderer/tests/jobsPreset.test.ts"
+      ],
+      "review": "The same power-down preset fixture passes the actual Rust validator and remains disabled with an explicit script placeholder. Its marked docs example is present and enabled; trigger, action kind, shell cwd and quiescence prefix agree; only script placeholder/arming intentionally differ. The retained renderer fixture keeps its independent editor/preset pin. No power provider or cloud action executes in these tests. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
+      "status": "ported"
+    }
+  }
+}

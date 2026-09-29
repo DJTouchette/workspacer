@@ -48,9 +48,13 @@ fn store(params: Value, dir: &Path) -> Result<Value> {
     if bytes.len() > MAX_BYTES {
         bail!("files.upload: payload exceeds 24 MiB")
     }
-    let ext = Path::new(&params.name)
-        .file_name()
-        .and_then(|name| name.to_str())
+    // filepath.Ext in the reference examines the final textual component.
+    // Path::file_name normalizes trailing separators and `/.`, accidentally
+    // accepting names such as `photo.png/` that have no allowed extension.
+    let ext = params
+        .name
+        .rsplit(std::path::is_separator)
+        .next()
         .and_then(|name| name.rsplit_once('.').map(|(_, ext)| ext))
         .unwrap_or("")
         .to_ascii_lowercase();
@@ -209,10 +213,65 @@ mod tests {
         assert_eq!(path.extension().unwrap(), "jpg");
         assert_eq!(std::fs::read(path).unwrap(), [0, 1, 2, 255]);
         assert_eq!(result["size"], 4);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
         assert!(store(json!({"name":"bad.exe","dataBase64":"YQ=="}), &dir).is_err());
         assert!(store(json!({"name":"a.png","dataBase64":"bad value"}), &dir).is_err());
         let second = store(json!({"name":"same.jpg","dataBase64":"YQ=="}), &dir).unwrap();
         assert_ne!(second["path"], result["path"]);
+    }
+    #[test]
+    fn refused_uploads_leave_no_spill_and_keep_reference_limits() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("private");
+        for (params, message) in [
+            (
+                json!({"name":"payload.sh","dataBase64":"aGk="}),
+                "not allowed",
+            ),
+            (json!({"name":"payload","dataBase64":"aGk="}), "not allowed"),
+            (
+                json!({"name":"photo.png/","dataBase64":"aGk="}),
+                "not allowed",
+            ),
+            (
+                json!({"name":"photo.png/.","dataBase64":"aGk="}),
+                "not allowed",
+            ),
+            (json!({"name":"a.png","dataBase64":""}), "required"),
+            (
+                json!({"name":"a.png","dataBase64":"!!!"}),
+                "not valid base64",
+            ),
+            (json!({"name":"a.png","dataBase64":"\r\n"}), "empty payload"),
+        ] {
+            let error = store(params, &dir).unwrap_err().to_string();
+            assert!(error.contains(message), "{error}");
+        }
+        let oversized_encoded = "!".repeat((MAX_BYTES / 3 + 2) * 4);
+        let error = store(json!({"name":"a.png","dataBase64":oversized_encoded}), &dir)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("exceeds"),
+            "encoded length must be checked before decoding: {error}"
+        );
+        let oversized_decoded =
+            base64::engine::general_purpose::STANDARD.encode(vec![0; MAX_BYTES + 1]);
+        let error = store(json!({"name":"a.png","dataBase64":oversized_decoded}), &dir)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("exceeds"),
+            "decoded limit must also be enforced: {error}"
+        );
+        assert!(!dir.exists(), "refusals must not create a spill directory");
     }
     #[cfg(unix)]
     #[test]

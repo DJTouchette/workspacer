@@ -1,0 +1,35 @@
+{
+  "records": {
+    "services/hub/internal/modelselection/modelselection.go": {
+      "replacement": [
+        "services/hub-rs/src/model_selection.rs",
+        "services/claudemon/src/session/windows.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
+          "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring.",
+          "2026-09-29 reviewed delta: specific claude-opus-5-5 suffix joins inherent1M exceptions in Go/TS/Rust, avoiding a synthetic [1m] argv suffix for its officially documented default window. Official Anthropic migration guide https://platform.claude.com/docs/en/models/opus-5-5/migration-guide confirms default1M without a beta header. Shared contract adds explicit argv case and requested-window/lookup/resolution guards; future5-50 is not promoted. Other normalization/provider/manager behavior is unchanged."
+        ],
+        "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed.",
+        "opus55Verification": {
+          "typescript": "170 tests passed across modelContextWindowsContract, spawnModel, claudeModels, claudeResolver",
+          "go": "internal/modelselection plus brain ContextWindow and FormatClaudeAliasWindowBadges tests passed",
+          "rust": "All9 genuine windows.rs module tests passed using rustc --edition=2021 --test services/claudemon/src/session/windows.rs with cached serde/serde_json/tracing artifacts. This executes the embedded shared corpus including the Opus5.5 cases; it is not a full claudemon crate test. Root MCP tests compiled production claudemon as dependency; root owns remaining integration verification."
+        },
+        "integrationCheckpoint": "Root ran current Rust hub models4, config20 and spawn_plan8: all32 passed after the Opus5.5 change (/tmp/workspacer-model-integration.log). MCP13 and legacy SSE4 also passed with claudemon compiled from the updated source."
+      },
+      "sha256": "07d4a088ebcd33df508f285d7413abc3fc6a454413ff1f8e1b13a6f046f3bbfc",
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/models.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "contracts/model-context-windows.json",
+        "services/claudemon/src/session/windows.rs",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts"
+      ]
+    }
+  }
+}

@@ -82,10 +82,10 @@ const WINDOWS: &[WindowRow] = &[
     // marker. Before the generic claude row or their gauges read 5× too full.
     contains("fable", 1_000_000),
     contains("mythos", 1_000_000),
+    suffix("claude-opus-5-5", 1_000_000),
     contains("gemini", 1_048_576),
     contains("gpt-4.1", 1_047_576),
-    // Table KNOWLEDGE, not a fallback: an unmarked Claude model really does
-    // hold 200k. The four places that spelled *unknown* 200_000 are gone.
+    // Retained baseline; specific verified model defaults precede this row.
     contains("claude", 200_000),
     contains("gpt-5", 272_000),
     contains("codex", 272_000),
@@ -411,12 +411,14 @@ pub fn claude_argv_model(selection: &ModelSelection) -> Result<String, ModelSele
     Ok(legacy_model_for_normalized_selection(&normalized))
 }
 
-/// Fable/Mythos expose 1M as their inherent window, not as a selectable
+/// Fable/Mythos and Opus 5.5 expose 1M inherently, not as a selectable
 /// marker-bearing variant. The shared argv fixture pins this with the TS and
 /// Go boundaries so a port cannot invent `fable[1m]` or `mythos[1m]`.
 fn is_claude_inherent_one_million_model(model: &str) -> bool {
     let identity = model.to_ascii_lowercase();
-    identity.contains("fable") || identity.contains("mythos")
+    identity.contains("fable")
+        || identity.contains("mythos")
+        || identity.ends_with("claude-opus-5-5")
 }
 
 /// The table's answer for a concrete model id, or `None` when no row covers it.
@@ -453,8 +455,9 @@ pub fn requested_window_for(model: &str) -> Option<u64> {
 
 /// The requested-window claim from an already-normalized canonical selection.
 pub fn requested_window_for_selection(selection: &ModelSelection) -> Option<u64> {
-    let m = selection.model.to_ascii_lowercase();
-    if selection.context_window == Some(1_000_000) || m.contains("fable") || m.contains("mythos") {
+    if selection.context_window == Some(1_000_000)
+        || is_claude_inherent_one_million_model(&selection.model)
+    {
         return Some(1_000_000);
     }
     None

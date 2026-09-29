@@ -1,0 +1,59 @@
+{
+  "records": {
+    "services/hub/cmd/hub/quiescence.go": {
+      "sha256": "f4c57d769621b37cd961953409a61a560842b31c3e93c8edc0358ca2b40bc400",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs",
+        "services/hub-rs/src/services/quiescence.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/quiescence/sampler_tests.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/federation.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all source branches and all eight reference tests. Matched cold/stale answer shape, ten-second session/peer probe bounds, missing/malformed provider evidence as a blocker, thirty-second production sampling, demand-triggered sampling and the fifteen-minute last-ask cutoff.",
+          "Traced actual routing before adding the hub-only fallback: sessions::install installs no sessions handler without an engine; Core prefers explicit handlers then registered providers; Watcher never serves sessions.snapshots. NativeSources now uses a private internal service client for the literal sessions.snapshots method when no owned engine exists, retaining the original registered-provider seam without recursively asking fleet.quiescence.",
+          "Matched infrastructure exclusion, per-connection request sequence self-exclusion, later activity reactivation regardless of wall-clock resolution, and pruning disappeared connection IDs. The private fallback connection is infrastructure and cannot keep its own machine busy.",
+          "Matched job schedule evidence and advisory shell exemption; federated peers are sampled only for sessions, never recursively for their own quiescence. Disconnected, timed-out or malformed peers remain unknown blockers. Owned launch preparation, workflow reservations, terminal uncertainty and replacement operations remain additional conservative blockers.",
+          "Manager review on 2026-09-29 passed full library 311, jobs 8 and quiescence 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Four real WebSocket/broker/provider/Watcher test groups exercise source sampling rather than replacing the fleet.quiescence handler with a stub; the handler delegates to the actual Watcher.answer."
+        ],
+        "intentionalChanges": [
+          "Private in-process service connection provenance replaces the Go loopback nonce URL and random-key helper. The broker owns that identity; a wire parameter cannot claim it. Embedded session reads remain typed and include canonical retained rows, while hub-only deployments preserve registered-provider reads.",
+          "Rust rejects nonempty fleet.quiescence parameters instead of ignoring them, so callers cannot supply evidence or tune dwell. A test asserts this refusal through the actual WebSocket handler.",
+          "The owned sampler cancels in-flight reads on shutdown and bounds the complete concurrent read to twelve seconds, while each session/peer call retains its ten-second budget. A backwards clock observation fails closed. These strengthen unknown-state handling and do not authorize power actions."
+        ]
+      }
+    },
+    "services/hub/cmd/hub/quiescence_test.go": {
+      "sha256": "8821eace1c8d2ec59fcaccd5ff62580f31999e94eabe756f35ed651b8c278da7",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/quiescence/sampler_tests.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestWatcherReadsTheFleetOverTheBus, TestWatcherBlocksOnASpawningSession and TestWatcherBlocksWhenNoProviderAnswers map to watcher_reads_registered_provider_and_refuses_unknown_or_unavailable_fleet. A real registered provider supplies responding/unknown rows over the broker; absent and malformed providers refuse quiet. Unknown detail must contain both TERMINAL and SPAWNING.",
+          "TestTheHubsOwnClientIsNotAUser and TestAskingDoesNotMakeTheMachineBusy map to watcher_excludes_infrastructure_and_asks_but_counts_later_same_connection_work. Actual internal and provider connections are observed, a fresh WebSocket caller blocks, its query self-excludes, its later sessions call increments the sequence and blocks again, and disconnected query identities are pruned.",
+          "TestJobScheduleReachesThePredicate maps to watcher_job_evidence_protects_spawn_schedule_but_exempts_advisory_shell_poller. Source evidence contains two jobs due in two minutes; the spawn job blocks and the shell poller never appears as a blocker.",
+          "TestFleetQuiescenceAnswersOverTheBus and TestTheSamplerOnlyRunsWhileSomebodyIsAsking map to watcher_wire_answer_is_cold_stale_and_sampler_runs_only_during_demand. The real wire answer preserves false/null/stale-sample/positive-dwell fields. Actual source read counts stay zero before demand, start after asking, remain eligible at five minutes and the exact fifteen-minute boundary, stop after expiry, and restart on a fresh ask.",
+          "Validation: all four watcher composites passed in the manager review full library 311 checkpoint on 2026-09-29, with jobs 8 and quiescence 3 also passing (322 tests; /tmp/workspacer-jobs-manager-audit.log). The portable monitor corpus separately pins continuous dwell, busy reset and stale-sample semantics. No real machine stop or cloud action runs in these tests."
+        ],
+        "intentionalChanges": [
+          "Injectable clock and short interval are limited to exercising the real sampler loop; production continues to use UTC now, a thirty-second interval, fifteen-minute demand expiry and ten-second provider reads. The real broker and WebSocket serialization remain in the test path."
+        ]
+      }
+    }
+  }
+}

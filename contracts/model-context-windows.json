@@ -243,6 +243,12 @@
       "note": "Mythos, same as Fable"
     },
     {
+      "match": "claude-opus-5-5",
+      "kind": "suffix",
+      "window": 1000000,
+      "note": "Opus 5.5 has a default 1M context window, without a beta header. Verified 2026-09-29: https://platform.claude.com/docs/en/models/opus-5-5/migration-guide . Fixed model ID; suffix matching permits vendor prefixes without promoting future 5-50 IDs."
+    },
+    {
       "match": "gemini",
       "kind": "contains",
       "window": 1048576,
@@ -258,7 +264,7 @@
       "match": "claude",
       "kind": "contains",
       "window": 200000,
-      "note": "every Claude id without a 1M marker. This is TABLE KNOWLEDGE, not a fallback: an unmarked Claude model really does hold 200k."
+      "note": "Retained 200k baseline for Claude IDs not covered by a more specific model or explicit window marker; newer defaults need independently verified rows."
     },
     {
       "match": "gpt-5",
@@ -447,6 +453,26 @@
       "model": "no3-such-model",
       "expected": null,
       "note": "`o3` is a PREFIX row, so an o3 buried inside another id must NOT match — this is the case a substring port would fail"
+    },
+    {
+      "model": "claude-opus-5-5",
+      "expected": 1000000,
+      "note": "Published default, not inferred from observed occupancy."
+    },
+    {
+      "model": "anthropic.claude-opus-5-5",
+      "expected": 1000000,
+      "note": "Provider-prefixed official ID."
+    },
+    {
+      "model": "CLAUDE-OPUS-5-5",
+      "expected": 1000000,
+      "note": "Matching remains case-insensitive."
+    },
+    {
+      "model": "claude-opus-5-50",
+      "expected": 200000,
+      "note": "Do not infer a future model default from a partial version match."
     }
   ],
   "markerCases": [
@@ -504,6 +530,11 @@
       "requested": "",
       "expected": null,
       "note": "empty says nothing"
+    },
+    {
+      "requested": "claude-opus-5-5",
+      "expected": 1000000,
+      "note": "Inherent default survives before transcript model arrives, without [1m] syntax."
     }
   ],
   "selectionCases": [
@@ -689,6 +720,14 @@
       "expected": null,
       "error": "empty-model",
       "note": "the argv adapter shares the normalizer's rejection boundary"
+    },
+    {
+      "name": "Opus 5.5 inherent window needs no marker",
+      "model": "claude-opus-5-5",
+      "contextWindow": 1000000,
+      "expected": "claude-opus-5-5",
+      "error": null,
+      "note": "Published inherent 1M default; do not invent a selectable marker variant."
     }
   ],
   "inputCases": [
@@ -1113,6 +1152,66 @@
       "peakContext": 1500000,
       "expected": null,
       "note": "Fall-through is not a promotion ladder. A session past 1M disproves the marker too, and with the table's 200k also disproved there is nothing left to believe — so the answer is the honest unknown, exactly as before."
+    },
+    {
+      "name": "Opus 5.5 observed 300682 uses its verified default",
+      "model": "claude-opus-5-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 300682,
+      "expected": 1000000,
+      "note": "Specific model table knowledge does not change report/override precedence or the drift tolerance."
+    },
+    {
+      "name": "Opus 5.5 stale report falls through without guessing",
+      "model": "claude-opus-5-5",
+      "requestedModel": null,
+      "reportedWindow": 200000,
+      "override": null,
+      "peakContext": 300682,
+      "expected": 1000000,
+      "note": "Specific model table knowledge does not change report/override precedence or the drift tolerance."
+    },
+    {
+      "name": "Opus 5.5 active smaller reported window retains precedence",
+      "model": "claude-opus-5-5",
+      "requestedModel": null,
+      "reportedWindow": 200000,
+      "override": null,
+      "peakContext": 100000,
+      "expected": 200000,
+      "note": "Specific model table knowledge does not change report/override precedence or the drift tolerance."
+    },
+    {
+      "name": "Opus 5.5 user override retains precedence",
+      "model": "claude-opus-5-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": 500000,
+      "peakContext": 300682,
+      "expected": 500000,
+      "note": "Specific model table knowledge does not change report/override precedence or the drift tolerance."
+    },
+    {
+      "name": "Opus 5.5 uncorroborated excess is still unknown",
+      "model": "claude-opus-5-5",
+      "requestedModel": null,
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 1020001,
+      "expected": null,
+      "note": "Specific model table knowledge does not change report/override precedence or the drift tolerance."
+    },
+    {
+      "name": "Opus 5.5 request supplies inherent default before first turn",
+      "model": null,
+      "requestedModel": "claude-opus-5-5",
+      "reportedWindow": null,
+      "override": null,
+      "peakContext": 0,
+      "expected": 1000000,
+      "note": "Specific model table knowledge does not change report/override precedence or the drift tolerance."
     }
   ]
 }

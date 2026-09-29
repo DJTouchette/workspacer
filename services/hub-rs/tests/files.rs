@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 use std::path::Path;
 use workspacer_hub::services::{files, paths};
+#[path = "support/sweepguard.rs"]
+mod sweepguard;
 
 #[test]
 fn shared_active_path_contract() {
@@ -8,6 +10,7 @@ fn shared_active_path_contract() {
         "../../../contracts/path-containment-cases.json"
     ))
     .unwrap();
+    let mut tally = sweepguard::Tally::default();
     for case in fixture["cases"].as_array().unwrap() {
         let dir = tempfile::tempdir().unwrap();
         let sandbox = std::fs::canonicalize(dir.path()).unwrap();
@@ -57,6 +60,7 @@ fn shared_active_path_contract() {
             }
             Ok(canonical)
         });
+        tally.ran(case["expect"].as_str().unwrap());
         if case["expect"] == "deny" {
             assert!(result.is_err(), "{}", case["name"]);
         } else {
@@ -68,6 +72,9 @@ fn shared_active_path_contract() {
             );
         }
     }
+    tally
+        .require_corpus("active path containment", 8, 3, 5)
+        .unwrap();
 }
 
 #[test]

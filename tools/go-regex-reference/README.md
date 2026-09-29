@@ -23,7 +23,7 @@ alias normalization and rejected property-assignment/binary-property extensions.
 This avoids assuming that Unicode table keys and regexp's accepted namespace
 are identical.
 
-The checked-in captures use Go **1.25.14**, Unicode **15.0.0**. They contain 63
+The checked-in captures use Go **1.25.14**, Unicode **15.0.0**. They contain 79
 pattern cases plus the accepted property-name inventory. Review changes before
 replacing either fixture, especially when upgrading the reference toolchain.
 

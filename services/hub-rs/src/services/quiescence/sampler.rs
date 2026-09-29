@@ -95,6 +95,15 @@ impl Watcher {
         }
     }
     async fn run_fleet(self: Arc<Self>, hub: Handle, interval: Duration) -> Result<()> {
+        self.run_fleet_with_clock(hub, interval, || chrono::Utc::now().timestamp_millis())
+            .await
+    }
+    async fn run_fleet_with_clock(
+        self: Arc<Self>,
+        hub: Handle,
+        interval: Duration,
+        now_ms: impl Fn() -> i64,
+    ) -> Result<()> {
         let mut cancelled = self.cancelled.subscribe();
         if *cancelled.borrow() {
             return Ok(());
@@ -105,7 +114,7 @@ impl Watcher {
         ticker.tick().await;
         loop {
             tokio::select! {_=cancelled.changed()=>return Ok(()),_=ticker.tick()=>{
-                let now=chrono::Utc::now().timestamp_millis();let requested=self.sampling(now);if !requested{continue;}
+                let now=now_ms();let requested=self.sampling(now);if !requested{continue;}
                 let read=tokio::select!{_=cancelled.changed()=>return Ok(()),read=tokio::time::timeout(Duration::from_secs(12),self.source.read())=>read};
                 let evidence=match read{Ok(Ok(evidence))=>evidence,Ok(Err(error))=>{let mut unknown=Evidence::unknown(now);unknown.sessions=Err(error.to_string());unknown},Err(_)=>{let mut unknown=Evidence::unknown(now);unknown.sessions=Err("Fleet sampling deadline exceeded".into());unknown}};
                 let asked={let mut activity=self.activity.lock().unwrap();if let Ok(clients)=&evidence.clients{activity.asked.retain(|id,_|clients.iter().any(|c|c.connection_id==*id));}activity.asked.clone()};
@@ -114,6 +123,10 @@ impl Watcher {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "sampler_tests.rs"]
+mod tests;
 pub fn install(
     mut options: Options,
     hub: Handle,

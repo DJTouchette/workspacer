@@ -142,6 +142,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -155,13 +157,15 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust build (claudemon)
+      - name: Cache release Rust backends
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             services/claudemon
             services/hub-rs
           cache-on-failure: true
+          cache-bin: false
+          shared-key: release-backends-${{ matrix.server }}
 
       # apps/desktop's postinstall rebuilds better-sqlite3 against Electron's
       # ABI for this OS, so the native module ships correctly per platform.
@@ -200,8 +204,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # Mirrors `npm run package`: builds the renderer + main, compiles the Go
-      # and Rust daemons, then runs electron-builder for THIS host OS. `--publish
+      # Mirrors `npm run package`: builds the renderer + main and Rust services,
+      # then runs electron-builder for THIS host OS. `--publish
       # never` keeps electron-builder from uploading (we attach to the Release
       # ourselves, below).
       - name: Package (Windows, signed via Azure Trusted Signing)
@@ -230,49 +234,6 @@ jobs:
             extra+=('-c.portable.artifactName=${productName}-${version}.${ext}')
           fi
           npm run package -- --publish never "${extra[@]}"
-
-      - name: Cache native Windows build
-        if: runner.os == 'Windows'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/native
-          cache-on-failure: true
-
-      - name: Build native Windows application and probe
-        if: runner.os == 'Windows'
-        working-directory: apps/native
-        run: cargo build --locked --release --bin wks-native --bin native-harness
-
-      - name: Resolve native installer compiler
-        if: runner.os == 'Windows'
-        working-directory: ${{ github.workspace }}
-        run: node apps/native/scripts/resolve-nsis.mjs
-
-      - name: Package native Windows installer (unsigned)
-        if: runner.os == 'Windows'
-        working-directory: ${{ github.workspace }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (!$vs) { throw 'Visual Studio C++ tools not found' }
-          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (!$crt) { throw 'Redistributable x64 CRT not found' }
-          $env:NATIVE_CRT_DIR = $crt.FullName
-          node --test apps/native/scripts/windows-payload.test.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Native payload tests failed' }
-          node apps/native/scripts/package-windows.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Native packaging failed' }
-
-      - name: Smoke test native Windows install, local backend and uninstall
-        if: runner.os == 'Windows'
-        working-directory: ${{ github.workspace }}
-        shell: pwsh
-        run: |
-          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
 
       # Shared Rust backend: one standalone executable, plus the separately
       # usable claudemon executable and browser/plugin assets.
@@ -342,6 +303,42 @@ jobs:
             tar -C "$tmp" -czf "$out/$name.tar.gz" workspacer-server
           fi
 
+      - name: Packaged server smoke regressions
+        working-directory: ${{ github.workspace }}
+        run: python -B -m unittest discover -s scripts -p 'test_smoke_server_bundle.py' -v
+
+      - name: Smoke extracted standalone server without Node
+        working-directory: ${{ github.workspace }}
+        run: python scripts/smoke-server-bundle.py --release-dir apps/desktop/release --platform ${{ matrix.server }} --commit ${{ github.sha }}
+
+      # Internal transfer only: its name intentionally does not match the
+      # publisher's workspacer-* artifact selector.
+      - name: Stage verified Windows backend input for native packaging
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputDir = Join-Path $env:RUNNER_TEMP 'rust-windows-backend-input'
+          New-Item -ItemType Directory -Force $inputDir | Out-Null
+          Copy-Item services/hub-rs/target/release/workspacer-rust.exe $inputDir
+          $binary = Join-Path $inputDir 'workspacer-rust.exe'
+          @{
+            kind = 'rust-windows-backend'; commit = $env:GITHUB_SHA
+            version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+            platform = 'windows-x64'; run = $env:GITHUB_RUN_ID
+            files = @(@{ path = 'workspacer-rust.exe'; sha256 = (Get-FileHash $binary -Algorithm SHA256).Hash })
+          } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $inputDir 'provenance.json')
+
+      - name: Upload Windows backend input
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-windows-backend-input
+          path: ${{ runner.temp }}/rust-windows-backend-input/
+          if-no-files-found: error
+          retention-days: 3
+
       # Standalone claudemon-only bundle, for people building their own client
       # against the session API documented on landing/build-client.html — they
       # don't need workspacer/hub/brain at all, just the daemon. Same binary
@@ -389,6 +386,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: workspacer-${{ matrix.artifact }}
+          # Installers/archives are already compressed; avoid recompressing them.
+          compression-level: 0
           # Installers PLUS the electron-updater metadata (latest*.yml) and the
           # delta .blockmap files — the updater needs the .yml + .blockmap next
           # to each installer, not just the installer — plus the standalone
@@ -452,8 +451,176 @@ jobs:
       contents: write
       id-token: write # Azure OIDC federated login for Windows Trusted Signing
 
-  # Rolls the `nightly` prerelease ATOMICALLY, and only after ALL THREE legs
-  # built (a failed leg skips this job and yesterday's nightly stays live).
+  # Independent runner: native compilation overlaps Electron and backend
+  # compilation. Cargo target locks and the two Cargo.lock graphs stay separate.
+  native-windows-build:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache native release dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native
+          cache-on-failure: true
+          cache-bin: false
+          shared-key: release-native-windows
+      - name: Build native Windows application and probe
+        working-directory: apps/native
+        run: cargo build --locked --release --bin wks-native --bin native-harness
+      - name: Capture native binaries and compiler-runner CRT provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputDir = Join-Path $env:RUNNER_TEMP 'native-windows-build-input'
+          New-Item -ItemType Directory -Force "$inputDir/bin", "$inputDir/crt" | Out-Null
+          Copy-Item apps/native/target/release/wks-native.exe "$inputDir/bin/"
+          Copy-Item apps/native/target/release/native-harness.exe "$inputDir/bin/"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (!$vs) { throw 'Visual Studio C++ tools not found on native compiler runner' }
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$crt) { throw 'Native compiler-runner x64 CRT not found' }
+          Copy-Item "$($crt.FullName)/*.dll" "$inputDir/crt/"
+          foreach ($required in @('vcruntime140.dll', 'msvcp140.dll')) {
+            if (!(Test-Path "$inputDir/crt/$required" -PathType Leaf)) { throw "Missing compiler CRT: $required" }
+          }
+          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          if ('${{ needs.gate.outputs.nightly }}' -eq 'true') { $version += '-nightly.${{ needs.gate.outputs.stamp }}' }
+          $files = @(Get-ChildItem $inputDir -File -Recurse | ForEach-Object {
+            @{ path = [System.IO.Path]::GetRelativePath($inputDir, $_.FullName).Replace('\', '/')
+               sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
+          })
+          @{
+            kind = 'native-windows-build'; commit = $env:GITHUB_SHA; version = $version
+            platform = 'windows-x64'; run = $env:GITHUB_RUN_ID
+            rustc = (& rustc --version | Out-String).Trim()
+            image = $env:ImageVersion; crtSource = $crt.FullName; files = $files
+          } | ConvertTo-Json -Depth 5 | Set-Content "$inputDir/provenance.json"
+      - name: Upload native compiler outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-windows-build-input
+          path: ${{ runner.temp }}/native-windows-build-input/
+          if-no-files-found: error
+          retention-days: 3
+
+  native-windows-package:
+    needs: [gate, build, native-windows-build]
+    if: needs.gate.outputs.build == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: write # Native installer remains an attachment to stable-tag drafts.
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Set up packaging Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install locked packaging tools without Electron rebuild
+        working-directory: apps/desktop
+        run: npm ci --ignore-scripts
+      - name: Stamp nightly version
+        if: needs.gate.outputs.nightly == 'true'
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          base=$(node -p "require('./package.json').version")
+          npm version --no-git-tag-version "$base-nightly.${{ needs.gate.outputs.stamp }}"
+      - name: Download native compiler inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: native-windows-build-input
+          path: ${{ runner.temp }}/native-windows-build-input
+      - name: Download existing Electron-leg backend
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-windows-backend-input
+          path: ${{ runner.temp }}/rust-windows-backend-input
+      - name: Verify and restore exact build inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          function Verify-Inputs([string]$directory, [string]$kind) {
+            $receiptPath = Join-Path $directory 'provenance.json'
+            $receipt = Get-Content $receiptPath -Raw | ConvertFrom-Json
+            if ($receipt.kind -ne $kind -or $receipt.commit -ne $env:GITHUB_SHA -or
+                $receipt.version -ne $version -or $receipt.platform -ne 'windows-x64' -or
+                $receipt.run -ne $env:GITHUB_RUN_ID) { throw "Build input provenance mismatch: $kind" }
+            if (!$receipt.files -or $receipt.files.Count -eq 0) { throw "Missing file hashes: $kind" }
+            $seen = @{}
+            foreach ($file in $receipt.files) {
+              if ($file.path -notmatch '^(bin/[^/]+[.]exe|crt/[^/]+[.]dll|workspacer-rust[.]exe)$' -or
+                  $file.path.Contains('..') -or $file.path.Contains('\') -or $file.path.Contains(':') -or
+                  $seen.ContainsKey($file.path)) { throw "Invalid build input path: $kind" }
+              $seen[$file.path] = $true
+              $path = Join-Path $directory $file.path
+              if (!(Test-Path $path -PathType Leaf) -or
+                  (Get-FileHash $path -Algorithm SHA256).Hash -ne $file.sha256) { throw "Build input hash mismatch: $kind" }
+            }
+            $actual = @(Get-ChildItem $directory -File -Recurse | Where-Object { $_.FullName -ne $receiptPath })
+            if ($actual.Count -ne $receipt.files.Count) { throw "Unrecorded build inputs: $kind" }
+            return $receipt
+          }
+          $nativeDir = Join-Path $env:RUNNER_TEMP 'native-windows-build-input'
+          $backendDir = Join-Path $env:RUNNER_TEMP 'rust-windows-backend-input'
+          $native = Verify-Inputs $nativeDir 'native-windows-build'
+          $backend = Verify-Inputs $backendDir 'rust-windows-backend'
+          foreach ($path in @('bin/wks-native.exe', 'bin/native-harness.exe', 'crt/vcruntime140.dll', 'crt/msvcp140.dll')) {
+            if ($path -notin $native.files.path) { throw "Missing native build input: $path" }
+          }
+          if ($backend.files.Count -ne 1 -or $backend.files[0].path -ne 'workspacer-rust.exe') { throw 'Unexpected backend input set' }
+          if (!$native.crtSource -or !$native.rustc) { throw 'Missing native compiler provenance' }
+          New-Item -ItemType Directory -Force apps/native/target/release, services/hub-rs/target/release | Out-Null
+          Copy-Item "$nativeDir/bin/*.exe" apps/native/target/release/
+          # Carry the same CRT beside the harness too, avoiding runner-global DLL resolution.
+          Copy-Item "$nativeDir/crt/*.dll" apps/native/target/release/
+          Copy-Item "$backendDir/workspacer-rust.exe" services/hub-rs/target/release/
+          "NATIVE_CRT_DIR=$nativeDir/crt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Resolve native installer compiler
+        run: node apps/native/scripts/resolve-nsis.mjs
+      - name: Package native Windows installer (unsigned)
+        shell: pwsh
+        run: |
+          node --test apps/native/scripts/windows-payload.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Native payload tests failed' }
+          node apps/native/scripts/package-windows.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Native packaging failed' }
+      - name: Smoke test native Windows install, local backend and uninstall
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
+          ./apps/native/scripts/test-windows-installer.ps1 -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
+      - name: Upload native installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspacer-native-windows
+          compression-level: 0
+          path: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe
+          if-no-files-found: error
+      - name: Attach native installer to stable-tag draft
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe
+          draft: true
+          fail_on_unmatched_files: true
+
+  # Roll the nightly only after every platform and native installer smoke passed.
+  # Build failure leaves the previous release intact; the publish-last rollout
+  # below still has a non-atomic boundary after deleting the previous release.
   # Every updater-critical asset is verified present BEFORE the old release is
   # touched, so a leg that "succeeded" but produced no installer can't ship a
   # release the updater can't read. The latest*.yml/.blockmap metadata IS
@@ -463,7 +630,7 @@ jobs:
   # prereleases — and the `nightly` tag sits outside the v* pattern the
   # landing page watches).
   publish-nightly:
-    needs: [gate, build]
+    needs: [gate, build, native-windows-package]
     if: needs.gate.outputs.nightly == 'true'
     runs-on: ubuntu-latest
     # One lock across ALL refs: a dispatch-nightly from another branch would
@@ -542,12 +709,14 @@ jobs:
           # tagging a release with no notes): a nightly must still ship the day
           # someone lands a change nobody wrote a line for.
           notes_file="$RUNNER_TEMP/nightly-notes.md"
+          native_installers=( Workspacer-Native-Rust-Preview-Setup-*-x64.exe )
           {
             printf 'Rolling nightly build of main (%s). Unsigned.\n\n' "${{ github.sha }}"
             if [ "$RUST_MIGRATION_PREVIEW" = "true" ]; then
               printf '**Rust migration testing nightly.** Electron uses the Rust hub/MCP executable; native Windows embeds the shared Rust backend. The compatibility audit and legacy-code retirement are still in progress. This release is for testing and does not certify complete migration parity.\n\n'
             fi
             printf 'Electron nightly installs auto-update onto the next nightly from this feed and never onto stable. Workspacer Native for Windows is experimental, unsigned, and updated manually using its separate installer. To return to stable, install a release build from the releases page.\n\n'
+            printf '[Download Native Windows installer](https://github.com/%s/releases/download/nightly/%s)\n\n' "$REPO" "${native_installers[0]}"
             printf -- '---\n\n'
             printf '## Unreleased — what has landed since the last stable release\n\n'
             node "$GITHUB_WORKSPACE/scripts/changelog-section.mjs" Unreleased \

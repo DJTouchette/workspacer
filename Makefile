@@ -124,6 +124,12 @@ test-hub-parity: test-hub-rust
 hub-migration:
 	python3 scripts/hub-migration.py check
 
+.PHONY: check-hub-capability-parameters
+check-hub-capability-parameters:
+	cargo fmt --manifest-path tools/capability-source-check/Cargo.toml --check
+	cargo test --locked --manifest-path tools/capability-source-check/Cargo.toml
+	cargo run --locked --manifest-path tools/capability-source-check/Cargo.toml -- --root . --check
+
 .PHONY: check-hub-rust-windows-platform
 check-hub-rust-windows-platform:
 	cargo check --manifest-path tools/windows-contract-check/Cargo.toml --target x86_64-pc-windows-gnu --tests

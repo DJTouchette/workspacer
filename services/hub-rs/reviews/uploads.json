@@ -1,0 +1,76 @@
+{
+  "records": {
+    "services/hub/internal/uploads/store.go": {
+      "sha256": "75149f1d517ca3ebc674960d3f5b10a02f5bb6a834e3b6952b389e178ba992c4",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete shared store, hub-local/worker wrapper and all three original tests. Rust retains the 24 MiB decoded limit plus pre-decode encoded bound, required/nonempty payload, standard base64 CR/LF handling, allowlisted lowercase image/PDF extension, generated filename and UID-specific temporary spill directory.",
+          "Tests exercise actual files: advisory traversal basename is discarded, bytes and returned size agree, unique names are generated, and Unix mode is 0600. Expanded refusals pin missing/disallowed extensions, required/invalid/empty base64, both encoded and decoded size limits, and no directory or files created on refusal.",
+          "Review exposed Path::file_name normalizing trailing slash and dot components unlike Go filepath.Ext. Rust now extracts the final textual native-path component; photo.png/ and photo.png/. are refused with regressions.",
+          "The real broker test proves triage cannot invoke files.receiveUpload directly, public forwarding uses an internal host identity and makes exactly one receiver call, and uncertain acknowledgement returns the worker error. Source retains the 60-second timeout and has no local fallback branch after forwarding.",
+          "Current Linux validation: full library 312, jobs 8 and quiescence 3 passed (323 total), recorded in /tmp/workspacer-manager-hub-tests.log. This is not Windows runtime evidence."
+        ],
+        "intentionalChanges": [
+          "Rust rejects preexisting symlink or non-private/wrong-owner upload directories on Unix. Tests pin shared-mode and symlink refusal. Go only MkdirAlls the spill directory.",
+          "Rust writes and syncs a private temporary file before persist_noclobber; Go creates the final generated name exclusively and removes it on write/close failure. Both avoid overwriting an existing final file.",
+          "Forwarded envelope size is measured by bounded JSON serialization after transport parsing, not the raw input whitespace. Error categories retain contract substrings; exact decoder diagnostics and disallowed-extension quoting are not promised."
+        ]
+      }
+    },
+    "services/hub/cmd/hub/upload.go": {
+      "sha256": "ef9578a1b86ae0ac1f5560fa2181170abf7cd993308e43d9e7778667acb485f1",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete shared store, hub-local/worker wrapper and all three original tests. Rust retains the 24 MiB decoded limit plus pre-decode encoded bound, required/nonempty payload, standard base64 CR/LF handling, allowlisted lowercase image/PDF extension, generated filename and UID-specific temporary spill directory.",
+          "Tests exercise actual files: advisory traversal basename is discarded, bytes and returned size agree, unique names are generated, and Unix mode is 0600. Expanded refusals pin missing/disallowed extensions, required/invalid/empty base64, both encoded and decoded size limits, and no directory or files created on refusal.",
+          "Review exposed Path::file_name normalizing trailing slash and dot components unlike Go filepath.Ext. Rust now extracts the final textual native-path component; photo.png/ and photo.png/. are refused with regressions.",
+          "The real broker test proves triage cannot invoke files.receiveUpload directly, public forwarding uses an internal host identity and makes exactly one receiver call, and uncertain acknowledgement returns the worker error. Source retains the 60-second timeout and has no local fallback branch after forwarding.",
+          "Current Linux validation: full library 312, jobs 8 and quiescence 3 passed (323 total), recorded in /tmp/workspacer-manager-hub-tests.log. This is not Windows runtime evidence."
+        ],
+        "intentionalChanges": [
+          "Rust rejects preexisting symlink or non-private/wrong-owner upload directories on Unix. Tests pin shared-mode and symlink refusal. Go only MkdirAlls the spill directory.",
+          "Rust writes and syncs a private temporary file before persist_noclobber; Go creates the final generated name exclusively and removes it on write/close failure. Both avoid overwriting an existing final file.",
+          "Forwarded envelope size is measured by bounded JSON serialization after transport parsing, not the raw input whitespace. Error categories retain contract substrings; exact decoder diagnostics and disallowed-extension quoting are not promised."
+        ]
+      }
+    },
+    "services/hub/cmd/hub/upload_test.go": {
+      "sha256": "0bafe34c6c03545eed3427d3c9bf490ff588f1df030ff8eab4be27a1712f4301",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete shared store, hub-local/worker wrapper and all three original tests. Rust retains the 24 MiB decoded limit plus pre-decode encoded bound, required/nonempty payload, standard base64 CR/LF handling, allowlisted lowercase image/PDF extension, generated filename and UID-specific temporary spill directory.",
+          "Tests exercise actual files: advisory traversal basename is discarded, bytes and returned size agree, unique names are generated, and Unix mode is 0600. Expanded refusals pin missing/disallowed extensions, required/invalid/empty base64, both encoded and decoded size limits, and no directory or files created on refusal.",
+          "Review exposed Path::file_name normalizing trailing slash and dot components unlike Go filepath.Ext. Rust now extracts the final textual native-path component; photo.png/ and photo.png/. are refused with regressions.",
+          "The real broker test proves triage cannot invoke files.receiveUpload directly, public forwarding uses an internal host identity and makes exactly one receiver call, and uncertain acknowledgement returns the worker error. Source retains the 60-second timeout and has no local fallback branch after forwarding.",
+          "Current Linux validation: full library 312, jobs 8 and quiescence 3 passed (323 total), recorded in /tmp/workspacer-manager-hub-tests.log. This is not Windows runtime evidence."
+        ],
+        "intentionalChanges": [
+          "Rust rejects preexisting symlink or non-private/wrong-owner upload directories on Unix. Tests pin shared-mode and symlink refusal. Go only MkdirAlls the spill directory.",
+          "Rust writes and syncs a private temporary file before persist_noclobber; Go creates the final generated name exclusively and removes it on write/close failure. Both avoid overwriting an existing final file.",
+          "Forwarded envelope size is measured by bounded JSON serialization after transport parsing, not the raw input whitespace. Error categories retain contract substrings; exact decoder diagnostics and disallowed-extension quoting are not promised."
+        ]
+      }
+    }
+  }
+}

@@ -12,10 +12,28 @@ last_reviewed: 2026-09-26
 
 # MCP Tool Facade
 
-`services/hub/cmd/mcp` exposes the hub capability bus over `/mcp` and `/sse`.
+`services/hub-rs/src/mcp.rs` exposes the Rust hub capability bus over `/mcp`
+and `/sse`; `services/hub/cmd/mcp` is the retained Go migration reference.
 The facade is an adapter: tools forward calls to the desktop provider or the
 headless brain. `/health` reports the exact service, listen address, hub URL,
 hub connection, and initial plugin-catalog readiness.
+
+## Rust wire compatibility
+
+The rmcp 3.5 adapter advertises MCP `2026-07-28` as well as older revisions.
+Its default `server/discover` includes cache hints, but its default list result
+types omit them. The facade explicitly supplies `ttlMs: 0` and
+`cacheScope: "private"` for tools, prompts, resources and resource-template lists.
+Tool catalogs depend on caller scope and live registrations, so they must not
+be shared between identities. Unsupported resource reads remain RPC errors.
+
+`services/hub-rs/tests/mcp.rs` exercises real authenticated HTTP requests for
+modern discovery/list metadata and all list families, plus tool calls and
+view/operator filtering under `2026-07-28`, `2025-11-25` and `2025-06-18`.
+The release bundle smoke additionally checks actual modern and legacy
+`tools/list` replies: `/health` alone did not catch Claude Code rejecting every
+tool when the modern cache fields were missing. A working native-app session
+does not prove it negotiated the same version or connected to the same facade.
 
 ## Spawned-agent contract
 

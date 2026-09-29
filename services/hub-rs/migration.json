@@ -361,10 +361,37 @@
       "tests": []
     },
     "services/hub/cmd/brain/capspec_params_test.go": {
-      "replacement": [],
+      "replacement": [
+        "tools/capability-source-check/src/index.rs",
+        "tools/capability-source-check/src/trace.rs",
+        "tools/capability-source-check/src/policy.rs",
+        "tools/capability-source-check/src/reference.rs",
+        "apps/desktop/tests/fixtures/capability-parameter-policy.json",
+        "tools/capability-source-check/go-reference.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read original AST scan and all four assertion groups. TestBrainParamsAreClassified maps to typed Rust source tracing, explicit per-binding decisions, unchanged independent vocabulary, six hop-specific canaries and original Go84 per-method field closure. The optional stdlib Go oracle captures the original algorithm plus scanner/source/vocabulary SHA256; routine Rust checking invokes no Go toolchain.",
+          "TestInertPathBearingMethodsBindNothing maps to the Rust policy prohibition on caller fields or opaque payloads for path-bearing inert methods. Existing TS checks retain actual canonicalization helpers and parameter-free inert source registrations.",
+          "TestInertMethodsAreActuallyRegistered maps to brainParameterContract registry closure across Rust and retained desktop registrations, including negative phantom-inert and removed-real-registration mutations. Full/catalog methods remain classified and agents.spawn cwd remains deliberately ambient.",
+          "TestBrainOpaquePayloadHandlersAreClassified is strengthened to explicit method and payload-path opaqueDecisions. A decision for an unrelated name cannot discharge an opaque pricing overrides map; negative policy tests pin this.",
+          "Original scanner parseBrain/jsonTagsOf/paramsBoundIn/literalIndexKeys/carriesCallerParams responsibilities map to production-only AST indexing, inherited test-module exclusion, serde nested/alias/skip fields, actual caller helper provenance, literal map reads, and separately visible opaque/unresolved evidence. Fixtures exclude response decoding and string-literal decoys, retain unknown input receiver failures, and separate binary imports from library imports.",
+          "Validation on 2026-09-29: isolated scanner15 tests passed (11 tracing,4 policy), TypeScript parameter suites19 passed, cargo fmt check and git diff check passed. Actual repository --check passed122 methods,126 current dangerous bindings,13 explicitly reviewed opaque methods and zero errors; every original84 Go dangerous binding and source hash verified. The optional Go oracle --check independently reproduced the capture. Logs: /tmp/workspacer-capability-audit-final.json and /tmp/workspacer-capability-tests-final.log."
+        ],
+        "intentionalChanges": [
+          "Original Go scanner flattened nested tags and bounded r.helper walks at depth3. Rust tracks nested paths and typed/local closure/receiver helpers; explicit recursion is opaque and depth exhaustion remains unresolved. Unknown match alternatives are conservatively joined instead of treating a default literal as certain.",
+          "Newly detected Rust-only nested or suspicious spellings require sourceParameterDecisions with actual field evidence, preserving the older TypeScript vocabulary-only decision invariant. Additional nested opaque scope decisions supplement individual dangerous fields rather than expanding runtime grants.",
+          "Original Go production inputs stay present as provenance-backed behavior references until cutover; deleting or changing them deliberately requires reviewing the reference capture. This review does not mark cutover gates complete."
+        ]
+      },
       "sha256": "17895a08226980104703cb21694a028c406ad6415f9e3902b157189b266f03f5",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "tools/capability-source-check/tests/bindings.rs",
+        "tools/capability-source-check/tests/policy.rs",
+        "apps/desktop/src/main/services/brainParameterContract.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts"
+      ]
     },
     "services/hub/cmd/brain/claudemon.go": {
       "replacement": [],
@@ -1992,7 +2019,7 @@
     },
     "services/hub/cmd/brain/windows.go": {
       "replacement": [],
-      "sha256": "43b646c18fb324d19a21b470547eb8e851185b700ca443d9bd914127954cdd41",
+      "sha256": "42a6fb749a314c912413e4a1a9a60a4ec7af32433d84dbedf8fb3a7fc51323d5",
       "status": "pending",
       "tests": []
     },
@@ -2426,16 +2453,59 @@
       ]
     },
     "services/hub/cmd/hub/quiescence.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs",
+        "services/hub-rs/src/services/quiescence.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all source branches and all eight reference tests. Matched cold/stale answer shape, ten-second session/peer probe bounds, missing/malformed provider evidence as a blocker, thirty-second production sampling, demand-triggered sampling and the fifteen-minute last-ask cutoff.",
+          "Traced actual routing before adding the hub-only fallback: sessions::install installs no sessions handler without an engine; Core prefers explicit handlers then registered providers; Watcher never serves sessions.snapshots. NativeSources now uses a private internal service client for the literal sessions.snapshots method when no owned engine exists, retaining the original registered-provider seam without recursively asking fleet.quiescence.",
+          "Matched infrastructure exclusion, per-connection request sequence self-exclusion, later activity reactivation regardless of wall-clock resolution, and pruning disappeared connection IDs. The private fallback connection is infrastructure and cannot keep its own machine busy.",
+          "Matched job schedule evidence and advisory shell exemption; federated peers are sampled only for sessions, never recursively for their own quiescence. Disconnected, timed-out or malformed peers remain unknown blockers. Owned launch preparation, workflow reservations, terminal uncertainty and replacement operations remain additional conservative blockers.",
+          "Manager review on 2026-09-29 passed full library 311, jobs 8 and quiescence 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Four real WebSocket/broker/provider/Watcher test groups exercise source sampling rather than replacing the fleet.quiescence handler with a stub; the handler delegates to the actual Watcher.answer."
+        ],
+        "intentionalChanges": [
+          "Private in-process service connection provenance replaces the Go loopback nonce URL and random-key helper. The broker owns that identity; a wire parameter cannot claim it. Embedded session reads remain typed and include canonical retained rows, while hub-only deployments preserve registered-provider reads.",
+          "Rust rejects nonempty fleet.quiescence parameters instead of ignoring them, so callers cannot supply evidence or tune dwell. A test asserts this refusal through the actual WebSocket handler.",
+          "The owned sampler cancels in-flight reads on shutdown and bounds the complete concurrent read to twelve seconds, while each session/peer call retains its ten-second budget. A backwards clock observation fails closed. These strengthen unknown-state handling and do not authorize power actions."
+        ]
+      },
       "sha256": "f4c57d769621b37cd961953409a61a560842b31c3e93c8edc0358ca2b40bc400",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/quiescence/sampler_tests.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/tests/federation.rs"
+      ]
     },
     "services/hub/cmd/hub/quiescence_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/quiescence/sampler.rs",
+        "services/hub-rs/src/services/quiescence/source.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "TestWatcherReadsTheFleetOverTheBus, TestWatcherBlocksOnASpawningSession and TestWatcherBlocksWhenNoProviderAnswers map to watcher_reads_registered_provider_and_refuses_unknown_or_unavailable_fleet. A real registered provider supplies responding/unknown rows over the broker; absent and malformed providers refuse quiet. Unknown detail must contain both TERMINAL and SPAWNING.",
+          "TestTheHubsOwnClientIsNotAUser and TestAskingDoesNotMakeTheMachineBusy map to watcher_excludes_infrastructure_and_asks_but_counts_later_same_connection_work. Actual internal and provider connections are observed, a fresh WebSocket caller blocks, its query self-excludes, its later sessions call increments the sequence and blocks again, and disconnected query identities are pruned.",
+          "TestJobScheduleReachesThePredicate maps to watcher_job_evidence_protects_spawn_schedule_but_exempts_advisory_shell_poller. Source evidence contains two jobs due in two minutes; the spawn job blocks and the shell poller never appears as a blocker.",
+          "TestFleetQuiescenceAnswersOverTheBus and TestTheSamplerOnlyRunsWhileSomebodyIsAsking map to watcher_wire_answer_is_cold_stale_and_sampler_runs_only_during_demand. The real wire answer preserves false/null/stale-sample/positive-dwell fields. Actual source read counts stay zero before demand, start after asking, remain eligible at five minutes and the exact fifteen-minute boundary, stop after expiry, and restart on a fresh ask.",
+          "Validation: all four watcher composites passed in the manager review full library 311 checkpoint on 2026-09-29, with jobs 8 and quiescence 3 also passing (322 tests; /tmp/workspacer-jobs-manager-audit.log). The portable monitor corpus separately pins continuous dwell, busy reset and stale-sample semantics. No real machine stop or cloud action runs in these tests."
+        ],
+        "intentionalChanges": [
+          "Injectable clock and short interval are limited to exercising the real sampler loop; production continues to use UTC now, a thirty-second interval, fifteen-minute demand expiry and ten-second provider reads. The real broker and WebSocket serialization remain in the test path."
+        ]
+      },
       "sha256": "8821eace1c8d2ec59fcaccd5ff62580f31999e94eabe756f35ed651b8c278da7",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/quiescence/sampler_tests.rs",
+        "services/hub-rs/tests/quiescence.rs",
+        "services/hub-rs/src/runtime.rs"
+      ]
     },
     "services/hub/cmd/hub/remote.go": {
       "replacement": [
@@ -2546,28 +2616,50 @@
     },
     "services/hub/cmd/hub/upload.go": {
       "replacement": [
-        "services/hub-rs/src/services/uploads.rs",
-        "services/hub-rs/src/provider_relay/methods.rs"
+        "services/hub-rs/src/services/uploads.rs"
       ],
-      "review": "Reviewed24MiB/base64 envelope limits, extension-only generated private spill names, byte preservation and exactly-once worker forwarding with60s acknowledgement budget. Missing or uncertain worker ACK never falls back to hub-owned disk; real broker forwarding test and mobile attachment flow pass.",
+      "review": {
+        "behaviors": [
+          "Read the complete shared store, hub-local/worker wrapper and all three original tests. Rust retains the 24 MiB decoded limit plus pre-decode encoded bound, required/nonempty payload, standard base64 CR/LF handling, allowlisted lowercase image/PDF extension, generated filename and UID-specific temporary spill directory.",
+          "Tests exercise actual files: advisory traversal basename is discarded, bytes and returned size agree, unique names are generated, and Unix mode is 0600. Expanded refusals pin missing/disallowed extensions, required/invalid/empty base64, both encoded and decoded size limits, and no directory or files created on refusal.",
+          "Review exposed Path::file_name normalizing trailing slash and dot components unlike Go filepath.Ext. Rust now extracts the final textual native-path component; photo.png/ and photo.png/. are refused with regressions.",
+          "The real broker test proves triage cannot invoke files.receiveUpload directly, public forwarding uses an internal host identity and makes exactly one receiver call, and uncertain acknowledgement returns the worker error. Source retains the 60-second timeout and has no local fallback branch after forwarding.",
+          "Current Linux validation: full library 312, jobs 8 and quiescence 3 passed (323 total), recorded in /tmp/workspacer-manager-hub-tests.log. This is not Windows runtime evidence."
+        ],
+        "intentionalChanges": [
+          "Rust rejects preexisting symlink or non-private/wrong-owner upload directories on Unix. Tests pin shared-mode and symlink refusal. Go only MkdirAlls the spill directory.",
+          "Rust writes and syncs a private temporary file before persist_noclobber; Go creates the final generated name exclusively and removes it on write/close failure. Both avoid overwriting an existing final file.",
+          "Forwarded envelope size is measured by bounded JSON serialization after transport parsing, not the raw input whitespace. Error categories retain contract substrings; exact decoder diagnostics and disallowed-extension quoting are not promised."
+        ]
+      },
       "sha256": "ef9578a1b86ae0ac1f5560fa2181170abf7cd993308e43d9e7778667acb485f1",
       "status": "ported",
       "tests": [
-        "services/hub-rs/src/services/uploads.rs",
-        "apps/desktop/tests/e2e/mobileClient.test.ts"
+        "services/hub-rs/src/services/uploads.rs"
       ]
     },
     "services/hub/cmd/hub/upload_test.go": {
       "replacement": [
-        "services/hub-rs/src/services/uploads.rs",
-        "services/hub-rs/src/provider_relay/methods.rs"
+        "services/hub-rs/src/services/uploads.rs"
       ],
-      "review": "Reviewed24MiB/base64 envelope limits, extension-only generated private spill names, byte preservation and exactly-once worker forwarding with60s acknowledgement budget. Missing or uncertain worker ACK never falls back to hub-owned disk; real broker forwarding test and mobile attachment flow pass.",
+      "review": {
+        "behaviors": [
+          "Read the complete shared store, hub-local/worker wrapper and all three original tests. Rust retains the 24 MiB decoded limit plus pre-decode encoded bound, required/nonempty payload, standard base64 CR/LF handling, allowlisted lowercase image/PDF extension, generated filename and UID-specific temporary spill directory.",
+          "Tests exercise actual files: advisory traversal basename is discarded, bytes and returned size agree, unique names are generated, and Unix mode is 0600. Expanded refusals pin missing/disallowed extensions, required/invalid/empty base64, both encoded and decoded size limits, and no directory or files created on refusal.",
+          "Review exposed Path::file_name normalizing trailing slash and dot components unlike Go filepath.Ext. Rust now extracts the final textual native-path component; photo.png/ and photo.png/. are refused with regressions.",
+          "The real broker test proves triage cannot invoke files.receiveUpload directly, public forwarding uses an internal host identity and makes exactly one receiver call, and uncertain acknowledgement returns the worker error. Source retains the 60-second timeout and has no local fallback branch after forwarding.",
+          "Current Linux validation: full library 312, jobs 8 and quiescence 3 passed (323 total), recorded in /tmp/workspacer-manager-hub-tests.log. This is not Windows runtime evidence."
+        ],
+        "intentionalChanges": [
+          "Rust rejects preexisting symlink or non-private/wrong-owner upload directories on Unix. Tests pin shared-mode and symlink refusal. Go only MkdirAlls the spill directory.",
+          "Rust writes and syncs a private temporary file before persist_noclobber; Go creates the final generated name exclusively and removes it on write/close failure. Both avoid overwriting an existing final file.",
+          "Forwarded envelope size is measured by bounded JSON serialization after transport parsing, not the raw input whitespace. Error categories retain contract substrings; exact decoder diagnostics and disallowed-extension quoting are not promised."
+        ]
+      },
       "sha256": "0bafe34c6c03545eed3427d3c9bf490ff588f1df030ff8eab4be27a1712f4301",
       "status": "ported",
       "tests": [
-        "services/hub-rs/src/services/uploads.rs",
-        "apps/desktop/tests/e2e/mobileClient.test.ts"
+        "services/hub-rs/src/services/uploads.rs"
       ]
     },
     "services/hub/cmd/hub/usageprefs.go": {
@@ -4780,40 +4872,80 @@
       ]
     },
     "services/hub/internal/jobs/context_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "Mapped ordered context collection/placeholder append, empty and empty-JSON vetoes with no agent call, matching/nonmatching regex, ignoreExitCode limited to an actual exit-status result, failed start/call rejection, quiet skipped runs versus notify.post errors, full-output guard before middle elision, malformed step/count validation. Proposal tests prove disarmed/fresh-ID creation, no overwrite of approved argv, 20-proposal cap, review notification click target, explicit approval and manual-run admission. Actual HTTP-independent broker events and persisted history are observed; Rune/Unicode behavior differences are documented. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "8d036459af9fe504d59286be2e23b86dda8b79098644e5a859ab64b36313111f",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/tests/jobs.rs",
+        "services/hub-rs/src/services/jobs/go_regex.rs"
+      ]
     },
     "services/hub/internal/jobs/docs_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "All marked landing-page JSON examples run through the Rust validator, as do the 10 captured authored specs with original source hash. Canonical field inventories are shared with production admission; full typed Job/Trigger literals and serializer-key comparison catch additions rather than a standalone test-only field list. All four trigger and three action shapes/context guards are validated. Placeholder/cap/file-mode, hand-edit/reload/failure/storage/script-convention phrases and scoped no-restart instruction are pinned. Reflection itself retires with the Go structs; current valid-null clearing semantics are accurately documented in JOBS_MIGRATION.md and hub-jobs context. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "8508224eabd3aa034f6091ab1278933bdd875275747a1746d40547b8a3f14ae8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/docs_tests.rs",
+        "services/hub-rs/src/services/jobs/authored_cases.json"
+      ]
     },
     "services/hub/internal/jobs/handedit_e2e_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "The real Service run loop uses the same private run_with_clock implementation as production (production wrapper fixes 30 seconds/Utc::now). Test changes actual files while that loop runs, observes schedule through state without read RPC reloads, advances an atomic clock, sees an actual owned bus callback fire, edits the interval, merges an owner upsert with an external row, clears and advances 48 hours without another run, then proves RunNow sees a handwritten manual row. Missing identity is minted and written back; test task is explicitly aborted/joined. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "e77483f27fa5eb966a28bf48be2fd641e64497adcc74dd8a59a1c2c9acf2bac4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs"
+      ]
     },
     "services/hub/internal/jobs/handedit_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "Real filesystem regressions cover handwritten missing IDs/timestamps and durable writeback, duplicate-ID split, content detection despite unchanged size/mtime, owner mutation preserving an already visible external row, malformed/missing-file retention then explicit clear, dropping a semantically invalid row while preserving valid rows, rename preserving both anchors and trigger edit moving only its own, proposal staying disarmed, immediate RunNow loading a handwritten manual job, and own-write hash/id/anchor stability. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "667989cde861be51b2a1dcd7a70e78dadb7d385c39fe2d080622271228220c09",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
     },
     "services/hub/internal/jobs/jobs.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "Spec/action validation, local-only call namespaces, owner-only six-method RPCs, four-context limit, interval/daily/once/manual scheduling, private atomic spec/history, content hashes, identity/stamp normalization, stable reload anchors, proposals and capped history are implemented in the Rust Service. Tests inspect real persisted files and runtime calls, not only registrations. Nullable typed fields now use Go defaults; valid null/empty schedule documents clear while malformed/missing files retain last good state. Fixed omitted Run detail/finishedAt deserialization that could otherwise discard history on restart. Canonical ASCII/Unicode-fold aliases are intentionally refused; source-format and resource differences are explicit in JOBS_MIGRATION.md. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "e05b6a9d0c119ff1fedd5718ba2d82a332c711b122e5467055f623df975b4546",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/src/services/jobs/docs_tests.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
     },
     "services/hub/internal/jobs/jobs_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "Mapped malformed trigger/action cases, all next-run shapes and fixed-offset corpus, real store/reopen/remove, due interval reschedule, once durable disarm, overlap skip, spawn-then-prompt order, failed-run history, already-running refusal and 30-record history cap. Added live runtime shell shutdown and explicit empty-history-field persistence coverage. Daily timezone gap/repeated-hour cases pin the two-lookup normalization. Core test fixtures use fake bus handlers or controlled child processes, never a model. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "e8758c58cdff4ce6b918fe72eee9a7f837644ee586b009bc3ca698af17f3dee9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/tests/jobs.rs"
+      ]
     },
     "services/hub/internal/jobs/migration_test.go": {
       "replacement": [
@@ -4828,16 +4960,33 @@
       ]
     },
     "services/hub/internal/jobs/preset_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs"
+      ],
+      "review": "The same power-down preset fixture passes the actual Rust validator and remains disabled with an explicit script placeholder. Its marked docs example is present and enabled; trigger, action kind, shell cwd and quiescence prefix agree; only script placeholder/arming intentionally differ. The retained renderer fixture keeps its independent editor/preset pin. No power provider or cloud action executes in these tests. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "3662b023dfefdb5cc41faf01fdfa5482f61927deac7c9e346fca278ecd12c893",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/docs_tests.rs",
+        "apps/desktop/src/renderer/tests/jobsPreset.test.ts"
+      ]
     },
     "services/hub/internal/jobs/scheduler.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/jobs.rs",
+        "services/hub-rs/src/services/owned_process.rs",
+        "services/hub-rs/src/services/jobs/go_regex.rs"
+      ],
+      "review": "Retains 30-second production polling, one invocation per job, skip-not-queue overlap, missed interval reanchor, once disarm before effects, fifteen-minute shared run budget, context-before-spawn, exact prompt substitution, guarded outputs, prompt-after-spawn and no blind spawn replay, newest 30 run history, quiet vetoes/error notifications. Owned combined capture replaces detached shell reading and preserves cross-stream order while bounding output and cleaning descendants. Windows raw cmd quoting has a real platform fixture. Go regex ASCII classes/boundaries and repeat syntax use a 79-case independent oracle plus 200 compile-verified property names; Unicode table-version differences and UTF-8 cap differences are explicit, so this is not a universal byte/engine equivalence claim. See services/hub-rs/JOBS_MIGRATION.md for scope and deliberate differences. Manager review on 2026-09-29 passed full library 311, jobs integration 8, and quiescence integration 3 (322 tests; /tmp/workspacer-jobs-manager-audit.log). Windows-specific quoted-shell execution remains a platform-CI gate; no universal regexp equivalence claim.",
       "sha256": "8f9dee061afa51b23423fed3aaf4545b8a66d45a9bdc794bb8cba830dbe1e2c7",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/jobs/reference_tests.rs",
+        "services/hub-rs/src/services/jobs/execution_tests.rs",
+        "services/hub-rs/tests/jobs.rs",
+        "services/hub-rs/src/services/jobs/go_regex.rs",
+        "services/hub-rs/src/services/owned_process.rs"
+      ]
     },
     "services/hub/internal/layout/layout.go": {
       "replacement": [
@@ -5124,16 +5273,26 @@
         "behaviors": [
           "Reviewed provider input normalization, canonical/legacy agreement and error codes, suffix stripping/idempotence, inherent1M argv exceptions, fresh Codex default versus explicit/resume, and owned optional-window values. Rust reuses the existing claudemon normalizer rather than introducing a duplicate Rust implementation.",
           "Reviewed strict/read manager-map handling, known provider/model vocabulary, effort strings, numeric/null contexts and model/window coupling. Review found/fixed omitted model-less nonnull Claude-context rejection/read-pruning and wrong unknown-provider context error code. Explicit null remains a valid provider-default preference.",
-          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring."
+          "Same unchanged shared selection/input/argv/manager corpora run with existing floors; models4 adds idempotence, exact provider-default block and missing-model/unknown-provider cases. Ownership corpus tests all five provider classifications; actual spawn_plan8 passed fresh/resume wiring.",
+          "2026-09-29 reviewed delta: specific claude-opus-5-5 suffix joins inherent1M exceptions in Go/TS/Rust, avoiding a synthetic [1m] argv suffix for its officially documented default window. Official Anthropic migration guide https://platform.claude.com/docs/en/models/opus-5-5/migration-guide confirms default1M without a beta header. Shared contract adds explicit argv case and requested-window/lookup/resolution guards; future5-50 is not promoted. Other normalization/provider/manager behavior is unchanged."
         ],
+        "integrationCheckpoint": "Root ran current Rust hub models4, config20 and spawn_plan8: all32 passed after the Opus5.5 change (/tmp/workspacer-model-integration.log). MCP13 and legacy SSE4 also passed with claudemon compiled from the updated source.",
+        "opus55Verification": {
+          "go": "internal/modelselection plus brain ContextWindow and FormatClaudeAliasWindowBadges tests passed",
+          "rust": "All9 genuine windows.rs module tests passed using rustc --edition=2021 --test services/claudemon/src/session/windows.rs with cached serde/serde_json/tracing artifacts. This executes the embedded shared corpus including the Opus5.5 cases; it is not a full claudemon crate test. Root MCP tests compiled production claudemon as dependency; root owns remaining integration verification.",
+          "typescript": "170 tests passed across modelContextWindowsContract, spawnModel, claudeModels, claudeResolver"
+        },
         "verifiedCheckpoint": "Current models4, config20 and spawn_plan8 targets passed. The two-writer fixture now selects Claude opus explicitly with its nonnull context; no production requirement was relaxed."
       },
-      "sha256": "725c0f43e86ca8e3721b06f14d6160f90e1081c362c7167622fe6bb1ad946b94",
+      "sha256": "07d4a088ebcd33df508f285d7413abc3fc6a454413ff1f8e1b13a6f046f3bbfc",
       "status": "ported",
       "tests": [
         "services/hub-rs/tests/models.rs",
         "services/hub-rs/tests/config.rs",
-        "services/hub-rs/tests/spawn_plan.rs"
+        "services/hub-rs/tests/spawn_plan.rs",
+        "contracts/model-context-windows.json",
+        "services/claudemon/src/session/windows.rs",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts"
       ]
     },
     "services/hub/internal/modelselection/modelselection_test.go": {
@@ -6485,10 +6644,28 @@
       "tests": []
     },
     "services/hub/internal/uploads/store.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/uploads.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the complete shared store, hub-local/worker wrapper and all three original tests. Rust retains the 24 MiB decoded limit plus pre-decode encoded bound, required/nonempty payload, standard base64 CR/LF handling, allowlisted lowercase image/PDF extension, generated filename and UID-specific temporary spill directory.",
+          "Tests exercise actual files: advisory traversal basename is discarded, bytes and returned size agree, unique names are generated, and Unix mode is 0600. Expanded refusals pin missing/disallowed extensions, required/invalid/empty base64, both encoded and decoded size limits, and no directory or files created on refusal.",
+          "Review exposed Path::file_name normalizing trailing slash and dot components unlike Go filepath.Ext. Rust now extracts the final textual native-path component; photo.png/ and photo.png/. are refused with regressions.",
+          "The real broker test proves triage cannot invoke files.receiveUpload directly, public forwarding uses an internal host identity and makes exactly one receiver call, and uncertain acknowledgement returns the worker error. Source retains the 60-second timeout and has no local fallback branch after forwarding.",
+          "Current Linux validation: full library 312, jobs 8 and quiescence 3 passed (323 total), recorded in /tmp/workspacer-manager-hub-tests.log. This is not Windows runtime evidence."
+        ],
+        "intentionalChanges": [
+          "Rust rejects preexisting symlink or non-private/wrong-owner upload directories on Unix. Tests pin shared-mode and symlink refusal. Go only MkdirAlls the spill directory.",
+          "Rust writes and syncs a private temporary file before persist_noclobber; Go creates the final generated name exclusively and removes it on write/close failure. Both avoid overwriting an existing final file.",
+          "Forwarded envelope size is measured by bounded JSON serialization after transport parsing, not the raw input whitespace. Error categories retain contract substrings; exact decoder diagnostics and disallowed-extension quoting are not promised."
+        ]
+      },
       "sha256": "75149f1d517ca3ebc674960d3f5b10a02f5bb6a834e3b6952b389e178ba992c4",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/uploads.rs"
+      ]
     },
     "services/hub/internal/usageprefs/usageprefs.go": {
       "note": "Pacing schedule persistence and report projection only; routing selection regression explicitly proves schedule does not alter decision policy.",

@@ -199,12 +199,12 @@ func ClaudeArgvModel(selection Selection) (string, error) {
 	return normalized.Model, nil
 }
 
-// Fable and Mythos are inherently 1M; they are not marker-selectable variants.
+// Fable, Mythos and Opus 5.5 are inherently 1M, not marker-selectable variants.
 // contracts/model-context-windows.json drives this boundary in all three
 // languages so Go cannot invent an argv spelling the Claude catalog never emits.
 func isClaudeInherentOneMillionModel(model string) bool {
 	identity := strings.ToLower(model)
-	return strings.Contains(identity, "fable") || strings.Contains(identity, "mythos")
+	return strings.Contains(identity, "fable") || strings.Contains(identity, "mythos") || strings.HasSuffix(identity, "claude-opus-5-5")
 }
 
 func ErrorCode(err error) string {

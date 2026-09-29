@@ -21,6 +21,8 @@ related_paths:
   - "scripts/hub-migration.py"
   - "scripts/check-nightly-preview.py"
   - "scripts/test_nightly_preview.py"
+  - "scripts/smoke-server-bundle.py"
+  - "scripts/test_smoke_server_bundle.py"
   - "services/hub-rs/migration.json"
 owner: Damien Touchette
 last_reviewed: 2026-09-29
@@ -142,7 +144,8 @@ version-tag/profile gates; do not assert every built Windows artifact is signed.
 
 ## Nightly rollout failure boundary
 
-The publish job waits for all build legs, serializes on a shared nightly lock,
+The publish job waits for all matrix build legs and the separate native Windows
+packaging/smoke job, serializes on a shared nightly lock,
 and checks expected assets before changing the live release. It removes stray
 drafts, uploads a new draft, deletes the old live release, deletes/polls the tag
 up to six times, then publishes the new draft. A build or pre-deletion upload
@@ -183,11 +186,52 @@ each stable update YAML path/URL against the actual uploaded draft asset names
 before publication; do not assume the provider repairs them. This audit checked
 the local resolver and workflow, not the historical live release URLs.
 
+## Extracted standalone archive smoke
+
+After creating each platform's standalone server archive, the release matrix runs
+`scripts/smoke-server-bundle.py` against the extracted archive. It validates the
+source/platform stamp and CLI alias, starts with isolated home/config/data/database,
+empty PATH and hook initialization disabled, then checks authenticated hub and
+brain service readiness, the engine/hook listeners, MCP identity/catalog health and
+the bundled web entry. MCP coverage also makes actual `tools/list` requests for
+legacy `2025-11-25` and modern `2026-07-28` protocol shapes, including complete-result
+and private zero-TTL cache hints for modern discovery. Parent-pipe EOF must yield a
+successful joined process exit and closure of all four listeners.
+
+This guard exercises packaged binaries, including actual MCP catalog responses;
+it does not establish GUI behavior or every provider/tool operation. No production
+state, provider credentials or active daemon is used by the smoke.
+
 ## Native Windows installer
 
-The Windows release leg builds `wks-native` and `native-harness` in release
-mode, then runs `apps/native/scripts/package-windows.mjs`. The current separate
-unsigned artifact is
+`native-windows-build` depends only on the release gate and compiles `wks-native`
+and `native-harness` in release mode alongside the Electron/backend matrix, on
+an independent Windows runner. It uploads the two binaries and the x64 CRT DLLs
+from that compiler runner, with file SHA256s and source SHA, gate-derived version,
+platform, workflow run, rustc, runner image and CRT-source provenance.
+
+`native-windows-package` waits for the matrix and native compile jobs. It downloads
+those inputs and the existing Rust backend executable uploaded by the Windows
+Electron leg. It verifies both receipts against source SHA, version, platform,
+run ID and every file hash before restoring the canonical package paths. It does
+not compile Rust or rediscover CRT DLLs on the packaging runner. The captured CRT
+also travels beside the harness. Locked `npm ci --ignore-scripts` supplies the
+pinned NSIS toolchain without rebuilding Electron; the existing native payload
+regressions and install/backend/uninstall smoke remain mandatory.
+
+Each compilation job uses one `rust-cache` action, `cache-bin: false`, and a
+separate release cache key. Cache cleanup cannot compete over Cargo-bin on the
+same runner. Dependency caches do not replace explicit binary artifact transfers.
+Final installer/archive uploads use compression level zero to avoid recompressing
+existing compressed payloads; intermediate raw binaries retain normal compression.
+This changes scheduling and compression work; measured wall-time improvement still
+requires the nonpublishing validation run.
+
+Internal transfer artifacts deliberately lack the `workspacer-` prefix used by
+the nightly publisher. Only the final `workspacer-native-windows` artifact joins
+the release downloads, and stable tags attach the unsigned native installer to
+the existing draft. The nightly notes include its direct download link. The
+current separate unsigned artifact is
 `Workspacer-Native-Rust-Preview-Setup-<version>-x64.exe`; the nightly asset gate
 now requires that exact naming family. Native updates remain manual and emit no
 Electron update metadata. The Electron Windows download excludes native assets.

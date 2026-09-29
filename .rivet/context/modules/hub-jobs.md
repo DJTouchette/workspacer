@@ -122,7 +122,7 @@ same-size edits within one timestamp tick must still be detected.
 
 Unreadable files and invalid JSON preserve the last good in-memory schedule.
 An individually invalid job in otherwise parseable JSON is dropped with a log.
-`{"jobs": []}` explicitly clears the schedule. Missing IDs and timestamps are
+`{"jobs": []}` is the recommended explicit clear. Actual Go decoding also accepts `{"jobs": null}`, `{}`, and a root `null` as valid empty schedules; the Rust port preserves those inputs. Missing, empty, whitespace-only, truncated, or otherwise invalid documents retain the last good schedule. Missing IDs and timestamps are
 filled in, duplicate IDs split, and completed rows written back so later reloads
 do not mint fresh identities. Only arming/trigger changes reschedule existing
 rows; a rename does not reanchor an interval. Interval bookkeeping is in memory;

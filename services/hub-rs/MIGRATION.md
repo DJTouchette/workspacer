@@ -29,8 +29,9 @@ processes because they are external integrations.
 The shared service graph and standalone launcher are implemented. The current
 work is client/build cutover, running preserved end-to-end assertions against
 Rust, reviewing source-by-source replacement evidence, and platform validation.
-Desktop, native local mode and TUI startup now select Rust; these changed defaults
-are being developed directly on `main` and have not been released. Native launches without
+Desktop, native local mode and TUI startup now select Rust. A testing nightly
+was published on 2026-09-29 from `1bf2f53aeff4f08e5a65f0a58d5b42908269d908`.
+This is explicitly an incomplete-migration preview. Native launches without
 `--local` still attach to an existing service.
 
 The original Go code remains a reference until the completion gates pass. The
@@ -41,10 +42,14 @@ completed migration.
 
 The native Windows artifact uses the isolated Rust Preview identity/data folder.
 Release packaging now selects that artifact and a standalone Rust server bundle.
-No nightly containing these changes has been published. Linux packaging and the
-three default Docker image builds/fresh-volume boots have passed CI checkpoints.
-Windows install and the latest macOS standalone build still need a green rerun;
-all publication gates will be checked against the final source revision.
+[Release run 36596973339](https://github.com/DJTouchette/workspacer/actions/runs/36596973339)
+successfully built Electron Windows/macOS/Linux packages, all three standalone
+bundles and the Native Rust Preview Windows installer, including its install,
+backend and uninstall smoke. The live nightly tag and assets were verified against
+the candidate SHA. Native macOS/Linux installers are not part of that workflow.
+The three default Docker image builds/fresh-volume boots passed earlier CI
+checkpoints; final integrated revision checks remain required. See
+[CUTOVER_STATUS.md](CUTOVER_STATUS.md) for all 14 gates and evidence boundaries.
 
 Implemented migration slices include config and profile persistence, saved
 sessions/layouts, usage preferences, filesystem access, Git review, search,
@@ -69,15 +74,16 @@ end-to-end test exercises launch through the real WebSocket adapter, a fake
 provider process, authenticated MCP, first-message acknowledgement, progress and
 completion wakes, and process cleanup. Paired remote dispatch now has durable receiver leases and restart tests. The
 outbound execution-provider relay and its separate upstream MCP caller are
-being integrated; remaining client behavior and packaging still need work.
+implemented; remaining source review and final integration evidence are part
+of the pending federation and remote-worker gate.
 Tests exercise the corresponding shared fixtures plus live temporary stores,
 repositories, child processes and an embedded claudemon. This list does not
 claim full parity for any unreviewed legacy file in the inventory.
 
-Native integration is opt-in with the `rust-hub` Cargo feature. A GUI build can
+Native integration uses the default `rust-hub` Cargo feature. A GUI build can
 use `--rust-local-dir <isolated-directory>` to run the Rust services with no Go
 children. Local launching is supported when the complete Rust service graph is ready;
-several other service families remain unavailable.
+unreviewed source inventory must not be interpreted as complete service parity.
 `make test-native-rust` exercises the non-GUI controller/protocol suites and the
 in-process native adapter. It is not a visual or cross-platform UI test.
 
@@ -87,6 +93,8 @@ in-process native adapter. It is not a visual or cross-platform UI test.
 make test-hub-rust       # Rust runtime, transports, lifecycle and contract tests
 make test-hub-parity     # same fixtures against the actual Go bus
 make hub-migration      # inventory status and source-drift checks
+python3 scripts/hub-migration.py backlog  # pending review groups, not missing implementation counts
+python3 scripts/hub-migration.py backlog --json --prefix services/hub/cmd/brain/
 make test-native-rust   # native protocol/controller + in-memory hub adapter
 python3 scripts/hub-migration.py ready  # completion gate, currently fails
 ```
@@ -101,7 +109,7 @@ uses an existing credential and prints its assigned address. Add `--database`,
 local services. No legacy process is launched. `Hub::start(Options::default())`
 starts without sockets. `backend::Backend` owns both Rust engines.
 
-## Current integration checkpoint (2026-09-28)
+## Earlier integration checkpoint (2026-09-28)
 
 The combined crate passes `cargo check --all-targets` after wiring provider caller
 proofs, the upstream MCP bridge, and the embedded conversation/statusline producer.
@@ -114,12 +122,12 @@ resumable-session discovery, review evidence, brief boards, analytics, terminal
 leases, quiescence and machine-power policy, persistent push subscriptions and
 HTTP/PWA assets. Native controller/protocol/embedding tests and a full GUI
 feature compile have passed at earlier checkpoints; Windows process ownership
-has compile-only coverage locally. The preview workflow and isolated installer
-are prepared, but no release has been published.
+had compile-only coverage locally at that checkpoint. Subsequent Windows CI
+and installer smoke passed; the testing nightly publication is described above.
 
 The inventory remains deliberately conservative: unreviewed source rows and
 cutover gates are pending even when a Rust module implements some behavior.
-Production packaging still uses the old backend. Do not delete the reference
+Packaging now selects the Rust backend. Do not delete the reference
 implementation or announce migration completion until the compatibility and
 packaging gates have been reviewed and run against a fixed source revision.
 
@@ -127,7 +135,7 @@ packaging gates have been reviewed and run against a fixed source revision.
 its actual installed methods with the reference brain/catalog and hub registries.
 A mapped MCP name alone is not an implementation. The report explicitly does not
 claim behavioral parity. `make build-rust-backend` builds the service used by the
-opt-in Electron/TUI startup paths (`WORKSPACER_RUST_HUB=1`). Electron keeps its
+normal Electron/TUI startup paths. Electron keeps its
 existing provider services inside Electron and adopts the Rust hub's embedded MCP
 listener; it does not start a separate Go facade or private Node companion.
 

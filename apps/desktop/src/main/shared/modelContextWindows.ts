@@ -45,10 +45,10 @@ export const CONTEXT_WINDOWS: readonly WindowRow[] = [
   // marker. Before the generic claude row or their gauges read 5× too full.
   { match: 'fable', kind: 'contains', window: 1_000_000 },
   { match: 'mythos', kind: 'contains', window: 1_000_000 },
+  { match: 'claude-opus-5-5', kind: 'suffix', window: 1_000_000 },
   { match: 'gemini', kind: 'contains', window: 1_048_576 },
   { match: 'gpt-4.1', kind: 'contains', window: 1_047_576 },
-  // Table KNOWLEDGE, not a fallback: an unmarked Claude model really does hold
-  // 200k. The four places that spelled *unknown* 200_000 are gone.
+  // Retained baseline; specific verified model defaults precede this row.
   { match: 'claude', kind: 'contains', window: 200_000 },
   { match: 'gpt-5', kind: 'contains', window: 272_000 },
   { match: 'codex', kind: 'contains', window: 272_000 },
@@ -166,12 +166,16 @@ export function claudeArgvModel(selection: ModelSelection): string {
 }
 
 /** Models whose million-token window is inherent, not a selectable Claude
- * variant. They must never receive `[1m]`: unlike Opus/Sonnet, the bare model
+ * variant. They must never receive `[1m]`: the bare model
  * already selects its only window and Claude Code does not expose a decorated
  * alias for it. Shared argv fixture cases pin this list across TS, Rust and Go. */
 export function isClaudeInherentOneMillionModel(model: string): boolean {
   const identity = normalizeModelSelection(model).model.toLowerCase();
-  return identity.includes('fable') || identity.includes('mythos');
+  return (
+    identity.includes('fable') ||
+    identity.includes('mythos') ||
+    identity.endsWith('claude-opus-5-5')
+  );
 }
 
 /**
@@ -250,8 +254,7 @@ export function requestedWindowFor(model: string | null | undefined): number | n
   } catch {
     return null;
   }
-  const m = selection.model.toLowerCase();
-  if (selection.contextWindow === 1_000_000 || m.includes('fable') || m.includes('mythos')) {
+  if (selection.contextWindow === 1_000_000 || isClaudeInherentOneMillionModel(selection.model)) {
     return 1_000_000;
   }
   return null;

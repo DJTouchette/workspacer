@@ -1,0 +1,893 @@
+{
+  "scannerSha256": "17895a08226980104703cb21694a028c406ad6415f9e3902b157189b266f03f5",
+  "sources": {
+    "services/hub/cmd/brain/agent_collaboration_skills.go": "24b12841450d4649e94cfbb032565722257b1ad9a597951e23b3e07713b221e5",
+    "services/hub/cmd/brain/agent_collaboration_skills_generated.go": "2c57a9bad93ccba14ae5744e831fcfca76f892ed59f2465c1f3dcd3105841b24",
+    "services/hub/cmd/brain/agenthandoff.go": "c74559b0434629fa5ff132a0a6c6bebb86334de2fb25dafb0d730670884cf67c",
+    "services/hub/cmd/brain/agentops.go": "bd53cc9d957914c180e7174e5e3fe88211f530ebbca3e1853277b04246f307f3",
+    "services/hub/cmd/brain/blockwake.go": "bacfdf1e4f71741481d59f90a644d86236f87f1ca48b65cc057e2d69429a56dc",
+    "services/hub/cmd/brain/bootdoc.go": "5be14c253f2565618cf812bd701960712039698c1600b1dde3461f79b2ae90c3",
+    "services/hub/cmd/brain/brief.go": "1ec76e1c7259071aff820a8bec232a6936bff3744dae5cd2d1b7bb7b30e4fe02",
+    "services/hub/cmd/brain/briefboard.go": "59983b754d03aa1a0f08d11d97d8f96c719173d3260fe4cfaef72f6373b69e6d",
+    "services/hub/cmd/brain/briefcheck.go": "c8d04a826800e0d9ff8c7ac9ceb141f27866d2e12b8472d0e36efdf863012f89",
+    "services/hub/cmd/brain/briefresult.go": "dbb9a1e49e820445baac927a89faa7ea70433474ba5400b6cb5b24adf20263f4",
+    "services/hub/cmd/brain/bus.go": "a6301929ba468caa28e1127a65b12895cbac6d7addd6c2bfa5c2d56d44d93bfd",
+    "services/hub/cmd/brain/claudemon.go": "4748c24c6b7d02775f146ed70caf214fee3ac5229956996ff9b18a536432a776",
+    "services/hub/cmd/brain/config.go": "188aa33ac8e0ec096ba9135ecb44b3f4880b92ac1a63269be2d4c51cf36eb9b9",
+    "services/hub/cmd/brain/config_orphans.go": "4f307f5e6a9fbd7853680bcfa1247cf4d1186d909fafd3eacd2a83b76d438a1d",
+    "services/hub/cmd/brain/configlock.go": "a637b56066b6a7395d0cffb54eea504c2adff47ccc49989aafd75088996094b1",
+    "services/hub/cmd/brain/conversation.go": "c7be955be85a9872d5e491321f8ee00063752d4d3535d08dea5da97f249f72ab",
+    "services/hub/cmd/brain/desktophost.go": "04911263f55278b347bef41e87bac6feefbfcc165af4540e56e83801f5622eef",
+    "services/hub/cmd/brain/desktopruntime.go": "07ed2ed9246ad4e424335049c8812e86f89e620debdbf634e55ffac5429c251a",
+    "services/hub/cmd/brain/discovery.go": "d1d4275ede795e75bd83aa20f07502a8dbf6871db69e92de4883c7ca8936d837",
+    "services/hub/cmd/brain/dispatchlease.go": "bdd7ad4dcf8be323f30c366a79683928b875a7b583c1cd8bb8ac43e65753d5e5",
+    "services/hub/cmd/brain/dispatchparams.go": "6925459db14c3e8664fa73956c6d063efd8807c7ea95f43d9476011e53b88e52",
+    "services/hub/cmd/brain/dispatchreadiness.go": "009affefc023643a2fa6734a126ddc87237de2edfbbe5f290b5dac66827f0522",
+    "services/hub/cmd/brain/enrich.go": "cf06c74f88c670eba8418c5ecb891344fb7491463023a9119436ee1533e83c11",
+    "services/hub/cmd/brain/events.go": "334935299c5461998363f144475d91e1889bc3447622bbadff1e6c485cd38cc6",
+    "services/hub/cmd/brain/facade.go": "34c82fea1ed01932b6b8845d5aebf31fea99fd51f71fbdd370bed8864f3574a1",
+    "services/hub/cmd/brain/filewatch.go": "9701d1e18c1e6d947f500b763990c555504ece7d443f294319cdf74f60fcd8da",
+    "services/hub/cmd/brain/finishwake.go": "0b3309eed7571f9e3c4a0f5f33f756a7c07b22f593c4586042d9b1a14ac7eb53",
+    "services/hub/cmd/brain/fleet_workflows.go": "08be435cc56af5d81b9070afc32dab8cf437c89e688b8ec55d3e72ccd27f7d77",
+    "services/hub/cmd/brain/fleetmsg.go": "2837ade8594f7e01f7c586d119ab55a835f78c0f58350b26cadf2c3f71d4bf03",
+    "services/hub/cmd/brain/fleetpermissions.go": "6d66a5c1c1957f8a2ffd0298d963fd88ebfdc78ec888495c325c2290029698e2",
+    "services/hub/cmd/brain/fleetview.go": "9546561bbca1a77c086149fecbb32c467f4f535646a10ef2f9aec95e6a55147a",
+    "services/hub/cmd/brain/fsguard.go": "e0853619769687946280181aaa096374e4476c52815c4db849b2dc2322feddaa",
+    "services/hub/cmd/brain/fsops.go": "1db04ef311e80a33f6b3c7f2e9902e2408de37ce4436ea17aeb097c5a6da8801",
+    "services/hub/cmd/brain/git.go": "92fc0dbd541857613bcc6b41bbe9ee6c4b5ba61e07debdd5526cffae77a9aaf9",
+    "services/hub/cmd/brain/gitactions.go": "8a5ae198630b18a96a19b93180edda09f862265f1fffb56389609a1d885d69df",
+    "services/hub/cmd/brain/handlers.go": "2506b12a11a361ae4a0200efd6dd152d4b2b6c64b8b12d0bcbda4b60c6779f61",
+    "services/hub/cmd/brain/lastexit.go": "e028f694d95590ee28d8574700e48a35bb29cc8cdb281a4c6cafc57016432e2a",
+    "services/hub/cmd/brain/launchintegration.go": "a37d5a8ebb50a347a8ca69317e69b53b8931f5cb1c88d900450f7627b031b372",
+    "services/hub/cmd/brain/library.go": "6f2b0d28694630f0a64412996a3d08ed16c805d8b54efbd9ce70ecfa8527107d",
+    "services/hub/cmd/brain/librarywatch.go": "83b26a169af742c77732e3139f8d4992cf6c65755b95ed9d6be8edae301c6f8b",
+    "services/hub/cmd/brain/livecontrol.go": "a2246fe3e70d0d610aa0d1a2f568b38013e16271b081017efd19cef96f99eccc",
+    "services/hub/cmd/brain/main.go": "6ae21437197b86a9fe381272bc2069270f611bd4c124f5788468c32563cc9f7c",
+    "services/hub/cmd/brain/managerrequests.go": "e90855255f47a2b59a9cf18b06d221f6b5dabe2d07b3951fcdfeabf1679ab6e2",
+    "services/hub/cmd/brain/models.go": "3ec148fd723b859491026adfb9c08f427d00f7a3c49347111eac093dba817077",
+    "services/hub/cmd/brain/pathmatch_other.go": "89f036761914213c1c63e03d90b1cf124f52d5c1912ada6f444e6135354d5d0e",
+    "services/hub/cmd/brain/pathmatch_windows.go": "c1206b932923b54e9c8d78302fdfb53d912f5c80611d43e661e050032b22e8ac",
+    "services/hub/cmd/brain/permissionmode.go": "a23a239299096189f11f908d4baf824c651215b26805653d3893f17b601f7c47",
+    "services/hub/cmd/brain/profiles.go": "52641e61217e1e84d025df85793f312f9e211485d16f128b40ceb75a2418b1ad",
+    "services/hub/cmd/brain/providers.go": "7536cb97ba1edfa17cdf4d7f0b4d01d0b9282cec6af81406b1b8c039e97b78b8",
+    "services/hub/cmd/brain/readimage.go": "60795e266a3b0e8c57b3a02bde211dcdfe7bca7cf64d2e5279bb7dac24a978ed",
+    "services/hub/cmd/brain/recent.go": "dbd1d48920d545564b851bcbb6ae4d90e62254ff81c7bb1a921360f1b66a5a35",
+    "services/hub/cmd/brain/remotedispatch.go": "256fd076bf30cd4adb59a3cfe9686a5a3eab1bd12126c65f2f5477782611c2df",
+    "services/hub/cmd/brain/replacementhost.go": "fb71b1e0207aa47ef2390e93d6b0737d437712204f90e09eeea3081132336eab",
+    "services/hub/cmd/brain/search.go": "68eeb64360b20bf08e84a885d9eea64b4ac6e5487e386426307afb17dc352542",
+    "services/hub/cmd/brain/shellallow.go": "4aaafbde64f377a50f0fc0a598881936207d8a20839523c40193c724ae1b503c",
+    "services/hub/cmd/brain/slug.go": "27a5463c6dc165557c1056a4115b42cfd699f4dbbd5dacc4fb7d581e040ca8e9",
+    "services/hub/cmd/brain/store.go": "5c26e7c0d864e03b0f8f642e4ecb1af37ab62478782a6088ffc902c572b7adf4",
+    "services/hub/cmd/brain/stores.go": "1d8f639241c09033664975e831acdc208338a6bf64b216a169ac6401595de73e",
+    "services/hub/cmd/brain/terminal.go": "13de5dcc29aa4875503d63280772cfb1c5f6b93a71c4dc3b4f99cffab03a525c",
+    "services/hub/cmd/brain/visibility.go": "7b3928428f64b70634d23d11ab896623b89317c3f10a720ded4a1f48639537e5",
+    "services/hub/cmd/brain/visibleterm.go": "13cbebe2265f3ecbe890ee2d1cfb3896fe2bed89761f09df4d46edb14a6cff7a",
+    "services/hub/cmd/brain/windows.go": "42a6fb749a314c912413e4a1a9a60a4ec7af32433d84dbedf8fb3a7fc51323d5",
+    "services/hub/cmd/brain/workerescalation.go": "78ec9ad8a0d7e6d0423cff4bee51258976e81e140e462755fe60615264791a3d",
+    "services/hub/cmd/brain/workerfailure.go": "d3694593926c7ccf59c55feefe04e1c94c04cd6623e196fe66e2811f09548b47"
+  },
+  "vocabularySha256": "d171fa35bf15885e5119342e71e37b690e6a396c09a3a0bc64a6e6e8e9fa2908",
+  "dangerousBindings": 84,
+  "methods": {
+    "agents.close": {
+      "fields": [
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "agents.dispatchPrepare": {
+      "fields": [
+        "cwd",
+        "dispatchId",
+        "ownerKey",
+        "protocol",
+        "provider",
+        "remoteOrigin",
+        "worktree"
+      ],
+      "dangerous": [
+        "cwd",
+        "remoteOrigin"
+      ],
+      "opaque": false
+    },
+    "agents.dispatchReplay": {
+      "fields": [
+        "ackedSeq",
+        "dispatchId",
+        "originKey"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "agents.list": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "agents.notifyWhen": {
+      "fields": [
+        "contextUsedPct",
+        "idleSeconds",
+        "notifySessionId",
+        "sessionId",
+        "tokens",
+        "usd"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "agents.orphans": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "agents.reparent": {
+      "fields": [
+        "fromSessionId",
+        "toSessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "agents.reportProgress": {
+      "fields": [
+        "callerSessionId",
+        "needsDecision",
+        "note"
+      ],
+      "dangerous": [
+        "callerSessionId",
+        "note"
+      ],
+      "opaque": false
+    },
+    "agents.sendMessage": {
+      "fields": [
+        "fromSessionId",
+        "sessionId",
+        "text"
+      ],
+      "dangerous": [
+        "text"
+      ],
+      "opaque": false
+    },
+    "agents.spawn": {
+      "fields": [
+        "capability",
+        "cols",
+        "contextWindow",
+        "cwd",
+        "decisionId",
+        "dispatchId",
+        "effort",
+        "escalationScrubbed",
+        "exactModel",
+        "label",
+        "launchIntegrationGranted",
+        "launchIntegrationId",
+        "manager",
+        "mcpFacade",
+        "mcpItemIds",
+        "message",
+        "model",
+        "modelIdentity",
+        "ownerKey",
+        "parentSessionId",
+        "permissionMode",
+        "pluginTools",
+        "profileGranted",
+        "profileId",
+        "protocol",
+        "provider",
+        "remoteOrigin",
+        "resumeSessionId",
+        "role",
+        "rows",
+        "skipPermissions",
+        "toolScope",
+        "transport",
+        "workflowStepId",
+        "yoloGranted"
+      ],
+      "dangerous": [
+        "cwd",
+        "effort",
+        "launchIntegrationGranted",
+        "launchIntegrationId",
+        "mcpItemIds",
+        "permissionMode",
+        "profileId",
+        "remoteOrigin",
+        "skipPermissions"
+      ],
+      "opaque": false
+    },
+    "analytics.recent": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "analytics.summary": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "app.getCwd": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "app.supervisorHome": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "brain.info": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "brief.append": {
+      "fields": [
+        "line",
+        "project",
+        "result",
+        "section",
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "brief.archive": {
+      "fields": [
+        "count",
+        "keep",
+        "project",
+        "section"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "brief.check": {
+      "fields": [
+        "project"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "claude.answer": {
+      "fields": [
+        "answerKinds",
+        "answers",
+        "option",
+        "sessionId",
+        "text"
+      ],
+      "dangerous": [
+        "answers",
+        "option",
+        "text"
+      ],
+      "opaque": false
+    },
+    "claude.approve": {
+      "fields": [
+        "decision",
+        "reason",
+        "sessionId"
+      ],
+      "dangerous": [
+        "decision"
+      ],
+      "opaque": false
+    },
+    "claude.gate": {
+      "fields": [
+        "on",
+        "sessionId"
+      ],
+      "dangerous": [
+        "on"
+      ],
+      "opaque": false
+    },
+    "claude.handoffAgentBrief": {
+      "fields": [
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "claude.handoffBrief": {
+      "fields": [
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "claude.listModels": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "claude.profiles.add": {
+      "fields": [
+        "configDir",
+        "extraArgs",
+        "mcpItemIds",
+        "name"
+      ],
+      "dangerous": [
+        "configDir",
+        "extraArgs",
+        "mcpItemIds",
+        "name"
+      ],
+      "opaque": false
+    },
+    "claude.profiles.list": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "claude.profiles.remove": {
+      "fields": [
+        "id"
+      ],
+      "dangerous": [
+        "id"
+      ],
+      "opaque": false
+    },
+    "claude.profiles.update": {
+      "fields": [
+        "configDir",
+        "extraArgs",
+        "id",
+        "isDefault",
+        "mcpItemIds",
+        "name",
+        "updates",
+        "weight"
+      ],
+      "dangerous": [
+        "configDir",
+        "extraArgs",
+        "id",
+        "mcpItemIds",
+        "name",
+        "updates"
+      ],
+      "opaque": false
+    },
+    "claude.sessionsForDir": {
+      "fields": [
+        "cwd"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "claude.setEffort": {
+      "fields": [
+        "effort",
+        "sessionId"
+      ],
+      "dangerous": [
+        "effort"
+      ],
+      "opaque": false
+    },
+    "claude.setModel": {
+      "fields": [
+        "contextWindow",
+        "effort",
+        "model",
+        "modelIdentity",
+        "sessionId"
+      ],
+      "dangerous": [
+        "effort"
+      ],
+      "opaque": false
+    },
+    "claude.setPermissionMode": {
+      "fields": [
+        "mode",
+        "sessionId"
+      ],
+      "dangerous": [
+        "mode"
+      ],
+      "opaque": false
+    },
+    "claude.signal": {
+      "fields": [
+        "sessionId",
+        "signal"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "config.get": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "config.getPath": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "config.reload": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "config.save": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": true
+    },
+    "files.receiveUpload": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "fleet.dispatchCapabilities": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "fleetWorkflows.request": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "fs.listDir": {
+      "fields": [
+        "path"
+      ],
+      "dangerous": [
+        "path"
+      ],
+      "opaque": false
+    },
+    "fs.listEntries": {
+      "fields": [
+        "path"
+      ],
+      "dangerous": [
+        "path"
+      ],
+      "opaque": false
+    },
+    "fs.read": {
+      "fields": [
+        "path"
+      ],
+      "dangerous": [
+        "path"
+      ],
+      "opaque": false
+    },
+    "fs.readImage": {
+      "fields": [
+        "path"
+      ],
+      "dangerous": [
+        "path"
+      ],
+      "opaque": false
+    },
+    "fs.unwatch": {
+      "fields": [
+        "path",
+        "watchId"
+      ],
+      "dangerous": [
+        "path"
+      ],
+      "opaque": false
+    },
+    "fs.watch": {
+      "fields": [
+        "path",
+        "watchId"
+      ],
+      "dangerous": [
+        "path"
+      ],
+      "opaque": false
+    },
+    "fs.write": {
+      "fields": [
+        "contents",
+        "path"
+      ],
+      "dangerous": [
+        "path"
+      ],
+      "opaque": false
+    },
+    "git.commit": {
+      "fields": [
+        "cwd",
+        "message"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "git.commitDiff": {
+      "fields": [
+        "cwd",
+        "hash",
+        "path"
+      ],
+      "dangerous": [
+        "cwd",
+        "hash",
+        "path"
+      ],
+      "opaque": false
+    },
+    "git.commitNumstat": {
+      "fields": [
+        "cwd",
+        "hash"
+      ],
+      "dangerous": [
+        "cwd",
+        "hash"
+      ],
+      "opaque": false
+    },
+    "git.diff": {
+      "fields": [
+        "cwd",
+        "path",
+        "staged",
+        "untracked"
+      ],
+      "dangerous": [
+        "cwd",
+        "path"
+      ],
+      "opaque": false
+    },
+    "git.log": {
+      "fields": [
+        "cwd",
+        "limit"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "git.numstat": {
+      "fields": [
+        "cwd",
+        "staged"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "git.push": {
+      "fields": [
+        "cwd"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "git.stage": {
+      "fields": [
+        "cwd",
+        "path"
+      ],
+      "dangerous": [
+        "cwd",
+        "path"
+      ],
+      "opaque": false
+    },
+    "git.status": {
+      "fields": [
+        "cwd"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "git.unstage": {
+      "fields": [
+        "cwd",
+        "path"
+      ],
+      "dangerous": [
+        "cwd",
+        "path"
+      ],
+      "opaque": false
+    },
+    "layouts.delete": {
+      "fields": [
+        "id"
+      ],
+      "dangerous": [
+        "id"
+      ],
+      "opaque": false
+    },
+    "layouts.list": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "layouts.save": {
+      "fields": [
+        "id",
+        "name"
+      ],
+      "dangerous": [
+        "id",
+        "name"
+      ],
+      "opaque": false
+    },
+    "library.list": {
+      "fields": [
+        "cwd",
+        "id",
+        "kind"
+      ],
+      "dangerous": [
+        "cwd",
+        "id"
+      ],
+      "opaque": false
+    },
+    "library.remove": {
+      "fields": [
+        "cwd",
+        "id",
+        "kind",
+        "origin",
+        "scope"
+      ],
+      "dangerous": [
+        "cwd",
+        "id"
+      ],
+      "opaque": false
+    },
+    "library.save": {
+      "fields": [
+        "action",
+        "args",
+        "body",
+        "command",
+        "cwd",
+        "description",
+        "env",
+        "headers",
+        "id",
+        "kind",
+        "mcp",
+        "origin",
+        "resultSchema",
+        "scope",
+        "tags",
+        "title",
+        "type",
+        "url"
+      ],
+      "dangerous": [
+        "args",
+        "command",
+        "cwd",
+        "env",
+        "id",
+        "url"
+      ],
+      "opaque": false
+    },
+    "notifications.post": {
+      "fields": [
+        "body",
+        "title"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "providers.checkAll": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "providers.listModels": {
+      "fields": [
+        "cwd",
+        "provider"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "search.project": {
+      "fields": [
+        "caseSensitive",
+        "cwd",
+        "maxResults",
+        "query",
+        "regex",
+        "wholeWord"
+      ],
+      "dangerous": [
+        "cwd",
+        "query",
+        "regex"
+      ],
+      "opaque": false
+    },
+    "sessions.attachTerminal": {
+      "fields": [
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.conversation": {
+      "fields": [
+        "sessionId",
+        "sinceSeq"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.delete": {
+      "fields": [
+        "filename"
+      ],
+      "dangerous": [
+        "filename"
+      ],
+      "opaque": false
+    },
+    "sessions.detachTerminal": {
+      "fields": [
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.list": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.load": {
+      "fields": [
+        "filename"
+      ],
+      "dangerous": [
+        "filename"
+      ],
+      "opaque": false
+    },
+    "sessions.recent": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.save": {
+      "fields": [
+        "activeAgentId",
+        "activeTabId",
+        "agents",
+        "name",
+        "tabs"
+      ],
+      "dangerous": [
+        "name"
+      ],
+      "opaque": false
+    },
+    "sessions.snapshot": {
+      "fields": [
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.snapshots": {
+      "fields": [],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.subagentConversation": {
+      "fields": [
+        "agentId",
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.terminalInput": {
+      "fields": [
+        "bytesB64",
+        "data",
+        "sessionId"
+      ],
+      "dangerous": [
+        "bytesB64",
+        "data"
+      ],
+      "opaque": false
+    },
+    "sessions.terminalKeepalive": {
+      "fields": [
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.terminalResize": {
+      "fields": [
+        "cols",
+        "rows",
+        "sessionId"
+      ],
+      "dangerous": [],
+      "opaque": false
+    },
+    "sessions.transcript": {
+      "fields": [
+        "cwd",
+        "sessionId"
+      ],
+      "dangerous": [
+        "cwd"
+      ],
+      "opaque": false
+    },
+    "terminals.create": {
+      "fields": [
+        "cols",
+        "cwd",
+        "rows",
+        "shell"
+      ],
+      "dangerous": [
+        "cwd",
+        "shell"
+      ],
+      "opaque": false
+    },
+    "terminals.open": {
+      "fields": [
+        "command",
+        "cwd",
+        "label",
+        "parentSessionId"
+      ],
+      "dangerous": [
+        "command",
+        "cwd"
+      ],
+      "opaque": false
+    }
+  }
+}

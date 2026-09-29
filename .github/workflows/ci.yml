@@ -242,6 +242,19 @@ jobs:
       - name: Test shared backend and standalone CLI
         run: cargo test --locked --no-fail-fast
 
+  capability-parameters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/capability-source-check
+      - name: Trace Rust capability parameter contracts
+        run: make check-hub-capability-parameters
+
   # Exercise actual Windows filesystem/process branches, plus the same
   # TypeScript boundary corpus used by the Electron client.
   containment-windows:

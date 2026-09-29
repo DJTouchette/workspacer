@@ -1,0 +1,37 @@
+{
+  "records": {
+    "services/hub/cmd/brain/capspec_params_test.go": {
+      "sha256": "17895a08226980104703cb21694a028c406ad6415f9e3902b157189b266f03f5",
+      "status": "ported",
+      "replacement": [
+        "tools/capability-source-check/src/index.rs",
+        "tools/capability-source-check/src/trace.rs",
+        "tools/capability-source-check/src/policy.rs",
+        "tools/capability-source-check/src/reference.rs",
+        "apps/desktop/tests/fixtures/capability-parameter-policy.json",
+        "tools/capability-source-check/go-reference.json"
+      ],
+      "tests": [
+        "tools/capability-source-check/tests/bindings.rs",
+        "tools/capability-source-check/tests/policy.rs",
+        "apps/desktop/src/main/services/brainParameterContract.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read original AST scan and all four assertion groups. TestBrainParamsAreClassified maps to typed Rust source tracing, explicit per-binding decisions, unchanged independent vocabulary, six hop-specific canaries and original Go84 per-method field closure. The optional stdlib Go oracle captures the original algorithm plus scanner/source/vocabulary SHA256; routine Rust checking invokes no Go toolchain.",
+          "TestInertPathBearingMethodsBindNothing maps to the Rust policy prohibition on caller fields or opaque payloads for path-bearing inert methods. Existing TS checks retain actual canonicalization helpers and parameter-free inert source registrations.",
+          "TestInertMethodsAreActuallyRegistered maps to brainParameterContract registry closure across Rust and retained desktop registrations, including negative phantom-inert and removed-real-registration mutations. Full/catalog methods remain classified and agents.spawn cwd remains deliberately ambient.",
+          "TestBrainOpaquePayloadHandlersAreClassified is strengthened to explicit method and payload-path opaqueDecisions. A decision for an unrelated name cannot discharge an opaque pricing overrides map; negative policy tests pin this.",
+          "Original scanner parseBrain/jsonTagsOf/paramsBoundIn/literalIndexKeys/carriesCallerParams responsibilities map to production-only AST indexing, inherited test-module exclusion, serde nested/alias/skip fields, actual caller helper provenance, literal map reads, and separately visible opaque/unresolved evidence. Fixtures exclude response decoding and string-literal decoys, retain unknown input receiver failures, and separate binary imports from library imports.",
+          "Validation on 2026-09-29: isolated scanner15 tests passed (11 tracing,4 policy), TypeScript parameter suites19 passed, cargo fmt check and git diff check passed. Actual repository --check passed122 methods,126 current dangerous bindings,13 explicitly reviewed opaque methods and zero errors; every original84 Go dangerous binding and source hash verified. The optional Go oracle --check independently reproduced the capture. Logs: /tmp/workspacer-capability-audit-final.json and /tmp/workspacer-capability-tests-final.log."
+        ],
+        "intentionalChanges": [
+          "Original Go scanner flattened nested tags and bounded r.helper walks at depth3. Rust tracks nested paths and typed/local closure/receiver helpers; explicit recursion is opaque and depth exhaustion remains unresolved. Unknown match alternatives are conservatively joined instead of treating a default literal as certain.",
+          "Newly detected Rust-only nested or suspicious spellings require sourceParameterDecisions with actual field evidence, preserving the older TypeScript vocabulary-only decision invariant. Additional nested opaque scope decisions supplement individual dangerous fields rather than expanding runtime grants.",
+          "Original Go production inputs stay present as provenance-backed behavior references until cutover; deleting or changing them deliberately requires reviewing the reference capture. This review does not mark cutover gates complete."
+        ]
+      }
+    }
+  }
+}

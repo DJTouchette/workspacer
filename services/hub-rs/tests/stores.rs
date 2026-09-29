@@ -330,13 +330,15 @@ fn collision_at_a_symlink_slot_never_falls_back_to_overwriting_the_first_session
 
 #[test]
 fn selected_session_filename_shared_contract() {
+    #[path = "support/sweepguard.rs"]
+    mod sweepguard;
     use workspacer_hub::services::paths;
     let corpus: Value = serde_json::from_str(include_str!(
         "../../../contracts/path-containment-cases.json"
     ))
     .unwrap();
     let rows = corpus["sessionFilenames"]["cases"].as_array().unwrap();
-    assert!(rows.len() >= 12);
+    let mut tally = sweepguard::Tally::default();
     for row in rows {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
@@ -366,6 +368,7 @@ fn selected_session_filename_shared_contract() {
             }
         }
         let result = paths::selected_path(&sessions, row["filename"].as_str().unwrap());
+        tally.ran(row["expect"].as_str().unwrap());
         if row["expect"] == "accept" {
             assert_eq!(
                 result.unwrap(),
@@ -409,4 +412,7 @@ fn selected_session_filename_shared_contract() {
             }
         }
     }
+    tally
+        .require_corpus("selected session filenames", 12, 3, 9)
+        .unwrap();
 }

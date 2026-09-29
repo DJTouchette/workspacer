@@ -52,6 +52,99 @@ fn tool_value(result: &Value) -> Value {
 }
 
 #[tokio::test]
+async fn modern_and_legacy_catalogs_have_private_cache_hints_and_preserve_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let tokens = root.path().join("tokens.json");
+    let view = auth::mint(&tokens, Scope::View, "catalog viewer").unwrap();
+    let mut options = Options::default()
+        .handler("app.getCwd", |_, _| async { Ok(json!("/fixture")) })
+        .handler("fs.write", |_, _| async { Ok(json!(true)) });
+    options.control_plane_only = true;
+    options.token = "catalog-owner".into();
+    options.scoped_tokens = Some(tokens);
+    options.mcp_listen = Some("127.0.0.1:0".parse().unwrap());
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let address = match *hub.handle().status().borrow() {
+        Status::Ready {
+            mcp_address: Some(address),
+            ..
+        } => address,
+        _ => panic!("missing MCP listener"),
+    };
+    let http = reqwest::Client::new();
+    for version in ["2026-07-28", "2025-11-25", "2025-06-18"] {
+        for (token, can_write) in [("catalog-owner", true), (view.token.as_str(), false)] {
+            for (method, field) in [
+                ("server/discover", "supportedVersions"),
+                ("tools/list", "tools"),
+                ("prompts/list", "prompts"),
+                ("resources/list", "resources"),
+                ("resources/templates/list", "resourceTemplates"),
+            ] {
+                let params = if version == "2026-07-28" || method == "server/discover" {
+                    json!({"_meta": {
+                        "io.modelcontextprotocol/protocolVersion": version,
+                        "io.modelcontextprotocol/clientInfo": {"name":"catalog-contract", "version":"1"},
+                        "io.modelcontextprotocol/clientCapabilities": {}
+                    }})
+                } else {
+                    json!({})
+                };
+                let response = http
+                    .post(format!("http://{address}/mcp"))
+                    .bearer_auth(token)
+                    .header("accept", "application/json, text/event-stream")
+                    .header("MCP-Protocol-Version", version)
+                    .header("Mcp-Method", method)
+                    .json(&json!({"jsonrpc":"2.0", "id":1, "method":method, "params":params}))
+                    .send()
+                    .await
+                    .unwrap();
+                let body = result(response).await;
+                assert!(body.get("error").is_none(), "{version} {method}: {body}");
+                let value = &body["result"];
+                assert_eq!(value["ttlMs"], 0, "{version} {method}: {body}");
+                assert_eq!(value["cacheScope"], "private", "{version} {method}: {body}");
+                let rows = value[field]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{method}: {body}"));
+                if method == "tools/list" {
+                    assert!(rows.iter().any(|tool| tool["name"] == "get_host_cwd"));
+                    assert_eq!(
+                        rows.iter().any(|tool| tool["name"] == "write_file"),
+                        can_write
+                    );
+                }
+            }
+            let mut params = json!({"name":"get_host_cwd", "arguments":{}});
+            if version == "2026-07-28" {
+                params["_meta"] = json!({
+                    "io.modelcontextprotocol/protocolVersion": version,
+                    "io.modelcontextprotocol/clientInfo": {"name":"catalog-contract", "version":"1"},
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                });
+            }
+            let response = http
+                .post(format!("http://{address}/mcp"))
+                .bearer_auth(token)
+                .header("accept", "application/json, text/event-stream")
+                .header("MCP-Protocol-Version", version)
+                .header("Mcp-Method", "tools/call")
+                .header("Mcp-Name", "get_host_cwd")
+                .json(&json!({"jsonrpc":"2.0", "id":2, "method":"tools/call", "params":params}))
+                .send()
+                .await
+                .unwrap();
+            let body = result(response).await;
+            assert!(body.get("error").is_none(), "{version} tools/call: {body}");
+            assert_eq!(tool_value(&body), json!("/fixture"));
+        }
+    }
+    hub.shutdown().unwrap();
+}
+
+#[tokio::test]
 async fn explicit_guest_policy_is_live_scoped_and_never_fallback_for_bad_credentials() {
     use std::sync::{
         Arc,

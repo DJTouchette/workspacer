@@ -32,6 +32,18 @@ fn normalize(pattern: &str) -> Result<String> {
             let Some(next) = rest[1..].chars().next() else {
                 bail!("trailing regex escape")
             };
+            if matches!(next, 'p' | 'P' | 'x') && rest[2..].starts_with('{') {
+                // These braces belong to one escape, not a repetition token.
+                let end = rest
+                    .find('}')
+                    .ok_or_else(|| anyhow::anyhow!("unclosed regex escape"))?;
+                out.push_str(&rest[..=end]);
+                offset += end + 1;
+                if class {
+                    first = false;
+                }
+                continue;
+            }
             if next == 'Q' {
                 ensure!(
                     !class,
@@ -129,6 +141,23 @@ fn normalize(pattern: &str) -> Result<String> {
             class = true;
             first = true;
         }
+        if c == '{' {
+            if let Some(end) = repetition_end(rest) {
+                out.push_str(&rest[..=end]);
+                offset += end + 1;
+            } else {
+                // Go treats a malformed repetition shape as a literal '{'.
+                // Well-shaped excessive/reversed bounds remain parser errors.
+                out.push_str(r"\{");
+                offset += 1;
+            }
+            continue;
+        }
+        if c == '}' {
+            out.push_str(r"\}");
+            offset += 1;
+            continue;
+        }
         // Captures are not observed by these boolean guards. Converting valid
         // named groups also preserves Go's allowance of duplicate/digit names.
         if let Some(prefix) = ["(?P<", "(?<"]
@@ -151,6 +180,20 @@ fn normalize(pattern: &str) -> Result<String> {
         offset += c.len_utf8();
     }
     Ok(out)
+}
+fn repetition_end(rest: &str) -> Option<usize> {
+    let end = rest.find('}')?;
+    let body = &rest[1..end];
+    let integer = |text: &str| {
+        !text.is_empty()
+            && text.bytes().all(|byte| byte.is_ascii_digit())
+            && (text.len() == 1 || !text.starts_with('0'))
+    };
+    let valid = match body.split_once(',') {
+        Some((min, max)) => integer(min) && (max.is_empty() || integer(max)),
+        None => integer(body),
+    };
+    valid.then_some(end)
 }
 fn parse(pattern: &str) -> Result<Ast> {
     Ok(ast::parse::Parser::new().parse(pattern)?)
@@ -356,7 +399,7 @@ mod tests {
         let cases: serde_json::Value =
             serde_json::from_str(include_str!("go_regex_cases.json")).unwrap();
         let cases = cases["cases"].as_array().unwrap();
-        assert!(cases.len() >= 63, "guard compatibility matrix shrank");
+        assert!(cases.len() >= 79, "guard compatibility matrix shrank");
         for case in cases {
             let pattern = case["pattern"].as_str().unwrap();
             if case["invalid"] == true {

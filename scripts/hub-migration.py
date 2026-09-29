@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,9 +93,30 @@ def apply_review(manifest, plan, live):
     manifest["files"].update(updates)
 
 
+def backlog(manifest, source_prefix=""):
+    """Report ledger work by legacy package, without claiming unported behavior."""
+    groups = defaultdict(list)
+    for source, row in sorted(manifest["files"].items()):
+        if row.get("status") == "pending" and source.startswith(source_prefix):
+            groups[Path(source).parent.as_posix()].append(source)
+    return {
+        "pending_files": sum(len(paths) for paths in groups.values()),
+        "packages": [
+            {"path": package, "pending_files": len(paths), "files": paths}
+            for package, paths in sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
+        ],
+        "pending_cutover": {
+            name: row for name, row in sorted(manifest.get("cutover", {}).items())
+            if row.get("status") != "verified"
+        },
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["refresh", "status", "check", "ready", "record", "record-review"])
+    parser.add_argument("command", choices=["refresh", "status", "backlog", "check", "ready", "record", "record-review"])
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable backlog (backlog only)")
+    parser.add_argument("--prefix", default="", help="Filter pending source paths (backlog only)")
     parser.add_argument("--plan", type=Path, help="Reviewed per-file JSON evidence with current source hashes")
     parser.add_argument("--source")
     parser.add_argument("--replacement", action="append", default=[])
@@ -102,7 +124,19 @@ def main():
     parser.add_argument("--retire", action="store_true", help="Record an architectural responsibility removed by the new ownership model")
     parser.add_argument("--reason", help="Required explanation for architectural retirement")
     args = parser.parse_args()
+    if args.command != "backlog" and (args.json or args.prefix):
+        parser.error("--json and --prefix require backlog")
     manifest = read()
+    if args.command == "backlog":
+        report = backlog(manifest, args.prefix)
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"Pending ledger entries: {report['pending_files']} (not a count of missing implementations)")
+            for package in report["packages"]:
+                print(f"{package['pending_files']:4}  {package['path']}")
+            print("Pending cutover gates: " + ", ".join(report["pending_cutover"]))
+        return 0
     live = sources()
     records = manifest["files"]
     if args.command == "record-review":

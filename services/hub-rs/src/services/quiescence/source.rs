@@ -34,17 +34,28 @@ impl EvidenceSource for NativeSources {
         Box::pin(async move {
             let mut evidence = Evidence::unknown(chrono::Utc::now().timestamp_millis());
             let sessions = async {
-                let Some(engine) = &self.engine else {
-                    return Err("no embedded session provider".to_string());
-                };
                 tokio::time::timeout(
                     Duration::from_secs(10),
-                    engine.request(Command::Request {
-                        method: "GET".into(),
-                        path: "/sessions?state_only=true&include_archived=true&include_empty=true"
-                            .into(),
-                        payload: None,
-                    }),
+                    async {
+                        if let Some(engine) = &self.engine {
+                            engine.request(Command::Request {
+                                method: "GET".into(),
+                                path: "/sessions?state_only=true&include_archived=true&include_empty=true"
+                                    .into(),
+                                payload: None,
+                            }).await
+                        } else {
+                            // Hub-only/central deployments may receive their
+                            // session service from a registered provider. This
+                            // private reader never asks fleet.quiescence, so it
+                            // cannot recurse into the watcher. Its connection
+                            // is marked infrastructure by the owning broker.
+                            let client = crate::client::Client::connect_service(&self.hub).await?;
+                            let result = client.call("sessions.snapshots", json!({})).await;
+                            client.close();
+                            result
+                        }
+                    },
                 )
                 .await
                 .map_err(|_| "session provider timed out".to_string())?

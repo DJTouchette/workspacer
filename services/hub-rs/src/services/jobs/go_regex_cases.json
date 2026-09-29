@@ -318,6 +318,86 @@
       "pattern": "^\\p{greek}$",
       "text": "μ",
       "matches": true
+    },
+    {
+      "pattern": "^a{foo}$",
+      "text": "a{foo}",
+      "matches": true
+    },
+    {
+      "pattern": "^a{$",
+      "text": "a{",
+      "matches": true
+    },
+    {
+      "pattern": "^a{1$",
+      "text": "a{1",
+      "matches": true
+    },
+    {
+      "pattern": "^a{01}$",
+      "text": "a{01}",
+      "matches": true
+    },
+    {
+      "pattern": "^a{1,02}$",
+      "text": "a{1,02}",
+      "matches": true
+    },
+    {
+      "pattern": "^a{,2}$",
+      "text": "a{,2}",
+      "matches": true
+    },
+    {
+      "pattern": "^a{2,x}$",
+      "text": "a{2,x}",
+      "matches": true
+    },
+    {
+      "pattern": "^a}$",
+      "text": "a}",
+      "matches": true
+    },
+    {
+      "pattern": "^{foo}$",
+      "text": "{foo}",
+      "matches": true
+    },
+    {
+      "pattern": "^\\x{41}{2}$",
+      "text": "AA",
+      "matches": true
+    },
+    {
+      "pattern": "^\\p{L}{2}$",
+      "text": "éA",
+      "matches": true
+    },
+    {
+      "pattern": "^[{]a[}]$",
+      "text": "{a}",
+      "matches": true
+    },
+    {
+      "pattern": "^\\Q{1}\\E$",
+      "text": "{1}",
+      "matches": true
+    },
+    {
+      "pattern": "a{2,1}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "a{1,1001}",
+      "text": "",
+      "invalid": true
+    },
+    {
+      "pattern": "{2}",
+      "text": "",
+      "invalid": true
     }
   ]
 }

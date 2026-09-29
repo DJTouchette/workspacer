@@ -1,0 +1,250 @@
+//! Shared test policy, not runtime authority. Source gaps fail independently of
+//! vocabulary membership; a registered name is not a proof about its payload.
+use crate::Report;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Policy {
+    pub path_parameters: BTreeMap<String, String>,
+    pub method_decisions: BTreeMap<String, String>,
+    pub inert_methods: BTreeMap<String, String>,
+    pub parameter_decisions: BTreeMap<String, BTreeMap<String, Decision>>,
+    pub dangerous_names: BTreeMap<String, String>,
+    pub path_namespaces: Vec<String>,
+    #[serde(default)]
+    pub opaque_decisions: BTreeMap<String, BTreeMap<String, String>>,
+    #[serde(default)]
+    pub source_parameter_decisions: BTreeMap<String, BTreeMap<String, Decision>>,
+}
+#[derive(Deserialize)]
+pub struct Decision {
+    pub kind: String,
+    pub reason: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Surface {
+    pub full: Vec<String>,
+    pub catalog: Vec<String>,
+    pub architectural_retirements: BTreeMap<String, serde_json::Value>,
+}
+#[derive(Debug, Serialize)]
+pub struct Check {
+    pub methods: usize,
+    pub dangerous_bindings: usize,
+    pub opaque_methods: usize,
+    pub errors: Vec<String>,
+}
+fn folded(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c == 'ſ' {
+                's'
+            } else {
+                let mut lower = c.to_lowercase();
+                let first = lower.next().unwrap_or(c);
+                if lower.next().is_none() { first } else { c }
+            }
+        })
+        .collect()
+}
+fn words(value: &str) -> Vec<String> {
+    let chars: Vec<_> = value.chars().collect();
+    let mut result = Vec::new();
+    let mut current = String::new();
+    for (i, c) in chars.iter().copied().enumerate() {
+        if matches!(c, '_' | '-' | '.' | ' ') || c.is_numeric() {
+            if !current.is_empty() {
+                result.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        if c.is_uppercase()
+            && (i == 0
+                || !chars[i - 1].is_uppercase()
+                || chars.get(i + 1).is_some_and(|c| c.is_lowercase()))
+            && !current.is_empty()
+        {
+            result.push(std::mem::take(&mut current));
+        }
+        current.extend(c.to_lowercase());
+    }
+    if !current.is_empty() {
+        result.push(current)
+    }
+    result
+}
+impl Policy {
+    fn classified(&self, method: &str) -> bool {
+        self.path_parameters.contains_key(method)
+            || self.method_decisions.contains_key(method)
+            || self.inert_methods.contains_key(method)
+    }
+    fn decision(&self, method: &str, path: &str) -> bool {
+        let leaf = path.rsplit('.').next().unwrap_or(path);
+        if self
+            .path_parameters
+            .get(method)
+            .is_some_and(|p| folded(p) == folded(leaf))
+        {
+            return true;
+        }
+        self.parameter_decisions
+            .get(method)
+            .into_iter()
+            .chain(self.source_parameter_decisions.get(method))
+            .any(|rows| {
+                rows.iter().any(|(name, d)| {
+                    matches!(
+                        d.kind.as_str(),
+                        "path"
+                            | "filename"
+                            | "executable"
+                            | "argv"
+                            | "shell"
+                            | "env"
+                            | "url"
+                            | "port"
+                            | "id"
+                            | "regex"
+                            | "permission"
+                            | "inert"
+                    ) && !d.reason.trim().is_empty()
+                        && (folded(name) == folded(path) || folded(name) == folded(leaf))
+                })
+            })
+    }
+    pub fn check(
+        &self,
+        report: &Report,
+        surface: &Surface,
+        vocabulary: &serde_json::Value,
+    ) -> Check {
+        let mut out = Check {
+            methods: 0,
+            dangerous_bindings: 0,
+            opaque_methods: 0,
+            errors: Vec::new(),
+        };
+        if report.source_files == 0 || report.methods.len() < 100 {
+            out.errors
+                .push("source/registration population collapsed".into())
+        }
+        for issue in &report.unresolved_registrations {
+            out.errors.push(format!("unresolved registration: {issue}"))
+        }
+        let stems: BTreeSet<_> = vocabulary["stems"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .collect();
+        if stems.is_empty() {
+            out.errors
+                .push("empty dangerous-name stem vocabulary".into())
+        }
+        let golden: BTreeMap<String, String> =
+            serde_json::from_value(vocabulary["params"].clone()).unwrap_or_default();
+        if golden != self.dangerous_names || golden.is_empty() {
+            out.errors
+                .push("dangerous-name policy differs from independent golden".into())
+        }
+        let methods: BTreeSet<_> = surface.full.iter().chain(&surface.catalog).collect();
+        if methods.len() < 40 {
+            out.errors.push("brain surface population collapsed".into())
+        }
+        for method in methods {
+            if surface.architectural_retirements.contains_key(method) {
+                continue;
+            }
+            let Some(bound) = report.methods.get(method) else {
+                out.errors.push(format!("missing actual handler {method}"));
+                continue;
+            };
+            out.methods += 1;
+            if !self.classified(method) {
+                out.errors.push(format!("unclassified capability {method}"))
+            }
+            for field in &bound.fields {
+                let leaf = field.rsplit('.').next().unwrap_or(field);
+                let known = self
+                    .dangerous_names
+                    .keys()
+                    .any(|name| folded(name) == folded(leaf));
+                if known {
+                    out.dangerous_bindings += 1;
+                    if !self.decision(method, field) {
+                        out.errors
+                            .push(format!("unclassified caller binding {method}.{field}"))
+                    }
+                } else if words(leaf).iter().any(|word| stems.contains(word.as_str()))
+                    && !self.decision(method, field)
+                {
+                    out.errors
+                        .push(format!("unreviewed dangerous spelling {method}.{field}"))
+                }
+            }
+            if let Some(rows) = self.source_parameter_decisions.get(method) {
+                for field in rows.keys() {
+                    if !bound
+                        .fields
+                        .iter()
+                        .any(|actual| folded(actual) == folded(field))
+                    {
+                        out.errors.push(format!(
+                            "source decision lacks actual binding {method}.{field}"
+                        ));
+                    }
+                }
+            }
+            let path_inert = self.inert_methods.contains_key(method)
+                && self.path_namespaces.iter().any(|p| method.starts_with(p));
+            if path_inert && (!bound.fields.is_empty() || !bound.opaque.is_empty()) {
+                out.errors
+                    .push(format!("inert path method binds caller payload {method}"))
+            }
+            if !bound.opaque.is_empty() {
+                out.opaque_methods += 1;
+            }
+            for path in &bound.opaque_paths {
+                if !self.opaque_decisions.get(method).is_some_and(|rows| {
+                    rows.iter().any(|(reviewed, reason)| {
+                        !reason.trim().is_empty()
+                            && (reviewed == "$"
+                                || reviewed == path
+                                || path.starts_with(&format!("{reviewed}.")))
+                    })
+                }) {
+                    out.errors
+                        .push(format!("opaque caller path lacks decision {method}:{path}"));
+                }
+            }
+            for issue in &bound.unresolved {
+                out.errors.push(format!("unresolved {method}: {issue}"))
+            }
+        }
+        for (method, key) in [
+            ("terminals.create", "shell"),
+            ("sessions.load", "filename"),
+            ("claude.profiles.update", "configDir"),
+            ("sessions.terminalInput", "bytesB64"),
+            ("layouts.save", "name"),
+            ("sessions.save", "name"),
+        ] {
+            if !report
+                .methods
+                .get(method)
+                .is_some_and(|b| b.fields.iter().any(|p| p.rsplit('.').next() == Some(key)))
+            {
+                out.errors
+                    .push(format!("missing binding canary {method}.{key}"))
+            }
+        }
+        if out.opaque_methods == 0 {
+            out.errors.push("opaque payload coverage collapsed".into())
+        }
+        out
+    }
+}

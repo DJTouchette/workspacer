@@ -158,6 +158,28 @@ async fn ambiguous_job_fields_cannot_arm_or_bypass_a_context_guard() {
     let mut job = spec();
     job["action"] = json!({"kind":"spawn","spawn":{"cwd":"/project","prompt":"task","Context":[{"kind":"shell","shell":{"command":"echo no"},"skipIfEmpty":true}]}});
     assert!(service.call(&owner(), "jobs.upsert", job).is_err());
+    let mut job = spec();
+    job["propoſedBy"] = json!("unapproved author");
+    assert!(service.call(&owner(), "jobs.upsert", job).is_err());
+    for (key, value) in [
+        ("ſkipIfEmpty", json!(true)),
+        ("ſkipUnlessMatch", json!("never")),
+        ("Kind", json!("shell")),
+    ] {
+        let mut step = json!({"kind":"shell","shell":{"command":"fixture"}});
+        step[key] = value;
+        let mut job = spec();
+        job["action"] =
+            json!({"kind":"spawn","spawn":{"cwd":"/fixture","prompt":"task","context":[step]}});
+        assert!(
+            service.call(&owner(), "jobs.upsert", job).is_err(),
+            "ignored noncanonical context field {key}"
+        );
+    }
+    assert_eq!(
+        service.call(&owner(), "jobs.list", json!({})).unwrap()["jobs"],
+        json!([])
+    );
     hub.shutdown().unwrap();
 }
 

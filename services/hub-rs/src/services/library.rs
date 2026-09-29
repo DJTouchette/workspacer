@@ -646,21 +646,28 @@ pub(crate) fn install(
 }
 
 #[cfg(test)]
+#[path = "../../tests/support/sweepguard.rs"]
+mod sweepguard;
+
+#[cfg(test)]
 mod selected_directory_contract {
     use super::*;
-    #[test]
-    fn selected_library_item_directories_match_corpus() {
+    fn cases() -> Vec<Value> {
         let corpus: Value = serde_json::from_str(include_str!(
             "../../../../contracts/path-containment-cases.json"
         ))
         .unwrap();
-        let rows = corpus["libraryItemDirs"]["cases"].as_array().unwrap();
-        assert!(rows.len() >= 7);
-        for row in rows {
-            #[cfg(windows)]
-            if row["needsSymlinks"] == true {
-                continue;
-            }
+        corpus["libraryItemDirs"]["cases"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+    fn run_cases(
+        rows: &[Value],
+        create_link: impl Fn(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+    ) -> sweepguard::Tally {
+        let mut tally = sweepguard::Tally::default();
+        'case: for row in rows {
             let dir = tempfile::tempdir().unwrap();
             let root = std::fs::canonicalize(dir.path()).unwrap();
             for sub in ["home", "config/workspacer/library", "outside"] {
@@ -674,11 +681,13 @@ mod selected_directory_contract {
                 std::fs::create_dir_all(path.parent().unwrap()).unwrap();
                 std::fs::write(path, text.as_str().unwrap()).unwrap();
             }
-            #[cfg(unix)]
             for (name, target) in row["tree"]["symlinks"].as_object().into_iter().flatten() {
                 let link = root.join(name);
                 std::fs::create_dir_all(link.parent().unwrap()).unwrap();
-                std::os::unix::fs::symlink(root.join(target.as_str().unwrap()), link).unwrap();
+                if let Err(error) = create_link(&root.join(target.as_str().unwrap()), &link) {
+                    tally.skip(&format!("{}: needsSymlinks ({error})", row["name"]));
+                    continue 'case;
+                }
             }
             let service = Library::new(root.join("config/workspacer"));
             let cwd = root.join(row["cwd"].as_str().unwrap());
@@ -686,6 +695,7 @@ mod selected_directory_contract {
             // assert the real semantic refusal, never manufacture old layer names.
             let result =
                 service.guard(&root.join(row["item"].as_str().unwrap()), Some(&cwd), false);
+            tally.ran(row["expect"].as_str().unwrap());
             if row["expect"] == "accept" {
                 assert_eq!(
                     result.unwrap(),
@@ -703,6 +713,55 @@ mod selected_directory_contract {
                     row["name"]
                 );
             }
+        }
+        tally
+    }
+    fn create_link(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link)
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_dir(target, link)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (target, link);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "directory symlinks unavailable",
+            ))
+        }
+    }
+    #[test]
+    fn selected_library_item_directories_match_corpus() {
+        run_cases(&cases(), create_link)
+            .require_corpus("selected library directories", 7, 3, 4)
+            .unwrap();
+    }
+    #[test]
+    fn unavailable_symlink_privilege_cannot_make_library_corpus_green() {
+        let tally = run_cases(&cases(), |_, _| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "simulated host without symlink privilege",
+            ))
+        });
+        assert_eq!(
+            (tally.enumerated(), tally.executed(), tally.skipped),
+            (7, 5, 2)
+        );
+        let error = tally
+            .require_corpus("selected library directories", 7, 3, 4)
+            .unwrap_err();
+        for expected in [
+            "2 deny cases",
+            "needsSymlinks",
+            "simulated host",
+            "2 case(s) skipped",
+        ] {
+            assert!(error.contains(expected), "{error}");
         }
     }
 }

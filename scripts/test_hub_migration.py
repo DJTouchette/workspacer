@@ -1,4 +1,4 @@
-"""Deletion evidence must reject stale or incomplete review batches atomically."""
+"""Migration reporting stays read-only; stale review batches fail atomically."""
 import copy
 import importlib.util
 from pathlib import Path
@@ -12,6 +12,29 @@ spec.loader.exec_module(migration)
 
 
 class ReviewTests(unittest.TestCase):
+    def test_backlog_filters_sources_without_hiding_cutover_or_mutating_evidence(self):
+        manifest = {"files": {
+            "services/hub/a/one.go": {"status": "pending"},
+            "services/hub/a/two_test.go": {"status": "pending"},
+            "services/hub/a/done.go": {"status": "ported"},
+            "services/hub/b/old.go": {"status": "retired"},
+            "services/hub/b/todo.go": {"status": "pending"},
+        }, "cutover": {
+            "deployment": {"status": "pending", "evidence": ["checkpoint"]},
+            "tui": {"status": "verified", "evidence": ["test"]},
+        }}
+        original = copy.deepcopy(manifest)
+        self.assertEqual(migration.backlog(manifest)["pending_files"], 3)
+        report = migration.backlog(manifest, "services/hub/a/")
+        self.assertEqual(report["pending_files"], 2)
+        self.assertEqual(report["packages"], [{
+            "path": "services/hub/a", "pending_files": 2,
+            "files": ["services/hub/a/one.go", "services/hub/a/two_test.go"],
+        }])
+        self.assertEqual(report["pending_cutover"], {"deployment": manifest["cutover"]["deployment"]})
+        self.assertEqual(manifest, original)
+        self.assertEqual(migration.backlog(manifest, "missing/")["packages"], [])
+
     def test_retained_parameter_fixture_is_inventoried_without_collecting_runtime_json(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

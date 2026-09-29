@@ -1,0 +1,230 @@
+{
+  "source": "services/hub/internal/jobs/docs_test.go",
+  "sourceSha256": "8508224eabd3aa034f6091ab1278933bdd875275747a1746d40547b8a3f14ae8",
+  "cases": [
+    {
+      "name": "weekday morning agent",
+      "spec": {
+        "name": "Morning PR sweep",
+        "enabled": true,
+        "trigger": {
+          "kind": "daily",
+          "at": "08:30",
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        },
+        "action": {
+          "kind": "spawn",
+          "spawn": {
+            "cwd": "/home/me/api",
+            "prompt": "Summarize new PRs."
+          }
+        }
+      }
+    },
+    {
+      "name": "minimal, no optional keys",
+      "spec": {
+        "name": "Ping",
+        "enabled": true,
+        "trigger": {
+          "kind": "manual"
+        },
+        "action": {
+          "kind": "shell",
+          "shell": {
+            "command": "echo hi"
+          }
+        }
+      }
+    },
+    {
+      "name": "interval shell with cwd",
+      "spec": {
+        "name": "Prune",
+        "enabled": true,
+        "trigger": {
+          "kind": "interval",
+          "everyMinutes": 240
+        },
+        "action": {
+          "kind": "shell",
+          "shell": {
+            "command": "git worktree prune",
+            "cwd": "/home/me/api"
+          }
+        }
+      }
+    },
+    {
+      "name": "once, RFC3339",
+      "spec": {
+        "name": "Kickoff",
+        "enabled": true,
+        "trigger": {
+          "kind": "once",
+          "once": "2026-09-01T09:00:00Z"
+        },
+        "action": {
+          "kind": "spawn",
+          "spawn": {
+            "cwd": "/home/me/api",
+            "prompt": "Start the migration.",
+            "provider": "claude",
+            "model": "opus"
+          }
+        }
+      }
+    },
+    {
+      "name": "guarded: only if the disk is full",
+      "spec": {
+        "name": "Disk pressure",
+        "enabled": true,
+        "trigger": {
+          "kind": "interval",
+          "everyMinutes": 60
+        },
+        "action": {
+          "kind": "spawn",
+          "spawn": {
+            "cwd": "/home/me/ops",
+            "prompt": "Disk is filling up:\n{{output}}\nFind the biggest offenders and propose cleanup.",
+            "context": [
+              {
+                "kind": "shell",
+                "shell": {
+                  "command": "df -h | awk '$5+0 > 90'"
+                },
+                "skipIfEmpty": true,
+                "ignoreExitCode": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "two steps, indexed placeholders",
+      "spec": {
+        "name": "Nightly digest",
+        "enabled": true,
+        "trigger": {
+          "kind": "daily",
+          "at": "22:00"
+        },
+        "action": {
+          "kind": "spawn",
+          "spawn": {
+            "cwd": "/home/me/api",
+            "prompt": "Commits:\n{{output.1}}\n\nSessions today:\n{{output.2}}\n\nWrite DIGEST.md.",
+            "context": [
+              {
+                "kind": "shell",
+                "shell": {
+                  "command": "git log --oneline --since=1.day"
+                },
+                "skipIfEmpty": true
+              },
+              {
+                "kind": "call",
+                "call": {
+                  "method": "sessions.list",
+                  "params": {}
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "blank id on create",
+      "spec": {
+        "id": "",
+        "name": "Blank id",
+        "enabled": true,
+        "trigger": {
+          "kind": "interval",
+          "everyMinutes": 15
+        },
+        "action": {
+          "kind": "call",
+          "call": {
+            "method": "notifications.post",
+            "params": {
+              "title": "tick"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "points at a script instead of inlining one",
+      "spec": {
+        "name": "Nightly tests",
+        "enabled": true,
+        "trigger": {
+          "kind": "daily",
+          "at": "02:00"
+        },
+        "action": {
+          "kind": "shell",
+          "shell": {
+            "command": "~/.workspacer/scripts/nightly-tests"
+          }
+        }
+      }
+    },
+    {
+      "name": "hand-written, no id and no timestamps",
+      "spec": {
+        "name": "Typed straight into jobs.json",
+        "enabled": true,
+        "trigger": {
+          "kind": "interval",
+          "everyMinutes": 90
+        },
+        "action": {
+          "kind": "shell",
+          "shell": {
+            "command": "~/.workspacer/scripts/sweep"
+          }
+        }
+      }
+    },
+    {
+      "name": "regex guard",
+      "spec": {
+        "name": "CI watch",
+        "enabled": true,
+        "trigger": {
+          "kind": "interval",
+          "everyMinutes": 30
+        },
+        "action": {
+          "kind": "spawn",
+          "spawn": {
+            "cwd": "/home/me/api",
+            "prompt": "CI says:\n{{output}}\nFix it.",
+            "context": [
+              {
+                "kind": "shell",
+                "shell": {
+                  "command": "gh run list --limit 5"
+                },
+                "skipUnlessMatch": "failure",
+                "ignoreExitCode": true
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

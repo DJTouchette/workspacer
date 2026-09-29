@@ -3,3 +3,5 @@
 # than weakening those guards with content or whitespace normalization.
 /contracts/**/*.json text eol=lf
 /services/hub/**/*.go text eol=lf
+/apps/desktop/tests/fixtures/capability-parameter-vocabulary.json text eol=lf
+/tools/capability-source-check/go-reference.json text eol=lf

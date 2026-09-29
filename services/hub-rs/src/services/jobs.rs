@@ -1,4 +1,8 @@
 //! Host-owned job specifications, scheduling and invocation history.
+#[cfg(test)]
+mod docs_tests;
+#[cfg(test)]
+mod execution_tests;
 mod go_regex;
 #[cfg(test)]
 mod reference_tests;
@@ -17,18 +21,71 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+const ACTION_FIELDS: &[&str] = &["kind", "spawn", "call", "shell"];
+const SPAWN_FIELDS: &[&str] = &[
+    "cwd",
+    "prompt",
+    "context",
+    "provider",
+    "model",
+    "effort",
+    "permissionMode",
+];
+const CONTEXT_FIELDS: &[&str] = &[
+    "kind",
+    "shell",
+    "call",
+    "skipIfEmpty",
+    "skipUnlessMatch",
+    "ignoreExitCode",
+];
+const SHELL_FIELDS: &[&str] = &["command", "cwd"];
+const CALL_FIELDS: &[&str] = &["method", "params"];
+const JOB_FIELDS: &[&str] = &[
+    "id",
+    "name",
+    "enabled",
+    "trigger",
+    "action",
+    "proposedBy",
+    "createdAt",
+    "updatedAt",
+];
+const TRIGGER_FIELDS: &[&str] = &["kind", "everyMinutes", "at", "days", "once"];
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Trigger {
+    #[serde(deserialize_with = "null_default")]
     pub kind: String,
     #[serde(skip_serializing_if = "is_zero")]
+    #[serde(deserialize_with = "null_default")]
     pub every_minutes: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "null_default")]
     pub at: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "nullable_days")]
     pub days: Vec<i32>,
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "null_default")]
     pub once: String,
+}
+fn null_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+fn nullable_days<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<i32>, D::Error> {
+    Ok(Option::<Vec<Option<i32>>>::deserialize(deserializer)?
+        .unwrap_or_default()
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect())
 }
 fn is_zero(n: &i64) -> bool {
     *n == 0
@@ -36,14 +93,21 @@ fn is_zero(n: &i64) -> bool {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Job {
+    #[serde(deserialize_with = "null_default")]
     pub id: String,
+    #[serde(deserialize_with = "null_default")]
     pub name: String,
+    #[serde(deserialize_with = "null_default")]
     pub enabled: bool,
+    #[serde(deserialize_with = "null_default")]
     pub trigger: Trigger,
     pub action: Value,
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "null_default")]
     pub proposed_by: String,
+    #[serde(deserialize_with = "null_default")]
     pub created_at: i64,
+    #[serde(deserialize_with = "null_default")]
     pub updated_at: i64,
 }
 impl Job {
@@ -54,16 +118,21 @@ impl Job {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Run {
+    #[serde(deserialize_with = "null_default")]
     pub job_id: String,
+    #[serde(deserialize_with = "null_default")]
     pub started_at: i64,
     #[serde(skip_serializing_if = "is_zero")]
+    #[serde(deserialize_with = "null_default")]
     pub finished_at: i64,
+    #[serde(deserialize_with = "null_default")]
     pub status: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "null_default")]
     pub detail: String,
 }
 pub fn validate(job: &Job) -> Result<()> {
-    check_keys(&job.action, &["kind", "spawn", "call", "shell"])?;
+    check_keys(&job.action, ACTION_FIELDS)?;
     if job.name.trim().is_empty() {
         bail!("job needs a name");
     }
@@ -93,18 +162,7 @@ pub fn validate(job: &Job) -> Result<()> {
     match job.action["kind"].as_str().unwrap_or("") {
         "spawn" => {
             let spawn = &job.action["spawn"];
-            check_keys(
-                spawn,
-                &[
-                    "cwd",
-                    "prompt",
-                    "context",
-                    "provider",
-                    "model",
-                    "effort",
-                    "permissionMode",
-                ],
-            )?;
+            check_keys(spawn, SPAWN_FIELDS)?;
             for key in [
                 "cwd",
                 "prompt",
@@ -126,17 +184,7 @@ pub fn validate(job: &Job) -> Result<()> {
                     bail!("at most 4 context steps (got {})", steps.len());
                 }
                 for (index, step) in steps.iter().enumerate() {
-                    check_keys(
-                        step,
-                        &[
-                            "kind",
-                            "shell",
-                            "call",
-                            "skipIfEmpty",
-                            "skipUnlessMatch",
-                            "ignoreExitCode",
-                        ],
-                    )?;
+                    check_keys(step, CONTEXT_FIELDS)?;
                     for key in ["skipIfEmpty", "ignoreExitCode"] {
                         optional_type(step, key, Value::is_boolean, "a boolean")?;
                     }
@@ -161,14 +209,14 @@ pub fn validate(job: &Job) -> Result<()> {
 fn validate_step(action: &Value) -> Result<()> {
     match string(action, "kind") {
         "shell" => {
-            check_keys(&action["shell"], &["command", "cwd"])?;
+            check_keys(&action["shell"], SHELL_FIELDS)?;
             optional_type(&action["shell"], "cwd", Value::is_string, "a string")?;
             if string(&action["shell"], "command").trim().is_empty() {
                 bail!("shell action needs a command");
             }
         }
         "call" => {
-            check_keys(&action["call"], &["method", "params"])?;
+            check_keys(&action["call"], CALL_FIELDS)?;
             let method = string(&action["call"], "method");
             if method.trim().is_empty() {
                 bail!("call action needs a method");
@@ -196,15 +244,28 @@ fn optional_type(
     Ok(())
 }
 fn check_keys(value: &Value, known: &[&str]) -> Result<()> {
+    // Go encoding/json uses Unicode SimpleFold for field matching. These are
+    // the non-ASCII members of ASCII fold sets; silently ignoring one could
+    // erase proposedBy or a context veto that the former decoder honored.
+    let folded = |key: &str| -> String {
+        key.chars()
+            .map(|c| match c {
+                'ſ' => 's',
+                'K' => 'k',
+                _ => c.to_ascii_lowercase(),
+            })
+            .collect()
+    };
     if let Some(map) = value.as_object() {
         let mut seen = BTreeSet::new();
         for key in map.keys() {
-            if !seen.insert(key.to_ascii_lowercase()) {
+            let lower = folded(key);
+            if !seen.insert(lower.clone()) {
                 bail!("ambiguous case-variant job field {key:?}");
             }
             if known
                 .iter()
-                .any(|canonical| canonical.eq_ignore_ascii_case(key) && *canonical != key)
+                .any(|canonical| canonical.to_ascii_lowercase() == lower && *canonical != key)
             {
                 bail!("non-canonical job field {key:?}");
             }
@@ -213,23 +274,8 @@ fn check_keys(value: &Value, known: &[&str]) -> Result<()> {
     Ok(())
 }
 fn check_job_keys(value: &Value) -> Result<()> {
-    check_keys(
-        value,
-        &[
-            "id",
-            "name",
-            "enabled",
-            "trigger",
-            "action",
-            "proposedBy",
-            "createdAt",
-            "updatedAt",
-        ],
-    )?;
-    check_keys(
-        &value["trigger"],
-        &["kind", "everyMinutes", "at", "days", "once"],
-    )
+    check_keys(value, JOB_FIELDS)?;
+    check_keys(&value["trigger"], TRIGGER_FIELDS)
 }
 fn string<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")
@@ -391,9 +437,16 @@ impl Service {
         #[derive(Deserialize, Default)]
         #[serde(default)]
         struct File {
-            jobs: Vec<Job>,
+            #[serde(deserialize_with = "null_default")]
+            jobs: Vec<Option<Job>>,
         }
         let parsed = serde_json::from_slice::<Value>(&raw);
+        if let Ok(value) = &parsed
+            && let Err(error) = check_keys(value, &["jobs"])
+        {
+            eprintln!("jobs: ambiguous spec; retaining last good schedule: {error}");
+            return;
+        }
         if let Ok(value) = &parsed
             && let Some(rows) = value["jobs"].as_array()
         {
@@ -404,8 +457,8 @@ impl Service {
                 }
             }
         }
-        let file = match serde_json::from_slice::<File>(&raw) {
-            Ok(file) => file,
+        let file = match serde_json::from_slice::<Option<File>>(&raw) {
+            Ok(file) => file.unwrap_or_default(),
             Err(error) => {
                 eprintln!("jobs: unreadable spec; retaining last good schedule: {error}");
                 return;
@@ -414,7 +467,8 @@ impl Service {
         let mut jobs = Vec::new();
         let mut ids = BTreeSet::new();
         let mut filled = false;
-        for mut job in file.jobs {
+        for job in file.jobs {
+            let mut job = job.unwrap_or_default();
             if let Err(error) = validate(&job) {
                 eprintln!("jobs: invalid row {:?} skipped: {error}", job.name);
                 continue;
@@ -655,9 +709,12 @@ impl Service {
         due
     }
     async fn execute(self: Arc<Self>, job: Job, client: Client) {
+        self.execute_with_runner(job, &client).await
+    }
+    async fn execute_with_runner(self: Arc<Self>, job: Job, client: &impl Runner) {
         let started = Utc::now();
         let result =
-            tokio::time::timeout(Duration::from_secs(15 * 60), perform(&job, &client)).await;
+            tokio::time::timeout(Duration::from_secs(15 * 60), perform(&job, client)).await;
         let (status, detail) = match result {
             Ok(Ok(detail)) => ("ok", head(&detail, 2000)),
             Ok(Err(error)) if error.downcast_ref::<Skip>().is_some() => {

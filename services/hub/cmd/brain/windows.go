@@ -51,10 +51,10 @@ var contextWindows = []windowRow{
 	// marker. Before the generic claude row or their gauges read 5x too full.
 	{"fable", windowMatchContains, 1_000_000},
 	{"mythos", windowMatchContains, 1_000_000},
+	{"claude-opus-5-5", windowMatchSuffix, 1_000_000},
 	{"gemini", windowMatchContains, 1_048_576},
 	{"gpt-4.1", windowMatchContains, 1_047_576},
-	// Table KNOWLEDGE, not a fallback: an unmarked Claude model really does hold
-	// 200k. The four places that spelled *unknown* 200000 are gone.
+	// Retained baseline; specific verified model defaults precede this row.
 	{"claude", windowMatchContains, 200_000},
 	{"gpt-5", windowMatchContains, 272_000},
 	{"codex", windowMatchContains, 272_000},
@@ -109,7 +109,7 @@ func windowForModel(model string) (uint64, bool) {
 func requestedWindowFor(model string) (uint64, bool) {
 	m := strings.ToLower(strings.TrimSpace(model))
 	if strings.HasSuffix(m, "[1m]") || strings.HasSuffix(m, "-1m") ||
-		strings.Contains(m, "fable") || strings.Contains(m, "mythos") {
+		strings.Contains(m, "fable") || strings.Contains(m, "mythos") || strings.HasSuffix(m, "claude-opus-5-5") {
 		return 1_000_000, true
 	}
 	return 0, false
