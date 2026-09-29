@@ -136,6 +136,16 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
         serde_json::from_slice(&std::fs::read(own.join("workspacer-allocation.json")).unwrap())
             .unwrap();
     assert_eq!(allocation["cwd"], json!(cwd));
+    assert!(
+        allocation["dependencyLinks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| {
+                std::path::Path::new(path.as_str().unwrap())
+                    == std::path::Path::new("apps/deep/source/node_modules")
+            })
+    );
     assert!(WorktreeMaintenance::acquire_git_dir(&own).is_err());
     assert_eq!(service.remove(&cwd).await.unwrap()["skipped"], true);
     let shared = WorktreeAdmission::acquire(cwd.to_str().unwrap()).unwrap();
@@ -204,6 +214,10 @@ async fn actual_allocation_reservation_setup_dependency_links_and_conservative_c
         remaining()
     );
     assert!(!cwd.exists(), "{removed}; remaining: {:?}", remaining());
+    assert_eq!(
+        std::fs::read(modules.join("dependency.js")).unwrap(),
+        b"fixture"
+    );
     assert!(
         !git(
             &project,

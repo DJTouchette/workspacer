@@ -35,6 +35,8 @@ mod services;
 #[path = "../../../services/hub-rs/src/services/filewatch/sample.rs"]
 mod filewatch_sample;
 
+#[path = "../../../services/hub-rs/src/services/worktrees/dependency_junctions.rs"]
+mod dependency_junctions;
 #[path = "../../../services/claudemon/src/protocol.rs"]
 mod protocol;
 #[path = "../../../services/claudemon/src/wrapper/pty.rs"]

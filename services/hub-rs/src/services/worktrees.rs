@@ -13,6 +13,10 @@ use std::{
     time::Duration,
 };
 
+#[cfg(windows)]
+#[path = "worktrees/dependency_junctions.rs"]
+mod dependency_junctions;
+
 struct Output {
     ok: bool,
     stdout: String,
@@ -238,7 +242,11 @@ impl Worktrees {
             atomic_json(&own.join("workspacer-allocation.json"), &allocation, true)?;
             let base = git_text(&destination, &["rev-parse", "--verify", "HEAD^{commit}"]).await?;
             let review = json!({"projectRoot":project,"allocatedCwd":std::fs::canonicalize(&destination)?,"commonDir":common,"branch":branch,"baseCommit":base});
-            let _ = link_dependencies(&project, &destination).await;
+            let links = link_dependencies(&project, &destination)
+                .await
+                .unwrap_or_default();
+            allocation["dependencyLinks"] = json!(links);
+            atomic_json(&own.join("workspacer-allocation.json"), &allocation, true)?;
             let setup = run_setup(
                 &resolve_setup(&self.config.get(), &[&cwd, &project]),
                 &project,
@@ -314,6 +322,44 @@ impl Worktrees {
         let main = common
             .parent()
             .ok_or_else(|| anyhow!("Git common directory has no parent"))?;
+        #[cfg(windows)]
+        {
+            // Git for Windows deliberately preserves junctions and their
+            // ancestors while returning success. Detach only the dependency
+            // links this allocation recorded, after the same clean-tree guard.
+            let clean = git(&cwd, &["status", "--porcelain", "--ignore-submodules=none"]).await?;
+            if !clean.ok || !clean.stdout.is_empty() {
+                return Ok(
+                    json!({"ok":false,"skipped":true,"error":"Worktree contains modified or untracked files"}),
+                );
+            }
+            let metadata = own.join("workspacer-allocation.json");
+            if metadata.exists() {
+                let allocation: Value =
+                    serde_json::from_slice(&super::files::bounded_bytes(&metadata, 64 * 1024)?)?;
+                if let Some(links) = allocation["dependencyLinks"].as_array() {
+                    let links = links
+                        .iter()
+                        .map(|link| {
+                            link.as_str()
+                                .map(PathBuf::from)
+                                .ok_or_else(|| anyhow!("invalid recorded dependency link"))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    for relative in &links {
+                        let path = paths::git_argument(relative)?;
+                        let tracked = git(&cwd, &["ls-files", "-z", "--", &path]).await?;
+                        if !tracked.ok
+                            || !tracked.stdout.is_empty()
+                            || !git(&cwd, &["check-ignore", "-q", "--", &path]).await?.ok
+                        {
+                            bail!("recorded dependency link is no longer ignored and untracked");
+                        }
+                    }
+                    dependency_junctions::remove_recorded(&cwd, main, &links)?;
+                }
+            }
+        }
         let result = git(
             main,
             &[
