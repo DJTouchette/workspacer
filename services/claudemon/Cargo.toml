@@ -63,6 +63,10 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 # so the delayed pending-message flush is testable without real sleeps.
 tokio = { version = "1", features = ["full", "test-util"] }
 
+[target.'cfg(windows)'.dev-dependencies]
+# Real job/ConPTY fixtures own temporary marker directories on Windows.
+tempfile = "3"
+
 # Windows version resource (FileDescription etc.) — what Task Manager shows.
 [build-dependencies]
 winresource = "0.1"
