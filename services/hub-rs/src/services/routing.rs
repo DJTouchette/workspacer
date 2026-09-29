@@ -155,7 +155,7 @@ fn assignment(matrix: &Value, profile: &str, cap: &str, pin: &str) -> Result<Val
     bail!("capability {cap} cannot be routed on explicitly requested provider {pin}")
 }
 fn canonical(path: &str) -> Option<PathBuf> {
-    if path.is_empty() {
+    if !Path::new(path).is_absolute() {
         None
     } else {
         std::fs::canonicalize(path).ok()
@@ -904,6 +904,25 @@ mod tests {
                 ceiling(&matrix, alias.to_str().unwrap()).unwrap().1["max_capability"],
                 "cheap"
             );
+        }
+    }
+
+    #[test]
+    fn relative_cwd_cannot_select_a_process_directory_ceiling() {
+        let current = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+        let mut matrix = defaults();
+        matrix["ceilings"] = json!({"default":{"max_capability":"cheap"}});
+        matrix["ceilings"][current.to_str().unwrap()] = json!({"max_capability":"frontier_plus"});
+        assert_eq!(
+            ceiling(&matrix, current.to_str().unwrap()).unwrap().0,
+            current.to_str().unwrap()
+        );
+        for path in ["", ".", "./", "not-a-real-relative-directory"] {
+            assert!(canonical(path).is_none(), "relative cwd {path:?}");
+            assert_eq!(ceiling(&matrix, path).unwrap().0, "default");
+            let mut request = json!({"cwd":path,"provider":"claude","capability":"frontier_plus","model":"fable"});
+            assert!(!sanitize(&matrix, &mut request).unwrap().is_empty());
+            assert_eq!(request["capability"], "cheap");
         }
     }
 }

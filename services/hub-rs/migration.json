@@ -492,10 +492,28 @@
       ]
     },
     "services/hub/cmd/brain/capspec_guard_test.go": {
-      "replacement": [],
+      "replacement": [
+        "tools/capability-source-check/src/policy.rs",
+        "apps/desktop/tests/support/capabilityParameters.ts",
+        "apps/desktop/tests/fixtures/capability-parameter-policy.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all three original assertions: full/catalog path-spec closure and nonempty path-bearing population; agents.spawn remains deliberately without path grant; every actual provider method has classification with at least40 entries. Current source guard requires actual handlers, independent original binding/source provenance and complete full/catalog classification. TS policy test pins path-bearing and unknown-namespace examples and ambient spawn, while live registration source guard rejects a newly registered unclassified actor and missing population.",
+          "Current TS registry/policy12 tests passed alongside sweep guard4; scanner check passed122 methods/126 dangerous bindings/23 opaque/zero errors. No runtime permission policy is changed."
+        ],
+        "intentionalChanges": [
+          "The in-process Rust and retained desktop registry/source guards replace constructing the old Go registry. Ambient authenticated filesystem policy and semantic object confinement remain explicit; this source guard does not invent a filesystem grant."
+        ]
+      },
       "sha256": "f92d2171a5e2adbd957a0cffdcbba7c7f3d3846b68890338133c170f445bd53e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "apps/desktop/src/main/services/brainParameterContract.test.ts",
+        "apps/desktop/src/main/services/capabilityParameterPolicy.test.ts",
+        "apps/desktop/src/main/services/capabilityRegistration.test.ts",
+        "tools/capability-source-check/tests/policy.rs"
+      ]
     },
     "services/hub/cmd/brain/capspec_params_test.go": {
       "replacement": [
@@ -792,10 +810,35 @@
       "tests": []
     },
     "services/hub/cmd/brain/contracts_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "contracts/reference-baselines/manifest.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all513 lines and every assertion: runtime-cache/source discovery, nonempty fixture/source population, two test-file/two-language ownership, README forward/reverse closure, required Windows executions and every declared block loader. Actual Rust ownership guard preserves these obligations for active Rust/TypeScript sources; implementations that merely mention fixture names cannot supply test ownership. Missing/unreadable markers and inputs are hard failures through the strict manifest reader.",
+          "source_discovery_excludes_runtime_caches_and_comments_are_not_loaders verifies the exclusion list against a temporary multi-language tree. every_active_fixture_has_test_loaders_in_distinct_languages discovers actual files on each run, distinguishes test sources, enforces documentation in both directions and refuses empty fixture discovery. Vocabulary declared_block_loaders_resolve_to_real_test_sources resolves file::needle entries, rejects empty/absolute/parent paths and retains the original floor25.",
+          "windows_ci_runs_both_live_path_implementations parses actual workflow YAML, recognizes direct Windows runners and matrix OS selection with Rust working-directory checks, and requires both Rust backend and TypeScript path execution. Mutation tests remove Windows runners or test commands and must produce false/false. Current c0f40add Windows job36628039492/109610780781 is actual successful execution evidence; latest-head Windows remains required.",
+          "Reviewed all existing exception forcing functions rather than treating them as blanket waivers. Six captured Go/Rust baseline fixtures require fixed allowlist,40-character reference commit,64-character byte digests, unchanged retained original sources, exact per-block floor keys, nonzero populations and exact actual Rust replay loader set; five corruption mutants must fail. HTTP route registry is separately classified as source architecture: seven real router sources, source roots, six runnable TS source checks, registered runner, vocabulary loader and70-route floor remain pinned, with malformed ownership/removed source/removed loader mutants."
+        ],
+        "intentionalChanges": [
+          "The deleted Go implementation cannot remain the mandatory second executable language. Active cross-language fixtures still require distinct-language test owners; exactly six explicitly captured Go/Rust contracts retain reviewed original byte provenance plus actual Rust replay. Capture metadata explicitly says this was a preserved contract checkpoint, not a fresh oracle execution.",
+          "The HTTP route source registry is independently read against live Rust routes by its TS architectural guard; duplicating a parser just to count another language would not create a behavior oracle. Unknown architectural exceptions are refused.",
+          "Cargo runtime reads replace extinput Go result-cache pinning. Source discovery no longer requires a Go tree, and missing repository/input is a hard error rather than a vendored skip."
+        ],
+        "validation": "2026-09-29: exact existing Rust corpus_ownership.rs and corpus_vocabulary.rs recompiled with rustc --test against cached dependencies after Cargo package clean had removed their binaries;6+5 tests passed. Actual retained TypeScript contractsVocabulary and pathConfinement twins66 passed. No implementation changes were needed in this audit. Logs /tmp/workspacer-corpus-ownership-test.log and /tmp/workspacer-corpus-vocabulary-test.log. Earlier Cargo reader13 checkpoint also passed the same source."
+      },
       "sha256": "4e39d72a2775f1d377f074d5305188902107ac856944c55c9ccfd66998b6bdcb",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts",
+        "apps/desktop/src/main/lib/pathConfinement.test.ts"
+      ]
     },
     "services/hub/cmd/brain/conversation.go": {
       "replacement": [
@@ -859,10 +902,34 @@
       ]
     },
     "services/hub/cmd/brain/corpusvocab_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "contracts/reference-baselines/manifest.json"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all655 lines: recursive object-array block discovery, bidirectional declaration closure, required-field presence, verdict vocabulary, required/declared/forbidden reasons, exercised reasons, unique names, all string/key token references incl unterminated forms, top-level and nested field closure, optional-use closure, loader syntax and discovery/exemption rules.",
+          "Rust retains all13 check IDs and all16 original mutations with an unmodified real-fixture control; the battery also asserts that every check ID was exercised. It preserves the fixture floor10, deny/refuse reason distinctions, optional/nested typo cases, unknown and unclosed token references and dropped per-block ownership.",
+          "The independent TypeScript twin is read and required to carry each check ID, and the reciprocal TS guard names the Rust vocabulary source. Active path loader existence checks now resolve real Rust shared_active_path_contract and the unchanged TS active-path describe. All declared block loaders resolve with original floor25.",
+          "The17-case anonymous parameter-shape corpus remains explicitly archived, byte content retained with documented dead-harness rationale and independent validation. No active authenticated runtime path restriction is inferred from that obsolete harness."
+        ],
+        "intentionalChanges": [
+          "The old fsguard Go loader reference is replaced by its executing Rust shared path corpus. Explicit backend-capabilities.json exemption identifies the new authoritative registration manifest as non-case metadata; existing three original no-block exemptions remain closed and fail if they grow vocabulary.",
+          "Original Go test-runner tally/skip accounting is replaced by direct synchronous Rust validation with an executed fixture counter and >=10 assertion; exemptions are fixed names, never inferred from missing blocks."
+        ],
+        "validation": "2026-09-29: exact existing Rust corpus_ownership.rs and corpus_vocabulary.rs recompiled with rustc --test against cached dependencies after Cargo package clean had removed their binaries;6+5 tests passed. Actual retained TypeScript contractsVocabulary and pathConfinement twins66 passed. No implementation changes were needed in this audit. Logs /tmp/workspacer-corpus-ownership-test.log and /tmp/workspacer-corpus-vocabulary-test.log. Earlier Cargo reader13 checkpoint also passed the same source."
+      },
       "sha256": "5ba65924a1045c9775f2e8d887eb99e34d095cfa62bf55121fabe13d1ba9a51a",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts",
+        "apps/desktop/src/main/lib/pathConfinement.test.ts"
+      ]
     },
     "services/hub/cmd/brain/delegation_guard_test.go": {
       "replacement": [],
@@ -1651,10 +1718,44 @@
       "tests": []
     },
     "services/hub/cmd/brain/hostgate_test.go": {
-      "replacement": [],
+      "reason": "Go TestMain global registry, simulated skip flags and process-wide config-home redirection belong to the removed Go test harness. Rust service fixtures inject temporary directories; required host scenarios execute with hard-failing setup and retained source/removal guards. TS host capability simulation remains in its existing support.",
+      "replacement": [
+        "services/hub-rs/tests/support/sweepguard.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "apps/desktop/tests/support/sweepSourceGuard.ts"
+      ],
+      "review": {
+        "assertionOnlyValidation": {
+          "command": "rustc --edition=2024 --test services/hub-rs/tests/sweepguard.rs -L dependency=/tmp/workspacer-hub-target/debug/deps --extern serde_json=/tmp/workspacer-hub-target/debug/deps/libserde_json-fb8ea12a834712c1.rlib -o /tmp/workspacer-sweepguard-assertions-test && /tmp/workspacer-sweepguard-assertions-test",
+          "log": "/tmp/workspacer-sweepguard-assertions-test.log",
+          "result": "5 passed;0 failed;0 ignored"
+        },
+        "behaviors": [
+          "Read all three original sweepguard source/test files and all sweepmeta/hostgate assertions. Tally preserves verdict aliases, allow/deny independence, skipped diagnostics, enumeration versus execution, shrunken corpus refusal and exact minimum execution. Current corpus mutation tests cover empty, one-sided, skipped-deny and dropped-case populations.",
+          "The real Rust Tally now refuses being dropped without observing a floor. Its Floor result also refuses being discarded; a revision records which counted population was checked, so later ran/skip or late observation of a stale result cannot reuse an earlier floor. Negative tests kill unread tally, discarded failure/success, early floor and delayed stale-floor mutations; helper-returned tallies succeed and an existing panic is preserved without double panic.",
+          "Strict manifest-anchored repository reader requires Makefile and Rust Cargo.toml. Missing checkout, either missing marker, marker replaced by a directory, moved required fixture and repeated reads after edits are covered. Actual ownership/vocabulary consumers use it. No old Go marker or cwd mutation is required.",
+          "TypeScript AST meta-guard scans all actual main test files, resolves counter symbols across sibling scopes, requires every tally/gated counter to have its corresponding floor, rejects registration-time ran calls, bare catch-return and uncounted CAN_* gates, and ignores comment/string decoys. Actual source floor deletion and adding a new unobserved test file fail. The old source population was21 Go tallies plus29 TS tally/gate uses under a combined30 minimum; the unchanged29 TS uses are now independently pinned in full, with original host-reference floor15 retained.",
+          "Required Rust host-case inventory checks real named test declarations and rejects removal, ignore, unsupported platform cfg or a disabled ancestor module. This is paired with actual executing regressions, not represented as standalone behavior proof. Auditing original17 symlink/10 Git gated callers recovered missing global-config-root visibility, alias-target writes/deletes, all four library walker allow/deny legs and file-listing symlink classification; all new regressions pass.",
+          "Validation2026-09-29: reader13 passed; full library362 passed in the bus checkpoint with new Tally helper; actual owning integrations55 passed (briefs11/files8/library10/models6/profiles6/stores9/sweepguard5) with zero ignored, excluding child repeats. TS sweep guard4 and existing registry/policy12 tests passed; final source scanner check122 methods/126 dangerous bindings/23 opaque/zero errors. Logs /tmp/workspacer-sweep-final.log and /tmp/workspacer-sweep-capability-check.json.",
+          "Final API correction: Floor exposes only assertion methods unwrap/unwrap_err; is_ok/is_err were removed because an ignored boolean could otherwise observe a failed floor without asserting it. All real consumer floors already use unwrap. The exact owning tests/sweepguard.rs was recompiled directly against cached serde_json and all5 tests passed after this correction; this is the real test file, not a substitute harness."
+        ],
+        "callerMapping": "services/hub-rs/reviews/sweepguard-audit.md",
+        "intentionalChanges": [
+          "Go GateCounter/RunGates process-global bookkeeping is retired, not cloned unused. Rust named tests cannot duplicate a function registration and symlink/Git setup failures panic rather than report conditional skips. The named required-case guard preserves deletion/disablement detection; adding a genuinely executing Rust test no longer requires increasing an unrelated Go group count. Go filtered-test/benchmark bypass and suite-exit passthrough disappear with that runner; existing assertion panic remains original Rust failure.",
+          "Go ErrNoCheckout skip outcome and external Go cached-test pinning are retired. Rust guards require a repository and missing inputs fail; runtime reads execute each invocation and compile-time includes fail when removed.",
+          "Native Windows CI at c0f40add (run36628039492/job109610780781) passed existing library corpus incl simulated symlink denial, selected-library directory refusal, canonical Git cwd and store alias boundaries. Newly enabled library/Git/filewatch Windows branches require latest-head CI; Linux validation does not claim to execute them."
+        ]
+      },
       "sha256": "b8c612f60d05c047732f83ef3bf3d79746a4743263e9601c90d523ca559b7095",
-      "status": "pending",
-      "tests": []
+      "status": "retired",
+      "tests": [
+        "services/hub-rs/tests/sweepguard.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "apps/desktop/src/main/services/sweepSourceGuard.test.ts"
+      ]
     },
     "services/hub/cmd/brain/lastexit.go": {
       "replacement": [
@@ -2125,10 +2226,28 @@
       ]
     },
     "services/hub/cmd/brain/readimage.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/image_preview.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All retained source read: exact browser extension/MIME allowlist, canonical path opened verbatim, regular-file refusal before reading,2MiB cap on actual bytes, base64 data URL and path/width/height/size response,40million-pixel bound without allocating decoded pixels.",
+          "Actual fs.readImage tests cover known dimensions and pixel rejection, wrong extension, directory/special file, exact inline byte boundary and one-byte overflow. All9 allowed extensions and TIFF/non-image exclusions are pinned; TypeScript reference-header vectors remain green.",
+          "Fixed Rust64KiB probe cutoff: one legal-size JPEG APP1 metadata segment can place SOF beyond that prefix while remaining below inline cap. Full bounded bytes and repeated FF marker fills are now scanned; positive300x200 and negative20000x20000 header fixtures pass through actual file handler. Fixture includes header through SOS, matching retained Go DecodeConfig boundary.",
+          "Final owning ui_assets target7/7 passed after the last JPEG fill/SOS regression; /tmp/workspacer-image-final.log. Earlier same batch search4 and ui_assets7 passed /tmp/workspacer-search-image-audit.log. The integrated library369 checkpoint also passed while routing/config changes were audited. Witness left source/tests unmapped; owning target was run explicitly."
+        ],
+        "intentionalChanges": [
+          "Rust uses bounded header-only probes rather than Go registered image decoders. It also knows BMP/WebP dimensions, so those formats receive the same pixel ceiling instead of Go unknown-dimension fallback. No full image validity or downscaling claim is made; this provider retains inline-original behavior under2MiB.",
+          "Opened regular-file identity and bounded byte reader are stricter than old stat/open. Size reports actual returned byte count rather than a potentially stale stat size. The image-specific extension type boundary is preserved independently of ambient authenticated path access."
+        ]
+      },
       "sha256": "60795e266a3b0e8c57b3a02bde211dcdfe7bca7cf64d2e5279bb7dac24a978ed",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/ui_assets.rs",
+        "services/hub-rs/src/services/files.rs"
+      ]
     },
     "services/hub/cmd/brain/recent.go": {
       "replacement": [],
@@ -2212,16 +2331,46 @@
       "tests": []
     },
     "services/hub/cmd/brain/search.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/search.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Full retained source reviewed: typed request, empty query, nonpositive500 default, smart/case-sensitive/whole-word/literal/regex argv, -- query delimiter and explicit dot operand, streaming collector,15second bound, no-match exit1 success and other exit diagnostics.",
+          "Fixed empty query to return empty results after typed validation and canonical cwd, rather than reporting an error. Wrong-type query/cwd/bool/limit now fail instead of silently selecting defaults. Real rg tests cover case, whole-word and literal/regex modes, invalid regex, ignore rules, option-like query and a100KB minified line.",
+          "Collector retains one result per submatch, first-seen file grouping, count-based overflow and ASCII-only trim/codepoint300 clipping. Signed numeric validation now skips malformed output and refuses offset overflow instead of panicking on u64::MAX. Exact500 default versus overflow, BOM/NEL and odd/even astral boundaries are pinned."
+        ],
+        "intentionalChanges": [
+          "Current authenticated search access is ambient canonical host-path access, matching retained handlers. Obsolete secret denylist prose at the end of search_test.go is not restored as an active read policy.",
+          "Malformed numeric offsets that cannot fit checked signed column arithmetic are skipped; no unchecked integer-overflow behavior is preserved. Streaming remains per-line and does not introduce a64KB Scanner cap that would discard valid minified matches. Search continues to use host rg and its configured ignore behavior."
+        ],
+        "validation": "2026-09-29 Linux: owning search integration4/4 passed in /tmp/workspacer-search-image-audit.log; same invocation ui_assets7/7 passed before subsequent independent JPEG fill-byte regression. Full source checker122methods/126dangerous/23opaque/errors[] in /tmp/workspacer-search-parameter-check.json. Witness left all4 changed source/test files unmapped; explicit owning targets were run."
+      },
       "sha256": "68eeb64360b20bf08e84a885d9eea64b4ac6e5487e386426307afb17dc352542",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/search.rs"
+      ]
     },
     "services/hub/cmd/brain/search_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/search.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All actual retained tests mapped: multiple submatches on one line, individual-submatch truncation, nonpositive cap defaults, odd/even Unicode codepoint boundaries, ASCII whitespace trim with BOM/NEL retained. Additional malformed output vectors prevent panic or coercion.",
+          "Actual ripgrep regressions cover the execution path and canonical input validation, not only collector output. The final old read-set comment has no test function and refers to a secret grant removed from current authenticated policy."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: owning search integration4/4 passed in /tmp/workspacer-search-image-audit.log; same invocation ui_assets7/7 passed before subsequent independent JPEG fill-byte regression. Full source checker122methods/126dangerous/23opaque/errors[] in /tmp/workspacer-search-parameter-check.json. Witness left all4 changed source/test files unmapped; explicit owning targets were run."
+      },
       "sha256": "6f8244cf2ff6d564c4a2404c0628106e6dc01a6b9950df0ab335c83e18787490",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/search.rs"
+      ]
     },
     "services/hub/cmd/brain/shellallow.go": {
       "replacement": [],
@@ -2587,10 +2736,43 @@
       ]
     },
     "services/hub/cmd/brain/sweepmeta_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/support/sweepguard.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "apps/desktop/tests/support/sweepSourceGuard.ts"
+      ],
+      "review": {
+        "assertionOnlyValidation": {
+          "command": "rustc --edition=2024 --test services/hub-rs/tests/sweepguard.rs -L dependency=/tmp/workspacer-hub-target/debug/deps --extern serde_json=/tmp/workspacer-hub-target/debug/deps/libserde_json-fb8ea12a834712c1.rlib -o /tmp/workspacer-sweepguard-assertions-test && /tmp/workspacer-sweepguard-assertions-test",
+          "log": "/tmp/workspacer-sweepguard-assertions-test.log",
+          "result": "5 passed;0 failed;0 ignored"
+        },
+        "behaviors": [
+          "Read all three original sweepguard source/test files and all sweepmeta/hostgate assertions. Tally preserves verdict aliases, allow/deny independence, skipped diagnostics, enumeration versus execution, shrunken corpus refusal and exact minimum execution. Current corpus mutation tests cover empty, one-sided, skipped-deny and dropped-case populations.",
+          "The real Rust Tally now refuses being dropped without observing a floor. Its Floor result also refuses being discarded; a revision records which counted population was checked, so later ran/skip or late observation of a stale result cannot reuse an earlier floor. Negative tests kill unread tally, discarded failure/success, early floor and delayed stale-floor mutations; helper-returned tallies succeed and an existing panic is preserved without double panic.",
+          "Strict manifest-anchored repository reader requires Makefile and Rust Cargo.toml. Missing checkout, either missing marker, marker replaced by a directory, moved required fixture and repeated reads after edits are covered. Actual ownership/vocabulary consumers use it. No old Go marker or cwd mutation is required.",
+          "TypeScript AST meta-guard scans all actual main test files, resolves counter symbols across sibling scopes, requires every tally/gated counter to have its corresponding floor, rejects registration-time ran calls, bare catch-return and uncounted CAN_* gates, and ignores comment/string decoys. Actual source floor deletion and adding a new unobserved test file fail. The old source population was21 Go tallies plus29 TS tally/gate uses under a combined30 minimum; the unchanged29 TS uses are now independently pinned in full, with original host-reference floor15 retained.",
+          "Required Rust host-case inventory checks real named test declarations and rejects removal, ignore, unsupported platform cfg or a disabled ancestor module. This is paired with actual executing regressions, not represented as standalone behavior proof. Auditing original17 symlink/10 Git gated callers recovered missing global-config-root visibility, alias-target writes/deletes, all four library walker allow/deny legs and file-listing symlink classification; all new regressions pass.",
+          "Validation2026-09-29: reader13 passed; full library362 passed in the bus checkpoint with new Tally helper; actual owning integrations55 passed (briefs11/files8/library10/models6/profiles6/stores9/sweepguard5) with zero ignored, excluding child repeats. TS sweep guard4 and existing registry/policy12 tests passed; final source scanner check122 methods/126 dangerous bindings/23 opaque/zero errors. Logs /tmp/workspacer-sweep-final.log and /tmp/workspacer-sweep-capability-check.json.",
+          "Final API correction: Floor exposes only assertion methods unwrap/unwrap_err; is_ok/is_err were removed because an ignored boolean could otherwise observe a failed floor without asserting it. All real consumer floors already use unwrap. The exact owning tests/sweepguard.rs was recompiled directly against cached serde_json and all5 tests passed after this correction; this is the real test file, not a substitute harness."
+        ],
+        "callerMapping": "services/hub-rs/reviews/sweepguard-audit.md",
+        "intentionalChanges": [
+          "Go GateCounter/RunGates process-global bookkeeping is retired, not cloned unused. Rust named tests cannot duplicate a function registration and symlink/Git setup failures panic rather than report conditional skips. The named required-case guard preserves deletion/disablement detection; adding a genuinely executing Rust test no longer requires increasing an unrelated Go group count. Go filtered-test/benchmark bypass and suite-exit passthrough disappear with that runner; existing assertion panic remains original Rust failure.",
+          "Go ErrNoCheckout skip outcome and external Go cached-test pinning are retired. Rust guards require a repository and missing inputs fail; runtime reads execute each invocation and compile-time includes fail when removed.",
+          "Native Windows CI at c0f40add (run36628039492/job109610780781) passed existing library corpus incl simulated symlink denial, selected-library directory refusal, canonical Git cwd and store alias boundaries. Newly enabled library/Git/filewatch Windows branches require latest-head CI; Linux validation does not claim to execute them."
+        ]
+      },
       "sha256": "72f55b07d312d2a5ff3e3f374e03bbd458a6af74b9a122a96f8135df1f24ab17",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/sweepguard.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "apps/desktop/src/main/services/sweepSourceGuard.test.ts"
+      ]
     },
     "services/hub/cmd/brain/terminal.go": {
       "replacement": [
@@ -5962,10 +6144,26 @@
       ]
     },
     "services/hub/internal/bus/sanitizerdrift_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "A third synthetic sanitizer is compiled only for unit tests in the same admission::sanitize entry point used by production local and qualified dispatch. No production method, grant, mutable registry or runtime dispatch branch is added.",
+          "Actual scoped operator over WebSocket calls a local handler and a qualified handler through two real hubs. Both return the unrelated note intact and omit secret. Provenance pass sequence must be [false] locally and [false,true] remotely, so destination-only sanitation cannot hide a skipped source hop.",
+          "Go mutates its methodSanitizers map at runtime for this regression; Rust uses a cfg(test) entry because its shared sanitizer is a static function. The regression still changes only that single shared entry point and proves both dispatch branches pick it up."
+        ],
+        "originalTests": [
+          "TestFederatedCallSanitizesThroughTheSameTableAsLocalCall"
+        ],
+        "validation": "Full Rust library checkpoint: 362 passed, 0 failed, 0 ignored; /tmp/workspacer-bus-third-sanitizer.log. Explicit third-sanitizer transport regression and freshness matrix (including fresh-reason assertion) both passed. Prior agent_spawn integration: 15 passed; /tmp/workspacer-paired-routing-validation.log."
+      },
       "sha256": "f7c6e290f1dbdc8c92df1417244520e61e6173c9c630fa9247cf05979d7d5a8c",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ]
     },
     "services/hub/internal/bus/scoped_token_test.go": {
       "replacement": [
@@ -6014,16 +6212,78 @@
       ]
     },
     "services/hub/internal/bus/spawnceiling_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Actual WebSocket scoped caller and external-provider echo verify under-ceiling requests retain all fields; above-ceiling requests carry an explicit safe provider/model/effort tuple, escalationScrubbed names capability/model/effort, unrelated cwd/role/decisionId/toolScope remain unchanged.",
+          "Real default, absent, empty, relative, explicit absolute-directory and Unix symlink requests verify policy selection; portable unit positive floor specifically proves dot cannot inherit process-directory policy. Canonical audit cwd matches resolved absolute directory.",
+          "Each clamp audit names routing.yaml as remedy through fixed allowlisted text. Bad ceiling capability and unsupported explicit provider are refused before the provider receives a spawn; an ordered provider barrier and call counter establish the negative without timing assumptions. Exact-model and qualified source clamp/refusal coverage is supplied by existing actual actor and two-hub tests.",
+          "Intentional architectural change: no safe concrete routed model causes refusal. Go callback harness dropped model and effort, leaving provider default unspecified; Rust never restores that policy bypass. Explicit provider is retained when a safe assignment exists, otherwise refused rather than silently swapped.",
+          "Retired synthetic harness: a hand-edited triage method list cannot grant agents.spawn through Rust exact scope policy. Actual operator/plugin ambient authority still preserves legacy toolScope as inert metadata, proved by bus_remaining and new provider tuple assertions; no caller-tier clamp is reintroduced."
+        ],
+        "originalTests": [
+          "TestCapabilityAboveTheCeilingIsClampedAndTheModelGoesWithIt",
+          "TestSpawnUnderTheCeilingIsUntouchedAndStillRecorded",
+          "TestCallerTierDoesNotClampAChild",
+          "TestTheCeilingResolverIsHandedACanonicalCwd",
+          "TestAnUnresolvableCwdStillAsksForACeiling",
+          "TestTheCeilingClampAlsoCoversTheFederatedHop",
+          "TestClampReasonsNameTheFileAsTheRemedy",
+          "TestADeniedCeilingRefusesTheSpawnAndStillRecordsIt",
+          "TestAClampedCapabilityArrivesWithAnExplicitSafeModel",
+          "TestTheClampNeverOverwritesAnExplicitProvider",
+          "TestWithNoRoutedReplacementTheModelIsStillDropped",
+          "TestExactModelRefusesSubstitutionButKeepsAuditAndOrdinaryClamping"
+        ],
+        "validation": "Full Rust library: 369 passed, 0 failed, 0 ignored, including relative-cwd positive floor and policy-remedy redaction test. New real WebSocket bus_ceiling target: 1 passed, 0 failed, 0 ignored. Combined log /tmp/workspacer-bus-ceiling-audit.log. The fixture uses public config_dir to install the actual RoutingService. Existing qualified source/freshness tests are included in that library checkpoint; prior bus_remaining8 and agent_spawn15 integrations passed."
+      },
       "sha256": "21b05fb1f3e6ed088114f16d49df5042a1c50ed124bc50db78e7388e1d259c97",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/bus_ceiling.rs",
+        "services/hub-rs/src/runtime/routing_admission_tests.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/tests/bus_remaining.rs"
+      ]
     },
     "services/hub/internal/bus/spawnfresh_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Real external-provider admission refuses reviewer-role and explicit deep_reviewer resumes before forwarding; returned error names the original session and freshness reason. A provider subscription acknowledgement is a deterministic barrier proving no request was forwarded as a silently fresh session.",
+          "Positive floors retain implementer, unlabeled and frontier-capability resumeSessionId, while fresh reviewers starting new sessions keep their role and capability. Both embedded host and authenticated scoped operator exercise the matrix.",
+          "With no injected routing service, identical fresh resumes are forwarded unchanged even if a routing.yaml exists. With policy injected, each attempt writes exactly one audit row; refused rows mark resumeRefused, exact deep_reviewer freshCapability and refused outcome.",
+          "Real paired hubs test source freshness refusal while the same destination independently admits that request directly. Provider count and independent origin/destination audit locations demonstrate source refusal before peer invocation. Owned agent-spawn integration separately verifies exactly-once preflight audit behavior.",
+          "Rust uses the actual YAML resolver and actor/provider transport instead of a mutable Go callback resolver; no fake provider process or inherited conversation is launched."
+        ],
+        "originalTests": [
+          "TestAFreshRoleCannotResumeASessionThroughTheSpawnGate",
+          "TestTheResumeIsRefusedRatherThanStrippedFromTheParams",
+          "TestOrdinaryResumesStillReachTheProvider",
+          "TestAFreshRoleStartingANewSessionIsAdmitted",
+          "TestTheFreshRefusalAlsoCoversTheFederatedHop",
+          "TestTheHostTokenIsNotExemptFromTheFreshRefusal",
+          "TestWithoutARoutingLayerNoResumeIsRefused"
+        ],
+        "validation": "Full Rust library checkpoint: 362 passed, 0 failed, 0 ignored; /tmp/workspacer-bus-third-sanitizer.log. Explicit third-sanitizer transport regression and freshness matrix (including fresh-reason assertion) both passed. Prior agent_spawn integration: 15 passed; /tmp/workspacer-paired-routing-validation.log."
+      },
       "sha256": "40252dd21e130c2a75b88eb193dc9040d0717c5c4acdbc8adaa0490db4c5350d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/runtime/routing_admission_tests.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/tests/agent_spawn.rs"
+      ]
     },
     "services/hub/internal/bus/spawnkeys.go": {
       "note": "All46 canonical spawn keys are tested: uppercase aliases refuse and canonical spellings pass for spawn and dispatchPrepare; unknown single fields and non-object params remain intact, while duplicate folded unknown keys refuse. The audit corrected Rust contextual/ASCII-only comparison to Go-compatible per-character simple lowercase, with Kelvin-sign,dotted-I and Greek-sigma cases. Direct broker tests prove local and qualified calls reject aliases before execution routing, while canonical calls reach the distinct execution gate. Existing frozen key vocabulary remains the provider-union reference; this record does not certify the separate provider-field/source-enumeration guards.",
@@ -8510,22 +8770,121 @@
       ]
     },
     "services/hub/internal/sweepguard/gate_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/support/sweepguard.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "apps/desktop/tests/support/sweepSourceGuard.ts"
+      ],
+      "review": {
+        "assertionOnlyValidation": {
+          "command": "rustc --edition=2024 --test services/hub-rs/tests/sweepguard.rs -L dependency=/tmp/workspacer-hub-target/debug/deps --extern serde_json=/tmp/workspacer-hub-target/debug/deps/libserde_json-fb8ea12a834712c1.rlib -o /tmp/workspacer-sweepguard-assertions-test && /tmp/workspacer-sweepguard-assertions-test",
+          "log": "/tmp/workspacer-sweepguard-assertions-test.log",
+          "result": "5 passed;0 failed;0 ignored"
+        },
+        "behaviors": [
+          "Read all three original sweepguard source/test files and all sweepmeta/hostgate assertions. Tally preserves verdict aliases, allow/deny independence, skipped diagnostics, enumeration versus execution, shrunken corpus refusal and exact minimum execution. Current corpus mutation tests cover empty, one-sided, skipped-deny and dropped-case populations.",
+          "The real Rust Tally now refuses being dropped without observing a floor. Its Floor result also refuses being discarded; a revision records which counted population was checked, so later ran/skip or late observation of a stale result cannot reuse an earlier floor. Negative tests kill unread tally, discarded failure/success, early floor and delayed stale-floor mutations; helper-returned tallies succeed and an existing panic is preserved without double panic.",
+          "Strict manifest-anchored repository reader requires Makefile and Rust Cargo.toml. Missing checkout, either missing marker, marker replaced by a directory, moved required fixture and repeated reads after edits are covered. Actual ownership/vocabulary consumers use it. No old Go marker or cwd mutation is required.",
+          "TypeScript AST meta-guard scans all actual main test files, resolves counter symbols across sibling scopes, requires every tally/gated counter to have its corresponding floor, rejects registration-time ran calls, bare catch-return and uncounted CAN_* gates, and ignores comment/string decoys. Actual source floor deletion and adding a new unobserved test file fail. The old source population was21 Go tallies plus29 TS tally/gate uses under a combined30 minimum; the unchanged29 TS uses are now independently pinned in full, with original host-reference floor15 retained.",
+          "Required Rust host-case inventory checks real named test declarations and rejects removal, ignore, unsupported platform cfg or a disabled ancestor module. This is paired with actual executing regressions, not represented as standalone behavior proof. Auditing original17 symlink/10 Git gated callers recovered missing global-config-root visibility, alias-target writes/deletes, all four library walker allow/deny legs and file-listing symlink classification; all new regressions pass.",
+          "Validation2026-09-29: reader13 passed; full library362 passed in the bus checkpoint with new Tally helper; actual owning integrations55 passed (briefs11/files8/library10/models6/profiles6/stores9/sweepguard5) with zero ignored, excluding child repeats. TS sweep guard4 and existing registry/policy12 tests passed; final source scanner check122 methods/126 dangerous bindings/23 opaque/zero errors. Logs /tmp/workspacer-sweep-final.log and /tmp/workspacer-sweep-capability-check.json.",
+          "Final API correction: Floor exposes only assertion methods unwrap/unwrap_err; is_ok/is_err were removed because an ignored boolean could otherwise observe a failed floor without asserting it. All real consumer floors already use unwrap. The exact owning tests/sweepguard.rs was recompiled directly against cached serde_json and all5 tests passed after this correction; this is the real test file, not a substitute harness."
+        ],
+        "callerMapping": "services/hub-rs/reviews/sweepguard-audit.md",
+        "intentionalChanges": [
+          "Go GateCounter/RunGates process-global bookkeeping is retired, not cloned unused. Rust named tests cannot duplicate a function registration and symlink/Git setup failures panic rather than report conditional skips. The named required-case guard preserves deletion/disablement detection; adding a genuinely executing Rust test no longer requires increasing an unrelated Go group count. Go filtered-test/benchmark bypass and suite-exit passthrough disappear with that runner; existing assertion panic remains original Rust failure.",
+          "Go ErrNoCheckout skip outcome and external Go cached-test pinning are retired. Rust guards require a repository and missing inputs fail; runtime reads execute each invocation and compile-time includes fail when removed.",
+          "Native Windows CI at c0f40add (run36628039492/job109610780781) passed existing library corpus incl simulated symlink denial, selected-library directory refusal, canonical Git cwd and store alias boundaries. Newly enabled library/Git/filewatch Windows branches require latest-head CI; Linux validation does not claim to execute them."
+        ]
+      },
       "sha256": "dc42a1d4d9e8299941905b61a8aeea661742c9667922f688cd60b2ad14cc65e6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/sweepguard.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "apps/desktop/src/main/services/sweepSourceGuard.test.ts"
+      ]
     },
     "services/hub/internal/sweepguard/sweepguard.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/support/sweepguard.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "apps/desktop/tests/support/sweepSourceGuard.ts"
+      ],
+      "review": {
+        "assertionOnlyValidation": {
+          "command": "rustc --edition=2024 --test services/hub-rs/tests/sweepguard.rs -L dependency=/tmp/workspacer-hub-target/debug/deps --extern serde_json=/tmp/workspacer-hub-target/debug/deps/libserde_json-fb8ea12a834712c1.rlib -o /tmp/workspacer-sweepguard-assertions-test && /tmp/workspacer-sweepguard-assertions-test",
+          "log": "/tmp/workspacer-sweepguard-assertions-test.log",
+          "result": "5 passed;0 failed;0 ignored"
+        },
+        "behaviors": [
+          "Read all three original sweepguard source/test files and all sweepmeta/hostgate assertions. Tally preserves verdict aliases, allow/deny independence, skipped diagnostics, enumeration versus execution, shrunken corpus refusal and exact minimum execution. Current corpus mutation tests cover empty, one-sided, skipped-deny and dropped-case populations.",
+          "The real Rust Tally now refuses being dropped without observing a floor. Its Floor result also refuses being discarded; a revision records which counted population was checked, so later ran/skip or late observation of a stale result cannot reuse an earlier floor. Negative tests kill unread tally, discarded failure/success, early floor and delayed stale-floor mutations; helper-returned tallies succeed and an existing panic is preserved without double panic.",
+          "Strict manifest-anchored repository reader requires Makefile and Rust Cargo.toml. Missing checkout, either missing marker, marker replaced by a directory, moved required fixture and repeated reads after edits are covered. Actual ownership/vocabulary consumers use it. No old Go marker or cwd mutation is required.",
+          "TypeScript AST meta-guard scans all actual main test files, resolves counter symbols across sibling scopes, requires every tally/gated counter to have its corresponding floor, rejects registration-time ran calls, bare catch-return and uncounted CAN_* gates, and ignores comment/string decoys. Actual source floor deletion and adding a new unobserved test file fail. The old source population was21 Go tallies plus29 TS tally/gate uses under a combined30 minimum; the unchanged29 TS uses are now independently pinned in full, with original host-reference floor15 retained.",
+          "Required Rust host-case inventory checks real named test declarations and rejects removal, ignore, unsupported platform cfg or a disabled ancestor module. This is paired with actual executing regressions, not represented as standalone behavior proof. Auditing original17 symlink/10 Git gated callers recovered missing global-config-root visibility, alias-target writes/deletes, all four library walker allow/deny legs and file-listing symlink classification; all new regressions pass.",
+          "Validation2026-09-29: reader13 passed; full library362 passed in the bus checkpoint with new Tally helper; actual owning integrations55 passed (briefs11/files8/library10/models6/profiles6/stores9/sweepguard5) with zero ignored, excluding child repeats. TS sweep guard4 and existing registry/policy12 tests passed; final source scanner check122 methods/126 dangerous bindings/23 opaque/zero errors. Logs /tmp/workspacer-sweep-final.log and /tmp/workspacer-sweep-capability-check.json.",
+          "Final API correction: Floor exposes only assertion methods unwrap/unwrap_err; is_ok/is_err were removed because an ignored boolean could otherwise observe a failed floor without asserting it. All real consumer floors already use unwrap. The exact owning tests/sweepguard.rs was recompiled directly against cached serde_json and all5 tests passed after this correction; this is the real test file, not a substitute harness."
+        ],
+        "callerMapping": "services/hub-rs/reviews/sweepguard-audit.md",
+        "intentionalChanges": [
+          "Go GateCounter/RunGates process-global bookkeeping is retired, not cloned unused. Rust named tests cannot duplicate a function registration and symlink/Git setup failures panic rather than report conditional skips. The named required-case guard preserves deletion/disablement detection; adding a genuinely executing Rust test no longer requires increasing an unrelated Go group count. Go filtered-test/benchmark bypass and suite-exit passthrough disappear with that runner; existing assertion panic remains original Rust failure.",
+          "Go ErrNoCheckout skip outcome and external Go cached-test pinning are retired. Rust guards require a repository and missing inputs fail; runtime reads execute each invocation and compile-time includes fail when removed.",
+          "Native Windows CI at c0f40add (run36628039492/job109610780781) passed existing library corpus incl simulated symlink denial, selected-library directory refusal, canonical Git cwd and store alias boundaries. Newly enabled library/Git/filewatch Windows branches require latest-head CI; Linux validation does not claim to execute them."
+        ]
+      },
       "sha256": "dba00b4cea75f501ad278a84417e69df42d1e829579f0de0b283d40a3cd0008e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/sweepguard.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "apps/desktop/src/main/services/sweepSourceGuard.test.ts"
+      ]
     },
     "services/hub/internal/sweepguard/sweepguard_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/tests/support/sweepguard.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "apps/desktop/tests/support/sweepSourceGuard.ts"
+      ],
+      "review": {
+        "assertionOnlyValidation": {
+          "command": "rustc --edition=2024 --test services/hub-rs/tests/sweepguard.rs -L dependency=/tmp/workspacer-hub-target/debug/deps --extern serde_json=/tmp/workspacer-hub-target/debug/deps/libserde_json-fb8ea12a834712c1.rlib -o /tmp/workspacer-sweepguard-assertions-test && /tmp/workspacer-sweepguard-assertions-test",
+          "log": "/tmp/workspacer-sweepguard-assertions-test.log",
+          "result": "5 passed;0 failed;0 ignored"
+        },
+        "behaviors": [
+          "Read all three original sweepguard source/test files and all sweepmeta/hostgate assertions. Tally preserves verdict aliases, allow/deny independence, skipped diagnostics, enumeration versus execution, shrunken corpus refusal and exact minimum execution. Current corpus mutation tests cover empty, one-sided, skipped-deny and dropped-case populations.",
+          "The real Rust Tally now refuses being dropped without observing a floor. Its Floor result also refuses being discarded; a revision records which counted population was checked, so later ran/skip or late observation of a stale result cannot reuse an earlier floor. Negative tests kill unread tally, discarded failure/success, early floor and delayed stale-floor mutations; helper-returned tallies succeed and an existing panic is preserved without double panic.",
+          "Strict manifest-anchored repository reader requires Makefile and Rust Cargo.toml. Missing checkout, either missing marker, marker replaced by a directory, moved required fixture and repeated reads after edits are covered. Actual ownership/vocabulary consumers use it. No old Go marker or cwd mutation is required.",
+          "TypeScript AST meta-guard scans all actual main test files, resolves counter symbols across sibling scopes, requires every tally/gated counter to have its corresponding floor, rejects registration-time ran calls, bare catch-return and uncounted CAN_* gates, and ignores comment/string decoys. Actual source floor deletion and adding a new unobserved test file fail. The old source population was21 Go tallies plus29 TS tally/gate uses under a combined30 minimum; the unchanged29 TS uses are now independently pinned in full, with original host-reference floor15 retained.",
+          "Required Rust host-case inventory checks real named test declarations and rejects removal, ignore, unsupported platform cfg or a disabled ancestor module. This is paired with actual executing regressions, not represented as standalone behavior proof. Auditing original17 symlink/10 Git gated callers recovered missing global-config-root visibility, alias-target writes/deletes, all four library walker allow/deny legs and file-listing symlink classification; all new regressions pass.",
+          "Validation2026-09-29: reader13 passed; full library362 passed in the bus checkpoint with new Tally helper; actual owning integrations55 passed (briefs11/files8/library10/models6/profiles6/stores9/sweepguard5) with zero ignored, excluding child repeats. TS sweep guard4 and existing registry/policy12 tests passed; final source scanner check122 methods/126 dangerous bindings/23 opaque/zero errors. Logs /tmp/workspacer-sweep-final.log and /tmp/workspacer-sweep-capability-check.json.",
+          "Final API correction: Floor exposes only assertion methods unwrap/unwrap_err; is_ok/is_err were removed because an ignored boolean could otherwise observe a failed floor without asserting it. All real consumer floors already use unwrap. The exact owning tests/sweepguard.rs was recompiled directly against cached serde_json and all5 tests passed after this correction; this is the real test file, not a substitute harness."
+        ],
+        "callerMapping": "services/hub-rs/reviews/sweepguard-audit.md",
+        "intentionalChanges": [
+          "Go GateCounter/RunGates process-global bookkeeping is retired, not cloned unused. Rust named tests cannot duplicate a function registration and symlink/Git setup failures panic rather than report conditional skips. The named required-case guard preserves deletion/disablement detection; adding a genuinely executing Rust test no longer requires increasing an unrelated Go group count. Go filtered-test/benchmark bypass and suite-exit passthrough disappear with that runner; existing assertion panic remains original Rust failure.",
+          "Go ErrNoCheckout skip outcome and external Go cached-test pinning are retired. Rust guards require a repository and missing inputs fail; runtime reads execute each invocation and compile-time includes fail when removed.",
+          "Native Windows CI at c0f40add (run36628039492/job109610780781) passed existing library corpus incl simulated symlink denial, selected-library directory refusal, canonical Git cwd and store alias boundaries. Newly enabled library/Git/filewatch Windows branches require latest-head CI; Linux validation does not claim to execute them."
+        ]
+      },
       "sha256": "f2a788beae6152f607d259e6c3b014e87868dd886876ecf38ae346df0a4ab642",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/sweepguard.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "apps/desktop/src/main/services/sweepSourceGuard.test.ts"
+      ]
     },
     "services/hub/internal/uploads/store.go": {
       "replacement": [

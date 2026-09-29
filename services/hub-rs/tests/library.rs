@@ -3,6 +3,110 @@ use workspacer_hub::services::{
     dispatch_templates,
     library::{Library, parse, slug},
 };
+
+#[test]
+fn global_library_remains_visible_through_a_symlinked_config_root() {
+    let root = tempfile::tempdir().unwrap();
+    let actual = root.path().join("real-config");
+    let alias = root.path().join("config-alias");
+    std::fs::create_dir_all(&actual).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&actual, &alias).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&actual, &alias)
+        .expect("Windows contract CI must provide symlink privilege");
+    let service = Library::new(alias);
+    service.save(&json!({"scope":"global","id":"linked-config","title":"Linked config","kind":"prompt","body":"kept"})).unwrap();
+    let rows = service
+        .list(&json!({"cwd":root.path().join("project"),"id":"linked-config"}))
+        .unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1);
+    assert_eq!(rows[0]["title"], "Linked config");
+    assert!(actual.join("library/linked-config.md").is_file());
+}
+
+#[test]
+fn every_library_walker_refuses_escaped_aliases_and_retains_ordinary_items() {
+    for folder in [
+        ".workspacer/library",
+        ".claude/agents",
+        ".claude/commands",
+        ".claude/skills",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("project");
+        let directory = cwd.join(folder);
+        let skill = folder.ends_with("skills");
+        let bad = directory.join(if skill {
+            "escaped/SKILL.md"
+        } else {
+            "escaped.md"
+        });
+        let good = directory.join(if skill {
+            "ordinary/SKILL.md"
+        } else {
+            "ordinary.md"
+        });
+        std::fs::create_dir_all(bad.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(good.parent().unwrap()).unwrap();
+        let target = root.path().join("outside.md");
+        std::fs::write(
+            &target,
+            "---\ntitle: secret\nname: secret\n---\nNEVER-EXPOSE-THIS\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &good,
+            "---\ntitle: ordinary-control\nname: ordinary-control\n---\nallowed\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &bad).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target, &bad)
+            .expect("Windows contract CI must provide symlink privilege");
+        let rows = Library::new(root.path().join("config"))
+            .list(&json!({"cwd":cwd}))
+            .unwrap();
+        let text = rows.to_string();
+        assert!(!text.contains("NEVER-EXPOSE-THIS"), "{folder}: {text}");
+        assert!(text.contains("ordinary-control"), "{folder}: {text}");
+    }
+}
+
+#[test]
+fn library_writes_use_resolved_targets_without_replacing_in_store_aliases() {
+    for (scope, kind, folder) in [
+        ("project", "prompt", ".workspacer/library"),
+        ("claude", "agent", ".claude/agents"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let cwd = root.path().join("project");
+        let directory = cwd.join(folder);
+        std::fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("target.md");
+        let alias = directory.join("alias.md");
+        std::fs::write(&target, "old bytes").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target, &alias)
+            .expect("Windows contract CI must provide symlink privilege");
+        let service = Library::new(root.path().join("config"));
+        service.save(&json!({"scope":scope,"kind":kind,"cwd":cwd,"id":"alias","title":"Alias","body":"changed target"})).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::read_to_string(&target)
+                .unwrap()
+                .contains("changed target")
+        );
+    }
+}
 #[test]
 fn template_parameter_shared_contract_and_strict_rendering() {
     let corpus: Value = serde_json::from_str(include_str!(

@@ -1,0 +1,44 @@
+{
+  "records": {
+    "services/hub/internal/bus/spawnceiling_test.go": {
+      "status": "ported",
+      "sha256": "21b05fb1f3e6ed088114f16d49df5042a1c50ed124bc50db78e7388e1d259c97",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/bus_ceiling.rs",
+        "services/hub-rs/src/runtime/routing_admission_tests.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/tests/bus_remaining.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestCapabilityAboveTheCeilingIsClampedAndTheModelGoesWithIt",
+          "TestSpawnUnderTheCeilingIsUntouchedAndStillRecorded",
+          "TestCallerTierDoesNotClampAChild",
+          "TestTheCeilingResolverIsHandedACanonicalCwd",
+          "TestAnUnresolvableCwdStillAsksForACeiling",
+          "TestTheCeilingClampAlsoCoversTheFederatedHop",
+          "TestClampReasonsNameTheFileAsTheRemedy",
+          "TestADeniedCeilingRefusesTheSpawnAndStillRecordsIt",
+          "TestAClampedCapabilityArrivesWithAnExplicitSafeModel",
+          "TestTheClampNeverOverwritesAnExplicitProvider",
+          "TestWithNoRoutedReplacementTheModelIsStillDropped",
+          "TestExactModelRefusesSubstitutionButKeepsAuditAndOrdinaryClamping"
+        ],
+        "behaviors": [
+          "Actual WebSocket scoped caller and external-provider echo verify under-ceiling requests retain all fields; above-ceiling requests carry an explicit safe provider/model/effort tuple, escalationScrubbed names capability/model/effort, unrelated cwd/role/decisionId/toolScope remain unchanged.",
+          "Real default, absent, empty, relative, explicit absolute-directory and Unix symlink requests verify policy selection; portable unit positive floor specifically proves dot cannot inherit process-directory policy. Canonical audit cwd matches resolved absolute directory.",
+          "Each clamp audit names routing.yaml as remedy through fixed allowlisted text. Bad ceiling capability and unsupported explicit provider are refused before the provider receives a spawn; an ordered provider barrier and call counter establish the negative without timing assumptions. Exact-model and qualified source clamp/refusal coverage is supplied by existing actual actor and two-hub tests.",
+          "Intentional architectural change: no safe concrete routed model causes refusal. Go callback harness dropped model and effort, leaving provider default unspecified; Rust never restores that policy bypass. Explicit provider is retained when a safe assignment exists, otherwise refused rather than silently swapped.",
+          "Retired synthetic harness: a hand-edited triage method list cannot grant agents.spawn through Rust exact scope policy. Actual operator/plugin ambient authority still preserves legacy toolScope as inert metadata, proved by bus_remaining and new provider tuple assertions; no caller-tier clamp is reintroduced."
+        ],
+        "validation": "Full Rust library: 369 passed, 0 failed, 0 ignored, including relative-cwd positive floor and policy-remedy redaction test. New real WebSocket bus_ceiling target: 1 passed, 0 failed, 0 ignored. Combined log /tmp/workspacer-bus-ceiling-audit.log. The fixture uses public config_dir to install the actual RoutingService. Existing qualified source/freshness tests are included in that library checkpoint; prior bus_remaining8 and agent_spawn15 integrations passed."
+      }
+    }
+  }
+}

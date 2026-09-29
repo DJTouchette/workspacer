@@ -2,6 +2,67 @@ use serde_json::{Value, json};
 use workspacer_hub::services::stores::{Stores, slug};
 
 #[test]
+fn store_writes_and_deletes_use_resolved_alias_targets() {
+    for kind in ["sessions", "layouts"] {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join(kind);
+        std::fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("target.yaml");
+        let alias = directory.join("alias.yaml");
+        std::fs::write(&target, "id: alias\nname: alias\nagents: []\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &alias).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target, &alias)
+            .expect("Windows contract CI must provide symlink privilege");
+        let resolved =
+            workspacer_hub::services::paths::selected_path(&directory, "alias.yaml").unwrap();
+        assert_eq!(resolved, target.canonicalize().unwrap());
+        assert!(
+            !std::fs::symlink_metadata(&resolved)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let service = Stores::new(root.path().into());
+        service
+            .call(
+                &format!("{kind}.save"),
+                json!({"id":"alias","name":"alias","agents":[]}),
+            )
+            .unwrap();
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let bytes = std::fs::read_to_string(&target).unwrap();
+        assert!(
+            bytes.contains(if kind == "sessions" {
+                "schemaVersion"
+            } else {
+                "createdAt"
+            }),
+            "{bytes}"
+        );
+        service
+            .call(
+                &format!("{kind}.delete"),
+                json!({"id":"alias","filename":"alias.yaml"}),
+            )
+            .unwrap();
+        assert!(!target.exists());
+        assert!(
+            std::fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+}
+
+#[test]
 fn filename_slug_contract_matches_all_three_existing_variants() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../../contracts/filename-slug-cases.json")).unwrap();

@@ -947,3 +947,63 @@ async fn editing_legacy_profile_metadata_neither_disconnects_nor_narrows_spawn_s
 
 #[path = "broker_tests.rs"]
 mod broker_tests;
+
+#[tokio::test]
+async fn third_sanitizer_is_shared_by_local_and_qualified_dispatch_before_the_hop() {
+    use crate::{client::Client, federation::Peer};
+    const METHOD: &str = "test.thirdSanitizer";
+    let mut destination_options =
+        Options::default().handler(METHOD, |_, params| async move { Ok(params) });
+    destination_options.control_plane_only = true;
+    destination_options.token = "third-sanitizer-destination".into();
+    destination_options.listen = Some("127.0.0.1:0".parse().unwrap());
+    let destination = Hub::start(destination_options).unwrap();
+    let destination_address = destination.ready().await.unwrap().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let tokens = directory.path().join("tokens.json");
+    let operator = crate::auth::mint(&tokens, Scope::Operator, "sanitizer test").unwrap();
+    let mut source_options =
+        Options::default().handler(METHOD, |_, params| async move { Ok(params) });
+    source_options.control_plane_only = true;
+    source_options.token = "third-sanitizer-source".into();
+    source_options.scoped_tokens = Some(tokens);
+    source_options.listen = Some("127.0.0.1:0".parse().unwrap());
+    source_options.federation_peers = vec![Peer {
+        name: "destination".into(),
+        url: format!("ws://{destination_address}/bus"),
+        token: "third-sanitizer-destination".into(),
+        dispatch: true,
+    }];
+    let source = Hub::start(source_options).unwrap();
+    let source_address = source.ready().await.unwrap().unwrap();
+    let client = Client::connect_remote(&format!("ws://{source_address}/bus"), &operator.token)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if client.call("federation.peers", Value::Null).await.unwrap()[0]["connected"] == true {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let params = json!({"secret":"must not cross the hop","note":"keep"});
+    assert_eq!(
+        client.call(METHOD, params.clone()).await.unwrap(),
+        json!({"note":"keep","sanitizerPasses":[false]})
+    );
+    // The destination pass alone must not mask a skipped source sanitizer.
+    // Identity provenance also proves two distinct sides, not a duplicate pass.
+    assert_eq!(
+        client
+            .call(&format!("hub:destination/{METHOD}"), params)
+            .await
+            .unwrap(),
+        json!({"note":"keep","sanitizerPasses":[false,true]})
+    );
+    client.close();
+    source.shutdown().unwrap();
+    destination.shutdown().unwrap();
+}

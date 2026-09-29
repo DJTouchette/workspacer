@@ -255,3 +255,79 @@ async fn display_assets_are_viewable_but_installation_remains_owner_only() {
     host.close();
     hub.shutdown().unwrap();
 }
+
+#[test]
+fn jpeg_metadata_cannot_hide_dimensions_and_inline_limits_remain_exact() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("large-metadata.JPG");
+    // One legal-size APP1 segment puts SOF beyond the former64KiB probe window.
+    let mut jpeg = vec![0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff];
+    jpeg.resize(6 + 65_533, 0);
+    let frame = jpeg.len();
+    jpeg.extend_from_slice(&[
+        0xff, 0xc0, 0, 17, 8, 0, 0, 0, 0, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
+    ]);
+    // Complete the header through SOS, which the retained Go DecodeConfig
+    // uses as its return boundary for a non-JFIF JPEG.
+    jpeg.extend_from_slice(&[0xff, 0xda, 0, 12, 3, 1, 0, 2, 0, 3, 0, 0, 63, 0]);
+    jpeg[frame + 5..frame + 7].copy_from_slice(&200u16.to_be_bytes());
+    jpeg[frame + 7..frame + 9].copy_from_slice(&300u16.to_be_bytes());
+    assert_eq!(image_preview::dimensions(&jpeg), Some((300, 200)));
+    let mut filled = jpeg.clone();
+    filled.splice(frame..frame, [0xff, 0xff, 0xff]);
+    assert_eq!(image_preview::dimensions(&filled), Some((300, 200)));
+    std::fs::write(&path, &jpeg).unwrap();
+    let preview = files::call("fs.readImage", json!({"path":path}), root.path()).unwrap();
+    assert_eq!(preview["width"], 300);
+    assert_eq!(preview["height"], 200);
+    assert_eq!(preview["size"], jpeg.len());
+    assert!(
+        preview["dataUrl"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,")
+    );
+    jpeg[frame + 5..frame + 7].copy_from_slice(&20_000u16.to_be_bytes());
+    jpeg[frame + 7..frame + 9].copy_from_slice(&20_000u16.to_be_bytes());
+    std::fs::write(&path, &jpeg).unwrap();
+    assert!(
+        files::call("fs.readImage", json!({"path":path}), root.path())
+            .unwrap_err()
+            .to_string()
+            .contains("40,000,000")
+    );
+    let svg = root.path().join("limit.svg");
+    std::fs::write(&svg, vec![b'x'; 2 * 1024 * 1024]).unwrap();
+    let preview = files::call("fs.readImage", json!({"path":svg}), root.path()).unwrap();
+    assert_eq!(preview["size"], 2 * 1024 * 1024);
+    assert_eq!(preview["width"], 0);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&svg)
+        .unwrap()
+        .set_len(2 * 1024 * 1024 + 1)
+        .unwrap();
+    assert!(files::call("fs.readImage", json!({"path":svg}), root.path()).is_err());
+    for (extension, mime) in [
+        ("PNG", "image/png"),
+        ("jpg", "image/jpeg"),
+        ("jpeg", "image/jpeg"),
+        ("gif", "image/gif"),
+        ("webp", "image/webp"),
+        ("svg", "image/svg+xml"),
+        ("bmp", "image/bmp"),
+        ("ico", "image/x-icon"),
+        ("avif", "image/avif"),
+    ] {
+        assert_eq!(
+            image_preview::mime(&root.path().join(format!("image.{extension}"))),
+            Some(mime)
+        );
+    }
+    for extension in ["tif", "tiff", "txt", "env", ""] {
+        assert_eq!(
+            image_preview::mime(&root.path().join(format!("image.{extension}"))),
+            None
+        );
+    }
+}

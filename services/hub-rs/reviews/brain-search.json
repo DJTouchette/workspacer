@@ -1,0 +1,46 @@
+{
+  "records": {
+    "services/hub/cmd/brain/search.go": {
+      "status": "ported",
+      "sha256": "68eeb64360b20bf08e84a885d9eea64b4ac6e5487e386426307afb17dc352542",
+      "replacement": [
+        "services/hub-rs/src/services/search.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/search.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Full retained source reviewed: typed request, empty query, nonpositive500 default, smart/case-sensitive/whole-word/literal/regex argv, -- query delimiter and explicit dot operand, streaming collector,15second bound, no-match exit1 success and other exit diagnostics.",
+          "Fixed empty query to return empty results after typed validation and canonical cwd, rather than reporting an error. Wrong-type query/cwd/bool/limit now fail instead of silently selecting defaults. Real rg tests cover case, whole-word and literal/regex modes, invalid regex, ignore rules, option-like query and a100KB minified line.",
+          "Collector retains one result per submatch, first-seen file grouping, count-based overflow and ASCII-only trim/codepoint300 clipping. Signed numeric validation now skips malformed output and refuses offset overflow instead of panicking on u64::MAX. Exact500 default versus overflow, BOM/NEL and odd/even astral boundaries are pinned."
+        ],
+        "intentionalChanges": [
+          "Current authenticated search access is ambient canonical host-path access, matching retained handlers. Obsolete secret denylist prose at the end of search_test.go is not restored as an active read policy.",
+          "Malformed numeric offsets that cannot fit checked signed column arithmetic are skipped; no unchecked integer-overflow behavior is preserved. Streaming remains per-line and does not introduce a64KB Scanner cap that would discard valid minified matches. Search continues to use host rg and its configured ignore behavior."
+        ],
+        "validation": "2026-09-29 Linux: owning search integration4/4 passed in /tmp/workspacer-search-image-audit.log; same invocation ui_assets7/7 passed before subsequent independent JPEG fill-byte regression. Full source checker122methods/126dangerous/23opaque/errors[] in /tmp/workspacer-search-parameter-check.json. Witness left all4 changed source/test files unmapped; explicit owning targets were run."
+      }
+    },
+    "services/hub/cmd/brain/search_test.go": {
+      "status": "ported",
+      "sha256": "6f8244cf2ff6d564c4a2404c0628106e6dc01a6b9950df0ab335c83e18787490",
+      "replacement": [
+        "services/hub-rs/src/services/search.rs",
+        "services/hub-rs/src/services/paths.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/search.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All actual retained tests mapped: multiple submatches on one line, individual-submatch truncation, nonpositive cap defaults, odd/even Unicode codepoint boundaries, ASCII whitespace trim with BOM/NEL retained. Additional malformed output vectors prevent panic or coercion.",
+          "Actual ripgrep regressions cover the execution path and canonical input validation, not only collector output. The final old read-set comment has no test function and refers to a secret grant removed from current authenticated policy."
+        ],
+        "intentionalChanges": [],
+        "validation": "2026-09-29 Linux: owning search integration4/4 passed in /tmp/workspacer-search-image-audit.log; same invocation ui_assets7/7 passed before subsequent independent JPEG fill-byte regression. Full source checker122methods/126dangerous/23opaque/errors[] in /tmp/workspacer-search-parameter-check.json. Witness left all4 changed source/test files unmapped; explicit owning targets were run."
+      }
+    }
+  }
+}

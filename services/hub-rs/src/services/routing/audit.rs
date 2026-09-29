@@ -113,6 +113,13 @@ impl SpawnAudit<'_> {
             self.scrubbed.extend(fields.iter().cloned());
         }
         ceiling["capabilityRefused"] = json!(self.capability_refused);
+        if self.capability_refused {
+            // Fixed text, not an arbitrary error/request string: record the
+            // operator's remedy without admitting payload secrets to the log.
+            ceiling["because"] = json!([
+                "routing.yaml ceilings policy caps this spawn; edit that policy to permit a higher capability"
+            ]);
+        }
         ceiling["denied"] = json!(result.is_err());
         if result.is_err() {
             if let Some(capability) = fresh {
@@ -232,6 +239,24 @@ impl RoutingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn clamp_receipt_names_policy_remedy_without_raw_request_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = RoutingService::open(dir.path().into()).unwrap();
+        let mut request = json!({"provider":"claude","model":"fable","capability":"frontier_plus","message":"SECRET_BODY","env":{"KEY":"SECRET_ENV"}});
+        {
+            let mut audit = service.begin_spawn_audit(None);
+            assert!(!audit.check(&mut request).unwrap().is_empty());
+        }
+        let raw = std::fs::read_to_string(dir.path().join("routing-decisions.jsonl")).unwrap();
+        assert!(!raw.contains("SECRET"));
+        let row: Value = serde_json::from_str(raw.trim()).unwrap();
+        assert_eq!(row["spawn"]["outcome"], "clamped");
+        assert_eq!(row["spawn"]["ceiling"]["capabilityRefused"], true);
+        let reasons = row["spawn"]["ceiling"]["because"].as_array().unwrap();
+        assert_eq!(reasons.len(), 1);
+        assert!(reasons[0].as_str().unwrap().contains("routing.yaml"));
+    }
     #[test]
     #[cfg(unix)]
     fn repairs_permissions_and_drops_sensitive_spawn_fields() {

@@ -51,20 +51,35 @@ impl Collector {
             return false;
         };
         let path = self.cwd.join(path.strip_prefix("./").unwrap_or(path));
-        let text = data["lines"]["text"]
-            .as_str()
-            .unwrap_or("")
-            .trim_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
+        if !data["lines"].is_object() && !data["lines"].is_null() {
+            return false;
+        }
+        let text = match data["lines"].get("text") {
+            None | Some(Value::Null) => "",
+            Some(Value::String(text)) => text,
+            _ => return false,
+        }
+        .trim_matches([' ', '\t', '\n', '\r', '\x0b', '\x0c']);
         let clipped: String = text.chars().take(300).collect();
-        let mut columns = data["submatches"]
-            .as_array()
-            .map(|matches| {
-                matches
-                    .iter()
-                    .map(|m| m["start"].as_u64().unwrap_or(0) + 1)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let Some(line_number) = integer(&data["line_number"]) else {
+            return false;
+        };
+        let mut columns = Vec::new();
+        if !data["submatches"].is_null() {
+            let Some(matches) = data["submatches"].as_array() else {
+                return false;
+            };
+            for item in matches {
+                if !item.is_object() && !item.is_null() {
+                    return false;
+                }
+                let Some(column) = integer(&item["start"]).and_then(|start| start.checked_add(1))
+                else {
+                    return false;
+                };
+                columns.push(column);
+            }
+        }
         if columns.is_empty() {
             columns.push(1);
         }
@@ -78,7 +93,10 @@ impl Collector {
                 self.files.push(json!({"file":path,"matches":[]}));
                 index
             });
-            self.files[index]["matches"].as_array_mut().unwrap().push(json!({"line":data["line_number"].as_u64().unwrap_or(0),"column":column,"text":clipped}));
+            self.files[index]["matches"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"line":line_number,"column":column,"text":clipped}));
             self.total += 1;
         }
         false
@@ -87,12 +105,44 @@ impl Collector {
         json!({"results":self.files,"truncated":self.truncated})
     }
 }
+fn integer(value: &Value) -> Option<i64> {
+    if value.is_null() {
+        Some(0)
+    } else {
+        value.as_i64()
+    }
+}
 pub async fn search(params: Value) -> Result<Value> {
-    let query = params["query"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow!("search.project requires {{ query, cwd }}"))?;
+    if !params.is_object() && !params.is_null() {
+        bail!("search parameters must be an object");
+    }
+    for key in ["cwd", "query"] {
+        if params
+            .get(key)
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+        {
+            bail!("{key} must be text");
+        }
+    }
+    for key in ["caseSensitive", "wholeWord", "regex"] {
+        if params
+            .get(key)
+            .is_some_and(|value| !value.is_null() && !value.is_boolean())
+        {
+            bail!("{key} must be a boolean");
+        }
+    }
+    if params
+        .get("maxResults")
+        .is_some_and(|value| !value.is_null() && value.as_i64().is_none())
+    {
+        bail!("maxResults must be an integer");
+    }
+    let query = params["query"].as_str().unwrap_or("");
     let cwd = paths::canonicalize(Path::new(params["cwd"].as_str().unwrap_or("")))?;
+    if query.is_empty() {
+        return Ok(json!({"results":[],"truncated":false}));
+    }
     let mut command = tokio::process::Command::new("rg");
     command
         .current_dir(&cwd)

@@ -17,7 +17,10 @@ pub fn mime(path: &Path) -> Option<&'static str> {
     }
 }
 pub fn dimensions(data: &[u8]) -> Option<(u32, u32)> {
-    let b = &data[..data.len().min(65536)];
+    // A legal JPEG metadata segment can itself approach64KiB; the SOF may
+    // follow several such segments. Inspect all bounded inline bytes so large
+    // metadata cannot hide the dimensions and bypass the source-pixel budget.
+    let b = &data[..data.len().min(2 * 1024 * 1024)];
     let be16 = |i| u16::from_be_bytes([b[i], b[i + 1]]) as u32;
     let le16 = |i| u16::from_le_bytes([b[i], b[i + 1]]) as u32;
     let be32 = |i| u32::from_be_bytes(b[i..i + 4].try_into().unwrap());
@@ -56,6 +59,11 @@ pub fn dimensions(data: &[u8]) -> Option<(u32, u32)> {
                 continue;
             }
             let m = b[i + 1];
+            if m == 0xff {
+                // JPEG permits fill bytes before any marker, including SOF.
+                i += 1;
+                continue;
+            }
             if m == 0xd8 || m == 1 || (0xd0..=0xd7).contains(&m) {
                 i += 2;
                 continue;

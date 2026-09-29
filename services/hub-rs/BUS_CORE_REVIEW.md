@@ -12,8 +12,8 @@ This records source-level review alongside the assertion mappings in
 | Subscription/demand caps and matching, replay/release by distinct interested clients, no metadata leak for disallowed streams | `Core::topics`/`publish`, broker and bus actor tests, topic256/257 network boundary and permitted-desync floor |
 | Local handler replacement/precedence, truthful provider registration acknowledgement, first-owner ownership, health inventory, outage diagnostics | Unified `Options.handlers` map, actor provider map, existing no-provider diagnostic subprocess test and new real-wire local/provider tests |
 | Pending-call ownership/correlation, provider disconnection, per-operation deadlines, independent slow readers/writers | Actor pending map/reliable queues, lifecycle timeout tests, provider result forgery corpus, broker slow-peer and cancellation tests |
-| Spawn/progress/replay provenance cleanup, canonical authority keys and local/federated shared admission | `admission::sanitize` called before dispatch branching, shared key corpus and real-peer progress tests; generic sanitizer-extension guard remains outstanding |
-| Routing capability/freshness gate and decision correlation | Owned coordinator and external-provider gate now record one routing-phase outcome per operation. Qualified/booked source routing and canonical model carriers are a separate follow-up under validation. |
+| Spawn/progress/replay provenance cleanup, canonical authority keys and local/federated shared admission | `admission::sanitize` called before dispatch branching, shared key corpus and real-peer progress tests; cfg(test) third-sanitizer real two-hub regression requires local/source/destination pass provenance |
+| Routing capability/freshness gate and decision correlation | Owned coordinator and external-provider gate now record one routing-phase outcome per operation. Qualified/booked source routing, canonical model carriers and paired local-project versus remote-execution cwd have passed real-peer and paired-origin tests. |
 
 Explicit architecture differences must remain visible in eventual core-file
 reviews:
@@ -39,16 +39,23 @@ reviews:
 
 Open source obligations before recording the two large files:
 
-1. Execute and review the qualified/paired source routing fix, including the
-   private local project versus remote execution cwd, canonical-only model IDs,
-   contradictory companions and separate source/destination audit receipts.
-2. Restore or explicitly retire the scope/label diagnostic supplied by Go's
-   `ScopedIdentFor` to `cmd/hub/hostonly.go`. A correct HTTP403 does not reproduce
-   the old operator-facing diagnostic.
-3. Finish the `sanitizerdrift_test.go` extension-equivalence guard: existing
-   concrete shared admission tests do not by themselves certify arbitrary future
-   method additions.
-4. Retain and actually invoke the optimized mature-snapshot latency budget;
-   debug functional transport coverage is not a performance verdict.
-5. Complete the residual source/checklist comparison and record concrete
+Completed bounded obligations: qualified/paired source routing, host-only
+scope/label diagnostics, third-sanitizer extension equivalence and the invoked
+optimized mature-snapshot latency budget. Exact row evidence lives in
+`reviews/bus-hostauthority.json`, `reviews/bus-freshness.json`,
+`reviews/bus-sanitizer-drift.json` and `reviews/bus-latency.json`. The latest
+local library checkpoint passed 369 tests; performance has its separate
+optimized CI receipt and is not inferred from that functional suite.
+
+Still open before recording the two large files:
+
+1. Review/record the now-tested `reviews/bus-ceiling.json` mapping. The relative
+   cwd mismatch is fixed and tested: non-absolute cwd retains default policy.
+   New `bus_ceiling` real WebSocket/provider regression passed alongside the
+   369-test library checkpoint. Allowed clamps now record a fixed routing.yaml
+   remedy; no raw request/error text is added to the audit.
+2. Preserve the documented fail-closed Rust behavior when no safe concrete
+   routed model exists, versus Go dropping model/effort and letting the provider
+   default. The new provider-barrier regression explicitly proves refusal.
+3. Complete the residual source/checklist comparison and record concrete
    architectural exceptions rather than certifying from passing aggregates.

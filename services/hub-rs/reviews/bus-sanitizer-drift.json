@@ -1,0 +1,26 @@
+{
+  "records": {
+    "services/hub/internal/bus/sanitizerdrift_test.go": {
+      "status": "ported",
+      "sha256": "f7c6e290f1dbdc8c92df1417244520e61e6173c9c630fa9247cf05979d7d5a8c",
+      "replacement": [
+        "services/hub-rs/src/admission.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/bus_audit_tests.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestFederatedCallSanitizesThroughTheSameTableAsLocalCall"
+        ],
+        "behaviors": [
+          "A third synthetic sanitizer is compiled only for unit tests in the same admission::sanitize entry point used by production local and qualified dispatch. No production method, grant, mutable registry or runtime dispatch branch is added.",
+          "Actual scoped operator over WebSocket calls a local handler and a qualified handler through two real hubs. Both return the unrelated note intact and omit secret. Provenance pass sequence must be [false] locally and [false,true] remotely, so destination-only sanitation cannot hide a skipped source hop.",
+          "Go mutates its methodSanitizers map at runtime for this regression; Rust uses a cfg(test) entry because its shared sanitizer is a static function. The regression still changes only that single shared entry point and proves both dispatch branches pick it up."
+        ],
+        "validation": "Full Rust library checkpoint: 362 passed, 0 failed, 0 ignored; /tmp/workspacer-bus-third-sanitizer.log. Explicit third-sanitizer transport regression and freshness matrix (including fresh-reason assertion) both passed. Prior agent_spawn integration: 15 passed; /tmp/workspacer-paired-routing-validation.log."
+      }
+    }
+  }
+}

@@ -14,6 +14,20 @@ fn lower_key(key: &str) -> String {
 }
 
 pub(crate) fn sanitize(identity: &Identity, method: &str, mut params: Value) -> Result<Value> {
+    // A third entry exists only in unit-test builds. The transport regression
+    // proves dispatch uses this shared entry point rather than a copied list.
+    #[cfg(test)]
+    if method == "test.thirdSanitizer" {
+        if let Some(map) = params.as_object_mut() {
+            map.remove("secret");
+            let passes = map.entry("sanitizerPasses").or_insert_with(|| json!([]));
+            passes
+                .as_array_mut()
+                .unwrap()
+                .push(json!(identity.federated));
+        }
+        return Ok(params);
+    }
     if method == "fleetWorkflows.request" && !identity.may_assert_session() {
         bail!("Fleet workflow management is local host only");
     }

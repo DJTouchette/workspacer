@@ -5,6 +5,42 @@ use workspacer_hub::services::{files, paths};
 mod sweepguard;
 
 #[test]
+fn listing_reports_symlink_targets_as_files_or_directories() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("directory");
+    let file = root.path().join("file.txt");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(&file, "ordinary").unwrap();
+    let linked_directory = root.path().join("directory-alias");
+    let linked_file = root.path().join("file-alias");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&directory, &linked_directory).unwrap();
+        std::os::unix::fs::symlink(&file, &linked_file).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(&directory, &linked_directory)
+            .expect("Windows contract CI must provide symlink privilege");
+        std::os::windows::fs::symlink_file(&file, &linked_file)
+            .expect("Windows contract CI must provide symlink privilege");
+    }
+    let result = files::call("fs.listEntries", json!({"path":root.path()}), root.path()).unwrap();
+    let rows = result["entries"].as_array().unwrap();
+    for (name, is_dir) in [
+        ("directory", true),
+        ("directory-alias", true),
+        ("file-alias", false),
+    ] {
+        assert_eq!(
+            rows.iter().find(|row| row["name"] == name).unwrap()["isDir"],
+            is_dir,
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn shared_active_path_contract() {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../contracts/path-containment-cases.json"

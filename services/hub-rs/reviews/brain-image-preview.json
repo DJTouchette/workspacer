@@ -1,0 +1,28 @@
+{
+  "records": {
+    "services/hub/cmd/brain/readimage.go": {
+      "status": "ported",
+      "sha256": "60795e266a3b0e8c57b3a02bde211dcdfe7bca7cf64d2e5279bb7dac24a978ed",
+      "replacement": [
+        "services/hub-rs/src/services/image_preview.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/ui_assets.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All retained source read: exact browser extension/MIME allowlist, canonical path opened verbatim, regular-file refusal before reading,2MiB cap on actual bytes, base64 data URL and path/width/height/size response,40million-pixel bound without allocating decoded pixels.",
+          "Actual fs.readImage tests cover known dimensions and pixel rejection, wrong extension, directory/special file, exact inline byte boundary and one-byte overflow. All9 allowed extensions and TIFF/non-image exclusions are pinned; TypeScript reference-header vectors remain green.",
+          "Fixed Rust64KiB probe cutoff: one legal-size JPEG APP1 metadata segment can place SOF beyond that prefix while remaining below inline cap. Full bounded bytes and repeated FF marker fills are now scanned; positive300x200 and negative20000x20000 header fixtures pass through actual file handler. Fixture includes header through SOS, matching retained Go DecodeConfig boundary.",
+          "Final owning ui_assets target7/7 passed after the last JPEG fill/SOS regression; /tmp/workspacer-image-final.log. Earlier same batch search4 and ui_assets7 passed /tmp/workspacer-search-image-audit.log. The integrated library369 checkpoint also passed while routing/config changes were audited. Witness left source/tests unmapped; owning target was run explicitly."
+        ],
+        "intentionalChanges": [
+          "Rust uses bounded header-only probes rather than Go registered image decoders. It also knows BMP/WebP dimensions, so those formats receive the same pixel ceiling instead of Go unknown-dimension fallback. No full image validity or downscaling claim is made; this provider retains inline-original behavior under2MiB.",
+          "Opened regular-file identity and bounded byte reader are stricter than old stat/open. Size reports actual returned byte count rather than a potentially stale stat size. The image-specific extension type boundary is preserved independently of ambient authenticated path access."
+        ]
+      }
+    }
+  }
+}

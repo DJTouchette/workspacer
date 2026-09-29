@@ -3,10 +3,61 @@ mod sweepguard;
 use sweepguard::Tally;
 
 #[test]
+fn real_tally_mutations_cannot_omit_or_discard_the_execution_floor() {
+    for mutation in [
+        "no-floor",
+        "discard-error",
+        "discard-success",
+        "early-floor",
+        "delayed-stale-floor",
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| {
+                let mut tally = Tally::default();
+                tally.ran("allow");
+                match mutation {
+                    "discard-error" => drop(tally.require_both("mutated live sweep")),
+                    "discard-success" => drop(tally.require_every("mutated live sweep", 1)),
+                    "early-floor" => {
+                        tally.require_every("premature floor", 1).unwrap();
+                        tally.skip("a case skipped after the floor");
+                    }
+                    "delayed-stale-floor" => {
+                        let earlier = tally.require_every("stale floor", 1);
+                        tally.skip("new case after floor was computed");
+                        earlier.unwrap();
+                    }
+                    _ => (),
+                }
+            })
+            .is_err(),
+            "unobserved floor mutation escaped: {mutation}"
+        );
+    }
+    fn loader() -> Tally {
+        let mut tally = Tally::default();
+        tally.ran("allow");
+        tally.ran("deny");
+        tally
+    }
+    loader().require_both("returned helper tally").unwrap();
+    let original = std::panic::catch_unwind(|| {
+        let mut tally = Tally::default();
+        tally.ran("allow");
+        panic!("original assertion failure");
+    })
+    .unwrap_err();
+    assert_eq!(
+        original.downcast_ref::<&str>(),
+        Some(&"original assertion failure")
+    );
+}
+
+#[test]
 fn verdict_floors_refuse_empty_and_half_empty_sweeps() {
     let mut tally = Tally::default();
-    assert!(tally.require_both("corpus").is_err());
-    assert!(tally.require_deny("corpus").is_err());
+    tally.require_both("corpus").unwrap_err();
+    tally.require_deny("corpus").unwrap_err();
     for _ in 0..42 {
         tally.ran("allow");
     }
@@ -79,13 +130,13 @@ fn enumeration_ratchet_and_execution_floor_are_independent() {
         tally.skip("needsSymlinks");
     }
     tally.require_corpus("corpus", 79, 1, 1).unwrap();
-    assert!(tally.require_every("all cases", 79).is_err());
+    tally.require_every("all cases", 79).unwrap_err();
     tally.require_every("executed", 2).unwrap();
     let mut skipped = Tally::default();
     for _ in 0..79 {
         skipped.skip("needsSymlinks");
     }
-    assert!(skipped.require_corpus("corpus", 79, 1, 1).is_err());
+    skipped.require_corpus("corpus", 79, 1, 1).unwrap_err();
 }
 
 #[test]
@@ -124,11 +175,12 @@ fn real_path_population_mutations_cannot_satisfy_sweep_floors() {
                     tally.ran(verdict);
                 }
             }
-            assert_eq!(
-                tally.require_corpus(name, floor, allow, deny).is_ok(),
-                mutation == "none",
-                "{name}: {mutation}"
-            );
+            let result = tally.require_corpus(name, floor, allow, deny);
+            if mutation == "none" {
+                result.unwrap();
+            } else {
+                result.unwrap_err();
+            }
         }
     }
 }

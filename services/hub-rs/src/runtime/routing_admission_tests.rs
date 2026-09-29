@@ -78,3 +78,137 @@ async fn external_spawn_audits_allow_clamp_and_refusal_once_without_logging_payl
     }
     hub.shutdown().unwrap();
 }
+
+#[tokio::test]
+async fn freshness_has_positive_floors_for_new_sessions_ordinary_resumes_and_absent_policy() {
+    for policy in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("routing.yaml"),"roles:\n  reviewer: deep_reviewer\nceilings:\n  default: {max_capability: frontier_plus}\n").unwrap();
+        let tokens = directory.path().join("tokens.json");
+        let operator = crate::auth::mint(&tokens, crate::auth::Scope::Operator, "fixture").unwrap();
+        let mut options = Options::default();
+        options.control_plane_only = true;
+        options.scoped_tokens = Some(tokens);
+        if policy {
+            options.routing = Some(Arc::new(
+                crate::services::routing::RoutingService::open(directory.path().into()).unwrap(),
+            ));
+        }
+        let hub = Hub::start(options).unwrap();
+        hub.ready().await.unwrap();
+        let mut provider = hub.handle().connect().await.unwrap();
+        next(&mut provider).await;
+        provider
+            .send(Frame {
+                methods: vec!["agents.spawn".into()],
+                ..Frame::op("register")
+            })
+            .unwrap();
+        next(&mut provider).await;
+        let mut count = 0;
+        for host in [false, true] {
+            let mut caller = if host {
+                hub.handle().connect().await.unwrap()
+            } else {
+                hub.handle()
+                    .connect_authenticated(operator.token.clone(), false)
+                    .await
+                    .unwrap()
+            };
+            next(&mut caller).await;
+            for (fields, fresh_resume) in [
+                (
+                    json!({"role":"reviewer","resumeSessionId":"role-old"}),
+                    true,
+                ),
+                (
+                    json!({"capability":"deep_reviewer","resumeSessionId":"cap-old"}),
+                    true,
+                ),
+                (
+                    json!({"role":"implementer","resumeSessionId":"ordinary-role"}),
+                    false,
+                ),
+                (json!({"resumeSessionId":"ordinary-unlabelled"}), false),
+                (
+                    json!({"capability":"frontier","resumeSessionId":"ordinary-capability"}),
+                    false,
+                ),
+                (
+                    json!({"role":"reviewer","capability":"deep_reviewer"}),
+                    false,
+                ),
+            ] {
+                let mut params = fields.clone();
+                params["cwd"] = json!(directory.path());
+                params["provider"] = json!("codex");
+                params["model"] = json!("gpt-5.6-terra");
+                params["effort"] = json!("high");
+                caller
+                    .send(Frame {
+                        id: "fresh-case".into(),
+                        method: "agents.spawn".into(),
+                        params: Some(params),
+                        ..Frame::op("call")
+                    })
+                    .unwrap();
+                if policy && fresh_resume {
+                    let refused = next(&mut caller).await;
+                    assert_eq!(refused.op, "error");
+                    assert_eq!(refused.id, "fresh-case");
+                    assert!(refused.error.contains("fresh"));
+                    assert!(
+                        refused
+                            .error
+                            .contains(fields["resumeSessionId"].as_str().unwrap())
+                    );
+                    provider.send(Frame::op("subscribe")).unwrap();
+                    assert_eq!(
+                        next(&mut provider).await.op,
+                        "subscribed",
+                        "refusal leaked a spawn to provider"
+                    );
+                } else {
+                    let forwarded = next(&mut provider).await;
+                    assert_eq!(forwarded.op, "call");
+                    for (key, value) in fields.as_object().unwrap() {
+                        assert_eq!(
+                            &forwarded.params.as_ref().unwrap()[key],
+                            value,
+                            "policy={policy} host={host} {key}"
+                        );
+                    }
+                    provider
+                        .send(Frame {
+                            id: forwarded.id,
+                            result: Some(json!({"ok":true})),
+                            ..Frame::op("result")
+                        })
+                        .unwrap();
+                    assert_eq!(next(&mut caller).await.result, Some(json!({"ok":true})));
+                }
+                count += 1;
+                if policy {
+                    let rows: Vec<Value> =
+                        std::fs::read_to_string(directory.path().join("routing-decisions.jsonl"))
+                            .unwrap()
+                            .lines()
+                            .map(|line| serde_json::from_str(line).unwrap())
+                            .collect();
+                    assert_eq!(rows.len(), count);
+                    let last = &rows.last().unwrap()["spawn"];
+                    assert_eq!(last["ceiling"]["resumeRefused"], fresh_resume);
+                    if fresh_resume {
+                        assert_eq!(last["ceiling"]["freshCapability"], "deep_reviewer");
+                        assert_eq!(last["outcome"], "refused");
+                    } else {
+                        assert_eq!(last["outcome"], "allowed");
+                    }
+                } else {
+                    assert!(!directory.path().join("routing-decisions.jsonl").exists());
+                }
+            }
+        }
+        hub.shutdown().unwrap();
+    }
+}

@@ -279,7 +279,6 @@ mod tests {
                 .contains("too long")
         );
     }
-    #[cfg(unix)]
     #[test]
     fn swapped_symlink_drops_observer_without_external_metadata_event() {
         let directory = tempfile::tempdir().unwrap();
@@ -290,7 +289,11 @@ mod tests {
         let watches = Watches::new();
         watches.watch(&json!({"path":path}), 0).unwrap();
         std::fs::remove_file(&path).unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside, &path)
+            .expect("Windows contract CI must provide symlink privilege");
         assert!(watches.poll(1).is_empty());
         assert!(watches.files.lock().unwrap().is_empty());
     }

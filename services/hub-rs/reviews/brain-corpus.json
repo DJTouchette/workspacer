@@ -1,0 +1,65 @@
+{
+  "records": {
+    "services/hub/cmd/brain/contracts_test.go": {
+      "sha256": "4e39d72a2775f1d377f074d5305188902107ac856944c55c9ccfd66998b6bdcb",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "contracts/reference-baselines/manifest.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts",
+        "apps/desktop/src/main/lib/pathConfinement.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all513 lines and every assertion: runtime-cache/source discovery, nonempty fixture/source population, two test-file/two-language ownership, README forward/reverse closure, required Windows executions and every declared block loader. Actual Rust ownership guard preserves these obligations for active Rust/TypeScript sources; implementations that merely mention fixture names cannot supply test ownership. Missing/unreadable markers and inputs are hard failures through the strict manifest reader.",
+          "source_discovery_excludes_runtime_caches_and_comments_are_not_loaders verifies the exclusion list against a temporary multi-language tree. every_active_fixture_has_test_loaders_in_distinct_languages discovers actual files on each run, distinguishes test sources, enforces documentation in both directions and refuses empty fixture discovery. Vocabulary declared_block_loaders_resolve_to_real_test_sources resolves file::needle entries, rejects empty/absolute/parent paths and retains the original floor25.",
+          "windows_ci_runs_both_live_path_implementations parses actual workflow YAML, recognizes direct Windows runners and matrix OS selection with Rust working-directory checks, and requires both Rust backend and TypeScript path execution. Mutation tests remove Windows runners or test commands and must produce false/false. Current c0f40add Windows job36628039492/109610780781 is actual successful execution evidence; latest-head Windows remains required.",
+          "Reviewed all existing exception forcing functions rather than treating them as blanket waivers. Six captured Go/Rust baseline fixtures require fixed allowlist,40-character reference commit,64-character byte digests, unchanged retained original sources, exact per-block floor keys, nonzero populations and exact actual Rust replay loader set; five corruption mutants must fail. HTTP route registry is separately classified as source architecture: seven real router sources, source roots, six runnable TS source checks, registered runner, vocabulary loader and70-route floor remain pinned, with malformed ownership/removed source/removed loader mutants."
+        ],
+        "intentionalChanges": [
+          "The deleted Go implementation cannot remain the mandatory second executable language. Active cross-language fixtures still require distinct-language test owners; exactly six explicitly captured Go/Rust contracts retain reviewed original byte provenance plus actual Rust replay. Capture metadata explicitly says this was a preserved contract checkpoint, not a fresh oracle execution.",
+          "The HTTP route source registry is independently read against live Rust routes by its TS architectural guard; duplicating a parser just to count another language would not create a behavior oracle. Unknown architectural exceptions are refused.",
+          "Cargo runtime reads replace extinput Go result-cache pinning. Source discovery no longer requires a Go tree, and missing repository/input is a hard error rather than a vendored skip."
+        ],
+        "validation": "2026-09-29: exact existing Rust corpus_ownership.rs and corpus_vocabulary.rs recompiled with rustc --test against cached dependencies after Cargo package clean had removed their binaries;6+5 tests passed. Actual retained TypeScript contractsVocabulary and pathConfinement twins66 passed. No implementation changes were needed in this audit. Logs /tmp/workspacer-corpus-ownership-test.log and /tmp/workspacer-corpus-vocabulary-test.log. Earlier Cargo reader13 checkpoint also passed the same source."
+      }
+    },
+    "services/hub/cmd/brain/corpusvocab_test.go": {
+      "sha256": "5ba65924a1045c9775f2e8d887eb99e34d095cfa62bf55121fabe13d1ba9a51a",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/support/repo.rs",
+        "contracts/reference-baselines/manifest.json"
+      ],
+      "tests": [
+        "services/hub-rs/tests/corpus_ownership.rs",
+        "services/hub-rs/tests/corpus_vocabulary.rs",
+        "services/hub-rs/tests/repo_reader.rs",
+        "apps/desktop/src/main/services/contractsVocabulary.test.ts",
+        "apps/desktop/src/main/lib/pathConfinement.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all655 lines: recursive object-array block discovery, bidirectional declaration closure, required-field presence, verdict vocabulary, required/declared/forbidden reasons, exercised reasons, unique names, all string/key token references incl unterminated forms, top-level and nested field closure, optional-use closure, loader syntax and discovery/exemption rules.",
+          "Rust retains all13 check IDs and all16 original mutations with an unmodified real-fixture control; the battery also asserts that every check ID was exercised. It preserves the fixture floor10, deny/refuse reason distinctions, optional/nested typo cases, unknown and unclosed token references and dropped per-block ownership.",
+          "The independent TypeScript twin is read and required to carry each check ID, and the reciprocal TS guard names the Rust vocabulary source. Active path loader existence checks now resolve real Rust shared_active_path_contract and the unchanged TS active-path describe. All declared block loaders resolve with original floor25.",
+          "The17-case anonymous parameter-shape corpus remains explicitly archived, byte content retained with documented dead-harness rationale and independent validation. No active authenticated runtime path restriction is inferred from that obsolete harness."
+        ],
+        "intentionalChanges": [
+          "The old fsguard Go loader reference is replaced by its executing Rust shared path corpus. Explicit backend-capabilities.json exemption identifies the new authoritative registration manifest as non-case metadata; existing three original no-block exemptions remain closed and fail if they grow vocabulary.",
+          "Original Go test-runner tally/skip accounting is replaced by direct synchronous Rust validation with an executed fixture counter and >=10 assertion; exemptions are fixed names, never inferred from missing blocks."
+        ],
+        "validation": "2026-09-29: exact existing Rust corpus_ownership.rs and corpus_vocabulary.rs recompiled with rustc --test against cached dependencies after Cargo package clean had removed their binaries;6+5 tests passed. Actual retained TypeScript contractsVocabulary and pathConfinement twins66 passed. No implementation changes were needed in this audit. Logs /tmp/workspacer-corpus-ownership-test.log and /tmp/workspacer-corpus-vocabulary-test.log. Earlier Cargo reader13 checkpoint also passed the same source."
+      }
+    }
+  }
+}

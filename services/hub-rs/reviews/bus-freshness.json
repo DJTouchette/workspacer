@@ -1,0 +1,38 @@
+{
+  "records": {
+    "services/hub/internal/bus/spawnfresh_test.go": {
+      "status": "ported",
+      "sha256": "40252dd21e130c2a75b88eb193dc9040d0717c5c4acdbc8adaa0490db4c5350d",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/audit.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/runtime/routing_admission_tests.rs",
+        "services/hub-rs/src/runtime/federation_routing_tests.rs",
+        "services/hub-rs/tests/agent_spawn.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestAFreshRoleCannotResumeASessionThroughTheSpawnGate",
+          "TestTheResumeIsRefusedRatherThanStrippedFromTheParams",
+          "TestOrdinaryResumesStillReachTheProvider",
+          "TestAFreshRoleStartingANewSessionIsAdmitted",
+          "TestTheFreshRefusalAlsoCoversTheFederatedHop",
+          "TestTheHostTokenIsNotExemptFromTheFreshRefusal",
+          "TestWithoutARoutingLayerNoResumeIsRefused"
+        ],
+        "behaviors": [
+          "Real external-provider admission refuses reviewer-role and explicit deep_reviewer resumes before forwarding; returned error names the original session and freshness reason. A provider subscription acknowledgement is a deterministic barrier proving no request was forwarded as a silently fresh session.",
+          "Positive floors retain implementer, unlabeled and frontier-capability resumeSessionId, while fresh reviewers starting new sessions keep their role and capability. Both embedded host and authenticated scoped operator exercise the matrix.",
+          "With no injected routing service, identical fresh resumes are forwarded unchanged even if a routing.yaml exists. With policy injected, each attempt writes exactly one audit row; refused rows mark resumeRefused, exact deep_reviewer freshCapability and refused outcome.",
+          "Real paired hubs test source freshness refusal while the same destination independently admits that request directly. Provider count and independent origin/destination audit locations demonstrate source refusal before peer invocation. Owned agent-spawn integration separately verifies exactly-once preflight audit behavior.",
+          "Rust uses the actual YAML resolver and actor/provider transport instead of a mutable Go callback resolver; no fake provider process or inherited conversation is launched."
+        ],
+        "validation": "Full Rust library checkpoint: 362 passed, 0 failed, 0 ignored; /tmp/workspacer-bus-third-sanitizer.log. Explicit third-sanitizer transport regression and freshness matrix (including fresh-reason assertion) both passed. Prior agent_spawn integration: 15 passed; /tmp/workspacer-paired-routing-validation.log."
+      }
+    }
+  }
+}
