@@ -554,7 +554,8 @@
     "services/hub/cmd/brain/main.go": "parses the --claudemon flag and constructs the client; every path lives in claudemon.go",
     "services/hub/internal/claudemon/bridge.go": "consumes whatever SSE URL it is handed; the URL is composed by cmd/hub/main.go, which is enumerated above",
     "apps/desktop/src/main/services/hubDaemon.ts": "Passes the external daemon base URL to the owned Rust hub; ExternalDaemon composes the read-only route paths.",
-    "services/hub-rs/src/runtime.rs": "Owns the configured external daemon service and passes its base URL; the service constructs all HTTP request paths."
+    "services/hub-rs/src/runtime.rs": "Owns the configured external daemon service and passes its base URL; the service constructs all HTTP request paths.",
+    "services/hub-rs/src/services/routing/sampler/report_tests.rs": "Test-only module loaded under cfg(test): isolated HTTP/ExternalDaemon fixtures verify usage report caching, scopes and side-effect assertions; production route construction remains in the separately enumerated sampler and external daemon owners."
   },
   "markers": [
     "loadWorktreeCleanupState",
