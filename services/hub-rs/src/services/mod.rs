@@ -161,18 +161,22 @@ pub(crate) fn install_config(
     if let Some(home) = options.home_dir.clone() {
         let pricing = Arc::new(pricing::Pricing::new(home.clone()));
         options = pricing::install(options, pricing.clone());
-        let analytics = Arc::new(analytics::Analytics::open(
-            directory.join("headless-analytics.sqlite"),
-            pricing,
-        )?);
-        let (configured, watcher) = analytics::install(
-            options,
-            analytics,
-            Arc::new(profiles::Profiles::new(directory.clone())),
-            home,
-        );
-        options = configured;
-        options.analytics_watcher = Some(watcher);
+        // Catalog-only composition leaves analytics to the desktop provider.
+        // An unavailable local source must not claim and shadow that capability.
+        if options.engine.is_some() {
+            let analytics = Arc::new(analytics::Analytics::open(
+                directory.join("headless-analytics.sqlite"),
+                pricing,
+            )?);
+            let (configured, watcher) = analytics::install(
+                options,
+                analytics,
+                Arc::new(profiles::Profiles::new(directory.clone())),
+                home,
+            );
+            options = configured;
+            options.analytics_watcher = Some(watcher);
+        }
     }
     let owner = local_lookup(&options);
     let definitions = Arc::new(workflows::WorkflowStore::new(

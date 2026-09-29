@@ -82,11 +82,12 @@ Backfill markers are versioned; rerunning an old fold is not proof its output
 matches a new pricing algorithm.
 
 Desktop history uses the shared session-history schema and model split table.
-The brain’s `analytics.summary` and `analytics.recent` now call the Node companion,
-whose `headless/analytics.ts` persists `headless-analytics.sqlite` and reuses
-native schema/query/fold code. They are not unconditional zero-valued headless
-stubs. A missing companion or failed read remains an availability failure; do
-not convert it to a measured zero.
+The shared Rust backend owns `analytics.summary` and `analytics.recent` when it
+owns an execution engine, persisting separate `headless-analytics.sqlite`
+history. Catalog-only composition leaves those capabilities to the desktop;
+an unavailable local engine must not shadow that provider. The Rust observer
+also records terminal session evidence without waiting for an analytics query.
+Missing or failed source reads remain availability errors, never measured zeros.
 
 Legacy analytics columns defaulted to zero without recording whether a sample
 was measured. Consumers such as `useSessionAnalytics` treat those stored zeros
@@ -213,7 +214,7 @@ Use the shared pricing, cache-multiplier, model-window, context-health, and
 window-currency fixtures for cross-language changes. Account poll/report tests
 must exercise zero live sessions, unavailable/expired credentials, explicit
 unattributed rows, and elapsed reset times. Renderer usage tests cover attribution,
-transport-stale reports, and server-validity deadlines. Run the headless companion
-suite for persistent analytics; a passing desktop-only history test does not
-validate that path. No tests here establish current external provider prices or
+transport-stale reports, and server-validity deadlines. Run the Rust `analytics`
+integration target for persistent history and actual catalog/full ownership;
+a passing desktop-only history test does not validate that path. No tests here establish current external provider prices or
 live account headroom.

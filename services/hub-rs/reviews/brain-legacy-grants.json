@@ -1,0 +1,50 @@
+{
+  "records": {
+    "services/hub/cmd/brain/profilegrant_test.go": {
+      "status": "ported",
+      "sha256": "589102d173ddd9c00955e2ed3e7f6df6cd5a34875701c3db0f85cf6a4b0b0862",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/profiles.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/mcp/parity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all original PTY/managed assertions. The new matrix exercises 24 resolved provider requests across both engine routes with absent/true/false/null legacy stamps. Every stamp yields the identical provider request; it neither confers nor restricts ambient profile/permission authority.",
+          "Selected trusted profile preserves CLAUDE_CONFIG_DIR, all local extra arguments, selected MCP IDs and the opus[1m]/opus/1000000 model tuple on both routes. Explicit skipPermissions and bypassPermissions remain provider-native requests with the original distinction between resolved skip/fullAccess and requested permission mode; PTY flags and managed yolo/permission_mode are checked.",
+          "Existing real MCP parity test independently checks that legacy metadata survives facade forwarding without inventing a new gate; actual spawn-plan tests cover explicit-false precedence, manager preferences and malformed wire types."
+        ],
+        "intentionalChanges": [
+          "Obsolete grant stamps remain inert compatibility data; no per-session grant checks or profile argument filtering are reinstated. Selected profiles are trusted local configuration, separately scrubbed on remote profile mutation."
+        ],
+        "validation": "Owning spawn_plan target10 passed, zero ignored, /tmp/workspacer-spawn-plan-profile-grants-final.log. New matrix executes24 plans across both routes. Earlier test assumption that permissionMode alone also sets fullAccess/yolo was corrected against exact Go handlers.go p.skip behavior, without changing production. Actual MCP target25 passed /tmp/workspacer-tcp-mcp-check.log, including spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire; MCP source/test bytes unchanged by this review."
+      }
+    },
+    "services/hub/cmd/brain/yologrant_test.go": {
+      "status": "ported",
+      "sha256": "0c3882cff8c7c6b4fa2488702d6a4d2cbc33bf2b3ac7eb9880ebcfe28586732e",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/profiles.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/mcp/parity.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all original PTY/managed assertions. The new matrix exercises 24 resolved provider requests across both engine routes with absent/true/false/null legacy stamps. Every stamp yields the identical provider request; it neither confers nor restricts ambient profile/permission authority.",
+          "Selected trusted profile preserves CLAUDE_CONFIG_DIR, all local extra arguments, selected MCP IDs and the opus[1m]/opus/1000000 model tuple on both routes. Explicit skipPermissions and bypassPermissions remain provider-native requests with the original distinction between resolved skip/fullAccess and requested permission mode; PTY flags and managed yolo/permission_mode are checked.",
+          "Existing real MCP parity test independently checks that legacy metadata survives facade forwarding without inventing a new gate; actual spawn-plan tests cover explicit-false precedence, manager preferences and malformed wire types."
+        ],
+        "intentionalChanges": [
+          "Obsolete grant stamps remain inert compatibility data; no per-session grant checks or profile argument filtering are reinstated. Selected profiles are trusted local configuration, separately scrubbed on remote profile mutation."
+        ],
+        "validation": "Owning spawn_plan target10 passed, zero ignored, /tmp/workspacer-spawn-plan-profile-grants-final.log. New matrix executes24 plans across both routes. Earlier test assumption that permissionMode alone also sets fullAccess/yolo was corrected against exact Go handlers.go p.skip behavior, without changing production. Actual MCP target25 passed /tmp/workspacer-tcp-mcp-check.log, including spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire; MCP source/test bytes unchanged by this review."
+      }
+    }
+  }
+}

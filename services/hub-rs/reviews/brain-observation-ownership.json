@@ -1,0 +1,66 @@
+{
+  "records": {
+    "services/hub/cmd/brain/analytics_test.go": {
+      "status": "ported",
+      "sha256": "89349bd559a50143a8774551fba1d6959ad10f6d66ed94721593b0a3eef6d554",
+      "replacement": [
+        "services/hub-rs/src/services/mod.rs",
+        "services/hub-rs/src/services/analytics/watcher.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/analytics.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original assertions: analytics.summary/recent belong to full scope, not catalog, and unavailable history must error rather than fabricate empty measurements. Found and fixed the actual gap: install_config announced catalog without an engine but still opened and registered local analytics whenever home_dir existed.",
+          "Only owned-engine composition now opens headless-analytics.sqlite, installs analytics capabilities and owns the watcher. Catalog pricing remains installed. The real catalog bus test registers a desktop provider, checks both calls reach it with exact response markers, and verifies no headless history database was opened.",
+          "The full backend test verifies full scope and healthy zero/empty controls, stops its actual engine, then requires both analytics calls to fail. Process isolation avoids colliding with the independent watcher test. Cleanup accepts orderly shutdown winning its race or the specifically expected engine-stream-closed failure; unrelated shutdown errors still fail.",
+          "All7 analytics integration tests pass, preserving persistence, deduplication/model splits, malformed source/database refusal and terminal-session observer lifecycle; child test execution is not counted twice."
+        ],
+        "intentionalChanges": [
+          "The owned in-process engine replaces the old remote Go client/private companion. Engine death may terminate the owned backend; this never becomes a successful empty analytics answer.",
+          "Catalog mode leaves the capability to its real desktop owner. This restores the old ownership rule without borrowing another provider after full-source failure."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/desktopworkflow_test.go": {
+      "status": "ported",
+      "sha256": "7098ae18a6f231d1eb2ab29d12c2f9d95864fc9ce443d41bd5710259511d3ebc",
+      "replacement": [
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/src/services/workflow_artifacts/state.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/tests/workflow_artifacts.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the full original sequence: active/streaming row, workflow overlay, fresh ended/idle/new-cwd row, one run, workflow-child filtering, agent-prefix lookup, exact description/new tokens10, and refusal to resurrect after removal.",
+          "New merge unit asserts authoritative ended/idle/new cwd fields, one workflow and one subagent with description new/tokens10. Existing unit additionally rejects forged outer status/cwd/parent authority and leaves remote rows untouched.",
+          "The real artifact integration writes run/agent files, observes actual watcher events and snapshots, updates daemon hook liveness without losing workflow content, closes through agents.close, writes a late artifact and proves no snapshot or workflow event resurrects it. Target passed1. The new merge unit passed in the shared library log."
+        ],
+        "intentionalChanges": [
+          "The private Node callback is replaced by owned artifact polling. Cache identity includes cwd/transcript/start/generation; cross-identity cached overlays are discarded rather than carried blindly by the old unversioned map. Fresh matching overlays preserve current liveness."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "analytics": "7 passed /tmp/workspacer-analytics-scope-review.log",
+    "workflow_artifacts": "1 passed /tmp/workspacer-workflow-overlay-review.log",
+    "merge_unit": "fresh_live_state_keeps_workflow_projection_without_restoring_old_liveness passed in /tmp/workspacer-terminal-sampler-final.log; overall shared run aborted elsewhere, NOT claimed green",
+    "witness": "All3 Rust files unmapped; explicit owning targets executed",
+    "format": "rustfmt and git diff --check passed",
+    "scope": "Cargo released. Only two completed generated executables removed after verifying no live process; dependencies retained."
+  },
+  "readyToStage": [
+    "services/hub-rs/src/services/mod.rs",
+    "services/hub-rs/tests/analytics.rs",
+    "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+    ".rivet/context/domains/usage-accounting.md",
+    ".rivet/learnings/2026-09-29-catalog-analytics-must-not-claim-a-desktop-owned-ef00c7.md",
+    ".rivet/learnings/2026-09-29-hub-dependency-edges-must-be-mirrored-in-the-nat-605e6c.md",
+    "services/hub-rs/reviews/brain-observation-ownership.json"
+  ]
+}

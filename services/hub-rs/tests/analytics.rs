@@ -1,6 +1,152 @@
 use serde_json::{Value, json};
 use std::sync::Arc;
 use workspacer_hub::services::{analytics::Analytics, pricing::Pricing};
+
+#[tokio::test]
+async fn catalog_leaves_analytics_to_the_real_desktop_provider() {
+    use workspacer_hub::{Hub, Options, client::Client, protocol::Frame};
+    let root = tempfile::tempdir().unwrap();
+    let config = root.path().join("config");
+    let mut options = Options::default();
+    options.config_dir = Some(config.clone());
+    options.home_dir = Some(root.path().join("home"));
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    let scope = client.call("brain.info", json!({})).await.unwrap();
+    let history_created = config.join("headless-analytics.sqlite").exists();
+    let mut provider = hub.handle().connect().await.unwrap();
+    provider.recv().await.unwrap();
+    provider
+        .send(Frame {
+            methods: vec!["analytics.summary".into(), "analytics.recent".into()],
+            ..Frame::op("register")
+        })
+        .unwrap();
+    let registered = provider.recv().await.unwrap();
+    let provider_task = tokio::spawn(async move {
+        let mut methods = Vec::new();
+        while let Some(call) = provider.recv().await {
+            if call.op != "call" {
+                continue;
+            }
+            methods.push(call.method.clone());
+            provider
+                .send(Frame {
+                    id: call.id,
+                    result: Some(json!({"source":"desktop-fixture","method":call.method})),
+                    ..Frame::op("result")
+                })
+                .unwrap();
+        }
+        methods
+    });
+    let mut replies = Vec::new();
+    for method in ["analytics.summary", "analytics.recent"] {
+        replies.push((method, client.call(method, json!({})).await));
+    }
+    client.close();
+    tokio::task::spawn_blocking(move || hub.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+    let methods = provider_task.await.unwrap();
+    assert_eq!(scope["scope"], "catalog");
+    assert!(
+        !history_created,
+        "catalog startup must not open the headless analytics store"
+    );
+    assert_eq!(registered.op, "registered");
+    assert_eq!(methods, ["analytics.summary", "analytics.recent"]);
+    for (method, reply) in replies {
+        assert_eq!(
+            reply.unwrap(),
+            json!({"source":"desktop-fixture","method":method})
+        );
+    }
+}
+
+#[tokio::test]
+async fn full_analytics_registration_reports_engine_failure_instead_of_empty_history() {
+    // EmbeddedDaemon permits one process-wide runtime. The independent watcher
+    // test also owns one, so isolate this real lifecycle instead of serializing
+    // the entire test binary or weakening the engine control.
+    if std::env::var_os("WKS_ANALYTICS_FULL_CHILD").is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "full_analytics_registration_reports_engine_failure_instead_of_empty_history",
+            ])
+            .env("WKS_ANALYTICS_FULL_CHILD", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "isolated full analytics lifecycle failed");
+        return;
+    }
+    use claudemon::daemon::{
+        ServeConfig,
+        embedded::{EmbeddedDaemon, Options as EngineOptions},
+    };
+    use workspacer_hub::{Hub, Options, client::Client};
+    let root = tempfile::tempdir().unwrap();
+    let mut engine = EmbeddedDaemon::start_with_options(
+        ServeConfig {
+            host: "127.0.0.1".into(),
+            hook_port: 0,
+            api_port: 0,
+            db_path: root.path().join("engine.db"),
+        },
+        EngineOptions {
+            usage_poll_on_boot: Some(false),
+        },
+    )
+    .unwrap();
+    engine.ready().await.unwrap();
+    let mut options = Options::default();
+    options.engine = Some(engine.client());
+    options.config_dir = Some(root.path().join("config"));
+    options.home_dir = Some(root.path().join("home"));
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    assert_eq!(
+        client.call("brain.info", json!({})).await.unwrap()["scope"],
+        "full"
+    );
+    assert_eq!(
+        client.call("analytics.summary", json!({})).await.unwrap()["totals"]["sessions"],
+        0
+    );
+    assert_eq!(
+        client.call("analytics.recent", json!({})).await.unwrap(),
+        json!([])
+    );
+    engine.shutdown().await.unwrap();
+    let mut failures = Vec::new();
+    for method in ["analytics.summary", "analytics.recent"] {
+        failures.push((method, client.call(method, json!({})).await));
+    }
+    client.close();
+    let shutdown = tokio::task::spawn_blocking(move || hub.shutdown())
+        .await
+        .unwrap();
+    // Explicit shutdown may win the race with supervision noticing the closed
+    // engine stream. Either cleanup succeeds or reports that specific failure.
+    if let Err(error) = shutdown {
+        assert!(
+            error
+                .to_string()
+                .contains("embedded session update stream closed"),
+            "{error:#}"
+        );
+    }
+    for (method, result) in failures {
+        assert!(
+            result.is_err(),
+            "{method} manufactured measured empty history"
+        );
+    }
+}
 #[test]
 fn persistent_headless_analytics_retains_deduplicated_model_splits_and_filters() {
     let dir = tempfile::tempdir().unwrap();

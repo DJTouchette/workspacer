@@ -250,10 +250,27 @@
       ]
     },
     "services/hub/cmd/brain/analytics_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/mod.rs",
+        "services/hub-rs/src/services/analytics/watcher.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both original assertions: analytics.summary/recent belong to full scope, not catalog, and unavailable history must error rather than fabricate empty measurements. Found and fixed the actual gap: install_config announced catalog without an engine but still opened and registered local analytics whenever home_dir existed.",
+          "Only owned-engine composition now opens headless-analytics.sqlite, installs analytics capabilities and owns the watcher. Catalog pricing remains installed. The real catalog bus test registers a desktop provider, checks both calls reach it with exact response markers, and verifies no headless history database was opened.",
+          "The full backend test verifies full scope and healthy zero/empty controls, stops its actual engine, then requires both analytics calls to fail. Process isolation avoids colliding with the independent watcher test. Cleanup accepts orderly shutdown winning its race or the specifically expected engine-stream-closed failure; unrelated shutdown errors still fail.",
+          "All7 analytics integration tests pass, preserving persistence, deduplication/model splits, malformed source/database refusal and terminal-session observer lifecycle; child test execution is not counted twice."
+        ],
+        "intentionalChanges": [
+          "The owned in-process engine replaces the old remote Go client/private companion. Engine death may terminate the owned backend; this never becomes a successful empty analytics answer.",
+          "Catalog mode leaves the capability to its real desktop owner. This restores the old ownership rule without borrowing another provider after full-source failure."
+        ]
+      },
       "sha256": "89349bd559a50143a8774551fba1d6959ad10f6d66ed94721593b0a3eef6d554",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/analytics.rs"
+      ]
     },
     "services/hub/cmd/brain/blockwake.go": {
       "replacement": [
@@ -1186,10 +1203,26 @@
       ]
     },
     "services/hub/cmd/brain/desktopworkflow_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/src/services/workflow_artifacts/state.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read the full original sequence: active/streaming row, workflow overlay, fresh ended/idle/new-cwd row, one run, workflow-child filtering, agent-prefix lookup, exact description/new tokens10, and refusal to resurrect after removal.",
+          "New merge unit asserts authoritative ended/idle/new cwd fields, one workflow and one subagent with description new/tokens10. Existing unit additionally rejects forged outer status/cwd/parent authority and leaves remote rows untouched.",
+          "The real artifact integration writes run/agent files, observes actual watcher events and snapshots, updates daemon hook liveness without losing workflow content, closes through agents.close, writes a late artifact and proves no snapshot or workflow event resurrects it. Target passed1. The new merge unit passed in the shared library log."
+        ],
+        "intentionalChanges": [
+          "The private Node callback is replaced by owned artifact polling. Cache identity includes cwd/transcript/start/generation; cross-identity cached overlays are discarded rather than carried blindly by the old unversioned map. Fresh matching overlays preserve current liveness."
+        ]
+      },
       "sha256": "7098ae18a6f231d1eb2ab29d12c2f9d95864fc9ce443d41bd5710259511d3ebc",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/workflow_artifacts/mod.rs",
+        "services/hub-rs/tests/workflow_artifacts.rs"
+      ]
     },
     "services/hub/cmd/brain/discovery.go": {
       "replacement": [
@@ -2432,10 +2465,27 @@
       ]
     },
     "services/hub/cmd/brain/profilegrant_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/profiles.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all original PTY/managed assertions. The new matrix exercises 24 resolved provider requests across both engine routes with absent/true/false/null legacy stamps. Every stamp yields the identical provider request; it neither confers nor restricts ambient profile/permission authority.",
+          "Selected trusted profile preserves CLAUDE_CONFIG_DIR, all local extra arguments, selected MCP IDs and the opus[1m]/opus/1000000 model tuple on both routes. Explicit skipPermissions and bypassPermissions remain provider-native requests with the original distinction between resolved skip/fullAccess and requested permission mode; PTY flags and managed yolo/permission_mode are checked.",
+          "Existing real MCP parity test independently checks that legacy metadata survives facade forwarding without inventing a new gate; actual spawn-plan tests cover explicit-false precedence, manager preferences and malformed wire types."
+        ],
+        "intentionalChanges": [
+          "Obsolete grant stamps remain inert compatibility data; no per-session grant checks or profile argument filtering are reinstated. Selected profiles are trusted local configuration, separately scrubbed on remote profile mutation."
+        ],
+        "validation": "Owning spawn_plan target10 passed, zero ignored, /tmp/workspacer-spawn-plan-profile-grants-final.log. New matrix executes24 plans across both routes. Earlier test assumption that permissionMode alone also sets fullAccess/yolo was corrected against exact Go handlers.go p.skip behavior, without changing production. Actual MCP target25 passed /tmp/workspacer-tcp-mcp-check.log, including spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire; MCP source/test bytes unchanged by this review."
+      },
       "sha256": "589102d173ddd9c00955e2ed3e7f6df6cd5a34875701c3db0f85cf6a4b0b0862",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/mcp/parity.rs"
+      ]
     },
     "services/hub/cmd/brain/profiles.go": {
       "replacement": [
@@ -3470,10 +3520,27 @@
       ]
     },
     "services/hub/cmd/brain/yologrant_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/profiles.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all original PTY/managed assertions. The new matrix exercises 24 resolved provider requests across both engine routes with absent/true/false/null legacy stamps. Every stamp yields the identical provider request; it neither confers nor restricts ambient profile/permission authority.",
+          "Selected trusted profile preserves CLAUDE_CONFIG_DIR, all local extra arguments, selected MCP IDs and the opus[1m]/opus/1000000 model tuple on both routes. Explicit skipPermissions and bypassPermissions remain provider-native requests with the original distinction between resolved skip/fullAccess and requested permission mode; PTY flags and managed yolo/permission_mode are checked.",
+          "Existing real MCP parity test independently checks that legacy metadata survives facade forwarding without inventing a new gate; actual spawn-plan tests cover explicit-false precedence, manager preferences and malformed wire types."
+        ],
+        "intentionalChanges": [
+          "Obsolete grant stamps remain inert compatibility data; no per-session grant checks or profile argument filtering are reinstated. Selected profiles are trusted local configuration, separately scrubbed on remote profile mutation."
+        ],
+        "validation": "Owning spawn_plan target10 passed, zero ignored, /tmp/workspacer-spawn-plan-profile-grants-final.log. New matrix executes24 plans across both routes. Earlier test assumption that permissionMode alone also sets fullAccess/yolo was corrected against exact Go handlers.go p.skip behavior, without changing production. Actual MCP target25 passed /tmp/workspacer-tcp-mcp-check.log, including spawn_defaults_and_legacy_grant_metadata_preserve_the_provider_wire; MCP source/test bytes unchanged by this review."
+      },
       "sha256": "0c3882cff8c7c6b4fa2488702d6a4d2cbc33bf2b3ac7eb9880ebcfe28586732e",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/mcp/parity.rs"
+      ]
     },
     "services/hub/cmd/hub/brain.go": {
       "reason": "Go brain executable discovery, argv assembly and inherited child output are retired with the owned Rust backend graph. Retained bind-to-dial normalization has real IPv4/IPv6 wildcard child-connection tests; owned readiness, explicit facade binding, failure propagation and parent/signal shutdown replace the obsolete child launch contract.",

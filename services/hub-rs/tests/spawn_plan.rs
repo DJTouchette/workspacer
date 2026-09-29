@@ -402,3 +402,124 @@ fn retained_manager_provider_selection_and_resume_defaults_are_distinct() {
         }
     }
 }
+
+#[test]
+fn inert_legacy_grants_do_not_change_selected_profile_or_provider_permission_requests() {
+    let root = tempfile::tempdir().unwrap();
+    let account = root.path().join("selected-account");
+    let profile = Profile {
+        id: "work".into(),
+        name: "Work".into(),
+        config_dir: account.to_string_lossy().into_owned(),
+        extra_args: [
+            "--model",
+            "opus[1m]",
+            "--dangerously-skip-permissions",
+            "--settings",
+            "host-settings.json",
+            "--allowedTools",
+            "Bash,Edit",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+        mcp_item_ids: vec!["mcp-item".into()],
+        ..Default::default()
+    };
+    for transport in ["pty", "stream"] {
+        let mut baseline = None;
+        for grant in [
+            None,
+            Some(json!(true)),
+            Some(json!(false)),
+            Some(serde_json::Value::Null),
+        ] {
+            let mut params = json!({"cwd":root.path(),"provider":"claude","transport":transport,"profileId":"work"});
+            if let Some(grant) = grant {
+                params["profileGranted"] = grant;
+            }
+            let plan = resolve(
+                &params,
+                &defaults(),
+                Some(&profile),
+                root.path(),
+                "worker",
+                false,
+            )
+            .unwrap();
+            assert_eq!(
+                plan.request["env"]["CLAUDE_CONFIG_DIR"],
+                account.to_string_lossy().as_ref()
+            );
+            assert_eq!(plan.request["model"], "opus[1m]");
+            assert_eq!(plan.request["model_identity"], "opus");
+            assert_eq!(plan.request["context_window"], 1000000);
+            assert_eq!(plan.mcp_item_ids, ["mcp-item"]);
+            let args = plan.request[if transport == "pty" {
+                "argv"
+            } else {
+                "extra_args"
+            }]
+            .as_array()
+            .unwrap();
+            for value in &profile.extra_args {
+                assert!(args.contains(&json!(value)));
+            }
+            if let Some(baseline) = &baseline {
+                assert_eq!(&plan.request, baseline);
+            } else {
+                baseline = Some(plan.request);
+            }
+        }
+        for permission in [
+            json!({"skipPermissions":true}),
+            json!({"permissionMode":"bypassPermissions"}),
+        ] {
+            let mut baseline = None;
+            for grant in [
+                None,
+                Some(json!(true)),
+                Some(json!(false)),
+                Some(serde_json::Value::Null),
+            ] {
+                let mut params =
+                    json!({"cwd":root.path(),"provider":"claude","transport":transport});
+                params
+                    .as_object_mut()
+                    .unwrap()
+                    .extend(permission.as_object().unwrap().clone());
+                if let Some(grant) = grant {
+                    params["yoloGranted"] = grant;
+                }
+                let plan =
+                    resolve(&params, &defaults(), None, root.path(), "worker", false).unwrap();
+                // The retained receipt reports the resolved skip flag; a
+                // provider permission-mode request is a separate wire field.
+                let skip = permission["skipPermissions"] == true;
+                assert_eq!(plan.full_access, skip);
+                assert_eq!(
+                    plan.metadata["settings"]["permissionMode"],
+                    "bypassPermissions"
+                );
+                if transport == "pty" {
+                    assert!(
+                        plan.request["argv"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!("--dangerously-skip-permissions"))
+                    );
+                } else {
+                    assert_eq!(plan.request["yolo"], skip);
+                    if permission.get("permissionMode").is_some() {
+                        assert_eq!(plan.request["permission_mode"], "bypassPermissions");
+                    }
+                }
+                if let Some(baseline) = &baseline {
+                    assert_eq!(&plan.request, baseline);
+                } else {
+                    baseline = Some(plan.request);
+                }
+            }
+        }
+    }
+}

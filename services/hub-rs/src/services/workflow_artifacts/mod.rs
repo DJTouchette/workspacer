@@ -230,6 +230,27 @@ pub(crate) fn prepare(mut options: Options, _hub: Handle) -> Options {
 mod tests {
     use super::*;
     #[test]
+    fn fresh_live_state_keeps_workflow_projection_without_restoring_old_liveness() {
+        let overlay = json!({"runs":[{"id":"run","status":"running"}],"workflowAgentIds":["in-run"],"subagentActivity":{"child":{"description":"new","tokens":10}}});
+        let initial = json!({"sessionId":"s","status":"active","ambientState":"streaming","cwd":"/project","subagents":[{"id":"agent-child","description":"old"},{"id":"in-run"}]});
+        assert_eq!(
+            merge(initial, &overlay)["subagents"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let latest = json!({"sessionId":"s","status":"ended","ambientState":"idle","cwd":"/new","subagents":[{"id":"agent-child"}]});
+        let projected = merge(latest, &overlay);
+        assert_eq!(projected["status"], "ended");
+        assert_eq!(projected["ambientState"], "idle");
+        assert_eq!(projected["cwd"], "/new");
+        assert_eq!(projected["workflows"].as_array().unwrap().len(), 1);
+        assert_eq!(projected["subagents"].as_array().unwrap().len(), 1);
+        assert_eq!(projected["subagents"][0]["tokens"], 10);
+        assert_eq!(projected["subagents"][0]["description"], "new");
+    }
+    #[test]
     fn projection_changes_only_workflow_content_and_never_remote_authority() {
         let row = json!({"sessionId":"local","status":"ended","cwd":"/project","parentSessionId":"parent","subagents":[{"id":"agent-worker","status":"running"},{"id":"plain","status":"done"}]});
         let update = json!({"status":"active","cwd":"/forged","runs":[{"runId":"wf_one"}],"workflowAgentIds":["worker"],"subagentActivity":{"plain":{"tokens":4,"model":"observed","status":"running","parentSessionId":"forged"}}});
