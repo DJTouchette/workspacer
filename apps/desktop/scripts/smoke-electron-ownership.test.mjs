@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { EventEmitter } from 'node:events';
-import { requireCleanExit, exitReceipt, deadline, isolatedEnvironment, checkModernCatalog, checkFacadeHealth } from './smoke-electron-ownership.mjs';
+import { requireCleanExit, exitReceipt, deadline, isolatedEnvironment, checkModernCatalog, checkFacadeHealth, checkDetachedCatalog, checkHelpResult, detachedFacade } from './smoke-electron-ownership.mjs';
 
 test('only an actual unsignalled zero exit qualifies as clean ownership', async () => {
   requireCleanExit({ code: 0, signal: null }, 'fixture');
@@ -48,4 +49,45 @@ test('MCP health requires the actual Rust identity and exact owning endpoints', 
   }
   assert.throws(() => checkFacadeHealth(expected, 5679, 1234));
   assert.throws(() => checkFacadeHealth(expected, 5678, 1235));
+});
+
+test('detached facade retains modern metadata but removes desktop-owned capability', () => {
+  const valid = { jsonrpc: '2.0', id: 1, result: { resultType: 'complete', ttlMs: 0, cacheScope: 'private', tools: [{ name: 'help' }] } };
+  assert.equal(checkDetachedCatalog(valid), 1);
+  assert.throws(() => checkModernCatalog(valid), /100-tool/);
+  for (const patch of [{ ttlMs: undefined }, { cacheScope: 'public' }, { resultType: undefined },
+    { tools: [] }, { tools: [{ name: 'help' }, { name: 'help' }] },
+    { tools: [{ name: 'help' }, { name: 'get_host_cwd' }] }])
+    assert.throws(() => checkDetachedCatalog({ ...valid, result: { ...valid.result, ...patch } }));
+  const help = { jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: 'Available tools' }] } };
+  checkHelpResult(help);
+  for (const result of [{ isError: true, content: help.result.content }, { content: [] }, { content: [{ type: 'text', text: ' ' }] }])
+    assert.throws(() => checkHelpResult({ ...help, result }));
+  assert.throws(() => checkHelpResult({ ...help, error: { code: -32603 } }));
+});
+test('detached probe actually calls retained help after fresh modern tools/list', async () => {
+  const seen = [];
+  let rejectHelp = false;
+  const server = http.createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw); seen.push(body.method);
+    assert.equal(req.headers.authorization, 'Bearer fixture');
+    assert.equal(req.headers['mcp-method'], body.method);
+    assert.equal(body.params._meta['io.modelcontextprotocol/protocolVersion'], '2026-07-28');
+    if (body.method === 'tools/call') {
+      assert.equal(body.params.name, 'help'); assert.deepEqual(body.params.arguments, {});
+      assert.equal(req.headers['mcp-name'], 'help');
+    }
+    const result = body.method === 'tools/list'
+      ? { resultType: 'complete', ttlMs: 0, cacheScope: 'private', tools: [{ name: 'help' }] }
+      : { isError: rejectHelp, content: [{ type: 'text', text: 'Retained local help' }] };
+    res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    assert.equal(await detachedFacade(server.address().port, 'fixture'), 1);
+    assert.deepEqual(seen, ['tools/list', 'tools/call']);
+    rejectHelp = true;
+    await assert.rejects(detachedFacade(server.address().port, 'fixture'), /help call failed/);
+  } finally { await new Promise((resolve) => server.close(resolve)); }
 });

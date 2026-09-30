@@ -104,29 +104,58 @@ export function checkFacadeHealth(value, hub, mcp) {
   for (const [key, expectedValue] of Object.entries(expected))
     assert.equal(value[key], expectedValue, `MCP health ${key}`);
 }
-export function checkModernCatalog(body) {
+function catalogNames(body) {
   assert.equal(body.jsonrpc, '2.0'); assert.equal(body.id, 1); assert.equal(body.error, undefined);
   const result = body.result;
   assert.equal(result.resultType, 'complete'); assert.equal(result.ttlMs, 0);
   assert.equal(result.cacheScope, 'private');
-  // Captured operator fixture currently contains100 unique built-in tools.
-  assert(Array.isArray(result.tools) && result.tools.length >= 100, 'operator catalog below retained100-tool floor');
+  assert(Array.isArray(result.tools), 'missing tools array');
   const names = result.tools.map((tool) => tool.name);
   assert(names.every((name) => typeof name === 'string' && name.length > 0), 'invalid tool name');
   assert.equal(new Set(names).size, names.length, 'duplicate tool names');
-  assert(names.includes('get_host_cwd'), 'missing real catalog floor');
-  return result.tools.length;
+  return names;
 }
-async function modernCatalog(port, token) {
+export function checkModernCatalog(body) {
+  const names = catalogNames(body);
+  // Captured operator fixture currently contains100 unique built-in tools.
+  assert(names.length >= 100, 'operator catalog below retained100-tool floor');
+  assert(names.includes('get_host_cwd'), 'missing real catalog floor');
+  return names.length;
+}
+export function checkDetachedCatalog(body) {
+  const names = catalogNames(body);
+  assert(names.includes('help'), 'external facade lost its local help tool');
+  assert(!names.includes('get_host_cwd'), 'desktop capability remains after provider quit');
+  return names.length;
+}
+export function checkHelpResult(body) {
+  assert.equal(body.jsonrpc, '2.0'); assert.equal(body.id, 1); assert.equal(body.error, undefined);
+  assert(body.result && body.result.isError !== true, 'external help call failed');
+  assert(Array.isArray(body.result.content) && body.result.content.some((item) =>
+    item.type === 'text' && typeof item.text === 'string' && item.text.trim().length > 0),
+  'external help returned no text');
+}
+async function modernRequest(port, token, method, params = {}) {
   const version = '2026-07-28';
   const response = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': version, 'Mcp-Method': 'tools/list' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { _meta: {
+      Accept: 'application/json, text/event-stream', 'MCP-Protocol-Version': version, 'Mcp-Method': method,
+      ...(method === 'tools/call' ? { 'Mcp-Name': params.name } : {}) },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: { ...params, _meta: {
       'io.modelcontextprotocol/protocolVersion': version,
       'io.modelcontextprotocol/clientInfo': { name: 'electron-ownership-smoke', version: '1' },
       'io.modelcontextprotocol/clientCapabilities': {} } } }), signal: AbortSignal.timeout(5000) });
-  assert.equal(response.status, 200); return checkModernCatalog(await response.json());
+  assert.equal(response.status, 200); return response.json();
+}
+async function modernCatalog(port, token) {
+  return checkModernCatalog(await modernRequest(port, token, 'tools/list'));
+}
+export async function detachedFacade(port, token) {
+  // The desktop provider is gone, but the external hub and its local facade
+  // remain owned elsewhere. Observe unregistration before testing that facade.
+  const catalogSize = checkDetachedCatalog(await modernRequest(port, token, 'tools/list'));
+  checkHelpResult(await modernRequest(port, token, 'tools/call', { name: 'help', arguments: {} }));
+  return catalogSize;
 }
 async function normalQuit(app, exited) {
   // Do not use Playwright close(): its outer cleanup may force-kill on failure.
@@ -157,6 +186,7 @@ export async function smoke(executable, output) {
     fs.writeFileSync(path.join(config, 'config.yaml'), `agents:\n  checkProviderOnStartup: false\nusage:\n  pollOnBoot: false\nupdates:\n  enabled: false\npluginSettings:\n  ownershipMarker: ${marker}\n`);
     let app, child, exited, external, externalExit;
     let diagnostics = '';
+    let detachedCatalogSize;
     const capture = (data) => { diagnostics = (diagnostics + String(data).replaceAll(token, '[fixture-token]')).slice(-32000); };
     try {
       if (adopted) {
@@ -198,12 +228,12 @@ export async function smoke(executable, output) {
         assert.equal(external.exitCode, null); assert.equal(external.signalCode, null);
         assert.equal((await jsonGet(hub, token)).status, 'ok');
         checkFacadeHealth(await jsonGet(mcp, token), hub, mcp);
-        await modernCatalog(mcp, token);
+        detachedCatalogSize = await eventually(() => detachedFacade(mcp, token), 'external facade after desktop unregisters');
         external.stdin.end();
         requireCleanExit(await deadline(externalExit, 20000, 'external fixture shutdown'), 'external Rust');
       }
       for (const port of ports) assert(!(await listening(port)), `owned listener still open: ${port}`);
-      results.push({ adopted, exit: status, ports, catalogSize, desktopConfig: true, listenersClosed: true });
+      results.push({ adopted, exit: status, ports, catalogSize, detachedCatalogSize, desktopConfig: true, listenersClosed: true });
     } catch (error) {
       throw new Error(`${adopted ? 'adopted' : 'owned'} Electron smoke failed: ${error.message.replaceAll(token, '[fixture-token]')}\n${diagnostics.replaceAll(token, '[fixture-token]')}`);
     } finally {
