@@ -275,10 +275,13 @@ fn service_fixture() -> (
     Arc<Host>,
     Arc<ReplacementService>,
 ) {
+    // These fixtures assert ordering/ownership, not filesystem latency. Atomic
+    // journal/checkpoint writes can exceed one second on loaded Windows CI.
+    // Use production deadlines; timeout behavior has its own explicitly gated
+    // fixture below. Only shorten polling so successful tests finish promptly.
     service_fixture_with_timing(Timing {
-        preparation: Duration::from_secs(1),
         poll: Duration::from_millis(1),
-        delivery: Duration::from_millis(200),
+        ..Timing::default()
     })
 }
 fn service_fixture_with_timing(
@@ -670,7 +673,7 @@ async fn binding_delivers_real_kickoff_then_exact_held_message_once_and_retires_
     let id = response["operations"][0]["operationId"].as_str().unwrap();
     service.idle(id).await;
     let op = service.state.get(id).unwrap();
-    assert_eq!(op["phase"], "binding");
+    assert_eq!(op["phase"], "binding", "{op}");
     let successor = op["successorSessionId"].as_str().unwrap();
     let tracker = MessageTracker::new(service.state.clone());
     let message = "Retain this exact queued message 🦀\nincluding its second line";
