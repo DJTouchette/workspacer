@@ -4,6 +4,8 @@ import hashlib
 import http.server
 import json
 import os
+import socket
+import socketserver
 from pathlib import Path
 import struct
 import sys
@@ -113,7 +115,23 @@ class Server(http.server.BaseHTTPRequestHandler):
             threading.Thread(target=self.server.shutdown, daemon=True).start()
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", endpoint.port), Server)
+def refuse_hostname_lookup(*args, **kwargs):
+    raise AssertionError("loopback fixture must not resolve hostnames")
+
+
+socket.getfqdn = refuse_hostname_lookup
+
+
+class LoopbackServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer normally calls getfqdn after binding, which can stall on
+        # macOS DNS. This numeric-loopback fixture needs no hostname lookup.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
+
+
+server = LoopbackServer(("127.0.0.1", endpoint.port), Server)
 parent_pid = os.getppid()
 finished = threading.Event()
 

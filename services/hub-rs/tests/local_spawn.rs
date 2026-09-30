@@ -17,14 +17,14 @@ fn rows(root: &Path, id: &str) -> Vec<Value> {
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
 }
-async fn until(mut condition: impl AsyncFnMut() -> bool) {
+async fn until(phase: &str, mut condition: impl AsyncFnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(20), async {
         while !condition().await {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("local launch fixture timed out");
+    .unwrap_or_else(|_| panic!("local launch fixture timed out: {phase}"));
 }
 #[test]
 fn owned_rpc_spawn_uses_scoped_mcp_and_routes_real_finish_wake_without_models() {
@@ -147,7 +147,7 @@ async fn run(root: PathBuf) {
     )
     .await
     .unwrap();
-    until(async || {
+    until("backend-launch-ready", async || {
         backend
             .handle()
             .health()
@@ -167,13 +167,13 @@ async fn run(root: PathBuf) {
     let parent=client.call("agents.spawn",json!({"cwd":project,"provider":"claude","transport":"stream","profileId":"isolated","message":"parent-ready-fixture","label":"Fixture parent"})).await.unwrap();
     assert_eq!(parent["messageQueued"], true);
     let parent_id = parent["sessionId"].as_str().unwrap().to_owned();
-    until(async || {
+    until("parent-scoped-mcp-call", async || {
         rows(&root, &parent_id)
             .iter()
             .any(|row| row["scopedMcpCall"] == true)
     })
     .await;
-    until(async || {
+    until("parent-initial-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -187,7 +187,7 @@ async fn run(root: PathBuf) {
         )
         .await
         .unwrap();
-    until(async || {
+    until("parent-numeric-question", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -195,14 +195,14 @@ async fn run(root: PathBuf) {
     })
     .await;
     client.call("claude.answer",json!({"sessionId":parent_id,"answers":["2","3","2"],"answerKinds":["text","text","option"]})).await.unwrap();
-    until(async || {
+    until("numeric-answer-receipt", async || {
         rows(&root, &parent_id).iter().any(|row| {
             row["numericAnswers"]
                 == json!({"Literal first":"2","Literal second":"3","Option control":"Blue"})
         })
     })
     .await;
-    until(async || {
+    until("parent-after-question-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -237,13 +237,13 @@ async fn run(root: PathBuf) {
             .is_err()
     );
     std::fs::write(root.join(format!("release-{child_id}")), "go").unwrap();
-    until(async || {
+    until("child-progress-receipt", async || {
         rows(&root, &child_id)
             .iter()
             .any(|row| row["progressMcpCall"] == true)
     })
     .await;
-    until(async || {
+    until("parent-finish-wake-receipt", async || {
         rows(&root, &parent_id)
             .iter()
             .filter_map(|row| row["message"].as_str())
@@ -272,7 +272,7 @@ async fn run(root: PathBuf) {
     }
     let successor=client.call("agents.spawn",json!({"cwd":project,"provider":"claude","transport":"stream","profileId":"isolated","message":"parent-ready-fixture","manager":true,"label":"Successor"})).await.unwrap();
     let successor_id = successor["sessionId"].as_str().unwrap().to_owned();
-    until(async || {
+    until("successor-initial-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":successor_id}))
             .await
@@ -305,7 +305,7 @@ async fn run(root: PathBuf) {
         .await
         .unwrap();
     assert_eq!(effort, json!({"ok":true,"effort":"high"}));
-    until(async || {
+    until("successor-effort-high-receipt", async || {
         rows(&root, &successor_id)
             .iter()
             .any(|row| row["message"] == "/effort high")
@@ -335,11 +335,14 @@ async fn run(root: PathBuf) {
     assert_eq!(accepted["ok"], true);
     assert_eq!(accepted["effort"], "low");
     assert!(accepted["warning"].as_str().is_some());
-    until(async || {
-        rows(&root, &successor_id)
-            .iter()
-            .any(|row| row["message"] == "/effort low")
-    })
+    until(
+        "successor-effort-low-after-bookkeeping-failure",
+        async || {
+            rows(&root, &successor_id)
+                .iter()
+                .any(|row| row["message"] == "/effort low")
+        },
+    )
     .await;
     assert_eq!(
         client
@@ -366,7 +369,7 @@ async fn run(root: PathBuf) {
     assert_eq!(handoff["ok"], true, "{handoff}");
     assert!(std::path::Path::new(handoff["path"].as_str().unwrap()).is_file());
 
-    until(async || {
+    until("parent-before-close-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -405,7 +408,7 @@ async fn run(root: PathBuf) {
             .unwrap()["parentSessionId"],
         successor_id
     );
-    until(async || {
+    until("reparented-child-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":child_id}))
             .await
@@ -450,7 +453,7 @@ async fn run(root: PathBuf) {
     assert_eq!(redispatch["clonedFrom"], child_id);
     assert_eq!(redispatch["taskTracking"], false);
     std::fs::write(root.join(format!("release-{retry_id}")), "go").unwrap();
-    until(async || {
+    until("retry-progress-receipt", async || {
         rows(&root, &retry_id)
             .iter()
             .any(|row| row["progressMcpCall"] == true)
@@ -507,11 +510,17 @@ async fn run(root: PathBuf) {
     }
     let codex = client.call("agents.spawn",json!({"cwd":project,"provider":"codex","transport":"stream","model":"gpt-5.6-luna","message":"fixture subagent parent","trackTask":false})).await.unwrap();
     let codex_id = codex["sessionId"].as_str().unwrap();
-    until(async || {
+    until("codex-parent-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":codex_id}))
             .await
-            .is_ok_and(|row| row["ambientState"] == "idle")
+            .is_ok_and(|row| {
+                assert!(
+                    row["status"] != "ended" && row["mode"] != "stopped",
+                    "Codex fixture ended before readiness"
+                );
+                row["ambientState"] == "idle"
+            })
     })
     .await;
     let day = root.join("home/.codex/sessions/2026/09/30");
@@ -542,7 +551,7 @@ async fn run(root: PathBuf) {
         "rollout must not be readable before parent exposure"
     );
     std::fs::write(root.join("expose-codex-child"), "go").unwrap();
-    until(async || {
+    until("codex-child-exposed", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":codex_id}))
             .await
@@ -597,7 +606,7 @@ async fn run(root: PathBuf) {
     );
     pids.extend(codex_pids);
     backend.shutdown().await.unwrap();
-    until(async || {
+    until("all-provider-pids-reaped", async || {
         pids.iter()
             .all(|pid| unsafe { libc::kill(*pid as i32, 0) } != 0)
     })
