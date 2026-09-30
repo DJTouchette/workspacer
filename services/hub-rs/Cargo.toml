@@ -43,6 +43,9 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 
+[dev-dependencies]
+tracing = "0.1"
+
 [target.'cfg(windows)'.dependencies]
 junction = "=2.0.0"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Pipes", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Memory"] }

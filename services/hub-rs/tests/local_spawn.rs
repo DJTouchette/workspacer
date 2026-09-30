@@ -12,6 +12,53 @@ use std::{
 use workspacer_hub::{Options, backend::Backend, client::Client, services::config::Config};
 // Diagnostic branch only: retain selected state, never argv/env/bearer fields.
 static LAST_OBSERVATION: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+// A deliberately narrow subscriber: no generic event/error/argument logging.
+struct LifecycleSubscriber;
+impl tracing::Subscriber for LifecycleSubscriber {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata.target() == "claudemon::providers::codex"
+    }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+    fn event(&self, event: &tracing::Event<'_>) {
+        #[derive(Default)]
+        struct Fields(std::collections::BTreeMap<String, String>);
+        impl tracing::field::Visit for Fields {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if [
+                    "message",
+                    "event",
+                    "reason",
+                    "exit_status",
+                    "cleanup",
+                    "appserver_pid",
+                    "generation",
+                ]
+                .contains(&field.name())
+                {
+                    self.0.insert(field.name().into(), format!("{value:?}"));
+                }
+            }
+        }
+        let mut fields = Fields::default();
+        event.record(&mut fields);
+        if fields
+            .0
+            .get("message")
+            .is_some_and(|message| message == "codex lifecycle")
+        {
+            eprintln!(
+                "[diag] lifecycle {}",
+                serde_json::to_string(&fields.0).unwrap()
+            );
+        }
+    }
+}
 fn observe(value: Value) {
     *LAST_OBSERVATION.lock().unwrap() = Some(value);
 }
@@ -96,6 +143,7 @@ fn timed_out(phase: &str) -> ! {
             let name = entry.file_name().to_string_lossy().into_owned();
             if !(name.starts_with("received-") && name.ends_with(".jsonl"))
                 && name != "codex-processes.jsonl"
+                && name != "codex-phases.jsonl"
             {
                 continue;
             }
@@ -118,7 +166,11 @@ fn timed_out(phase: &str) -> ! {
                         .iter()
                         .rev()
                         .take(8)
-                        .map(selected_log)
+                        .map(|row| if name == "codex-phases.jsonl" {
+                            row.clone()
+                        } else {
+                            selected_log(row)
+                        })
                         .collect::<Vec<_>>()
                 )
             );
@@ -162,6 +214,7 @@ async fn until(phase: &str, mut condition: impl AsyncFnMut() -> bool) {
 #[test]
 fn owned_rpc_spawn_uses_scoped_mcp_and_routes_real_finish_wake_without_models() {
     if let Some(root) = std::env::var_os("WKS_LOCAL_SPAWN_FIXTURE") {
+        tracing::subscriber::set_global_default(LifecycleSubscriber).unwrap();
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -656,7 +709,12 @@ async fn run(root: PathBuf) {
         client
             .call("sessions.snapshot", json!({"sessionId":codex_id}))
             .await
-            .is_ok_and(|row| row["ambientState"] == "idle")
+            .is_ok_and(|row| {
+                if row["status"] == "ended" || row["mode"] == "stopped" {
+                    timed_out("codex-ended-before-ready");
+                }
+                row["ambientState"] == "idle"
+            })
     })
     .await;
     let day = root.join("home/.codex/sessions/2026/09/30");

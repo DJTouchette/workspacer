@@ -12,6 +12,22 @@ import time
 import urllib.parse
 
 root = Path(os.environ["WKS_LOCAL_SPAWN_FIXTURE"])
+phase_lock = threading.Lock()
+
+def phase(name, **fields):
+    with phase_lock, (root / "codex-phases.jsonl").open("a") as output:
+        output.write(json.dumps({"phase": name, "pid": os.getpid(), **fields}) + "\n")
+
+def exception(kind, value, tb):
+    lines = []
+    while tb is not None:
+        lines.append(tb.tb_lineno)
+        tb = tb.tb_next
+    phase("exception", exceptionType=kind.__name__, lines=lines)
+
+sys.excepthook = exception
+threading.excepthook = lambda args: exception(args.exc_type, args.exc_value, args.exc_traceback)
+phase("interpreter")
 if "--version" in sys.argv:
     print("codex-fixture 1.0")
     sys.exit(0)
@@ -33,10 +49,12 @@ class Server(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/readyz":
+            phase("readyz")
             self.send_response(200)
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        phase("websocket-request")
         key = self.headers["Sec-WebSocket-Key"]
         digest = hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
         self.send_response(101)
@@ -44,6 +62,7 @@ class Server(http.server.BaseHTTPRequestHandler):
         self.send_header("Connection", "Upgrade")
         self.send_header("Sec-WebSocket-Accept", base64.b64encode(digest).decode())
         self.end_headers()
+        phase("websocket-upgraded")
         writing = threading.Lock()
         stopped = threading.Event()
 
@@ -67,6 +86,7 @@ class Server(http.server.BaseHTTPRequestHandler):
             while not stopped.is_set() and time.monotonic() < deadline:
                 if (root / "expose-codex-child").exists():
                     try:
+                        phase("exposing-child")
                         send({"method": "thread/started", "params": {"thread": {"id": child, "parentThreadId": parent}}})
                     except OSError:
                         pass
@@ -94,26 +114,37 @@ class Server(http.server.BaseHTTPRequestHandler):
                     continue
                 request = json.loads(payload)
                 method = request.get("method")
+                phase("method", method=method if method in ("initialize", "initialized", "thread/start", "thread/resume", "turn/start") else "other")
                 if "id" not in request:
                     continue
                 result = {"thread": {"id": parent}} if method in ("thread/start", "thread/resume") else {}
                 send({"jsonrpc": "2.0", "id": request["id"], "result": result})
                 if method == "turn/start":
+                    phase("turn-start")
                     send({"method": "turn/started", "params": {"threadId": parent}})
                     send({"method": "turn/completed", "params": {"threadId": parent, "turn": {"status": "completed"}}})
+                    phase("turn-completed")
                     if exposing is None:
                         exposing = threading.Thread(target=expose, daemon=True)
                         exposing.start()
-        except (EOFError, OSError):
-            pass
+        except BaseException as error:
+            exception(type(error), error, error.__traceback__)
+            raise
         finally:
+            phase("websocket-finally")
             stopped.set()
             if exposing is not None:
                 exposing.join(timeout=1)
             threading.Thread(target=self.server.shutdown, daemon=True).start()
 
 
-server = http.server.ThreadingHTTPServer(("127.0.0.1", endpoint.port), Server)
+class DiagnosticServer(http.server.ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        exception(*sys.exc_info())
+
+phase("before-bind")
+server = DiagnosticServer(("127.0.0.1", endpoint.port), Server)
+phase("bound")
 parent_pid = os.getppid()
 finished = threading.Event()
 
@@ -121,13 +152,16 @@ finished = threading.Event()
 def parent_watch():
     while not finished.wait(0.1):
         if os.getppid() != parent_pid:
+            phase("parent-changed")
             server.shutdown()
             return
 
 
 threading.Thread(target=parent_watch, daemon=True).start()
 try:
+    phase("serving")
     server.serve_forever()
 finally:
+    phase("server-finally")
     finished.set()
     server.server_close()
