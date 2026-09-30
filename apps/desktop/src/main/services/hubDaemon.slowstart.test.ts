@@ -14,6 +14,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import path from 'path';
 
 const probeHealth = vi.fn<(url: string, t?: number) => Promise<boolean>>();
 const killStaleListener = vi.fn();
@@ -112,13 +114,33 @@ beforeEach(() => {
   gracefulStop.mockClear().mockResolvedValue(undefined);
   spawnMock.mockClear();
   notifySystem.mockClear();
+  vi.mocked(fs.existsSync).mockImplementation(() => true);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
 });
 
 describe('hubDaemon slow start', () => {
+  it.each([
+    { sharing: '', webExists: true, enabled: false },
+    { sharing: '1', webExists: true, enabled: true },
+    { sharing: '1', webExists: false, enabled: false },
+  ])('passes the exact webapp selection for %j', async ({ sharing, webExists, enabled }) => {
+    vi.stubEnv('WORKSPACER_REMOTE_SHARE', sharing);
+    vi.stubEnv('WORKSPACER_WEBAPP_DIR', '/ambient-web-must-not-override-desktop');
+    const web = path.join('/tmp/app', 'dist', 'web');
+    vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate !== web || webExists);
+    waitForHealth.mockResolvedValue(undefined);
+    const mod = await loadModule();
+    await mod.startHub();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const [, args] = spawnMock.mock.calls[0] as unknown as [string, string[]];
+    expect(args.filter((arg) => arg === '--webapp-dir')).toHaveLength(1);
+    expect(args[args.indexOf('--webapp-dir') + 1]).toBe(enabled ? web : '');
+    await mod.stopHub();
+  });
   it('healthy in the first round: resolves with no notices', async () => {
     waitForHealth.mockResolvedValue(undefined);
     const mod = await loadModule();

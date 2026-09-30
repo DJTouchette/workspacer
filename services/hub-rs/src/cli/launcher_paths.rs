@@ -35,9 +35,51 @@ pub(super) fn webapp(directory: &Path) -> Option<PathBuf> {
         .find(|path| path.join("index.html").is_file())
 }
 
+pub(super) fn select_webapp(
+    explicit: Option<&Path>,
+    environment: Option<std::ffi::OsString>,
+    discover: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(path) = explicit {
+        // Empty is an explicit disable, not an invitation to rediscover assets.
+        return (!path.as_os_str().is_empty()).then(|| path.to_path_buf());
+    }
+    environment
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(discover)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_empty_webapp_suppresses_environment_and_discovery() {
+        assert_eq!(
+            select_webapp(Some(Path::new("")), Some("ambient".into()), || panic!(
+                "explicit disable reached discovery"
+            )),
+            None
+        );
+        assert_eq!(
+            select_webapp(
+                Some(Path::new("chosen")),
+                Some("ambient".into()),
+                || panic!()
+            ),
+            Some(PathBuf::from("chosen"))
+        );
+        assert_eq!(
+            select_webapp(None, Some("ambient".into()), || panic!()),
+            Some(PathBuf::from("ambient"))
+        );
+        for environment in [None, Some("".into())] {
+            assert_eq!(
+                select_webapp(None, environment, || Some(PathBuf::from("bundled"))),
+                Some(PathBuf::from("bundled"))
+            );
+        }
+    }
     #[test]
     fn explicit_database_wins_but_inferred_relative_or_empty_environment_is_refused() {
         let root = tempfile::tempdir().unwrap();

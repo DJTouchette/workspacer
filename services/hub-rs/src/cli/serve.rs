@@ -336,7 +336,8 @@ pub(super) async fn run(
             .jobs_file
             .clone()
             .unwrap_or(hub_state.join("jobs.json")),
-    );
+    )
+    .filter(|path| !path.as_os_str().is_empty());
     if serve.no_jobs {
         options.jobs_file = None;
     }
@@ -345,7 +346,8 @@ pub(super) async fn run(
             .peers_file
             .clone()
             .unwrap_or(plan.config.join("peers.json")),
-    );
+    )
+    .filter(|path| !path.as_os_str().is_empty());
     options.plugin_origin = match &serve.plugin_origin {
         Some(origin) => origin.clone(),
         None => std::env::var_os("WORKSPACER_PLUGIN_ORIGIN")
@@ -366,18 +368,16 @@ pub(super) async fn run(
     } else {
         serve.trusted_host.clone()
     };
-    options.webapp_dir = serve
-        .webapp_dir
-        .clone()
-        .filter(|path| !path.as_os_str().is_empty())
-        .or_else(|| {
-            std::env::var_os("WORKSPACER_WEBAPP_DIR")
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from)
-        })
-        .or_else(discover_webapp);
+    options.webapp_dir = super::launcher_paths::select_webapp(
+        serve.webapp_dir.as_deref(),
+        std::env::var_os("WORKSPACER_WEBAPP_DIR"),
+        discover_webapp,
+    );
     options.push_dir = Some(push_directory(&plan.config, serve.push_dir.as_deref()));
-    options.plugin_examples_dir = serve.examples_dir.clone().or_else(discover_examples);
+    options.plugin_examples_dir = match &serve.examples_dir {
+        Some(path) => (!path.as_os_str().is_empty()).then(|| path.clone()),
+        None => discover_examples(),
+    };
     options.plugins_stream_logs = dev.is_some();
     options.sidecar_node = serve
         .sidecar_node

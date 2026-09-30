@@ -84,7 +84,7 @@ pub struct ServeArgs {
     pub provider_scope: crate::provider_relay::Scope,
     #[arg(long, default_value = "")]
     pub node_id: String,
-    #[arg(long)]
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub nodes_file: Option<PathBuf>,
     #[arg(long)]
     pub nodes_keep_failed_wakes_running: bool,
@@ -108,7 +108,7 @@ pub struct ServeArgs {
     pub allow_new_token: Option<bool>,
     #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub plugins_dir: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub examples_dir: Option<PathBuf>,
     #[arg(long)]
     pub sidecar_node: Option<String>,
@@ -118,19 +118,19 @@ pub struct ServeArgs {
     pub trusted_host: Vec<String>,
     #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub webapp_dir: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub push_dir: Option<PathBuf>,
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
     #[arg(long)]
     pub home_dir: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub jobs_file: Option<PathBuf>,
     #[arg(long)]
     pub no_jobs: bool,
     #[arg(long)]
     pub uploads_to_worker: bool,
-    #[arg(long)]
+    #[arg(long,value_parser=clap::builder::OsStringValueParser::new().map(PathBuf::from))]
     pub peers_file: Option<PathBuf>,
 }
 impl Default for ServeArgs {

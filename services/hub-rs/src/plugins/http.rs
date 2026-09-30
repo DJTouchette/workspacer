@@ -364,9 +364,12 @@ pub(crate) fn router_with_policy(
         )
         .route(
             "/plugins/origin",
-            get(
-                |State(s): State<HttpState>| async move { Json(json!({"origin":s.plugin_origin})) },
-            ),
+            get(|State(s): State<HttpState>| async move {
+                (
+                    [(header::CACHE_CONTROL, "no-cache")],
+                    Json(json!({"origin":s.plugin_origin})),
+                )
+            }),
         )
         .with_state(HttpState {
             manager,

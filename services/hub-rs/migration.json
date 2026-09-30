@@ -4151,10 +4151,49 @@
       ]
     },
     "services/hub/cmd/hub/main.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/cli/mod.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "services/hub-rs/src/cli/parent.rs",
+        "services/hub-rs/src/backend.rs",
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/server.rs",
+        "services/hub-rs/src/server/web.rs",
+        "services/hub-rs/src/plugins/http.rs",
+        "services/hub-rs/src/services/mod.rs",
+        "services/hub-rs/src/services/nodes/mod.rs",
+        "services/hub-rs/src/services/push/mod.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete1329-line source read, including inline HTTP handlers and path/trust/push helpers, mapped in BOOTSTRAP_REVIEW.md. Actual runtime composition installs auth/layout/pacing/routing/remote admin/uploads/jobs/nodes/push/federation/plugins/quiescence and owned session services before exposing their readiness; this is not certification from helper tests alone.",
+          "Headless actual Backend test checks shipped web/mobile/remote literal methods against registered providers with parser execution floors and launchReady. It calls empty nodes.list and unknown-node wake/sleep. The old main fallback always registered those three even when startNodes returned nil; root corrected the Rust empty registry omission in e7504f49.",
+          "CLI role ownership replaces the old hub component interface: --host/--hub-port replace --addr; full mode owns Rust engine+hub+MCP, hub-only is explicit, and a borrowed daemon is read-only/identity-verified. Separate brain binary/supervision, arbitrary SSE URL, argv peer credentials and per-component layout/routing/pacing file toggles are architectural retirements. Current Electron and Fly Rust launchers use the new role/config/data inputs; obsolete flags survive legacy sources/comparison fixtures rather than shipped Rust startup.",
+          "Network startup always requires a host credential and preserves scoped record provenance/revocation and Host/Origin policy. Empty --tokens-file remains rejected because owned session launch/MCP needs its credential store; anonymous old component startup and disabling that owned store are not restored. Configuration and historical hub data paths remain distinct when appropriate.",
+          "Existing disable-capable flags now preserve explicit empties: nodes supplies empty API without polling, push installs no observer/methods, examples suppresses discovery/seeding, jobs and peers normalize to absent owners rather than empty filenames. CLI proof uses malformed default node/peer files, positive enabled method controls, actual owner RPCs and a CWD example canary.",
+          "Explicit empty --webapp-dir now prevents environment and bundle fallback; omission retains environment/discovery and explicit path wins. Electron passes explicit empty for disabled sharing or absent web build. Exact captured argv controls and actual isolated CLI HTTP200/404 tests cover the two call sites.",
+          "Plugin manager HTTP routes preserve private manifest/settings/credential boundaries, host-only install/reload, SDK injection, safe example seeding, current pane identity and consent. Origin response restores explicit no-cache. Actual CLI checks public mobile/manifest/service worker/icons/xterm/SDK MIME/cache and nonempty bodies, authenticated remote/app entry gates, trusted/untrusted Host behavior and origin normalization.",
+          "Owned Handle/internal clients replace self-dial machinery without granting person activity or extra authority. Routing and launch permit ownership are accounted by the separate routing/admission reviews; retired plugins.prepareLaunch callback is replaced by opaque owned LaunchPermit plus actual launchReady health, not a new credential-bearing RPC.",
+          "Parent-death pipe/PID, clean signal exit, port collision/readiness refusal and startup cancellation are actual process/backend tests. Per-child Windows suspended-launch job owners replace global GUI host confinement. Runtime keeps the actor pumping while plugin/dispatch shutdown runs, closes queued reply channels before joining observers, closes transports/services and joins the engine last; uncertain joins retain database ownership rather than claim clean shutdown.",
+          "Best-effort push initialization remains nonfatal and validates stored subscription fingerprints against host/scoped credentials. Public browser resources contain no credential; actual route policy wraps the whole listener. Detailed subsystem behavior is linked through existing exact-hash service records, while this row accounts for final startup wiring and composition."
+        ],
+        "originalTests": [],
+        "validation": "Actual CLI22/22 passed0ignored (/tmp/workspacer-bootstrap-cli-final.log), including standalone owned-engine, parent-death, scoped role and three isolated HTTP disable/default/explicit startup controls. Pure cli::launcher_paths helper3/3 passed0ignored from the freshly built shared unit binary (/tmp/workspacer-provider-cli-helper.log), including no environment/discovery fallback after explicit empty. Electron owning hubDaemon3 suites39 tests and main typecheck passed (/tmp/workspacer-desktop-webapp-flags.log, /tmp/workspacer-desktop-webapp-typecheck.log). Root headless3+progress4 passed (/tmp/workspacer-headless-port-final.log); prior library391 covers runtime/subsystem composition. The newer provider_relay pre-fix unit filter reproduced an unrelated registration recovery gap, so no whole-current-library or CI pass is inferred from this scoped helper receipt. No Windows/publication claim."
+      },
       "sha256": "49318d2997c332f2593efed3b58bae5672019634298c30b47ca08ba6d981ee3d",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/headless_completeness.rs",
+        "services/hub-rs/tests/http.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/lifecycle.rs",
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/visible_terminal.rs",
+        "services/hub-rs/src/cli/launcher_paths.rs",
+        "apps/desktop/src/main/services/hubDaemon.slowstart.test.ts"
+      ]
     },
     "services/hub/cmd/hub/manifestroutes.go": {
       "replacement": [

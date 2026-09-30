@@ -574,6 +574,10 @@ function launch(
   const webDir = webappDir();
   if (remote && fs.existsSync(webDir)) {
     hubArgs.push('--webapp-dir', webDir);
+  } else {
+    // Rust serve discovers bundled assets when this flag is omitted. Preserve
+    // the desktop's explicit sharing choice instead of enabling that fallback.
+    hubArgs.push('--webapp-dir', '');
   }
   // The token goes in the ENVIRONMENT, never argv: /proc/<pid>/cmdline is
   // world-readable (0444) on Linux, so `--token <secret>` would publish to every

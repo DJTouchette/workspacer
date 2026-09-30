@@ -526,6 +526,10 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             let _ = self.0.wait();
         }
     }
+    assert!(
+        CommandLine::try_parse_from(["workspacer", "serve", "--tokens-file", ""]).is_err(),
+        "owned launcher must not disable its session credential store implicitly"
+    );
     for (origin_override, expected_origin) in [
         (None, "https://environment.fixture:8443"),
         (Some(""), ""),
@@ -538,6 +542,25 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
         let config = root.path().join("config");
         let home = root.path().join("home");
         std::fs::create_dir(&home).unwrap();
+        if origin_override == Some("") {
+            std::fs::create_dir(&config).unwrap();
+            for name in ["nodes.json", "peers.json"] {
+                std::fs::write(config.join(name), "invalid default must not be read").unwrap();
+            }
+        }
+        let env_web = root.path().join("env-web");
+        let explicit_web = root.path().join("explicit-web");
+        std::fs::create_dir(&env_web).unwrap();
+        std::fs::create_dir(&explicit_web).unwrap();
+        std::fs::write(env_web.join("index.html"), "environment web fixture").unwrap();
+        std::fs::write(explicit_web.join("index.html"), "explicit web fixture").unwrap();
+        // An empty examples path must not become a relative CWD seed source.
+        std::fs::create_dir(root.path().join("editor")).unwrap();
+        std::fs::write(
+            root.path().join("editor/plugin.json"),
+            r#"{"id":"workspacer.editor","name":"CWD canary","version":"1.0.0"}"#,
+        )
+        .unwrap();
         let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = socket.local_addr().unwrap().port();
         drop(socket);
@@ -562,6 +585,7 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             .arg("--claudemon-db-path")
             .arg(&db)
             .env("HUB_TOKEN", "SUPERVISED_HOST_SECRET")
+            .env("WORKSPACER_WEBAPP_DIR", &env_web)
             .env(
                 "WORKSPACER_PLUGIN_ORIGIN",
                 "https://environment.fixture:8443/path",
@@ -571,11 +595,28 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
             .env("USERPROFILE", &home)
             .env("APPDATA", root.path().join("xdg"))
             .env("XDG_CONFIG_HOME", root.path().join("xdg"))
+            .current_dir(root.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(origin) = origin_override {
             command.arg("--plugin-origin").arg(origin);
+            command.arg("--webapp-dir").arg(if origin.is_empty() {
+                std::path::Path::new("")
+            } else {
+                &explicit_web
+            });
+        }
+        if origin_override == Some("") {
+            for flag in [
+                "--nodes-file",
+                "--push-dir",
+                "--examples-dir",
+                "--jobs-file",
+                "--peers-file",
+            ] {
+                command.arg(flag).arg("");
+            }
         }
         let mut child = Child(command.spawn().unwrap());
         let client = reqwest::blocking::Client::builder()
@@ -616,14 +657,160 @@ fn quiet_control_plane_starts_without_engine_or_hook_side_effects() {
                 .status(),
             reqwest::StatusCode::FORBIDDEN
         );
-        let origin: Value = client
+        let origin_response = client
             .get(format!("http://127.0.0.1:{port}/plugins/origin"))
+            .send()
+            .unwrap();
+        assert_eq!(origin_response.headers()["cache-control"], "no-cache");
+        let origin: Value = origin_response.json().unwrap();
+        assert_eq!(origin["origin"], expected_origin);
+        let app = client
+            .get(format!("http://127.0.0.1:{port}/app/"))
+            .bearer_auth("SUPERVISED_HOST_SECRET")
+            .send()
+            .unwrap();
+        let anonymous_app = client
+            .get(format!("http://127.0.0.1:{port}/app/"))
+            .send()
+            .unwrap();
+        if origin_override == Some("") {
+            assert_eq!(anonymous_app.status(), reqwest::StatusCode::NOT_FOUND);
+            assert_eq!(
+                app.status(),
+                reqwest::StatusCode::NOT_FOUND,
+                "explicit empty webapp must suppress the environment selection"
+            );
+        } else {
+            assert_eq!(anonymous_app.status(), reqwest::StatusCode::UNAUTHORIZED);
+            assert_eq!(app.status(), reqwest::StatusCode::OK);
+            assert_eq!(
+                app.text().unwrap(),
+                if origin_override.is_none() {
+                    "environment web fixture"
+                } else {
+                    "explicit web fixture"
+                }
+            );
+        }
+        if origin_override.is_none() {
+            assert_eq!(
+                client
+                    .get(format!("http://127.0.0.1:{port}/remote"))
+                    .send()
+                    .unwrap()
+                    .status(),
+                reqwest::StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(
+                client
+                    .get(format!("http://127.0.0.1:{port}/remote"))
+                    .bearer_auth("SUPERVISED_HOST_SECRET")
+                    .send()
+                    .unwrap()
+                    .status(),
+                reqwest::StatusCode::OK
+            );
+            for (route, mime, cache) in [
+                ("/m", "text/html", "no-cache"),
+                (
+                    "/manifest.webmanifest",
+                    "application/manifest+json",
+                    "no-cache",
+                ),
+                ("/sw.js", "text/javascript", "no-cache"),
+                ("/icon-192.png", "image/png", "public, max-age=86400"),
+                ("/icon-512.png", "image/png", "public, max-age=86400"),
+                (
+                    "/icon-maskable-512.png",
+                    "image/png",
+                    "public, max-age=86400",
+                ),
+                (
+                    "/apple-touch-icon.png",
+                    "image/png",
+                    "public, max-age=86400",
+                ),
+                (
+                    "/xterm.js",
+                    "application/javascript",
+                    "public, max-age=86400",
+                ),
+                ("/xterm.css", "text/css", "public, max-age=86400"),
+                (
+                    "/addon-fit.js",
+                    "application/javascript",
+                    "public, max-age=86400",
+                ),
+                (
+                    "/plugins/sdk.js",
+                    "application/javascript",
+                    "public, max-age=300",
+                ),
+            ] {
+                let asset = client
+                    .get(format!("http://127.0.0.1:{port}{route}"))
+                    .send()
+                    .unwrap();
+                assert_eq!(asset.status(), reqwest::StatusCode::OK, "{route}");
+                assert!(
+                    asset.headers()["content-type"]
+                        .to_str()
+                        .unwrap()
+                        .starts_with(mime),
+                    "{route}"
+                );
+                assert_eq!(asset.headers()["cache-control"], cache, "{route}");
+                if route == "/sw.js" {
+                    assert_eq!(asset.headers()["service-worker-allowed"], "/");
+                }
+                assert!(!asset.bytes().unwrap().is_empty(), "{route}");
+            }
+        }
+        assert!(config.join("plugins").is_dir());
+        let health: Value = client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .bearer_auth("SUPERVISED_HOST_SECRET")
             .send()
             .unwrap()
             .json()
             .unwrap();
-        assert_eq!(origin["origin"], expected_origin);
-        assert!(config.join("plugins").is_dir());
+        let names = health["methodNames"].as_array().unwrap();
+        assert!(names.iter().any(|name| name == "nodes.list"));
+        if origin_override == Some("") {
+            assert!(!names.iter().any(|name| {
+                name.as_str()
+                    .is_some_and(|name| name.starts_with("jobs.") || name.starts_with("push."))
+            }));
+            assert!(
+                !config.join("plugins/editor").exists(),
+                "disabled examples seeded from CWD"
+            );
+            assert!(!config.join("vapid.json").exists());
+        } else {
+            assert!(names.iter().any(|name| name == "jobs.list"));
+            assert!(names.iter().any(|name| name == "push.key"));
+        }
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let bus = workspacer_hub::client::Client::connect_remote(
+                &format!("ws://127.0.0.1:{port}/bus"),
+                "SUPERVISED_HOST_SECRET",
+            )
+            .await
+            .unwrap();
+            assert_eq!(bus.call("nodes.list", json!({})).await.unwrap(), json!([]));
+            let peers = bus.call("federation.peersConfig", json!({})).await;
+            if origin_override == Some("") {
+                assert!(
+                    peers
+                        .unwrap_err()
+                        .to_string()
+                        .contains("disabled by the server launcher")
+                );
+            } else {
+                assert_eq!(peers.unwrap(), json!([]));
+            }
+            bus.close();
+        });
         assert!(!db.exists());
         assert!(!home.join(".claude/settings.json").exists());
         drop(child.0.stdin.take());
