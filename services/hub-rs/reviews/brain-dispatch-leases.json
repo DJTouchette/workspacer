@@ -1,0 +1,107 @@
+{
+  "records": {
+    "services/hub/cmd/brain/dispatchlease.go": {
+      "status": "ported",
+      "sha256": "bdd7ad4dcf8be323f30c366a79683928b875a7b583c1cd8bb8ac43e65753d5e5",
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/mod.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/examples/support/paired.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/lease_audit_tests.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete prepare/claim/persist/load/expire/resume implementation. Rust Receiver preserves credential-bound owner/repo/cwd/provider/worktree leases, authenticated readiness and canonical execution-host choices, generated worktree destinations and5-minute expiry.",
+          "prepare_owned journals cleanup responsibility before worktree allocation and marks prepared only after successful allocation. Claimed admissions never become reusable on cancellation, failed acknowledgment or restart. sweep_at skips claimed rows and retains cleanup failures for retry.",
+          "Journal.change persists a cloned next map before replacing in-memory state. New actual write obstruction test proves no spawn without durable claim and no publication/sequence advance without durable receipt; old shared schema is discriminated and migrated to separate worker/origin journals without overwriting the legacy file."
+        ],
+        "intentionalChanges": [
+          "Authenticated connection fingerprint owns the lease; caller-claimed origin names do not grant authority. Opaque remote paths remain execution-host facts.",
+          "Worker/origin journals use distinct files, and cleanup refuses active or dirty generated worktrees rather than force-deleting unclaimed work.",
+          "Unexpected execution/wake acknowledgment remains unknown and is never replay permission; prepare is detached/owned until receiver shutdown accounts for it."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/dispatchlease_test.go": {
+      "status": "ported",
+      "sha256": "7add409014e14b779e1b8b793f8c2826a5015b03a3e9f448eff1f9c2d22af0a9",
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/mod.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/examples/support/paired.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/lease_audit_tests.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "New actual receiver tests execute owner,cwd,provider,expired and old-protocol negatives before first execution. Nonexpired mismatches leave the genuine lease usable once; second admission and reopened consumed admission fail; actual execution counter remains0 or1 as appropriate.",
+          "New durable-write obstruction control blocks journal replacement after preparation: claim failure starts0 workers; after filesystem recovery genuine admission succeeds. A second obstruction makes terminal report fail without bus publication; subsequent progress/blocked/final receipts use sequences1/2/3, exact camelCase identity/label/note/needsDecision, and no internal SessionID spelling.",
+          "forgetting the live card does not erase the terminal journal; reopen replays seq3, rejects later progress and wrong-owner acknowledgment, persists ackedAt, and another reopen retains the final receipt.",
+          "Existing tests cover actual two-hub credential/view/dispatch-opt-in controls, unknown spawn/restart no retry, uncertain origin wake delivery no resend, and incomplete worktree allocation/failed cleanup retries.",
+          "Added boot-idle backstop unit using existing Wakes remote fixture: no observed working-to-idle transition; exact grace boundary emits nothing; repeated later backstops emit exactly1 remote final with correct reply/session and no local manager wake."
+        ],
+        "intentionalChanges": [
+          "Authenticated connection fingerprint owns the lease; caller-claimed origin names do not grant authority. Opaque remote paths remain execution-host facts.",
+          "Worker/origin journals use distinct files, and cleanup refuses active or dirty generated worktrees rather than force-deleting unclaimed work.",
+          "Unexpected execution/wake acknowledgment remains unknown and is never replay permission; prepare is detached/owned until receiver shutdown accounts for it.",
+          "A claim whose journal write demonstrably failed before execution leaves the Rust in-memory lease unused, so a valid retry after storage recovery may execute once; the old Go helper marked its in-memory lease claimed before persistence. This is distinct from uncertain execution, whose durable claim remains consumed."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/paired_dispatch_fixture_test.go": {
+      "status": "ported",
+      "sha256": "da060e56461989d0d387dd13c8bfa3f85fe4951debcca64d83c1e6bbf8205db9",
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/mod.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/examples/support/paired.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/lease_audit_tests.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "The Go source is an opt-in hosted integration fixture rather than an assertion suite. Its production bus auth, old endpoint, provider readiness/repo choices, worktree preparation, spawn recording, progress/block/final wake path and replay-known/unknown/error/wrong-id modes map to the Rust hub_contract_fixture paired mode in examples/support/paired.rs.",
+          "The Rust fixture uses real Receiver, Progress, Wakes and spawn_plan with only provider execution replaced by a recording sink. Desktop dispatchChain.integration.ts starts the Rust binary with --mode paired, checks old protocol/view refusal, isolated remote worktree, no local spawn/token leak, returned local proxy, reconnect/replay identity and idempotent result delivery.",
+          "PrimaryCI36642609790 at9bd86db6019172f58b68d0befd97739d9e66bcfa desktop job109659991125 ran dispatch-chain16 successfully including the named unknown paired replay test. Saved log /tmp/workspacer-dispatch-chain-9bd-ci.log. All remote_dispatch production, paired fixture and desktop consumer bytes are unchanged from that SHA; no fresh whole-current-checkout CI claim."
+        ],
+        "intentionalChanges": [
+          "Authenticated connection fingerprint owns the lease; caller-claimed origin names do not grant authority. Opaque remote paths remain execution-host facts.",
+          "Worker/origin journals use distinct files, and cleanup refuses active or dirty generated worktrees rather than force-deleting unclaimed work.",
+          "Unexpected execution/wake acknowledgment remains unknown and is never replay permission; prepare is detached/owned until receiver shutdown accounts for it."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "status": "READY: all3 new owning units passed",
+    "lease_units": "Both2 lease_audit_tests passed in /tmp/workspacer-routing-preview-catalog-final2.log",
+    "paired_fixture": "Exact unchanged-source CI dispatch-chain16 passed as documented above",
+    "format": "rustfmt/git diff --check passed",
+    "witness": "new lease test recognized; tests.rs module unmapped; explicit --lib remote_dispatch plus wakes remote tests selected",
+    "missed_finish": "boot_idle_remote_finish_backstop_reports_once_without_local_delivery passed in /tmp/workspacer-routing-preview-catalog-final2.log",
+    "shared_checkpoint_limit": "Full390 checkpoint had388pass2fail: unrelated preview fixture assertion and library_watch timing failure; NOT claimed full-green. Root/cutover handle those separately."
+  },
+  "readyToStage": [
+    "services/hub-rs/src/services/remote_dispatch/tests.rs",
+    "services/hub-rs/src/services/remote_dispatch/lease_audit_tests.rs",
+    "services/hub-rs/src/services/wakes.rs",
+    ".rivet/learnings/2026-09-29-dispatch-admission-and-receipt-tests-must-separa-5e7708.md",
+    "services/hub-rs/reviews/brain-dispatch-leases.json"
+  ]
+}

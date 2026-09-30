@@ -381,3 +381,164 @@ async fn confirmed_live_controls_are_generation_fenced_and_cannot_change_authori
             .unwrap()
     );
 }
+
+#[tokio::test]
+async fn routing_wire_reaches_launch_receipt_durable_metadata_and_public_projection() {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Arc::new(Fake::default());
+    let journal = root.path().join("launch.json");
+    let service = Lifecycle::open(journal.clone(), fake.clone(), fake.clone()).unwrap();
+    for (id, fields) in [
+        (
+            "routed",
+            json!({"role":"implementer","capability":"frontier","decisionId":"rd_deadbeef"}),
+        ),
+        ("partial", json!({"role":"scout"})),
+        ("plain", json!({})),
+    ] {
+        let mut params =
+            json!({"cwd":root.path(),"label":"Worker","parentSessionId":"boss","manager":true});
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        let plan = spawn_plan::resolve(&params, &json!({}), None, root.path(), id, false).unwrap();
+        let receipt = service.launch(plan).await.unwrap();
+        let raw = json!({"session_id":id,"mode":"input"});
+        let row = service.enrich(raw.clone());
+        let restored = Lifecycle::open(journal.clone(), fake.clone(), fake.clone())
+            .unwrap()
+            .enrich(raw);
+        for value in [&receipt, &row, &restored] {
+            if fields.as_object().unwrap().is_empty() {
+                assert!(value.get("routing").is_none());
+            } else {
+                assert_eq!(value["routing"], fields);
+            }
+        }
+        assert_eq!(row["mode"], "input");
+        assert_eq!(row["label"], "Worker");
+        assert_eq!(row["parentSessionId"], "boss");
+        assert_eq!(row["isWakeTarget"], true);
+    }
+    let unknown = json!({"session_id":"unwatched","cwd":"/elsewhere","mode":"input"});
+    assert_eq!(service.enrich(unknown.clone()), unknown);
+    service.close().await;
+}
+
+#[tokio::test]
+async fn launch_permission_truth_agrees_across_result_projection_and_reopen_without_claiming_unknowns()
+ {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Arc::new(Fake::default());
+    let journal = root.path().join("launch.json");
+    let service = Lifecycle::open(journal.clone(), fake.clone(), fake.clone()).unwrap();
+    let cases = [
+        ("claude", "pty", false, "", "default"),
+        ("claude", "pty", false, "plan", "plan"),
+        ("claude", "stream", false, "plan", "plan"),
+        ("claude", "stream", false, "acceptEdits", "acceptEdits"),
+        ("claude", "pty", true, "", "bypassPermissions"),
+        ("claude", "stream", true, "plan", "bypassPermissions"),
+        // Provider mode and the skip receipt are different facts.
+        (
+            "claude",
+            "stream",
+            false,
+            "bypassPermissions",
+            "bypassPermissions",
+        ),
+        ("codex", "stream", false, "plan", "ask"),
+        ("codex", "stream", true, "", "yolo"),
+        ("opencode", "stream", true, "", "yolo"),
+        ("copilot", "stream", false, "", "ask"),
+    ];
+    for (index, (provider, transport, skip, mode, expected)) in cases.into_iter().enumerate() {
+        let id = format!("truth-{index}");
+        let plan=spawn_plan::resolve(&json!({"cwd":root.path(),"provider":provider,"transport":transport,"skipPermissions":skip,"permissionMode":mode,"yoloGranted":true,"label":"Worker","parentSessionId":"boss"}),&json!({}),None,root.path(),&id,false).unwrap();
+        assert_eq!(plan.full_access, skip);
+        let receipt = service.launch(plan).await.unwrap();
+        assert_eq!(receipt["fullAccess"], skip);
+        for owner in [
+            &service,
+            &Lifecycle::open(journal.clone(), fake.clone(), fake.clone()).unwrap(),
+        ] {
+            let row = owner.enrich(json!({"session_id":id,"mode":"input"}));
+            assert_eq!(
+                row["settings"]["permissionMode"], expected,
+                "{provider}/{transport}/{skip}/{mode}"
+            );
+            assert_eq!(row["settings"]["bypassAvailable"], skip);
+            assert_eq!(
+                row.get("escalationScrubbed"),
+                receipt.get("escalationScrubbed")
+            );
+            assert_eq!(row["label"], "Worker");
+            assert_eq!(row["parentSessionId"], "boss");
+            assert_eq!(row["mode"], "input");
+        }
+    }
+    let unknown = service.enrich(json!({"sessionId":"unwatched"}));
+    assert!(unknown.get("settings").is_none());
+    assert!(unknown.get("livePermissionMode").is_none());
+    service.close().await;
+}
+
+#[tokio::test]
+async fn reused_identity_drops_stale_live_permission_and_fences_old_acknowledgments() {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Arc::new(Fake::default());
+    let service = Lifecycle::open(root.path().join("launch.json"), fake.clone(), fake).unwrap();
+    let make_plan = |skip| {
+        spawn_plan::resolve(&json!({"cwd":root.path(),"provider":"claude","transport":"stream","skipPermissions":skip,"modelIdentity":"opus","contextWindow":1000000,"effort":"high","label":"Worker","parentSessionId":"boss","manager":true}),&json!({}),None,root.path(),"same",false).unwrap()
+    };
+    service.launch(make_plan(false)).await.unwrap();
+    let first = service.records()["same"].generation.clone();
+    assert!(service.note_live_control("same",&first,&json!({"settings":{"permissionMode":"plan","model":"opus","effort":"high"},"livePermissionMode":"plan"})).await.unwrap());
+    let live = service.enrich(json!({"sessionId":"same"}));
+    assert_eq!(live["livePermissionMode"], "plan");
+    assert_eq!(live["settings"]["permissionMode"], "plan");
+    service.stopped("same", &first).await.unwrap();
+    let plan = make_plan(true);
+    assert_eq!(plan.request["model_identity"], "opus");
+    assert_eq!(plan.request["context_window"], 1000000);
+    assert_eq!(plan.request["effort"], "high");
+    service.launch(plan).await.unwrap();
+    let second = service.records()["same"].generation.clone();
+    assert_ne!(first, second);
+    let relaunched = service.enrich(json!({"sessionId":"same"}));
+    assert!(relaunched.get("livePermissionMode").is_none());
+    assert_eq!(
+        relaunched["settings"]["permissionMode"],
+        "bypassPermissions"
+    );
+    assert_eq!(relaunched["settings"]["bypassAvailable"], true);
+    assert_eq!(relaunched["label"], "Worker");
+    assert_eq!(relaunched["parentSessionId"], "boss");
+    assert_eq!(relaunched["isWakeTarget"], true);
+    assert!(
+        !service
+            .note_live_control(
+                "same",
+                &first,
+                &json!({"settings":{"permissionMode":"default"},"livePermissionMode":"default"})
+            )
+            .await
+            .unwrap()
+    );
+    assert!(
+        service
+            .note_live_control(
+                "same",
+                &second,
+                &json!({"settings":{"permissionMode":"plan"},"livePermissionMode":"plan"})
+            )
+            .await
+            .unwrap()
+    );
+    let current = service.enrich(json!({"sessionId":"same"}));
+    assert_eq!(current["livePermissionMode"], "plan");
+    assert_eq!(current["settings"]["permissionMode"], "plan");
+    assert_eq!(current["settings"]["bypassAvailable"], true);
+    service.close().await;
+}

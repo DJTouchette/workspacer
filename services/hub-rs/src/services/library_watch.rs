@@ -19,6 +19,8 @@ pub(crate) struct Watcher {
     rows: Rows,
     owned_engine: bool,
     stopped: tokio::sync::watch::Sender<bool>,
+    #[cfg(test)]
+    scanned: tokio::sync::watch::Sender<Option<[u8; 32]>>,
 }
 fn roots<'a>(rows: impl Iterator<Item = &'a Value>) -> BTreeSet<String> {
     rows.filter(|row| snapshots::live(row) && row.get("hub").is_none_or(Value::is_null))
@@ -54,6 +56,8 @@ impl Watcher {
             rows,
             owned_engine,
             stopped: tokio::sync::watch::channel(false).0,
+            #[cfg(test)]
+            scanned: tokio::sync::watch::channel(None).0,
         })
     }
     pub(crate) fn close(&self) {
@@ -106,6 +110,8 @@ impl Watcher {
                 }
             }
             previous = Some(next);
+            #[cfg(test)]
+            let _ = self.scanned.send_replace(Some(next));
         }
     }
 }
@@ -157,10 +163,11 @@ mod tests {
         let client = Client::connect(&hub.handle()).await.unwrap();
         let mut events = client.events();
         client
-            .topics(["library.changed".into()].into())
+            .topics(["library.changed".into(), "fixture.libraryScan".into()].into())
             .await
             .unwrap();
-        let watcher = Watcher::new(library, rows.clone(), true);
+        let watcher = Watcher::new(library.clone(), rows.clone(), true);
+        let mut scanned = watcher.scanned.subscribe();
         let task = tokio::spawn(
             watcher
                 .clone()
@@ -183,9 +190,32 @@ mod tests {
         })
         .await
         .unwrap();
-        // Let the last write settle, then prove stable projections are quiet.
-        tokio::time::sleep(Duration::from_millis(80)).await;
-        while events.try_recv().is_ok() {}
+        // A retry may receive the preceding write's event. Wait for the final
+        // real projection to be committed, then drain through a marker on the
+        // same subscriber: scan completion alone does not prove delivery.
+        let final_revision = revision(&library, &BTreeSet::from([String::new()])).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if *scanned.borrow_and_update() == Some(final_revision) {
+                    break;
+                }
+                scanned.changed().await.unwrap();
+            }
+            hub.handle()
+                .publish_wait(Event::new("fixture.libraryScan", "fixture", json!({})))
+                .await
+                .unwrap();
+            loop {
+                let event = events.recv().await.unwrap();
+                if event.topic == "fixture.libraryScan" {
+                    break;
+                }
+                assert_eq!(event.topic, "library.changed");
+                assert_eq!(event.data, Some(json!({})));
+            }
+        })
+        .await
+        .unwrap();
         assert!(
             tokio::time::timeout(Duration::from_millis(100), events.recv())
                 .await

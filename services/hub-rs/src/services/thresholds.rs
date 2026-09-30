@@ -456,6 +456,18 @@ pub(crate) fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn retained_fleet_threshold_numbers_use_grouped_wire_text() {
+        for (value, expected) in [
+            (0.0, "0"),
+            (999.0, "999"),
+            (1000.0, "1,000"),
+            (309412.0, "309,412"),
+            (1234567.0, "1,234,567"),
+        ] {
+            assert_eq!(grouped(value), expected);
+        }
+    }
     fn fixture(
         fail: bool,
     ) -> (

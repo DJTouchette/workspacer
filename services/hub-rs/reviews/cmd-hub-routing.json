@@ -1,0 +1,168 @@
+{
+  "records": {
+    "services/hub/cmd/hub/routing.go": {
+      "status": "ported",
+      "sha256": "662b2dbb3e6cac9db714ed14d32fa2b1a4dbe14b22dc044776d7f915e08a2438",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/sampler/flight_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/catalog_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs"
+      ],
+      "review": {
+        "originalTests": [],
+        "behaviors": [
+          "Production Rust sampler owns daemon access; requests never select a backend URL or supply quota observations. Concurrent callers share one independently spawned ten-second fetch; each caller waits at most three seconds. Cancellation of the last waiter does not cancel the producer, and late results are cached before notifying readers. Failed refresh clears prior success; decision/preview max-age is zero, Overview max-age sixty seconds.",
+          "Legacy hub thirty-second mirror prefetch and fifteen-minute idle tail are retired in favor of daemon-owned quota polling and renderer subscriber-owned report refresh. This preserves public observation age bounds, not an identical background schedule; exact owner paths and polling evidence are recorded in CMD_HUB_ROUTING_REVIEW.md.",
+          "Catalog adapters ask the actual claude.listModels owner or owned daemon models endpoint. Typed model/effort decoding rejects malformed successful answers as unknown, skips empty IDs/null rows, and strips unrelated fields. Measured empty non-Claude models are unavailable; transport failure and unanswered Claude catalog are unknown. Positive answers have a ten-minute TTL; negative/unknown answers can re-probe after the five-second demand-refresh floor.",
+          "Go private Catalog.Models HTTP502-versus-unreachable error prose is retired: ValidateAgainstCatalog and answerCounting discard that prose. Public answered/unknown distinctions remain, with unknown fail-open rather than invented availability or measured emptiness. No new public error-detail field is introduced.",
+          "Go deferred model check and retry timers are replaced by demand-driven routing.select catalog refresh; preview/report never probe catalogs. Decisions explicitly disclose pending checks. Positive catalog model/effort evidence rejects unsupported fallover candidates, and measured-empty providers produce a safe explanation. Existing explicit provider-pin/no-alternative behavior remains unchanged.",
+          "Existing event projection keeps chosen landing health/pace, zero ratios, sanitized fellOverFrom/effortStep and decision identity while hiding private directory/account data. Actual handler tests verify audit/event publication for selection and no publication for preview. The canonical report/limits policy remains the authority for unknown capacity rather than manufacturing numerical zero."
+        ],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      }
+    },
+    "services/hub/cmd/hub/routing_test.go": {
+      "status": "ported",
+      "sha256": "8774add6b26b322c905c871c664fe8582cfa494b2f548c3a4bc657d1055c1f93",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/sampler/flight_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/catalog_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestUsageWatcherReadsTheReport",
+          "TestUsageWatcherWindsDownWhenNobodyIsAsking",
+          "TestUsageWatcherDoesNotServeStaleNumbersAcrossAnOutage",
+          "TestUsageWatcherRefusesABodyThatIsNotTheReport",
+          "TestTheWatcherHoldsTheDocumentUnjudged",
+          "TestARoutingDecisionTakesItsOwnReading",
+          "TestRoutingSelectAnswersWithoutAUsageDocument",
+          "TestConcurrentDecisionsShareOneFetch",
+          "TestASlowClaudemonCannotHangADecision",
+          "TestRoutingSelectRecordsAndPublishesTheDecisionItAnswered",
+          "TestAFalloverEventNamesTheHealthOfTheProviderItActuallyPicked",
+          "TestAFalloverDecisionPublishesFellOverFrom",
+          "TestTheHandlerFeedsLiveAvailabilityIntoTheDecision",
+          "TestTheDecisionEventCarriesTheEffortStep",
+          "TestAForcedRefreshReProbesAnUnavailableProvider",
+          "TestAnUnreachableDaemonAndAFailedProbeAreDifferentSentences",
+          "TestThePendingCatalogReasonRidesTheDecisionUntilTheCheckSettles"
+        ],
+        "behaviors": [
+          "Production Rust sampler owns daemon access; requests never select a backend URL or supply quota observations. Concurrent callers share one independently spawned ten-second fetch; each caller waits at most three seconds. Cancellation of the last waiter does not cancel the producer, and late results are cached before notifying readers. Failed refresh clears prior success; decision/preview max-age is zero, Overview max-age sixty seconds.",
+          "Legacy hub thirty-second mirror prefetch and fifteen-minute idle tail are retired in favor of daemon-owned quota polling and renderer subscriber-owned report refresh. This preserves public observation age bounds, not an identical background schedule; exact owner paths and polling evidence are recorded in CMD_HUB_ROUTING_REVIEW.md.",
+          "Catalog adapters ask the actual claude.listModels owner or owned daemon models endpoint. Typed model/effort decoding rejects malformed successful answers as unknown, skips empty IDs/null rows, and strips unrelated fields. Measured empty non-Claude models are unavailable; transport failure and unanswered Claude catalog are unknown. Positive answers have a ten-minute TTL; negative/unknown answers can re-probe after the five-second demand-refresh floor.",
+          "Go private Catalog.Models HTTP502-versus-unreachable error prose is retired: ValidateAgainstCatalog and answerCounting discard that prose. Public answered/unknown distinctions remain, with unknown fail-open rather than invented availability or measured emptiness. No new public error-detail field is introduced.",
+          "Go deferred model check and retry timers are replaced by demand-driven routing.select catalog refresh; preview/report never probe catalogs. Decisions explicitly disclose pending checks. Positive catalog model/effort evidence rejects unsupported fallover candidates, and measured-empty providers produce a safe explanation. Existing explicit provider-pin/no-alternative behavior remains unchanged.",
+          "Existing event projection keeps chosen landing health/pace, zero ratios, sanitized fellOverFrom/effortStep and decision identity while hiding private directory/account data. Actual handler tests verify audit/event publication for selection and no publication for preview. The canonical report/limits policy remains the authority for unknown capacity rather than manufacturing numerical zero."
+        ],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      }
+    },
+    "services/hub/cmd/hub/routingselect.go": {
+      "status": "ported",
+      "sha256": "656fec0661a97aa58561714634276d61c0451f0f08a706a70b26b86fdc02a993",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/sampler/flight_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/catalog_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs"
+      ],
+      "review": {
+        "originalTests": [],
+        "behaviors": [
+          "Production Rust sampler owns daemon access; requests never select a backend URL or supply quota observations. Concurrent callers share one independently spawned ten-second fetch; each caller waits at most three seconds. Cancellation of the last waiter does not cancel the producer, and late results are cached before notifying readers. Failed refresh clears prior success; decision/preview max-age is zero, Overview max-age sixty seconds.",
+          "Legacy hub thirty-second mirror prefetch and fifteen-minute idle tail are retired in favor of daemon-owned quota polling and renderer subscriber-owned report refresh. This preserves public observation age bounds, not an identical background schedule; exact owner paths and polling evidence are recorded in CMD_HUB_ROUTING_REVIEW.md.",
+          "Catalog adapters ask the actual claude.listModels owner or owned daemon models endpoint. Typed model/effort decoding rejects malformed successful answers as unknown, skips empty IDs/null rows, and strips unrelated fields. Measured empty non-Claude models are unavailable; transport failure and unanswered Claude catalog are unknown. Positive answers have a ten-minute TTL; negative/unknown answers can re-probe after the five-second demand-refresh floor.",
+          "Go private Catalog.Models HTTP502-versus-unreachable error prose is retired: ValidateAgainstCatalog and answerCounting discard that prose. Public answered/unknown distinctions remain, with unknown fail-open rather than invented availability or measured emptiness. No new public error-detail field is introduced.",
+          "Go deferred model check and retry timers are replaced by demand-driven routing.select catalog refresh; preview/report never probe catalogs. Decisions explicitly disclose pending checks. Positive catalog model/effort evidence rejects unsupported fallover candidates, and measured-empty providers produce a safe explanation. Existing explicit provider-pin/no-alternative behavior remains unchanged.",
+          "Existing event projection keeps chosen landing health/pace, zero ratios, sanitized fellOverFrom/effortStep and decision identity while hiding private directory/account data. Actual handler tests verify audit/event publication for selection and no publication for preview. The canonical report/limits policy remains the authority for unknown capacity rather than manufacturing numerical zero."
+        ],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      }
+    },
+    "services/hub/cmd/hub/routingpreferences.go": {
+      "status": "ported",
+      "sha256": "17572a666a9bb56733bbeba80ba2e0712bdc449bd9c9a871a369c8ce07221e71",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/preview_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ],
+      "review": {
+        "originalTests": [],
+        "behaviors": [
+          "Preferences get exposes configurable only to trusted authenticated host operator authority; validation/save/reset require that same host gate. Shared method scopes additionally exclude view/triage from these routing reads. Scoped operator can read but cannot mutate. No authorization vocabulary changed.",
+          "Strict preference/raw preview input validation rejects duplicate JSON keys before Value decoding, null/type/unknown fields and invalid request sizes. Qualified hub method names share the raw boundary. The desktop preview request shape (role/profile/provider/cwd) remains supported.",
+          "Preview takes a fresh bounded usage reading and cached catalog only, returns an allowlisted DTO with observedAt milliseconds and live-at-time/unknown state, removes private ceiling reasons and substitutes a generic safety sentence. Private decision ID, matrix, directory key, account, ticket, capacity and demand do not escape. Invalid host policy errors are redacted.",
+          "Actual bus regression saves owner activeProfile/role preferences, verifies selection and preview agree, checks unchanged audit on preview, and reopens the saved service to prove persistence. Separate actual operator fixture verifies fresh sequential usage reads, invalid input before I/O, unknown after transport failure, unchanged audit/catalog, and a positively exercised catalog trap."
+        ],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      }
+    },
+    "services/hub/cmd/hub/routingpreferences_test.go": {
+      "status": "ported",
+      "sha256": "eff436e9da25b45d2c180997ed5009b19b1e9c2c25f0cba61a4a52daa38be5f8",
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/preview_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ],
+      "review": {
+        "originalTests": [
+          "TestRoutingPreferencesHandlersReachSelectAndPreviewWithoutAudit"
+        ],
+        "behaviors": [
+          "Preferences get exposes configurable only to trusted authenticated host operator authority; validation/save/reset require that same host gate. Shared method scopes additionally exclude view/triage from these routing reads. Scoped operator can read but cannot mutate. No authorization vocabulary changed.",
+          "Strict preference/raw preview input validation rejects duplicate JSON keys before Value decoding, null/type/unknown fields and invalid request sizes. Qualified hub method names share the raw boundary. The desktop preview request shape (role/profile/provider/cwd) remains supported.",
+          "Preview takes a fresh bounded usage reading and cached catalog only, returns an allowlisted DTO with observedAt milliseconds and live-at-time/unknown state, removes private ceiling reasons and substitutes a generic safety sentence. Private decision ID, matrix, directory key, account, ticket, capacity and demand do not escape. Invalid host policy errors are redacted.",
+          "Actual bus regression saves owner activeProfile/role preferences, verifies selection and preview agree, checks unchanged audit on preview, and reopens the saved service to prove persistence. Separate actual operator fixture verifies fresh sequential usage reads, invalid input before I/O, unknown after transport failure, unchanged audit/catalog, and a positively exercised catalog trap."
+        ],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      }
+    }
+  }
+}

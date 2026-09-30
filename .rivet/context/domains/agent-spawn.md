@@ -18,9 +18,10 @@ last_reviewed: 2026-09-26
 
 Electron IPC (`claude:spawn`) and the hub method `agents.spawn` both launch the
 same provider families. Desktop entry points converge on `claudeSpawn.ts` and
-`managedSpawn.ts`; the headless brain has a parallel Go implementation in
-`handlers.go`. Keep provider, transport, model, profile, MCP, first-message and
-parent metadata parity across both implementations.
+`managedSpawn.ts`; standalone and native hosts use the owned Rust implementation
+in `services/hub-rs/src/services/{spawn_plan,agent_spawn,agent_lifecycle}.rs`.
+Remaining Go `handlers.go` is migration reference. Keep provider, transport,
+model, profile, MCP, first-message and parent metadata consistent across owners.
 
 Authenticated spawned sessions receive ambient Workspacer tools and the tools of
 every enabled plugin. `toolScope`, plugin-tool selections, profile grants,
@@ -31,9 +32,11 @@ Workspacer filesystem or plugin grant.
 
 The desktop and headless launchers verify the exact MCP facade health before
 minting and injecting a lifecycle-bound identity bearer. Desktop managed
-launch waits for facade readiness; headless launch can omit the facade when
-its configured endpoint is unavailable. Do not describe an omitted bearer as
-a narrower tool tier. The bearer records session identity/role for provenance and parent
+launch waits for facade readiness. A configured Rust facade must be verified
+before launch; an explicitly disabled facade remains a supported mode without
+credentials. The retiring Go implementation omitted an unavailable configured
+facade and continued; that is not the current Rust policy. Do not describe an
+omitted bearer as a narrower tool tier. The bearer records session identity/role for provenance and parent
 routing; it is not a directory allowlist. It is revoked after the session ends,
 with duplicate stopped observations retrying a failed persistent revocation.
 

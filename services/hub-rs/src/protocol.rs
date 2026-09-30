@@ -111,7 +111,8 @@ impl Frame {
         if raw.op == "call"
             && matches!(
                 bare,
-                "routing.preferences.validate"
+                "routing.preview"
+                    | "routing.preferences.validate"
                     | "routing.preferences.save"
                     | "routing.preferences.reset"
             )

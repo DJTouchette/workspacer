@@ -5,6 +5,7 @@ pub(crate) use audit::SpawnAudit;
 mod events;
 pub(crate) mod path;
 mod preferences;
+mod preview;
 use path::path_within;
 mod raw;
 mod sampler;
@@ -116,6 +117,44 @@ fn candidates(row: &Value) -> Vec<&Value> {
     std::iter::once(row)
         .chain(row["alternatives"].as_array().into_iter().flatten())
         .collect()
+}
+fn catalog_refusal(matrix: &Value, candidate: &Value) -> Option<String> {
+    let provider = word(&candidate["provider"]);
+    let catalog = &matrix["_catalog"][provider];
+    if catalog["state"] == "unavailable" {
+        return Some(format!("{provider} reported no launchable model"));
+    }
+    // An unanswered catalog cannot refute an assignment. Positive answers
+    // replace the Go deferred catalog Issues when judging fallover candidates.
+    if catalog["state"] != "available" {
+        return None;
+    }
+    let models = catalog["models"]
+        .as_array()
+        .filter(|models| !models.is_empty())?;
+    let requested = word(&candidate["model"]);
+    let Some(model) = models
+        .iter()
+        .find(|model| word(&model["id"]).eq_ignore_ascii_case(requested))
+    else {
+        return Some(format!(
+            "{provider} catalog does not serve model {requested}"
+        ));
+    };
+    let effort = word(&candidate["effort"]);
+    if !effort.is_empty()
+        && model["effortLevels"].as_array().is_some_and(|levels| {
+            !levels.is_empty()
+                && !levels
+                    .iter()
+                    .any(|level| word(level).eq_ignore_ascii_case(effort))
+        })
+    {
+        return Some(format!(
+            "{provider} catalog does not support effort {effort} for {requested}"
+        ));
+    }
+    None
 }
 fn rank(matrix: &Value, c: &str) -> i64 {
     matrix["capability_ranks"][c].as_i64().unwrap_or(i64::MAX)
@@ -561,12 +600,14 @@ pub fn select(matrix: &Value, params: &Value, report: &Value, now: i64) -> Resul
             options.sort_by_key(|a| provider(word(&a["provider"])) == previous);
         }
         for candidate in options {
+            if let Some(reason) = catalog_refusal(matrix, candidate) {
+                reasons.push(reason);
+                continue;
+            }
             let candidate_capacity =
                 limits::capacity(matrix, report, word(&candidate["provider"]), account, now);
             let (candidate_mode, _) = self::mode(matrix, &candidate_capacity, demand);
-            if matrix["_catalog"][word(&candidate["provider"])]["state"] != "unavailable"
-                && usable(matrix, candidate, &candidate_capacity, candidate_mode)
-            {
+            if usable(matrix, candidate, &candidate_capacity, candidate_mode) {
                 if candidate != &primary {
                     row = candidate.clone();
                     fell_over = Some(primary.clone());
@@ -712,6 +753,29 @@ impl RoutingService {
             }
             None => json!({"state":"unknown","observedAt":chrono::Utc::now().timestamp_millis()}),
         };
+    }
+    pub(super) fn catalog_pending(&self) -> bool {
+        let matrix = self.matrix();
+        matrix["profiles"]
+            .as_object()
+            .into_iter()
+            .flat_map(|profiles| profiles.values())
+            .flat_map(|profile| {
+                profile
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|rows| rows.values())
+            })
+            .flat_map(candidates)
+            .any(|row| {
+                let provider = word(&row["provider"]);
+                if provider.is_empty() {
+                    return false;
+                }
+                let catalog = &matrix["_catalog"][provider];
+                catalog["state"] != "available"
+                    || catalog["models"].as_array().is_none_or(Vec::is_empty)
+            })
     }
     pub fn catalog(&self) -> Value {
         self.state.lock().unwrap().catalog.clone()

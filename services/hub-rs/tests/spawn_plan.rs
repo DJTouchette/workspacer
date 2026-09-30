@@ -523,3 +523,28 @@ fn inert_legacy_grants_do_not_change_selected_profile_or_provider_permission_req
         }
     }
 }
+
+#[test]
+fn every_scrubbed_exact_model_axis_refuses_before_a_launch_plan_exists() {
+    let root = tempfile::tempdir().unwrap();
+    for field in [
+        "model",
+        "modelIdentity",
+        "contextWindow",
+        "effort",
+        "capability",
+    ] {
+        let params = json!({"cwd":root.path(),"provider":"codex","model":"replacement","exactModel":true,"escalationScrubbed":[field]});
+        let error = resolve(&params, &defaults(), None, root.path(), "refused", false).unwrap_err();
+        assert!(
+            error.to_string().contains("no substitute was launched"),
+            "{field}: {error}"
+        );
+        let mut nonexact = params;
+        nonexact["exactModel"] = json!(false);
+        assert!(resolve(&nonexact, &defaults(), None, root.path(), "allowed", false).is_ok());
+    }
+    let plan=resolve(&json!({"cwd":root.path(),"provider":"codex","modelIdentity":"gpt-5-codex","contextWindow":400000,"exactModel":true,"escalationScrubbed":["profileId"]}),&defaults(),None,root.path(),"unrelated",false).unwrap();
+    assert_eq!(plan.request["model_identity"], "gpt-5-codex");
+    assert_eq!(plan.request["context_window"], 400000);
+}

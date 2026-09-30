@@ -1263,16 +1263,63 @@
       ]
     },
     "services/hub/cmd/brain/dispatchlease.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/mod.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/examples/support/paired.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete prepare/claim/persist/load/expire/resume implementation. Rust Receiver preserves credential-bound owner/repo/cwd/provider/worktree leases, authenticated readiness and canonical execution-host choices, generated worktree destinations and5-minute expiry.",
+          "prepare_owned journals cleanup responsibility before worktree allocation and marks prepared only after successful allocation. Claimed admissions never become reusable on cancellation, failed acknowledgment or restart. sweep_at skips claimed rows and retains cleanup failures for retry.",
+          "Journal.change persists a cloned next map before replacing in-memory state. New actual write obstruction test proves no spawn without durable claim and no publication/sequence advance without durable receipt; old shared schema is discriminated and migrated to separate worker/origin journals without overwriting the legacy file."
+        ],
+        "intentionalChanges": [
+          "Authenticated connection fingerprint owns the lease; caller-claimed origin names do not grant authority. Opaque remote paths remain execution-host facts.",
+          "Worker/origin journals use distinct files, and cleanup refuses active or dirty generated worktrees rather than force-deleting unclaimed work.",
+          "Unexpected execution/wake acknowledgment remains unknown and is never replay permission; prepare is detached/owned until receiver shutdown accounts for it."
+        ]
+      },
       "sha256": "bdd7ad4dcf8be323f30c366a79683928b875a7b583c1cd8bb8ac43e65753d5e5",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/lease_audit_tests.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ]
     },
     "services/hub/cmd/brain/dispatchlease_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/mod.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/examples/support/paired.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "New actual receiver tests execute owner,cwd,provider,expired and old-protocol negatives before first execution. Nonexpired mismatches leave the genuine lease usable once; second admission and reopened consumed admission fail; actual execution counter remains0 or1 as appropriate.",
+          "New durable-write obstruction control blocks journal replacement after preparation: claim failure starts0 workers; after filesystem recovery genuine admission succeeds. A second obstruction makes terminal report fail without bus publication; subsequent progress/blocked/final receipts use sequences1/2/3, exact camelCase identity/label/note/needsDecision, and no internal SessionID spelling.",
+          "forgetting the live card does not erase the terminal journal; reopen replays seq3, rejects later progress and wrong-owner acknowledgment, persists ackedAt, and another reopen retains the final receipt.",
+          "Existing tests cover actual two-hub credential/view/dispatch-opt-in controls, unknown spawn/restart no retry, uncertain origin wake delivery no resend, and incomplete worktree allocation/failed cleanup retries.",
+          "Added boot-idle backstop unit using existing Wakes remote fixture: no observed working-to-idle transition; exact grace boundary emits nothing; repeated later backstops emit exactly1 remote final with correct reply/session and no local manager wake."
+        ],
+        "intentionalChanges": [
+          "Authenticated connection fingerprint owns the lease; caller-claimed origin names do not grant authority. Opaque remote paths remain execution-host facts.",
+          "Worker/origin journals use distinct files, and cleanup refuses active or dirty generated worktrees rather than force-deleting unclaimed work.",
+          "Unexpected execution/wake acknowledgment remains unknown and is never replay permission; prepare is detached/owned until receiver shutdown accounts for it.",
+          "A claim whose journal write demonstrably failed before execution leaves the Rust in-memory lease unused, so a valid retry after storage recovery may execute once; the old Go helper marked its in-memory lease claimed before persistence. This is distinct from uncertain execution, whose durable claim remains consumed."
+        ]
+      },
       "sha256": "7add409014e14b779e1b8b793f8c2826a5015b03a3e9f448eff1f9c2d22af0a9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/lease_audit_tests.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ]
     },
     "services/hub/cmd/brain/dispatchparams.go": {
       "replacement": [
@@ -1494,10 +1541,28 @@
       ]
     },
     "services/hub/cmd/brain/exactmodel_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all5 original tuple-axis cases. Integration exercises production spawn_plan::resolve with exactModel and each host scrub receipt model/modelIdentity/contextWindow/effort/capability, requiring the explicit no-substitute error before a launch plan exists.",
+          "Controls show nonexact requests still resolve and an unrelated profileId scrub does not erase an exact canonical model/window pair. No provider process or remote admission fixture is substituted."
+        ],
+        "intentionalChanges": [
+          "Current daemon-confirmed live permission is persisted into settings.permissionMode as well as livePermissionMode; preserve the already-established Rust correction instead of restoring a stale launch-mode floor.",
+          "fullAccess and bypassAvailable report the resolved skip flag, not equivalence with every provider permission-mode string; old yoloGranted/profileGranted metadata does not supply authority.",
+          "Each new launch generation receives its freshly resolved metadata; old live fields are not borrowed as new process truth. Model identity/window/effort stay distinct inputs. Pi is explicitly refused because it lacks the required MCP bridge, rather than producing an apparently supported default permission helper answer."
+        ]
+      },
       "sha256": "9e68527ec394a5927f4fb29908f077069af66cb25024a3d4af765eb6d5b8b392",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ]
     },
     "services/hub/cmd/brain/executionengine_test.go": {
       "replacement": [
@@ -2166,10 +2231,29 @@
       "tests": []
     },
     "services/hub/cmd/brain/launchtruth_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Eleven actual launch-plan/lifecycle cases cover Claude PTY/stream default/plan/acceptEdits/bypass, skip overriding requested plan, and managed codex/opencode/copilot ask/yolo vocabulary. Receipt fullAccess and persisted/reopened bypassAvailable equal the resolved skip flag independently of requested provider permissionMode.",
+          "No scrub refusal is invented; result/row escalationScrubbed absence agrees. Original daemon mode and label/parent remain, and an unwatched row receives neither settings nor livePermissionMode.",
+          "Public note_live_control requires the current generation. Same-ID stop/relaunch replaces old live permission, retains newly requested canonical model/window/effort and attribution, rejects the prior generation acknowledgment, and allows an acknowledged current live mode to update both livePermissionMode and settings while retaining the launch bypassAvailable fact."
+        ],
+        "intentionalChanges": [
+          "Current daemon-confirmed live permission is persisted into settings.permissionMode as well as livePermissionMode; preserve the already-established Rust correction instead of restoring a stale launch-mode floor.",
+          "fullAccess and bypassAvailable report the resolved skip flag, not equivalence with every provider permission-mode string; old yoloGranted/profileGranted metadata does not supply authority.",
+          "Each new launch generation receives its freshly resolved metadata; old live fields are not borrowed as new process truth. Model identity/window/effort stay distinct inputs. Pi is explicitly refused because it lacks the required MCP bridge, rather than producing an apparently supported default permission helper answer."
+        ]
+      },
       "sha256": "3701a88a9f3a9c94771326ffbe0532a4f83d184da5614d1c2b7939fdd9d5c8e8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ]
     },
     "services/hub/cmd/brain/library.go": {
       "replacement": [
@@ -2453,10 +2537,32 @@
       ]
     },
     "services/hub/cmd/brain/paired_dispatch_fixture_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/remote_dispatch/receiver.rs",
+        "services/hub-rs/src/services/remote_dispatch/mod.rs",
+        "services/hub-rs/src/services/remote_dispatch/origin.rs",
+        "services/hub-rs/examples/support/paired.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "The Go source is an opt-in hosted integration fixture rather than an assertion suite. Its production bus auth, old endpoint, provider readiness/repo choices, worktree preparation, spawn recording, progress/block/final wake path and replay-known/unknown/error/wrong-id modes map to the Rust hub_contract_fixture paired mode in examples/support/paired.rs.",
+          "The Rust fixture uses real Receiver, Progress, Wakes and spawn_plan with only provider execution replaced by a recording sink. Desktop dispatchChain.integration.ts starts the Rust binary with --mode paired, checks old protocol/view refusal, isolated remote worktree, no local spawn/token leak, returned local proxy, reconnect/replay identity and idempotent result delivery.",
+          "PrimaryCI36642609790 at9bd86db6019172f58b68d0befd97739d9e66bcfa desktop job109659991125 ran dispatch-chain16 successfully including the named unknown paired replay test. Saved log /tmp/workspacer-dispatch-chain-9bd-ci.log. All remote_dispatch production, paired fixture and desktop consumer bytes are unchanged from that SHA; no fresh whole-current-checkout CI claim."
+        ],
+        "intentionalChanges": [
+          "Authenticated connection fingerprint owns the lease; caller-claimed origin names do not grant authority. Opaque remote paths remain execution-host facts.",
+          "Worker/origin journals use distinct files, and cleanup refuses active or dirty generated worktrees rather than force-deleting unclaimed work.",
+          "Unexpected execution/wake acknowledgment remains unknown and is never replay permission; prepare is detached/owned until receiver shutdown accounts for it."
+        ]
+      },
       "sha256": "da060e56461989d0d387dd13c8bfa3f85fe4951debcca64d83c1e6bbf8205db9",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/remote_dispatch/tests.rs",
+        "services/hub-rs/src/services/remote_dispatch/lease_audit_tests.rs",
+        "services/hub-rs/src/services/wakes.rs",
+        "apps/desktop/tests/integration/dispatchChain.integration.ts"
+      ]
     },
     "services/hub/cmd/brain/parity_ordering_test.go": {
       "replacement": [
@@ -2895,10 +3001,28 @@
       "tests": []
     },
     "services/hub/cmd/brain/routingwire_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Actual public Lifecycle launch consumes resolved plans, persists metadata, returns receipt, and enriches raw daemon-shaped rows. Full role/capability/decisionId tuple remains byte-equivalent in result, local row and reopened journal projection.",
+          "Partial routing remains sparse and absent routing produces no block. Labels, parent identity, wake-target status and original daemon mode survive enrichment; an entirely unwatched row remains exactly unchanged."
+        ],
+        "intentionalChanges": [
+          "Current daemon-confirmed live permission is persisted into settings.permissionMode as well as livePermissionMode; preserve the already-established Rust correction instead of restoring a stale launch-mode floor.",
+          "fullAccess and bypassAvailable report the resolved skip flag, not equivalence with every provider permission-mode string; old yoloGranted/profileGranted metadata does not supply authority.",
+          "Each new launch generation receives its freshly resolved metadata; old live fields are not borrowed as new process truth. Model identity/window/effort stay distinct inputs. Pi is explicitly refused because it lacks the required MCP bridge, rather than producing an apparently supported default permission helper answer."
+        ]
+      },
       "sha256": "b470a30489378973bc2d56dc51dc597dff87bbee3e2e5f3a42c966cd007090ba",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ]
     },
     "services/hub/cmd/brain/scope_test.go": {
       "replacement": [],
@@ -4219,16 +4343,82 @@
       ]
     },
     "services/hub/cmd/hub/routing.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Production Rust sampler owns daemon access; requests never select a backend URL or supply quota observations. Concurrent callers share one independently spawned ten-second fetch; each caller waits at most three seconds. Cancellation of the last waiter does not cancel the producer, and late results are cached before notifying readers. Failed refresh clears prior success; decision/preview max-age is zero, Overview max-age sixty seconds.",
+          "Legacy hub thirty-second mirror prefetch and fifteen-minute idle tail are retired in favor of daemon-owned quota polling and renderer subscriber-owned report refresh. This preserves public observation age bounds, not an identical background schedule; exact owner paths and polling evidence are recorded in CMD_HUB_ROUTING_REVIEW.md.",
+          "Catalog adapters ask the actual claude.listModels owner or owned daemon models endpoint. Typed model/effort decoding rejects malformed successful answers as unknown, skips empty IDs/null rows, and strips unrelated fields. Measured empty non-Claude models are unavailable; transport failure and unanswered Claude catalog are unknown. Positive answers have a ten-minute TTL; negative/unknown answers can re-probe after the five-second demand-refresh floor.",
+          "Go private Catalog.Models HTTP502-versus-unreachable error prose is retired: ValidateAgainstCatalog and answerCounting discard that prose. Public answered/unknown distinctions remain, with unknown fail-open rather than invented availability or measured emptiness. No new public error-detail field is introduced.",
+          "Go deferred model check and retry timers are replaced by demand-driven routing.select catalog refresh; preview/report never probe catalogs. Decisions explicitly disclose pending checks. Positive catalog model/effort evidence rejects unsupported fallover candidates, and measured-empty providers produce a safe explanation. Existing explicit provider-pin/no-alternative behavior remains unchanged.",
+          "Existing event projection keeps chosen landing health/pace, zero ratios, sanitized fellOverFrom/effortStep and decision identity while hiding private directory/account data. Actual handler tests verify audit/event publication for selection and no publication for preview. The canonical report/limits policy remains the authority for unknown capacity rather than manufacturing numerical zero."
+        ],
+        "originalTests": [],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      },
       "sha256": "662b2dbb3e6cac9db714ed14d32fa2b1a4dbe14b22dc044776d7f915e08a2438",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/sampler/flight_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/catalog_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs"
+      ]
     },
     "services/hub/cmd/hub/routing_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Production Rust sampler owns daemon access; requests never select a backend URL or supply quota observations. Concurrent callers share one independently spawned ten-second fetch; each caller waits at most three seconds. Cancellation of the last waiter does not cancel the producer, and late results are cached before notifying readers. Failed refresh clears prior success; decision/preview max-age is zero, Overview max-age sixty seconds.",
+          "Legacy hub thirty-second mirror prefetch and fifteen-minute idle tail are retired in favor of daemon-owned quota polling and renderer subscriber-owned report refresh. This preserves public observation age bounds, not an identical background schedule; exact owner paths and polling evidence are recorded in CMD_HUB_ROUTING_REVIEW.md.",
+          "Catalog adapters ask the actual claude.listModels owner or owned daemon models endpoint. Typed model/effort decoding rejects malformed successful answers as unknown, skips empty IDs/null rows, and strips unrelated fields. Measured empty non-Claude models are unavailable; transport failure and unanswered Claude catalog are unknown. Positive answers have a ten-minute TTL; negative/unknown answers can re-probe after the five-second demand-refresh floor.",
+          "Go private Catalog.Models HTTP502-versus-unreachable error prose is retired: ValidateAgainstCatalog and answerCounting discard that prose. Public answered/unknown distinctions remain, with unknown fail-open rather than invented availability or measured emptiness. No new public error-detail field is introduced.",
+          "Go deferred model check and retry timers are replaced by demand-driven routing.select catalog refresh; preview/report never probe catalogs. Decisions explicitly disclose pending checks. Positive catalog model/effort evidence rejects unsupported fallover candidates, and measured-empty providers produce a safe explanation. Existing explicit provider-pin/no-alternative behavior remains unchanged.",
+          "Existing event projection keeps chosen landing health/pace, zero ratios, sanitized fellOverFrom/effortStep and decision identity while hiding private directory/account data. Actual handler tests verify audit/event publication for selection and no publication for preview. The canonical report/limits policy remains the authority for unknown capacity rather than manufacturing numerical zero."
+        ],
+        "originalTests": [
+          "TestUsageWatcherReadsTheReport",
+          "TestUsageWatcherWindsDownWhenNobodyIsAsking",
+          "TestUsageWatcherDoesNotServeStaleNumbersAcrossAnOutage",
+          "TestUsageWatcherRefusesABodyThatIsNotTheReport",
+          "TestTheWatcherHoldsTheDocumentUnjudged",
+          "TestARoutingDecisionTakesItsOwnReading",
+          "TestRoutingSelectAnswersWithoutAUsageDocument",
+          "TestConcurrentDecisionsShareOneFetch",
+          "TestASlowClaudemonCannotHangADecision",
+          "TestRoutingSelectRecordsAndPublishesTheDecisionItAnswered",
+          "TestAFalloverEventNamesTheHealthOfTheProviderItActuallyPicked",
+          "TestAFalloverDecisionPublishesFellOverFrom",
+          "TestTheHandlerFeedsLiveAvailabilityIntoTheDecision",
+          "TestTheDecisionEventCarriesTheEffortStep",
+          "TestAForcedRefreshReProbesAnUnavailableProvider",
+          "TestAnUnreachableDaemonAndAFailedProbeAreDifferentSentences",
+          "TestThePendingCatalogReasonRidesTheDecisionUntilTheCheckSettles"
+        ],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      },
       "sha256": "8774add6b26b322c905c871c664fe8582cfa494b2f548c3a4bc657d1055c1f93",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/sampler/flight_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/catalog_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs"
+      ]
     },
     "services/hub/cmd/hub/routingceiling.go": {
       "replacement": [
@@ -4257,22 +4447,90 @@
       ]
     },
     "services/hub/cmd/hub/routingpreferences.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Preferences get exposes configurable only to trusted authenticated host operator authority; validation/save/reset require that same host gate. Shared method scopes additionally exclude view/triage from these routing reads. Scoped operator can read but cannot mutate. No authorization vocabulary changed.",
+          "Strict preference/raw preview input validation rejects duplicate JSON keys before Value decoding, null/type/unknown fields and invalid request sizes. Qualified hub method names share the raw boundary. The desktop preview request shape (role/profile/provider/cwd) remains supported.",
+          "Preview takes a fresh bounded usage reading and cached catalog only, returns an allowlisted DTO with observedAt milliseconds and live-at-time/unknown state, removes private ceiling reasons and substitutes a generic safety sentence. Private decision ID, matrix, directory key, account, ticket, capacity and demand do not escape. Invalid host policy errors are redacted.",
+          "Actual bus regression saves owner activeProfile/role preferences, verifies selection and preview agree, checks unchanged audit on preview, and reopens the saved service to prove persistence. Separate actual operator fixture verifies fresh sequential usage reads, invalid input before I/O, unknown after transport failure, unchanged audit/catalog, and a positively exercised catalog trap."
+        ],
+        "originalTests": [],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      },
       "sha256": "17572a666a9bb56733bbeba80ba2e0712bdc449bd9c9a871a369c8ce07221e71",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/preview_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ]
     },
     "services/hub/cmd/hub/routingpreferences_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Preferences get exposes configurable only to trusted authenticated host operator authority; validation/save/reset require that same host gate. Shared method scopes additionally exclude view/triage from these routing reads. Scoped operator can read but cannot mutate. No authorization vocabulary changed.",
+          "Strict preference/raw preview input validation rejects duplicate JSON keys before Value decoding, null/type/unknown fields and invalid request sizes. Qualified hub method names share the raw boundary. The desktop preview request shape (role/profile/provider/cwd) remains supported.",
+          "Preview takes a fresh bounded usage reading and cached catalog only, returns an allowlisted DTO with observedAt milliseconds and live-at-time/unknown state, removes private ceiling reasons and substitutes a generic safety sentence. Private decision ID, matrix, directory key, account, ticket, capacity and demand do not escape. Invalid host policy errors are redacted.",
+          "Actual bus regression saves owner activeProfile/role preferences, verifies selection and preview agree, checks unchanged audit on preview, and reopens the saved service to prove persistence. Separate actual operator fixture verifies fresh sequential usage reads, invalid input before I/O, unknown after transport failure, unchanged audit/catalog, and a positively exercised catalog trap."
+        ],
+        "originalTests": [
+          "TestRoutingPreferencesHandlersReachSelectAndPreviewWithoutAudit"
+        ],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      },
       "sha256": "eff436e9da25b45d2c180997ed5009b19b1e9c2c25f0cba61a4a52daa38be5f8",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler/preview_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/raw.rs"
+      ]
     },
     "services/hub/cmd/hub/routingselect.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/routing.rs",
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/preferences.rs",
+        "services/hub-rs/src/services/routing/preview.rs",
+        "services/hub-rs/src/protocol.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Production Rust sampler owns daemon access; requests never select a backend URL or supply quota observations. Concurrent callers share one independently spawned ten-second fetch; each caller waits at most three seconds. Cancellation of the last waiter does not cancel the producer, and late results are cached before notifying readers. Failed refresh clears prior success; decision/preview max-age is zero, Overview max-age sixty seconds.",
+          "Legacy hub thirty-second mirror prefetch and fifteen-minute idle tail are retired in favor of daemon-owned quota polling and renderer subscriber-owned report refresh. This preserves public observation age bounds, not an identical background schedule; exact owner paths and polling evidence are recorded in CMD_HUB_ROUTING_REVIEW.md.",
+          "Catalog adapters ask the actual claude.listModels owner or owned daemon models endpoint. Typed model/effort decoding rejects malformed successful answers as unknown, skips empty IDs/null rows, and strips unrelated fields. Measured empty non-Claude models are unavailable; transport failure and unanswered Claude catalog are unknown. Positive answers have a ten-minute TTL; negative/unknown answers can re-probe after the five-second demand-refresh floor.",
+          "Go private Catalog.Models HTTP502-versus-unreachable error prose is retired: ValidateAgainstCatalog and answerCounting discard that prose. Public answered/unknown distinctions remain, with unknown fail-open rather than invented availability or measured emptiness. No new public error-detail field is introduced.",
+          "Go deferred model check and retry timers are replaced by demand-driven routing.select catalog refresh; preview/report never probe catalogs. Decisions explicitly disclose pending checks. Positive catalog model/effort evidence rejects unsupported fallover candidates, and measured-empty providers produce a safe explanation. Existing explicit provider-pin/no-alternative behavior remains unchanged.",
+          "Existing event projection keeps chosen landing health/pace, zero ratios, sanitized fellOverFrom/effortStep and decision identity while hiding private directory/account data. Actual handler tests verify audit/event publication for selection and no publication for preview. The canonical report/limits policy remains the authority for unknown capacity rather than manufacturing numerical zero."
+        ],
+        "originalTests": [],
+        "validation": "Frozen-source full Rust library checkpoint passed391 tests with0 failed/ignored (/tmp/workspacer-watcher-barrier-full-lib.log). Includes preview3 (actual operator freshness/redaction, owner save/select/preview/reopen, raw duplicate/null boundary), catalog2 (actual HTTP producer/TTL and positive model/effort refutation), flight2 (cancelled final waiter and3s caller vs10s producer), report concurrency/uncertainty, existing routing event/corpus/preferences tests. Earlier387/389 and388/390 checkpoints are not reported as whole-suite successes: wrong view-scope fixture and optional-effort representation were corrected without changing authority or selection semantics; unrelated watcher timing was separately fixed with a committed-revision barrier. No live daemon or production backend was contacted."
+      },
       "sha256": "656fec0661a97aa58561714634276d61c0451f0f08a706a70b26b86fdc02a993",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/services/routing/sampler.rs",
+        "services/hub-rs/src/services/routing/sampler/flight_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/catalog_tests.rs",
+        "services/hub-rs/src/services/routing/sampler/report_tests.rs",
+        "services/hub-rs/src/services/routing/events.rs"
+      ]
     },
     "services/hub/cmd/hub/sdk_test.go": {
       "replacement": [

@@ -1025,3 +1025,6 @@ async fn legacy_paired_receipts_migrate_only_for_the_same_endpoint_and_credentia
     assert_eq!(original, records);
     hub.shutdown().unwrap();
 }
+
+#[path = "lease_audit_tests.rs"]
+mod lease_audit_tests;

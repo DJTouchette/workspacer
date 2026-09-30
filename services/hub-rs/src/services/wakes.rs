@@ -1107,6 +1107,34 @@ mod remote_tests {
         (service, returns, rows, sent)
     }
     #[tokio::test]
+    async fn boot_idle_remote_finish_backstop_reports_once_without_local_delivery() {
+        let (service, returns, rows, sent) = fixture();
+        let restored = {
+            let mut rows = rows.lock().unwrap();
+            let worker = rows.get_mut("worker").unwrap();
+            worker["ambientState"] = json!("idle");
+            worker["lastActivity"] = json!(1);
+            worker.clone()
+        };
+        // This observer has never seen a working→idle transition. The row was
+        // already idle when the host restarted; only backstop can recover it.
+        service.prime(&[restored]);
+        service.backstop(180_001);
+        service.tick(180_001).await.unwrap();
+        assert!(returns.entries.lock().unwrap().is_empty());
+        for at in [180_002, 240_002] {
+            service.backstop(at);
+            service.tick(at).await.unwrap();
+        }
+        let entries = returns.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, Kind::WorkerFinished);
+        assert_eq!(entries[0].1["sessionId"], "worker");
+        assert_eq!(entries[0].1["lastReply"], "done");
+        assert!(sent.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn terminal_wake_uses_owned_remote_channel_despite_local_identity_collision() {
         let (service, returns, rows, sent) = fixture();
         let before = rows.lock().unwrap()["worker"].clone();

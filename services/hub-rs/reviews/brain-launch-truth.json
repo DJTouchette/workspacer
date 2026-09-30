@@ -1,0 +1,91 @@
+{
+  "records": {
+    "services/hub/cmd/brain/exactmodel_test.go": {
+      "status": "ported",
+      "sha256": "9e68527ec394a5927f4fb29908f077069af66cb25024a3d4af765eb6d5b8b392",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all5 original tuple-axis cases. Integration exercises production spawn_plan::resolve with exactModel and each host scrub receipt model/modelIdentity/contextWindow/effort/capability, requiring the explicit no-substitute error before a launch plan exists.",
+          "Controls show nonexact requests still resolve and an unrelated profileId scrub does not erase an exact canonical model/window pair. No provider process or remote admission fixture is substituted."
+        ],
+        "intentionalChanges": [
+          "Current daemon-confirmed live permission is persisted into settings.permissionMode as well as livePermissionMode; preserve the already-established Rust correction instead of restoring a stale launch-mode floor.",
+          "fullAccess and bypassAvailable report the resolved skip flag, not equivalence with every provider permission-mode string; old yoloGranted/profileGranted metadata does not supply authority.",
+          "Each new launch generation receives its freshly resolved metadata; old live fields are not borrowed as new process truth. Model identity/window/effort stay distinct inputs. Pi is explicitly refused because it lacks the required MCP bridge, rather than producing an apparently supported default permission helper answer."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/routingwire_test.go": {
+      "status": "ported",
+      "sha256": "b470a30489378973bc2d56dc51dc597dff87bbee3e2e5f3a42c966cd007090ba",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Actual public Lifecycle launch consumes resolved plans, persists metadata, returns receipt, and enriches raw daemon-shaped rows. Full role/capability/decisionId tuple remains byte-equivalent in result, local row and reopened journal projection.",
+          "Partial routing remains sparse and absent routing produces no block. Labels, parent identity, wake-target status and original daemon mode survive enrichment; an entirely unwatched row remains exactly unchanged."
+        ],
+        "intentionalChanges": [
+          "Current daemon-confirmed live permission is persisted into settings.permissionMode as well as livePermissionMode; preserve the already-established Rust correction instead of restoring a stale launch-mode floor.",
+          "fullAccess and bypassAvailable report the resolved skip flag, not equivalence with every provider permission-mode string; old yoloGranted/profileGranted metadata does not supply authority.",
+          "Each new launch generation receives its freshly resolved metadata; old live fields are not borrowed as new process truth. Model identity/window/effort stay distinct inputs. Pi is explicitly refused because it lacks the required MCP bridge, rather than producing an apparently supported default permission helper answer."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/launchtruth_test.go": {
+      "status": "ported",
+      "sha256": "3701a88a9f3a9c94771326ffbe0532a4f83d184da5614d1c2b7939fdd9d5c8e8",
+      "replacement": [
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Eleven actual launch-plan/lifecycle cases cover Claude PTY/stream default/plan/acceptEdits/bypass, skip overriding requested plan, and managed codex/opencode/copilot ask/yolo vocabulary. Receipt fullAccess and persisted/reopened bypassAvailable equal the resolved skip flag independently of requested provider permissionMode.",
+          "No scrub refusal is invented; result/row escalationScrubbed absence agrees. Original daemon mode and label/parent remain, and an unwatched row receives neither settings nor livePermissionMode.",
+          "Public note_live_control requires the current generation. Same-ID stop/relaunch replaces old live permission, retains newly requested canonical model/window/effort and attribution, rejects the prior generation acknowledgment, and allows an acknowledged current live mode to update both livePermissionMode and settings while retaining the launch bypassAvailable fact."
+        ],
+        "intentionalChanges": [
+          "Current daemon-confirmed live permission is persisted into settings.permissionMode as well as livePermissionMode; preserve the already-established Rust correction instead of restoring a stale launch-mode floor.",
+          "fullAccess and bypassAvailable report the resolved skip flag, not equivalence with every provider permission-mode string; old yoloGranted/profileGranted metadata does not supply authority.",
+          "Each new launch generation receives its freshly resolved metadata; old live fields are not borrowed as new process truth. Model identity/window/effort stay distinct inputs. Pi is explicitly refused because it lacks the required MCP bridge, rather than producing an apparently supported default permission helper answer."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "status": "READY: owning integration22 passed",
+    "scope": "Integration-only4 new tests; no production edits. Cargo released to root; generated binaries retained.",
+    "format": "rustfmt and git diff --check passed",
+    "witness": "both integration files unmapped; explicitly selected owning Cargo targets",
+    "spawn_plan": "11 passed /tmp/workspacer-launch-truth-plan.log",
+    "agent_lifecycle": "11 passed /tmp/workspacer-launch-truth-lifecycle.log"
+  },
+  "readyToStage": [
+    "services/hub-rs/tests/spawn_plan.rs",
+    "services/hub-rs/tests/agent_lifecycle.rs",
+    ".rivet/learnings/2026-09-30-launch-permission-receipts-and-acknowledged-live-c99955.md",
+    "services/hub-rs/reviews/brain-launch-truth.json"
+  ]
+}

@@ -9,6 +9,20 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 type Fetch = Shared<BoxFuture<'static, std::result::Result<Value, String>>>;
+const CALLER_WAIT: Duration = Duration::from_secs(3);
+const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+struct Flight {
+    generation: u64,
+    result: Fetch,
+    cancel: tokio::task::AbortHandle,
+}
+
+#[cfg(test)]
+mod catalog_tests;
+#[cfg(test)]
+mod flight_tests;
+#[cfg(test)]
+mod preview_tests;
 #[cfg(test)]
 mod report_tests;
 fn claude_models(catalog: &Value) -> Option<Vec<Value>> {
@@ -34,6 +48,39 @@ fn claude_models(catalog: &Value) -> Option<Vec<Value>> {
         .map(|id| json!({"id":id}))
         .collect();
     (!models.is_empty()).then_some(models)
+}
+
+fn provider_models(catalog: &Value) -> Option<Vec<Value>> {
+    #[derive(serde::Deserialize)]
+    struct Model {
+        id: Option<String>,
+        #[serde(rename = "effortLevels")]
+        effort_levels: Option<Vec<Option<String>>>,
+    }
+    // Missing/malformed envelopes are unknown, not a successful zero-model
+    // answer. A present null/empty models list retains the Go empty-list rule.
+    let rows: Option<Vec<Option<Model>>> =
+        serde_json::from_value(catalog.get("models")?.clone()).ok()?;
+    Some(
+        rows.into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|row| {
+                let id = row.id.filter(|id| !id.is_empty())?;
+                let mut model = json!({"id":id});
+                let levels: Vec<_> = row
+                    .effort_levels
+                    .into_iter()
+                    .flatten()
+                    .map(|level| level.unwrap_or_default())
+                    .collect();
+                if !levels.is_empty() {
+                    model["effortLevels"] = json!(levels);
+                }
+                Some(model)
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -98,6 +145,29 @@ mod tests {
         server.await.unwrap();
     }
     #[test]
+    fn provider_catalog_requires_typed_launchable_ids_without_exposing_extra_fields() {
+        assert_eq!(
+            provider_models(&json!({"models":[null,{}, {"id":null}, {"id":""}]})),
+            Some(vec![])
+        );
+        assert_eq!(provider_models(&json!({"models":null})), Some(vec![]));
+        assert_eq!(
+            provider_models(
+                &json!({"models":[{"id":"model","effortLevels":[null,"high"],"private":"do-not-project"}]})
+            ),
+            Some(vec![json!({"id":"model","effortLevels":["","high"]})])
+        );
+        for invalid in [
+            Value::Null,
+            json!({}),
+            json!({"models":{}}),
+            json!({"models":[{"id":42}]}),
+            json!({"models":[{"id":"valid"},{"id":"bad","effortLevels":[42]}]}),
+        ] {
+            assert!(provider_models(&invalid).is_none(), "{invalid}");
+        }
+    }
+    #[test]
     fn actual_claude_aliases_and_seen_form_catalog_but_empty_is_unknown() {
         assert_eq!(
             claude_models(
@@ -113,7 +183,7 @@ mod tests {
 #[derive(Default)]
 struct Cache {
     report: Option<(Instant, Value)>,
-    flight: Option<(u64, Fetch)>,
+    flight: Option<Flight>,
     generation: u64,
 }
 /// Host-owned report transport. Concurrent callers join the same fetch; decisions
@@ -122,17 +192,29 @@ pub struct UsageSampler {
     engine: Option<EmbeddedClient>,
     external: Option<Arc<super::super::external_claudemon::ExternalDaemon>>,
     hub: Option<crate::Handle>,
-    cache: Mutex<Cache>,
+    cache: Arc<Mutex<Cache>>,
     catalog_flight: AtomicBool,
     catalog_last: Mutex<Option<Instant>>,
 }
+impl Drop for UsageSampler {
+    fn drop(&mut self) {
+        // Cancel the outstanding read when its sampler owner drops. Dropping
+        // one waiter does not reach this while the service still owns it.
+        if let Ok(mut cache) = self.cache.lock() {
+            if let Some(flight) = cache.flight.take() {
+                flight.cancel.abort();
+            }
+        }
+    }
+}
+
 impl UsageSampler {
     pub fn new(engine: Option<EmbeddedClient>) -> Self {
         Self {
             engine,
             external: None,
             hub: None,
-            cache: Mutex::new(Cache::default()),
+            cache: Arc::new(Mutex::new(Cache::default())),
             catalog_flight: AtomicBool::new(false),
             catalog_last: Mutex::new(None),
         }
@@ -229,7 +311,7 @@ impl UsageSampler {
                         let models = result
                             .ok()
                             .and_then(Result::ok)
-                            .and_then(|v| v["models"].as_array().cloned());
+                            .and_then(|value| provider_models(&value));
                         service.update_catalog(&p, models);
                     }
                 });
@@ -237,7 +319,7 @@ impl UsageSampler {
         });
     }
     pub async fn report(&self, max_age: Duration) -> Result<Value> {
-        let (generation, future) = {
+        let future = {
             let mut cache = self.cache.lock().unwrap();
             if !max_age.is_zero() {
                 if let Some((at, report)) = &cache.report {
@@ -247,56 +329,78 @@ impl UsageSampler {
                 }
             }
             if let Some(flight) = &cache.flight {
-                flight.clone()
+                flight.result.clone()
             } else {
                 let engine = self.engine.clone();
                 let external = self.external.clone();
+                let saved = self.cache.clone();
                 cache.generation += 1;
                 let generation = cache.generation;
+                let (send, receive) =
+                    tokio::sync::oneshot::channel::<std::result::Result<Value, String>>();
                 let future = async move {
-                    let result = tokio::time::timeout(Duration::from_secs(3), async {
-                        if let Some(engine) = engine {
+                    receive.await.unwrap_or_else(|_| {
+                        Err("usage sampler stopped before fetch completed".into())
+                    })
+                }
+                .boxed()
+                .shared();
+                // The sampler owns the read independently of any caller. A
+                // cancelled/expired waiter must not discard a late observation.
+                let task = tokio::spawn(async move {
+                    let fetched = tokio::time::timeout(FETCH_TIMEOUT, async {
+                        let report = if let Some(engine) = engine {
                             engine
                                 .request(Command::Request {
                                     method: "GET".into(),
                                     path: "/usage/report".into(),
                                     payload: None,
                                 })
-                                .await
+                                .await?
                         } else if let Some(external) = external {
-                            external.usage_report().await
+                            external.usage_report().await?
                         } else {
-                            bail!("usage sampler has no daemon")
+                            bail!("usage sampler has no daemon");
+                        };
+                        if !report["providers"].is_array() {
+                            bail!("invalid usage report: providers absent");
                         }
+                        Ok::<_, anyhow::Error>(report)
                     })
-                    .await
-                    .map_err(|_| "usage sampler deadline exceeded".to_string())?
-                    .map_err(|e| e.to_string())?;
-                    if !result["providers"].is_array() {
-                        return Err("invalid usage report: providers absent".into());
+                    .await;
+                    let result = match fetched {
+                        Ok(result) => result.map_err(|error| error.to_string()),
+                        Err(_) => Err("usage sampler fetch deadline exceeded".into()),
+                    };
+                    {
+                        let mut cache = saved.lock().unwrap();
+                        if cache
+                            .flight
+                            .as_ref()
+                            .is_some_and(|flight| flight.generation == generation)
+                        {
+                            cache.flight = None;
+                            cache.report = result
+                                .as_ref()
+                                .ok()
+                                .map(|report| (Instant::now(), report.clone()));
+                        }
                     }
-                    Ok(result)
-                }
-                .boxed()
-                .shared();
-                cache.flight = Some((generation, future.clone()));
-                (generation, future)
+                    // Publish cache first: even with no remaining waiter, the
+                    // next Overview request can use this bounded observation.
+                    let _ = send.send(result);
+                });
+                cache.flight = Some(Flight {
+                    generation,
+                    result: future.clone(),
+                    cancel: task.abort_handle(),
+                });
+                future
             }
         };
-        let result = future.await;
-        let mut cache = self.cache.lock().unwrap();
-        if cache.flight.as_ref().is_some_and(|(g, _)| *g == generation) {
-            cache.flight = None;
-            if let Ok(report) = &result {
-                cache.report = Some((Instant::now(), report.clone()));
-            } else {
-                // A cached observation is reusable only until this sampler
-                // learns its upstream cannot supply a new one. Preserve each
-                // waiter's own result, but never revive old quota after failure.
-                cache.report = None;
-            }
-        }
-        result.map_err(anyhow::Error::msg)
+        tokio::time::timeout(CALLER_WAIT, future).await
+            .map_err(|_| anyhow::anyhow!("usage report did not arrive within the 3-second caller budget; shared fetch remains open for a later reader"))?
+            .map_err(anyhow::Error::msg)
     }
 }
 pub fn install(
@@ -342,15 +446,14 @@ pub fn install(
                         .context("usage.report unavailable")?;
                     return Ok(service.usage_report(&report, chrono::Utc::now().timestamp()));
                 }
+                if method == "routing.preview" {
+                    super::preview::validate_request(&params)?;
+                }
                 if method == "routing.select" {
                     sampler.refresh_catalog(service.clone());
                 }
                 let report = sampler
-                    .report(if method == "routing.preview" {
-                        Duration::from_secs(60)
-                    } else {
-                        Duration::ZERO
-                    })
+                    .report(Duration::ZERO)
                     .await;
                 let (report, warning) = match report {
                     Ok(v) => (v, None),
@@ -359,9 +462,12 @@ pub fn install(
                         Some(format!("usage unavailable: {e}; capacity remains unknown")),
                     ),
                 };
-                let now = chrono::Utc::now().timestamp();
+                let instant = chrono::Utc::now();
+                let now = instant.timestamp();
+                let usage_known = warning.is_none();
                 let mut decision = if method == "routing.preview" {
-                    select(&service.matrix(), &params, &report, now)?
+                    select(&service.matrix(), &params, &report, now)
+                        .map_err(|_| anyhow::anyhow!("routing preview unavailable; inspect host routing policy"))?
                 } else {
                     service.select(params, &report, now)?
                 };
@@ -371,7 +477,13 @@ pub fn install(
                         .unwrap()
                         .push(warning.into());
                 }
+                if method == "routing.preview" {
+                    return Ok(super::preview::project(&decision, instant.timestamp_millis(), usage_known));
+                }
                 if method == "routing.select" {
+                    if service.catalog_pending() {
+                        decision["reason"].as_array_mut().unwrap().push(json!("the routing service still owes routing.yaml a catalog check (either none has run yet, or a provider named in it could not answer the last one)"));
+                    }
                     service.log_decision(&decision);
                     // Failure to deliver during shutdown cannot invalidate an
                     // already recorded decision, matching the reference sink.
