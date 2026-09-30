@@ -196,6 +196,6 @@ Converted so far: `AgentCard`, `AgentCardBody`, `AttentionCard`, `ApprovalPrompt
 - `deriveSupervisorName` bakes a 🧭 emoji into the supervisor _name string_ (crosses
   process boundaries); display sites now use the `Compass` icon — unifying the name
   format needs a coordinated change.
-- Default app-launcher emoji icons come from `config_defaults.json` (Go-embedded,
+- Default app-launcher emoji icons come from `services/hub-rs/assets/config-defaults.json` (Rust-embedded,
   generated into `hooks/configDefaults.generated.ts`) — changing them is a product call
   plus regen, not a renderer edit.

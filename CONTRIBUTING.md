@@ -1,9 +1,9 @@
 # Contributing to Workspacer
 
-Thanks for wanting to help. Workspacer is a monorepo with four moving parts —
-an Electron/React desktop app, a Rust session daemon, a Go control plane, and a
-Rust terminal client — so this guide gets you from a clean checkout to a green
-build and a mergeable pull request.
+Thanks for wanting to help. Workspacer is a monorepo with an Electron/React
+desktop app, a shared Rust backend, a Rust session daemon, and native and terminal
+clients — so this guide gets you from a clean checkout to a green build and a
+mergeable pull request.
 
 By contributing, you agree to the terms in [Contributor terms](#contributor-terms)
 at the bottom of this file.
@@ -22,9 +22,10 @@ at the bottom of this file.
 
 Toolchains are pinned with [`mise`](https://mise.jdx.dev) via `mise.toml`:
 
-- **Go 1.25** — the `hub` control plane
+- **Go 1.25** — optional historical oracle tooling only; see
+  [`scripts/reference/README.md`](scripts/reference/README.md)
 - **Node 22** — the desktop app (Electron + React + Vite)
-- **Rust** (stable, via `rustup`) — `claudemon` and `wks-tui`
+- **Rust** (stable, via `rustup`) — the shared backend, `claudemon`, native client and `wks-tui`
 
 If you use `mise`, run `mise install` to get Go and Node at the pinned
 versions. Install Rust separately with `rustup`.
@@ -35,7 +36,7 @@ From the repo root:
 
 ```bash
 make install          # desktop JS deps (root + renderer workspaces)
-make build            # build all four components (desktop, hub, claudemon, tui)
+make build            # desktop, Rust hub, claudemon, TUI and native client
 ```
 
 Then run the app in dev mode:
@@ -45,11 +46,11 @@ make build-claudemon  # required once before agents can spawn
 make dev              # Vite renderer + Electron with hot reload
 ```
 
-The desktop app spawns and supervises `claudemon` and `hub` for you — you don't
+The desktop app spawns and supervises `claudemon` and the Rust control plane for you — you don't
 start them by hand. See the [README](README.md#common-tasks-from-the-repo-root)
 for the full `make` target list, and the per-component READMEs
-(`apps/desktop/`, `apps/tui/`, `services/claudemon/`, `services/hub/`) for
-building each piece on its own.
+(`apps/desktop/`, `apps/tui/`, `apps/native/`, `services/claudemon/`) and
+[`services/hub-rs/MIGRATION.md`](services/hub-rs/MIGRATION.md) for the shared backend.
 
 ## Where things live
 
@@ -58,7 +59,8 @@ building each piece on its own.
 | `apps/desktop/`      | Electron + React desktop client (the primary GUI)                |
 | `apps/tui/`          | `wks-tui`, the Rust terminal client                              |
 | `services/claudemon/`| Rust session daemon: sessions, PTYs, provider adapters, git      |
-| `services/hub/`      | Go control plane: event bus, supervisor, plugins, MCP facade     |
+| `services/hub-rs/`   | Shared Rust backend: event bus, services, plugins, MCP facade      |
+| `apps/native/`      | Native GPUI client embedding that same backend                    |
 | `docs/`              | design notes, specs, and the feature catalog (`features.md`)     |
 | `landing/`           | the static marketing site + user docs                            |
 
@@ -73,7 +75,7 @@ then `landing/build.html` (the architecture and hub-bus protocol).
 2. **Write the change with tests.** Match the style and structure of the code
    around it. Add or update tests for anything with runtime behavior.
 3. **Format and lint** the components you touched (see below).
-4. **Run the tests:** `make test` runs the desktop + hub + tui suites.
+4. **Run the tests:** `make test` runs desktop, Rust hub, claudemon, TUI and native suites.
 5. **Commit** in logical chunks with clear messages (see below).
 6. **Open a PR** against `master` describing what changed and why, with a note
    on how you verified it.
@@ -83,28 +85,30 @@ then `landing/build.html` (the architecture and hub-bus protocol).
 **The format gates are separate CI jobs and no test suite covers them.**
 `make test` can be entirely green on a tree that CI rejects on formatting
 alone — that is not hypothetical, it has reddened `master`. There is no
-`make fmt` target, so run the four checks by hand for whatever you touched:
+`make fmt` target, so run the component checks below for whatever you touched:
 
 | Component | Check CI runs | Fix it with |
 | --- | --- | --- |
 | `apps/desktop` (TS/TSX) | `npm run format:check` (Prettier) | `npm run format` |
 | `services/claudemon` (Rust) | `cargo fmt --check` | `cargo fmt` |
 | `apps/tui` (Rust) | `cargo fmt --check` | `cargo fmt` |
-| `services/hub` (Go) | `test -z "$(gofmt -l .)"` | `gofmt -w .` |
+| `services/hub-rs` (Rust) | `cargo fmt --check` | `cargo fmt` |
+| `apps/native` (Rust) | `cargo fmt --check` | `cargo fmt` |
 
-Each runs from that component's directory. Note that `cargo fmt --check` is
-run **twice**, once per Rust crate — they are separate workspaces and
-formatting one does not format the other.
+Each runs from that component's directory. The Rust crates are separate
+workspaces; formatting one does not format the others.
 
 Also gated in CI, and also not covered by the tests:
 
 - `npm run typecheck` in `apps/desktop`.
-- `cargo clippy --all-targets -- -D warnings` for both Rust crates — the tree
-  is clippy-clean, so warnings are hard errors.
-- `go vet ./...` in `services/hub`.
+- `cargo clippy --locked --all-targets -- -D warnings` in `services/claudemon`
+  and `apps/tui`; native CI adds `--features ui-tests`.
+- `make check-hub-capability-parameters` and `make check-hub-rust-assets` from
+  the repository root. Historical Go checks are explicitly pinned optional
+  commands, not the shipping backend's CI path.
 - **Generated files must be fresh.** `configDefaults.generated.ts` and
   `changelog.generated.ts` are regenerated in CI and the job fails if the
-  tree moves. If you edited `services/hub/cmd/brain/config_defaults.json` or
+  tree moves. If you edited `services/hub-rs/assets/config-defaults.json` or
   `CHANGELOG.md`, run `npm run gen:config-defaults` / `npm run gen:changelog`
   in `apps/desktop` and commit the result.
 - **No unresolved conflict markers**, anywhere in the tree. This job exists
@@ -163,7 +167,8 @@ and the nightly job appends its `-nightly.<stamp>` tail to it.
 `services/claudemon/Cargo.toml` and `apps/tui/Cargo.toml` have been `0.1.0` for
 the life of the project — that is what `claudemon --version` prints, and
 `release.yml` says so in as many words where it explains why the build stamp
-exists. `services/hub` has no Go version constant at all. Bumping any of them
+exists. `services/hub-rs/Cargo.toml` and `apps/native/Cargo.toml` likewise
+have independent crate versions. Bumping any of them
 to match the desktop would be a new claim, not a fix. Version strings in tests
 (`manualUpdates.test.tsx`, `useWhatsNew.test.tsx`, `updateService.test.ts`,
 `deploy/fly/test-fetch-release.sh`) are fixtures — arbitrary by design — and

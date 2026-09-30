@@ -47,7 +47,7 @@ four grafts from the losing designs.**
 1. _(from Mod Layer)_ All new verbs register with `scope: 'layer'` in
    ACTION_REGISTRY + RENDERER_ONLY_SHORTCUTS — the fleet-_/inbox-_ pattern. The
    preset drift test filters scoped actions, so the three preset maps,
-   config_defaults.json, both generated twins, and the Go writer stay untouched.
+   the canonical defaults JSON, both generated twins, and the Rust writer stay untouched.
 2. _(from Mod Layer, redefined per gap review)_ **Dwell-HUD**: if armed and no
    key arrives within `hudDelayMs` (400ms default), the compact strip expands
    into the full grouped key grid (Focus / Move / Create / Layout / Act),
@@ -150,13 +150,14 @@ keybindings:
     leaderOverride: '' # per-platform escape hatch (Hyprland Alt conflicts, web client)
 ```
 
-Defaults land in `services/hub/cmd/brain/config_defaults.json` →
+Defaults land in `services/hub-rs/assets/config-defaults.json` →
 `npm run gen:config-defaults` (both generated twins). A fourth keybinding preset
 `tmux` re-arranges EXISTING persisted actions into flat `prefix <key>` chords and
 its `presetConfigPatch` also sets `commandLayer.enabled: true`. Switching away
 from the tmux preset leaves the layer enabled (the strip re-renders from the new
-merged map — defined behavior, not an accident); the Go `migrateKeybindings`
-mirror is extended in the same commit, pinned by a `contracts/` fixture.
+merged map — defined behavior, not an accident). Keep the Rust `migrate_keys`
+mirror in `services/hub-rs/src/services/config.rs` aligned with the TypeScript
+writer and shared `contracts/` fixtures.
 
 **Merge policy (gap fix):** layer-scoped chords merge into the global chord tree
 ONLY while `commandLayer.enabled`, and persisted user/preset chords always beat
