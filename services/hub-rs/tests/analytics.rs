@@ -130,13 +130,22 @@ async fn full_analytics_registration_reports_engine_failure_instead_of_empty_his
     let shutdown = tokio::task::spawn_blocking(move || hub.shutdown())
         .await
         .unwrap();
-    // Explicit shutdown may win the race with supervision noticing the closed
-    // engine stream. Either cleanup succeeds or reports that specific failure.
+    // Explicit shutdown may win, or any independently supervised engine
+    // producer may report the deliberate stop first. Keep this exact list tied
+    // to sessions::observe, live_streams::run and analytics::Watcher::run;
+    // unrelated cleanup failures must still fail the test.
     if let Err(error) = shutdown {
+        let message = error.to_string();
         assert!(
-            error
-                .to_string()
-                .contains("embedded session update stream closed"),
+            [
+                "embedded session engine stopped",
+                "embedded session update stream closed",
+                "embedded live stream producer stopped",
+                "embedded conversation producer closed",
+                "embedded status-line producer closed",
+                "analytics engine update stream closed",
+            ]
+            .contains(&message.as_str()),
             "{error:#}"
         );
     }
