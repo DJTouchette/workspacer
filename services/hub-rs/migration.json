@@ -2261,10 +2261,29 @@
       ]
     },
     "services/hub/cmd/brain/launchintegration.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/plugins/launch.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/agent_spawn.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Owner-authorized selected preparation maps to an opaque LaunchPermit tied to the pending call/session/plugin, rather than a forgeable JSON grant. The coordinator owns admission and the preparation lease; missing selection does no discovery and selected JSON alone cannot authorize it.",
+          "Context preserves provider, cwd, model and resume; native preparation precedes integration patching, patches extend environment/argv without replacing host cwd/bin or routing/facade authority. Complete patch validation and repeated permit/manifest checks precede applying the response.",
+          "Existing owning tests exercise post-hook owner revocation, slow-hook cancellation with zero engine attempts and credential cleanup, successful ordered patching, unsupported response shapes and secret-free plugin context."
+        ],
+        "intentionalChanges": [
+          "The private Node internal.prepareIntegration callback is retired. Rust calls the declared namespaced plugin method directly under broker authority; it sends minimal versioned context rather than the legacy raw base env/args/bin object, avoiding credential disclosure.",
+          "Rust deliberately strengthens response validation, overlays host-owned routing/identity restrictions and consumes the permit once. Missing env/args produce empty patches; explicit null env/args is refused instead of Go nullable patch semantics."
+        ],
+        "validation": "Read-only audit on 2026-09-30; no production or test modifications required. Current full library396 checkpoint /tmp/workspacer-provider-recovery-full.log includes all8 plugins::launch tests passing. Existing unchanged-source manager_replacements16 passed /tmp/workspacer-manager-replacement-fixtures.log; lifecycle11 passed /tmp/workspacer-launch-truth-lifecycle.log, including real Unix embedded PTY stop reconciliation. Parameter agent confirmed unchanged source/receipts; git diff for these owners/tests is empty. Tests and complete legacy32/280-line sources were read; manager service host is modeled, not a claim of full native manager-provider end-to-end execution. Witness returned unmapped Rust files; explicit owner receipts used. No new native Windows/macOS execution claimed."
+      },
       "sha256": "a37d5a8ebb50a347a8ca69317e69b53b8931f5cb1c88d900450f7627b031b372",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/plugins/launch/tests.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ]
     },
     "services/hub/cmd/brain/launchtruth_test.go": {
       "replacement": [
@@ -3004,10 +3023,33 @@
       ]
     },
     "services/hub/cmd/brain/replacementhost.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/manager_replacements/native.rs",
+        "services/hub-rs/src/services/manager_replacements/service.rs",
+        "services/hub-rs/src/services/manager_replacements/messages.rs",
+        "services/hub-rs/src/services/agent_spawn.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "All legacy private callbacks mapped: refresh/receipt to authoritative embedded sessions and final assistant turn; send to tracked accepted/rejected/uncertain engine delivery; signal/close to bounded embedded interrupt/SIGTERM; spawn to pinned durable operation and admitted SpawnCoordinator; transfer to task-first transaction and lifecycle reparent; restore to durable metadata overlay publication.",
+          "Native source/successor validate live local manager stream identity, operator manager fingerprint, recorded configuration/model/effort/permission and viewer binding. Coordinator refuses mismatched journal phase/claim and previously attempted successor launches; lifecycle checks actual engine identity before credential rotation.",
+          "Durable manager tests prove restart turns sending into uncertain, no automatic replay, task ownership precedes worker transfer, failed transfer reconciles forward, held messages wait for actual pane acknowledgement then deliver exact original content once with transfer annotation, and timed-out late successor is closed without kickoff.",
+          "Lifecycle tests prove caller cancellation does not abandon admitted launch, old generation cannot revoke a new session, failed revocation stays retryable, and authoritative embedded stop reconciliation clears pending credentials. Metadata overlays preserve remote ownership and ended state."
+        ],
+        "intentionalChanges": [
+          "No private Node replacement.* bus methods are recreated: ReplacementHost is an internal typed interface and desktop.managerReplacement requires authenticated trusted owner. Rust owns both durable journal and adapter rather than delegating journal state to a companion.",
+          "Legacy raw callback text/signal/metadata JSON validation is replaced by internal typed operations and validated journal/service boundaries; no arbitrary callback string is exported. Restore publishes durable overlays instead of copying a second mutable Go metadata store.",
+          "Session credentials are revoked by authoritative generation-fenced lifecycle stop reconciliation with persistence retries, rather than immediately revoking by textual session label after sending SIGTERM. Native close is idempotent for absent/ended sessions. Full concrete native manager-provider replacement is not claimed from model-host tests; adapter mapping is source-reviewed and engine lifecycle separately exercised."
+        ],
+        "validation": "Read-only audit on 2026-09-30; no production or test modifications required. Current full library396 checkpoint /tmp/workspacer-provider-recovery-full.log includes all8 plugins::launch tests passing. Existing unchanged-source manager_replacements16 passed /tmp/workspacer-manager-replacement-fixtures.log; lifecycle11 passed /tmp/workspacer-launch-truth-lifecycle.log, including real Unix embedded PTY stop reconciliation. Parameter agent confirmed unchanged source/receipts; git diff for these owners/tests is empty. Tests and complete legacy32/280-line sources were read; manager service host is modeled, not a claim of full native manager-provider end-to-end execution. Witness returned unmapped Rust files; explicit owner receipts used. No new native Windows/macOS execution claimed."
+      },
       "sha256": "fb71b1e0207aa47ef2390e93d6b0737d437712204f90e09eeea3081132336eab",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/manager_replacements.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs"
+      ]
     },
     "services/hub/cmd/brain/repofile_test.go": {
       "reason": "The Go-specific test-hub/CI -count=1 requirement and cmd/go-pinned reader helpers are replaced by Cargo/Vitest test entry points.",
