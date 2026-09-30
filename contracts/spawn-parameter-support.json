@@ -1,0 +1,1187 @@
+{
+  "version": 1,
+  "description": "Reviewed spawn parameter support, distinct from parsing. Observed roots are the ordinary Rust registration trace/desktop inner handler plus AST caller reads in workflow admission. Semantic evidence also includes authenticated admission and paired adapters. Provider-specific limitations remain applicable; op is spelling-only.",
+  "vocabulary": {
+    "blocks": {
+      "cases": {
+        "why": "Exact symmetric support dispositions and source-backed differences; reading a field never implies implementation.",
+        "required": [
+          "name",
+          "rust",
+          "desktop"
+        ],
+        "loaders": [
+          "tools/capability-source-check/tests/spawn_support.rs::fn current_support_has_exact_source_closure_and_inverse_exceptions(",
+          "apps/desktop/src/main/services/spawnSupport.test.ts::current spawn support has symmetric source closure"
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "afterDispatchId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::tracking_input|input[key] = value.clone();",
+          "services::agent_spawn::SpawnCoordinator::dispatch_owner|self.workflow.owner_snapshot(parent).unwrap_or(Value::Null)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const ids = dispatchHistoryStore.accept({",
+          "apps/desktop/src/main/services/hubCapabilities.ts|...dispatchAdmission,"
+        ]
+      }
+    },
+    {
+      "name": "capability",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|for key in [\"role\", \"capability\", \"decisionId\"]",
+          "services::spawn_plan::resolve|metadata[\"routing\"] = routing;"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const routing = normalizeRouting({ role, capability, decisionId });"
+        ]
+      }
+    },
+    {
+      "name": "cols",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|params[\"cols\"].as_u64().filter(|n|*n>0)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|cols, rows, resultSchema,"
+        ]
+      }
+    },
+    {
+      "name": "contextWindow",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|request[\"context_window\"] = json!(window);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|model, modelIdentity, contextWindow, effort,"
+        ]
+      }
+    },
+    {
+      "name": "cwd",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|let mut metadata = json!({\"settings\":{\"permissionMode\":permission,\"bypassAvailable\":skip},\"isWakeTarget\":manager});",
+          "services::spawn_plan::resolve|json!({\"provider\":provider,\"cwd\":cwd,\"bin\":binary,\"session_id\":session_id,\"yolo\":skip})"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });",
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "decisionId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|for key in [\"role\", \"capability\", \"decisionId\"]",
+          "services::spawn_plan::resolve|metadata[\"routing\"] = routing;"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const routing = normalizeRouting({ role, capability, decisionId });"
+        ]
+      }
+    },
+    {
+      "name": "dispatchOwnerSessionId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::tracking_input|input[key] = value.clone();",
+          "services::agent_spawn::SpawnCoordinator::dispatch_owner|self.workflow.owner_snapshot(parent).unwrap_or(Value::Null)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const ids = dispatchHistoryStore.accept({",
+          "apps/desktop/src/main/services/hubCapabilities.ts|...dispatchAdmission,"
+        ]
+      }
+    },
+    {
+      "name": "effort",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|request[\"effort\"] = json!(effort);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|model, modelIdentity, contextWindow, effort,"
+        ]
+      }
+    },
+    {
+      "name": "escalationScrubbed",
+      "rust": {
+        "observed": true,
+        "disposition": "host-derived",
+        "reason": "Caller provenance is removed at Rust admission; desktop consumes the authenticated hub scrub receipt and returns it.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "admission::sanitize|for key in [\"profileGranted\", \"yoloGranted\", \"escalationScrubbed\"]"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "host-derived",
+        "reason": "Caller provenance is removed at Rust admission; desktop consumes the authenticated hub scrub receipt and returns it.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const escalationDropped: string[] = [...(Array.isArray(hubScrubbed) ? hubScrubbed : [])];"
+        ]
+      }
+    },
+    {
+      "name": "exactModel",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::routing::sanitize|if params[\"exactModel\"] == true"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|throw new Error('The hub changed the explicitly requested model; no substitute was launched');"
+        ]
+      }
+    },
+    {
+      "name": "executionTarget",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Supported by authenticated paired dispatch; remoteCwd is read in that adapter rather than the ordinary local spawn trace.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::remote_dispatch::paired::Paired::spawn_owned|let mut wire = json!({\"cwd\":params[\"remoteCwd\"],\"dispatchOwnerSessionId\":owner_id});"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Supported by authenticated paired dispatch; remoteCwd is read in that adapter rather than the ordinary local spawn trace.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|return spawnPairedWorker({"
+        ]
+      }
+    },
+    {
+      "name": "expectedTaskRevision",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Optional workflow CAS revision must equal the current owned task revision; extracted from the actual middleware caller reads.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::workflow_runtime::WorkflowRuntime::admit|revision.as_u64() != Some(task_store::revision(task))"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Optional workflow CAS revision must equal the current owned task revision; extracted from the actual middleware caller reads.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/fleetWorkflowCore.ts|p.expectedTaskRevision !== (task.revision ?? 0)"
+        ]
+      }
+    },
+    {
+      "name": "fleetFullAccess",
+      "rust": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Caller flag ignored; fleet bypass is derived from host configuration and verified manager/parent.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "services::spawn_plan::resolve|if config[\"agents\"][\"fleetFullAccess\"] == true && (manager || fleet_parent)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Caller flag ignored; fleet bypass is derived from host configuration and verified manager/parent.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const fleetBypass = fleetSkipsPermissions({ manager, parentSessionId }, spawnCfg.agents?.fleetFullAccess === true);"
+        ]
+      }
+    },
+    {
+      "name": "intents",
+      "rust": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Shared workflow normalizer validates nested cwd, but agents.spawn does not execute batch intents.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "services::workflow_runtime::WorkflowRuntime::normalize_request|for intent in intents"
+        ]
+      },
+      "desktop": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "Ignored by agents.spawn: desktop batch intents normalization belongs to the separate fleetWorkflows.request registration.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });"
+        ]
+      }
+    },
+    {
+      "name": "label",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|for key in [\"label\", \"parentSessionId\"]",
+          "services::spawn_plan::resolve|metadata[key] = params[key].clone();"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|label, parentSessionId, cols, rows,"
+        ]
+      }
+    },
+    {
+      "name": "launchIntegrationGranted",
+      "rust": {
+        "observed": true,
+        "disposition": "host-derived",
+        "reason": "Authorization stamp is supplied by authenticated owner admission, not caller authority.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "admission::sanitize|map.insert(\"launchIntegrationGranted\".into(), json!(true));"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "host-derived",
+        "reason": "Authorization stamp is supplied by authenticated owner admission, not caller authority.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|(params as {launchIntegrationGranted?:boolean}).launchIntegrationGranted !== true"
+        ]
+      }
+    },
+    {
+      "name": "launchIntegrationId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|preparation.admit(permit)?",
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|Some(preparation.admit(permit)?)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|launchIntegrationId, provider,"
+        ]
+      }
+    },
+    {
+      "name": "manager",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|let mut metadata = json!({\"settings\":{\"permissionMode\":permission,\"bypassAvailable\":skip},\"isWakeTarget\":manager});",
+          "services::spawn_plan::resolve|json!({\"provider\":provider,\"cwd\":cwd,\"bin\":binary,\"session_id\":session_id,\"yolo\":skip})"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });",
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "mcpFacade",
+      "rust": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Caller flag ignored; supported agents receive the facade unconditionally.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "services::session_facade::SessionFacade::mint|scope: \"operator\".into(),",
+          "services::session_facade::SessionFacade::mint|record.metadata.insert(\"plugins\".into(), json!([\"*\"]));"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Caller flag ignored; supported agents receive the facade unconditionally.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/managedSpawn.ts|const wantsFacade = true;",
+          "apps/desktop/src/main/services/managedSpawn.ts|const facadeScope: RemoteTokenScope = 'operator';"
+        ]
+      }
+    },
+    {
+      "name": "mcpItemIds",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|metadata[\"settings\"][\"mcpItemIds\"] = json!(mcp_item_ids);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|parentSessionId, mcpItemIds, resultSchema,"
+        ]
+      }
+    },
+    {
+      "name": "message",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|request[\"first_message\"] = params[\"message\"].clone();"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|firstMessage: message"
+        ]
+      }
+    },
+    {
+      "name": "model",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|request[\"model\"] = json!(model);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|model, modelIdentity, contextWindow, effort,"
+        ]
+      }
+    },
+    {
+      "name": "modelIdentity",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|request[\"model_identity\"] = json!(identity);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|model, modelIdentity, contextWindow, effort,"
+        ]
+      }
+    },
+    {
+      "name": "parentSessionId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|for key in [\"label\", \"parentSessionId\"]",
+          "services::spawn_plan::resolve|metadata[key] = params[key].clone();"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|label, parentSessionId, cols, rows,"
+        ]
+      }
+    },
+    {
+      "name": "permissionMode",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|let mut metadata = json!({\"settings\":{\"permissionMode\":permission,\"bypassAvailable\":skip},\"isWakeTarget\":manager});",
+          "services::spawn_plan::resolve|json!({\"provider\":provider,\"cwd\":cwd,\"bin\":binary,\"session_id\":session_id,\"yolo\":skip})"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });",
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "pluginTools",
+      "rust": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "Local caller list ignored because enabled plugin tools are ambient; paired dispatch refuses local process configuration, including an empty array.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "services::session_facade::SessionFacade::mint|scope: \"operator\".into(),",
+          "services::session_facade::SessionFacade::mint|record.metadata.insert(\"plugins\".into(), json!([\"*\"]));"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Local caller list ignored because enabled plugin tools are ambient; paired dispatch refuses local process configuration, including an empty array.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/managedSpawn.ts|const wantsFacade = true;",
+          "apps/desktop/src/main/services/managedSpawn.ts|const facadeScope: RemoteTokenScope = 'operator';"
+        ]
+      }
+    },
+    {
+      "name": "profileGranted",
+      "rust": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "Legacy caller grant stamp is not authoritative; current provider permission/profile admission uses authenticated policy and request selection.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "admission::sanitize|for key in [\"profileGranted\", \"yoloGranted\", \"escalationScrubbed\"]",
+          "admission::sanitize|map.remove(key);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Legacy caller grant stamp is not authoritative; current provider permission/profile admission uses authenticated policy and request selection.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "profileId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|metadata[\"settings\"][\"profileId\"] = json!(profile.id);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|profileId, model, modelIdentity,"
+        ]
+      }
+    },
+    {
+      "name": "projectCwd",
+      "rust": {
+        "observed": true,
+        "disposition": "host-derived",
+        "reason": "Caller claim discarded; project identity and workflow lease are generated by the owning launch operation.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|map.remove(\"projectCwd\");"
+        ]
+      },
+      "desktop": {
+        "observed": false,
+        "disposition": "host-derived",
+        "reason": "Caller claim discarded; project identity and workflow lease are generated by the owning launch operation.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|projectCwd = requestedExecutionCwd;"
+        ]
+      }
+    },
+    {
+      "name": "provider",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|let mut metadata = json!({\"settings\":{\"permissionMode\":permission,\"bypassAvailable\":skip},\"isWakeTarget\":manager});",
+          "services::spawn_plan::resolve|json!({\"provider\":provider,\"cwd\":cwd,\"bin\":binary,\"session_id\":session_id,\"yolo\":skip})"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });",
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "remoteCwd",
+      "rust": {
+        "observed": false,
+        "disposition": "supported",
+        "reason": "Supported by authenticated paired dispatch; remoteCwd is read in that adapter rather than the ordinary local spawn trace.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::remote_dispatch::paired::Paired::spawn_owned|let mut wire = json!({\"cwd\":params[\"remoteCwd\"],\"dispatchOwnerSessionId\":owner_id});"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Supported by authenticated paired dispatch; remoteCwd is read in that adapter rather than the ordinary local spawn trace.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|return spawnPairedWorker({"
+        ]
+      }
+    },
+    {
+      "name": "remoteOrigin",
+      "rust": {
+        "observed": true,
+        "disposition": "host-derived",
+        "reason": "Only authenticated federation may carry origin; hub replaces owner identity. Desktop local adapter has no origin authority.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "admission::sanitize|map.remove(\"remoteOrigin\");",
+          "admission::sanitize|origin.insert(\"ownerKey\".into(), json!(identity.token_id));"
+        ]
+      },
+      "desktop": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "The desktop local spawn handler does not accept origin authority; origin claims are not forwarded to the local spawner.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });"
+        ]
+      }
+    },
+    {
+      "name": "resultSchema",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|metadata[\"resultSchema\"] = schema.clone();"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|rows, resultSchema, routing,"
+        ]
+      }
+    },
+    {
+      "name": "resumeSessionId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|let mut metadata = json!({\"settings\":{\"permissionMode\":permission,\"bypassAvailable\":skip},\"isWakeTarget\":manager});",
+          "services::spawn_plan::resolve|json!({\"provider\":provider,\"cwd\":cwd,\"bin\":binary,\"session_id\":session_id,\"yolo\":skip})"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });",
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "retrySourceSessionId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::tracking_input|input[key] = value.clone();",
+          "services::agent_spawn::SpawnCoordinator::dispatch_owner|self.workflow.owner_snapshot(parent).unwrap_or(Value::Null)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const ids = dispatchHistoryStore.accept({",
+          "apps/desktop/src/main/services/hubCapabilities.ts|...dispatchAdmission,"
+        ]
+      }
+    },
+    {
+      "name": "role",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|for key in [\"role\", \"capability\", \"decisionId\"]",
+          "services::spawn_plan::resolve|metadata[\"routing\"] = routing;"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const routing = normalizeRouting({ role, capability, decisionId });"
+        ]
+      }
+    },
+    {
+      "name": "rows",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|params[\"rows\"].as_u64().filter(|n|*n>0)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|cols, rows, resultSchema,"
+        ]
+      }
+    },
+    {
+      "name": "skipPermissions",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|let mut metadata = json!({\"settings\":{\"permissionMode\":permission,\"bypassAvailable\":skip},\"isWakeTarget\":manager});",
+          "services::spawn_plan::resolve|json!({\"provider\":provider,\"cwd\":cwd,\"bin\":binary,\"session_id\":session_id,\"yolo\":skip})"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });",
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "stage",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::tracking_input|input[key] = value.clone();",
+          "services::agent_spawn::SpawnCoordinator::dispatch_owner|self.workflow.owner_snapshot(parent).unwrap_or(Value::Null)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const ids = dispatchHistoryStore.accept({",
+          "apps/desktop/src/main/services/hubCapabilities.ts|...dispatchAdmission,"
+        ]
+      }
+    },
+    {
+      "name": "targetHub",
+      "rust": {
+        "observed": true,
+        "disposition": "refused",
+        "reason": "Incomplete local remote selector is refused; paired execution uses its complete admission adapter.",
+        "evidenceKind": "refusal",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|bail!(\"{key} requires its complete launch admission adapter\");"
+        ]
+      },
+      "desktop": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "This root is not consumed by the desktop inner spawn handler; remote selection uses the complete paired adapter.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|if (executionTarget !== 'paired') throw new Error('Unsupported execution target');"
+        ]
+      }
+    },
+    {
+      "name": "taskId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::tracking_input|input[key] = value.clone();",
+          "services::agent_spawn::SpawnCoordinator::dispatch_owner|self.workflow.owner_snapshot(parent).unwrap_or(Value::Null)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const ids = dispatchHistoryStore.accept({",
+          "apps/desktop/src/main/services/hubCapabilities.ts|...dispatchAdmission,"
+        ]
+      }
+    },
+    {
+      "name": "template",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|dispatch_templates::render(text(item, \"body\"), &params[\"templateParams\"], \"\", \"\")?;"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|message = renderDispatchTemplate(templateBody, templateParams ?? {},"
+        ]
+      }
+    },
+    {
+      "name": "templateParams",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|dispatch_templates::render(text(item, \"body\"), &params[\"templateParams\"], \"\", \"\")?;"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|message = renderDispatchTemplate(templateBody, templateParams ?? {},"
+        ]
+      }
+    },
+    {
+      "name": "toolScope",
+      "rust": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Caller tier does not choose local credentials: host mints operator scope; paired wire may carry tier metadata.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "services::session_facade::SessionFacade::mint|scope: \"operator\".into(),",
+          "services::session_facade::SessionFacade::mint|record.metadata.insert(\"plugins\".into(), json!([\"*\"]));"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Caller tier does not choose local credentials: host mints operator scope; paired wire may carry tier metadata.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/managedSpawn.ts|const wantsFacade = true;",
+          "apps/desktop/src/main/services/managedSpawn.ts|const facadeScope: RemoteTokenScope = 'operator';"
+        ]
+      }
+    },
+    {
+      "name": "trackTask",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::tracking_input|input[key] = value.clone();",
+          "services::agent_spawn::SpawnCoordinator::dispatch_owner|self.workflow.owner_snapshot(parent).unwrap_or(Value::Null)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const ids = dispatchHistoryStore.accept({",
+          "apps/desktop/src/main/services/hubCapabilities.ts|...dispatchAdmission,"
+        ]
+      }
+    },
+    {
+      "name": "transport",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|let mut metadata = json!({\"settings\":{\"permissionMode\":permission,\"bypassAvailable\":skip},\"isWakeTarget\":manager});",
+          "services::spawn_plan::resolve|json!({\"provider\":provider,\"cwd\":cwd,\"bin\":binary,\"session_id\":session_id,\"yolo\":skip})"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const provider = resolveSpawnProvider({ provider: reqProvider, manager });",
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    },
+    {
+      "name": "workflowReservationToken",
+      "rust": {
+        "observed": true,
+        "disposition": "host-derived",
+        "reason": "Caller claim discarded; project identity and workflow lease are generated by the owning launch operation.",
+        "evidenceKind": "host-value",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|map.remove(\"workflowReservationToken\");",
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|plan.metadata[\"workflowReservationToken\"]=json!(admission.token);"
+        ]
+      },
+      "desktop": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "No caller workflow token is accepted; desktop workflow admission owns its busy-task fence.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/fleetWorkflowCore.ts|if (workflowBusy.has(task.taskId))"
+        ]
+      }
+    },
+    {
+      "name": "workflowStepId",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::tracking_input|input[key] = value.clone();",
+          "services::agent_spawn::SpawnCoordinator::dispatch_owner|self.workflow.owner_snapshot(parent).unwrap_or(Value::Null)"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const ids = dispatchHistoryStore.accept({",
+          "apps/desktop/src/main/services/hubCapabilities.ts|...dispatchAdmission,"
+        ]
+      }
+    },
+    {
+      "name": "worktree",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::agent_spawn::SpawnCoordinator::spawn_owned|self.worktrees.create_reserved(json!({\"repoCwd\":project,\"name\":params[\"label\"]}))"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|const wt = await createWorktree({"
+        ]
+      }
+    },
+    {
+      "name": "yoloGranted",
+      "rust": {
+        "observed": false,
+        "disposition": "ignored",
+        "reason": "Legacy caller grant stamp is not authoritative; current provider permission/profile admission uses authenticated policy and request selection.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "admission::sanitize|for key in [\"profileGranted\", \"yoloGranted\", \"escalationScrubbed\"]",
+          "admission::sanitize|map.remove(key);"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "ignored",
+        "reason": "Legacy caller grant stamp is not authoritative; current provider permission/profile admission uses authenticated policy and request selection.",
+        "evidenceKind": "compatibility-policy",
+        "evidence": [
+          "apps/desktop/src/main/services/hubCapabilities.ts|skipPermissions, resumeSessionId, manager,"
+        ]
+      }
+    }
+  ],
+  "mirroredSupported": [
+    "afterDispatchId",
+    "capability",
+    "cols",
+    "contextWindow",
+    "cwd",
+    "decisionId",
+    "dispatchOwnerSessionId",
+    "effort",
+    "exactModel",
+    "executionTarget",
+    "expectedTaskRevision",
+    "label",
+    "launchIntegrationId",
+    "manager",
+    "mcpItemIds",
+    "message",
+    "model",
+    "modelIdentity",
+    "parentSessionId",
+    "permissionMode",
+    "profileId",
+    "provider",
+    "remoteCwd",
+    "resultSchema",
+    "resumeSessionId",
+    "retrySourceSessionId",
+    "role",
+    "rows",
+    "skipPermissions",
+    "stage",
+    "taskId",
+    "template",
+    "templateParams",
+    "trackTask",
+    "transport",
+    "workflowStepId",
+    "worktree"
+  ],
+  "differences": {
+    "rustOnly": {
+      "intents": "Rust workflow admission reuses a normalizer that validates nested intent cwd; agents.spawn executes only one plan. Desktop batch intents belong to fleetWorkflows.request, outside spawn.",
+      "projectCwd": "Rust coordinator explicitly removes the supplied root before deriving project identity; desktop inner handler never destructures a supplied projectCwd and derives it from requested execution cwd.",
+      "remoteOrigin": "Rust ordinary trace sees origin refusal and authenticated federation admission; desktop inner local handler has no remoteOrigin claim. Federation middleware is reviewed separately.",
+      "targetHub": "Rust explicitly refuses this incomplete local selector. Desktop selects remote execution only through executionTarget=paired and remoteCwd, leaving targetHub unused.",
+      "workflowReservationToken": "Rust explicitly removes caller tokens and generates an owned workflow admission token; desktop owns workflowBusy/task admission rather than accepting this root."
+    },
+    "desktopOnly": {
+      "pluginTools": "Desktop inner DTO retains the ignored local compatibility list. Rust ordinary plan does not consume it; paired adapter separately rejects local process configuration on both implementations.",
+      "profileGranted": "Desktop DTO retains this obsolete grant stamp without passing authority to the spawner. Rust admission removes it before the ordinary registered launch trace.",
+      "remoteCwd": "Desktop inner handler forwards this value to spawnPairedWorker. Rust reads it in the authenticated Paired adapter before ordinary local spawn; both support the paired directory selection.",
+      "yoloGranted": "Desktop DTO retains this legacy stamp, but current permission choice uses live skipPermissions/mode and host policy. Rust admission removes the stamp before ordinary plan tracing."
+    },
+    "semantics": {
+      "remoteOrigin": {
+        "rust": "host-derived",
+        "desktop": "ignored",
+        "reason": "Only authenticated federation may carry origin; hub replaces owner identity. Desktop local adapter has no origin authority."
+      },
+      "targetHub": {
+        "rust": "refused",
+        "desktop": "ignored",
+        "reason": "Incomplete local remote selector is refused; paired execution uses its complete admission adapter."
+      },
+      "workflowReservationToken": {
+        "rust": "host-derived",
+        "desktop": "ignored",
+        "reason": "Caller claim discarded; project identity and workflow lease are generated by the owning launch operation."
+      }
+    }
+  }
+}

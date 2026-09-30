@@ -27,7 +27,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let sources = workspacer_capability_source_check::read_sources(&root)?;
-    let report = workspacer_capability_source_check::scan(sources)?;
+    let report = workspacer_capability_source_check::scan(sources.clone())?;
     if check {
         let policy: workspacer_capability_source_check::policy::Policy =
             serde_json::from_slice(&std::fs::read(
@@ -58,6 +58,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &historical,
             ),
         );
+        let support = serde_json::from_slice(&std::fs::read(
+            root.join("contracts/spawn-parameter-support.json"),
+        )?)?;
+        let index = workspacer_capability_source_check::Index::parse(sources)?;
+        checked
+            .errors
+            .extend(workspacer_capability_source_check::spawn_support::check(
+                &report, &index, &support,
+            ));
         println!("{}", serde_json::to_string_pretty(&checked)?);
         if !checked.errors.is_empty() {
             return Err(format!("{} source-policy errors", checked.errors.len()).into());

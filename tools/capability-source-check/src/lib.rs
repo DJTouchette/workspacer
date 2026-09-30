@@ -3,6 +3,7 @@
 mod index;
 pub mod policy;
 pub mod reference;
+pub mod spawn_support;
 mod trace;
 pub use index::{Index, read_sources};
 use serde::{Deserialize, Serialize};

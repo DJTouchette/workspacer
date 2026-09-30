@@ -58,3 +58,15 @@ Retired anonymous-harness parameter-shape cases are preserved separately under
 registry, consumed directly by the Rust bus and checked against Rust source
 bindings and desktop TypeScript AST bindings. Its five reviewed reservations do
 not grant launch authority; the captured Go vocabulary remains historical.
+
+`spawn-parameter-support.json` records reviewed support separately from source
+reads and canonical spelling. Rust and desktop guards independently extract
+ordinary handler and workflow-admission caller roots, check both directions of
+source differences, and require an exact supported intersection. Production-code
+anchors pin implementation, refusal, host-derived authority and ignored legacy
+flags; comments and string decoys do not count. These are drift guards for the
+reviewed provider-specific behavior, not a claim that parsing a field implements
+it or that every provider accepts every option. In particular, local facade tier
+and plugin flags are compatibility inputs; paired dispatch still refuses local
+process configuration. Mutation tests cover stale exceptions, contradictory
+classifications, missing implementation and new middleware fields.
