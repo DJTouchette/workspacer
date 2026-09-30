@@ -553,10 +553,28 @@
       ]
     },
     "services/hub/cmd/brain/bus.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/provider_relay/mod.rs",
+        "services/hub-rs/src/provider_relay/methods.rs",
+        "services/hub-rs/src/client.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Full legacy client lifecycle was read: dial, reconnect, registration retry/ack, subscriptions/demand reset, asynchronous inbound dispatch, outbound correlated calls, context cancellation, best-effort publication and connection cleanup.",
+          "Rust retains missing-grant retries at five seconds without reconnect or accepted-effect replay. Acknowledgements update grants and newly granted feeds initialize once. Existing actual relay tests cover identity, central layout caller authority, individual deadlines, sibling continuity, leases and reconnect without mutation replay; new actual stale-predecessor and duplicate-ack tests cover the missing retry branch."
+        ],
+        "intentionalChanges": [
+          "Rust rejects unknown scope strings at the typed boundary rather than silently selecting Go Full fallback; explicit defaults remain CLI-owned.",
+          "Shipped Electron uses hub-only control-plane composition and owns notifications; adopted Full native notification/image limitations remain disclosed. The 55-overlap Rust-only source artifact is not a shared-language corpus or a runtime policy.",
+          "Modern relay uses authenticated caller-context v1, Bearer credentials and separate Full caller authority; transport limits, reconnect/power-pause and cancellation behavior are documented in PROVIDER_SCOPE_REVIEW.md. No mutation replay is introduced."
+        ],
+        "validation": "2026-09-30 Linux: real predecessor reproduction failed before fix with 11 passing / 1 failing test (/tmp/workspacer-provider-recovery-before.log). After fix all 13 selected tests passed (/tmp/workspacer-provider-recovery-after.log), then all 396 library tests passed from the same compiled binary with crate working directory (/tmp/workspacer-provider-recovery-full.log). No ignored tests. Independent CLI scope/path helpers3 also passed (/tmp/workspacer-provider-cli-helper.log). Witness selected no mapped Rust tests, so explicit owning and full-library tests supplied proof. No Windows/macOS execution is claimed for this change."
+      },
       "sha256": "a6301929ba468caa28e1127a65b12895cbac6d7addd6c2bfa5c2d56d44d93bfd",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ]
     },
     "services/hub/cmd/brain/busredact_test.go": {
       "reason": "The private Go brain-to-hub tokened WebSocket reconnect loop is removed by in-process owned services. No replacement internal credential URL or reconnect-log shim is introduced solely to satisfy this obsolete transport fixture.",
@@ -1120,10 +1138,28 @@
       ]
     },
     "services/hub/cmd/brain/delegation_guard_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/provider_relay/mod.rs",
+        "services/hub-rs/src/provider_relay/methods.rs",
+        "services/hub-rs/src/client.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Current desktop delegated methods are contained in Catalog and main registrations are disjoint from Catalog. Full desktop overlaps exactly match all55 declared rows; required adopted-provider disclosure markers are enforced, with current source-backed per-method rationales.",
+          "brain.info is exclusive to hub/worker, fs.readImage stays desktop-owned in the shipped hub-only composition, and agents.summarizeStatus is not silently exported by the worker. Actual parsed hub-only CLI composition permits the desktop notification provider to register and receive a title/body call."
+        ],
+        "intentionalChanges": [
+          "Rust rejects unknown scope strings at the typed boundary rather than silently selecting Go Full fallback; explicit defaults remain CLI-owned.",
+          "Shipped Electron uses hub-only control-plane composition and owns notifications; adopted Full native notification/image limitations remain disclosed. The 55-overlap Rust-only source artifact is not a shared-language corpus or a runtime policy.",
+          "Modern relay uses authenticated caller-context v1, Bearer credentials and separate Full caller authority; transport limits, reconnect/power-pause and cancellation behavior are documented in PROVIDER_SCOPE_REVIEW.md. No mutation replay is introduced."
+        ],
+        "validation": "2026-09-30 Linux: real predecessor reproduction failed before fix with 11 passing / 1 failing test (/tmp/workspacer-provider-recovery-before.log). After fix all 13 selected tests passed (/tmp/workspacer-provider-recovery-after.log), then all 396 library tests passed from the same compiled binary with crate working directory (/tmp/workspacer-provider-recovery-full.log). No ignored tests. Independent CLI scope/path helpers3 also passed (/tmp/workspacer-provider-cli-helper.log). Witness selected no mapped Rust tests, so explicit owning and full-library tests supplied proof. No Windows/macOS execution is claimed for this change."
+      },
       "sha256": "882b6d9cb4ab8181a1d3049e876a50c07a020172928c24d897c5dfe0f5b47e50",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ]
     },
     "services/hub/cmd/brain/desktophost.go": {
       "replacement": [
@@ -2995,10 +3031,28 @@
       ]
     },
     "services/hub/cmd/brain/reregister_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/provider_relay/mod.rs",
+        "services/hub-rs/src/provider_relay/methods.rs",
+        "services/hub-rs/src/client.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Actual central hub socket holds brain.info on a different predecessor, grants config.get to the worker, and proves first-owner preservation before eviction. Evicting only predecessor recovers brain.info at five seconds on exactly the same worker provider ID; successful sibling calls and absent/private-method negative controls prevent false recovery.",
+          "Repeated partial/duplicate acknowledgements replace the granted set after offered-set intersection. Ungranted and unoffered methods refuse actual socket calls; cancellation retires the socket and connection-owned retry timer."
+        ],
+        "intentionalChanges": [
+          "Rust rejects unknown scope strings at the typed boundary rather than silently selecting Go Full fallback; explicit defaults remain CLI-owned.",
+          "Shipped Electron uses hub-only control-plane composition and owns notifications; adopted Full native notification/image limitations remain disclosed. The 55-overlap Rust-only source artifact is not a shared-language corpus or a runtime policy.",
+          "Modern relay uses authenticated caller-context v1, Bearer credentials and separate Full caller authority; transport limits, reconnect/power-pause and cancellation behavior are documented in PROVIDER_SCOPE_REVIEW.md. No mutation replay is introduced."
+        ],
+        "validation": "2026-09-30 Linux: real predecessor reproduction failed before fix with 11 passing / 1 failing test (/tmp/workspacer-provider-recovery-before.log). After fix all 13 selected tests passed (/tmp/workspacer-provider-recovery-after.log), then all 396 library tests passed from the same compiled binary with crate working directory (/tmp/workspacer-provider-recovery-full.log). No ignored tests. Independent CLI scope/path helpers3 also passed (/tmp/workspacer-provider-cli-helper.log). Witness selected no mapped Rust tests, so explicit owning and full-library tests supplied proof. No Windows/macOS execution is claimed for this change."
+      },
       "sha256": "0e89e4420d38396b03c65c3b143e9feb40677d144535cbd8d3062a93dcccd9c0",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ]
     },
     "services/hub/cmd/brain/routingwire_test.go": {
       "replacement": [
@@ -3025,10 +3079,27 @@
       ]
     },
     "services/hub/cmd/brain/scope_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/provider_relay/mod.rs",
+        "services/hub-rs/src/provider_relay/methods.rs",
+        "services/hub-rs/src/client.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Catalog is a proper subset of Full, omits live terminal/session/process controls, and exports only actually installed declared methods. Exact generated scope sets and explicit unknown-scope refusal have executable assertions."
+        ],
+        "intentionalChanges": [
+          "Rust rejects unknown scope strings at the typed boundary rather than silently selecting Go Full fallback; explicit defaults remain CLI-owned.",
+          "Shipped Electron uses hub-only control-plane composition and owns notifications; adopted Full native notification/image limitations remain disclosed. The 55-overlap Rust-only source artifact is not a shared-language corpus or a runtime policy.",
+          "Modern relay uses authenticated caller-context v1, Bearer credentials and separate Full caller authority; transport limits, reconnect/power-pause and cancellation behavior are documented in PROVIDER_SCOPE_REVIEW.md. No mutation replay is introduced."
+        ],
+        "validation": "2026-09-30 Linux: real predecessor reproduction failed before fix with 11 passing / 1 failing test (/tmp/workspacer-provider-recovery-before.log). After fix all 13 selected tests passed (/tmp/workspacer-provider-recovery-after.log), then all 396 library tests passed from the same compiled binary with crate working directory (/tmp/workspacer-provider-recovery-full.log). No ignored tests. Independent CLI scope/path helpers3 also passed (/tmp/workspacer-provider-cli-helper.log). Witness selected no mapped Rust tests, so explicit owning and full-library tests supplied proof. No Windows/macOS execution is claimed for this change."
+      },
       "sha256": "3234cf33d6d19eca7c75ffc260780e2ee5de8a2177696811edac214c5909b7b6",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/src/provider_relay/tests.rs"
+      ]
     },
     "services/hub/cmd/brain/search.go": {
       "replacement": [

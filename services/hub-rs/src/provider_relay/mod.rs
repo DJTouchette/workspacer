@@ -239,6 +239,70 @@ impl Relay {
         cache.insert(proof, caller.clone());
         Ok(caller)
     }
+    fn accept_registration(
+        &self,
+        registered: Frame,
+        offered: &BTreeMap<String, String>,
+    ) -> Result<BTreeSet<String>> {
+        anyhow::ensure!(
+            registered.op == "registered" && registered.caller_context_version == 1,
+            "upstream must support authenticated provider caller context"
+        );
+        let accepted: BTreeSet<String> = registered
+            .methods
+            .into_iter()
+            .filter(|method| offered.contains_key(method))
+            .collect();
+        {
+            let mut status = self.status.lock().unwrap();
+            status.connected = true;
+            status.paused = false;
+            status.detail = if accepted.contains("brain.info") {
+                String::new()
+            } else {
+                "upstream liveness slot belongs to another provider".into()
+            };
+            status.registered_methods = accepted.iter().cloned().collect();
+        }
+        Ok(accepted)
+    }
+    async fn start_registered_feeds(
+        socket: &mut Socket,
+        events: &Client,
+        accepted: &BTreeSet<String>,
+        previous: &BTreeSet<String>,
+    ) -> Result<()> {
+        if accepted.contains("sessions.conversation") && !previous.contains("sessions.conversation")
+        {
+            send(
+                socket,
+                &Frame {
+                    topics: vec!["agent.conversation.".into()],
+                    ..Frame::op("demand")
+                },
+            )
+            .await?;
+        }
+        // Initial/reconnect fleet state is a read, not replay of any accepted mutation.
+        if accepted.contains("sessions.snapshots") && !previous.contains("sessions.snapshots") {
+            if let Ok(rows) = events.call("sessions.snapshots", Value::Null).await {
+                if let Some(rows) = rows.as_array() {
+                    for row in rows {
+                        let event = Event::new("agent.snapshot", "brain", row.clone());
+                        send(
+                            socket,
+                            &Frame {
+                                event: Some(event),
+                                ..Frame::op("publish")
+                            },
+                        )
+                        .await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     async fn session(
         &self,
         socket: &mut Socket,
@@ -264,60 +328,14 @@ impl Relay {
         let registered = tokio::time::timeout(Duration::from_secs(10), receive(socket))
             .await
             .map_err(|_| anyhow!("provider registration timed out"))??;
-        anyhow::ensure!(
-            registered.op == "registered" && registered.caller_context_version == 1,
-            "upstream must support authenticated provider caller context"
-        );
-        let accepted: BTreeSet<_> = registered
-            .methods
-            .into_iter()
-            .filter(|method| offered.contains_key(method))
-            .collect();
-        {
-            let mut status = self.status.lock().unwrap();
-            status.connected = true;
-            status.paused = false;
-            status.detail = if accepted.contains("brain.info") {
-                String::new()
-            } else {
-                "upstream liveness slot belongs to another provider".into()
-            };
-            status.registered_methods = accepted.iter().cloned().collect();
-        }
+        let mut accepted = self.accept_registration(registered, offered)?;
         let mut demand = BTreeSet::new();
         let base: BTreeSet<String> = methods::TOPICS
             .iter()
             .map(|topic| (*topic).into())
             .collect();
         events.topics(base.clone()).await?;
-        if accepted.contains("sessions.conversation") {
-            send(
-                socket,
-                &Frame {
-                    topics: vec!["agent.conversation.".into()],
-                    ..Frame::op("demand")
-                },
-            )
-            .await?;
-        }
-        // Initial/reconnect fleet state is a read, not replay of any accepted mutation.
-        if accepted.contains("sessions.snapshots") {
-            if let Ok(rows) = events.call("sessions.snapshots", Value::Null).await {
-                if let Some(rows) = rows.as_array() {
-                    for row in rows {
-                        let event = Event::new("agent.snapshot", "brain", row.clone());
-                        send(
-                            socket,
-                            &Frame {
-                                event: Some(event),
-                                ..Frame::op("publish")
-                            },
-                        )
-                        .await?;
-                    }
-                }
-            }
-        }
+        Self::start_registered_feeds(socket, events, &accepted, &BTreeSet::new()).await?;
         let mut callers = HashMap::new();
         let mut active_ids = HashSet::new();
         let mut cancellations: HashMap<String, (u64, tokio::task::AbortHandle)> = HashMap::new();
@@ -326,12 +344,19 @@ impl Relay {
         let mut stop = self.stop.subscribe();
         let mut caller_state = self.caller.as_ref().map(|caller| caller.state());
         let mut sweep = tokio::time::interval(Duration::from_secs(30));
+        // Retry only missing grants, on this connection, at the retained Go cadence.
+        let retry_period = Duration::from_secs(5);
+        let mut registration_retry =
+            tokio::time::interval_at(Instant::now() + retry_period, retry_period);
+        registration_retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let result=async{loop{if *stop.borrow(){return Ok(())}if let Some(caller)=&self.caller{if caller.paused(){return Err(DisconnectReason::RemoteClose{code:Some(crate::client::MACHINE_STOP_CLOSE_CODE),reason:"upstream caller paused".into()}.into())}if !caller.connected(){bail!("upstream caller unavailable")}}tokio::select!{biased;
    _=stop.changed()=>return Ok(()),
    _=async{caller_state.as_mut().unwrap().changed().await},if caller_state.is_some()=>{if self.caller.as_ref().is_some_and(|caller|caller.paused()){return Err(DisconnectReason::RemoteClose{code:Some(crate::client::MACHINE_STOP_CLOSE_CODE),reason:"upstream caller paused".into()}.into())}if self.caller.as_ref().is_some_and(|caller|!caller.connected()){bail!("upstream caller unavailable")}},
+   _=registration_retry.tick(),if accepted.len()<offered.len()=>{send(socket,&Frame{methods:offered.keys().cloned().collect(),wants_caller_context:true,..Frame::op("register")}).await?;},
    Some(reply)=tasks.join_next()=>{if let Ok(reply)=reply{if reply.generation==generation && cancellations.get(&reply.id).is_some_and(|(id,_)|*id==reply.attempt){cancellations.remove(&reply.id);active_ids.remove(&reply.id);let frame=match reply.result{Ok(value)=>Frame{id:reply.id,result:Some(value),..Frame::op("result")},Err(error)=>Frame::error(reply.id,error.to_string())};send(socket,&frame).await?;}}},
    incoming=receive(socket)=>{
     let frame=incoming?;match frame.op.as_str(){
+     "registered"=>{let next=self.accept_registration(frame,offered)?;Self::start_registered_feeds(socket,events,&next,&accepted).await?;if accepted.contains("sessions.conversation")&&!next.contains("sessions.conversation"){demand.clear();events.topics(base.clone()).await?;}accepted=next;},
      "call"=>{if frame.id.is_empty()||frame.id.len()>200{bail!("invalid upstream call identity")};if !accepted.contains(&frame.method){send(socket,&Frame::error(frame.id,"method was not registered by this provider")).await?;continue}
       if frame.method=="brain.info"{let mut info=json!({"provider":"brain","runtime":"rust","scope":self.config.scope});if !self.config.node_id.is_empty(){info["node"]=self.config.node_id.clone().into();}if let Some(exit)=&self.last_exit{info["lastExit"]=serde_json::to_value(exit)?;}send(socket,&Frame{id:frame.id,result:Some(info),..Frame::op("result")}).await?;continue}
       if tasks.len()>=64||active_ids.contains(&frame.id){send(socket,&Frame::error(frame.id,"provider is busy or call identity is already active")).await?;continue}

@@ -1,0 +1,282 @@
+{
+  "description": "Rust-only migration reference for allowed adopted Full overlaps. Each rationale records the current ownership boundary; presence is not proof of behavioral parity. Disclosure markers retain compatibility warnings for older adopted providers.",
+  "referenceFile": "services/hub/cmd/brain/delegation_guard_test.go",
+  "referenceSha256": "882b6d9cb4ab8181a1d3049e876a50c07a020172928c24d897c5dfe0f5b47e50",
+  "overlaps": [
+    {
+      "method": "agents.close",
+      "rationale": "Both close through the engine; adopted callers use the serving owner projection, not an immediate edit to Electron sidebar state.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "agents.list",
+      "rationale": "Both expose engine-backed agent snapshots; the serving owner applies its visibility/layout projection and the renderer can overlay local state.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "agents.notifyWhen",
+      "rationale": "Predicates observe the serving owner snapshots; desktop-only cached observations are not supplied to an adopted owner.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "agents.orphans",
+      "rationale": "Orphan detection uses parent lineage known to the serving owner, not an assumed shared Electron in-memory registry.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "agents.reparent",
+      "rationale": "Reparenting updates the serving owner lineage; this does not promise mutation of Electron local parent/wake caches.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "agents.reportProgress",
+      "rationale": "Progress is delivered using the serving owner tracked parent identity and bounds; it cannot infer desktop-only lineage.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "agents.sendMessage",
+      "rationale": "The serving owner submits messages to the same session engine and preserves acceptance versus queued acknowledgement.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "agents.spawn",
+      "rationale": "The serving owner performs real engine admission and returns owned launch identity; per-provider launch controls are reviewed separately.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "analytics.recent",
+      "rationale": "Rust uses its persistent headless analytics store; Electron has a separate session-history store. Current Rust is not the old all-zero/empty stub.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "analytics.summary",
+      "rationale": "Rust computes persistent headless history/model totals; Electron history can include UI-owned history absent from that store. Current Rust does not return the old zero stub.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "app.getCwd",
+      "rationale": "Returns the serving process cwd; per-process context is intentional and not a directory authorization grant.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "app.supervisorHome",
+      "rationale": "Returns the serving host configured supervisor directory; actual filesystem behavior has owning handler tests.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "brief.append",
+      "rationale": "Both modify the same selected brief using additive insertion, lock/CAS checks and selected-object containment.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "brief.archive",
+      "rationale": "Both preserve archive-first ordering and whole-line splicing under the same selected brief ownership contract.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "brief.check",
+      "rationale": "Document parsing is shared, but liveness comes from the serving owner snapshots; desktop-only rows cannot be inferred.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "claude.answer",
+      "rationale": "Both forward an answer to the same engine-owned question endpoint, preserving session and request identity.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "claude.approve",
+      "rationale": "Both forward approval to the engine-owned prompt endpoint rather than maintaining independent permission state.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "claude.gate",
+      "rationale": "Both use the engine permission-gate operation; a UI local rendering layer is not the gate owner.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "claude.handoffAgentBrief",
+      "rationale": "Both use the same handoff instruction, bounded file completion and fallback contract on the serving host.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "claude.handoffBrief",
+      "rationale": "Both use the engine handoff result with its markdown/path instead of fabricating a local completion.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "claude.setEffort",
+      "rationale": "The engine receives the effort operation; Electron local optimistic effort notes are a separate projection.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "claude.setModel",
+      "rationale": "The owner distinguishes accepted versus queued model selection; desktop local optimistic cache behavior is not duplicated by the adopted owner.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "claude.setPermissionMode",
+      "rationale": "Both use the provider/engine permission operation; Electron local optimistic metadata is distinct from authoritative engine acknowledgement.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "claude.signal",
+      "rationale": "Both signal the selected engine-owned process; no separate unmanaged process is selected by the overlapping method.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "fleetWorkflows.request",
+      "rationale": "The legacy agent-facing V1 name retains its documented availability boundary; desktop.* workflow owner methods have separate contracts.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "fs.readImage",
+      "rationale": "Rust performs header-only format/dimension probing and returns bounded original inline bytes; it has no image decoder/resizer. Electron can produce thumbnails and handle large eligible images differently, so the adopted-provider disclosure remains current.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "fs.unwatch",
+      "rationale": "Releases the serving owner path watch; it does not unwatch unrelated owners or widen ordinary filesystem authority.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "fs.watch",
+      "rationale": "Observes the selected path and emits fs.changed through the serving owner, including atomic replacement behavior.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.commit",
+      "rationale": "Commits selected worktree changes with literal arguments and real Git error propagation. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.commitDiff",
+      "rationale": "Reads the selected commit diff through literal Git arguments and worktree operand containment. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.commitNumstat",
+      "rationale": "Reads selected commit line statistics with the shared wire shape. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.diff",
+      "rationale": "Reads selected worktree changes; pathspec and untracked operands remain bounded to that selected Git object. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.log",
+      "rationale": "Reads bounded Git history with the shared entry shape and argument contract. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.numstat",
+      "rationale": "Reads line statistics with literal arguments and UTF-8 path handling. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.push",
+      "rationale": "Pushes through the selected repository Git operation and preserves its actual success/error acknowledgement. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.stage",
+      "rationale": "Stages the caller selected paths using literal Git arguments, retaining empty-selection semantics. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.status",
+      "rationale": "Reads the selected repository status into the shared wire shape, including unusual filename characters. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "git.unstage",
+      "rationale": "Unstages the selected paths without converting malformed input into all-path scope. Ordinary host cwd access remains ambient; selected Git operands stay contained.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "notifications.post",
+      "rationale": "Full headless fallback logs instead of posting Electron in-app/OS notifications; default desktop hub-only composition deliberately leaves ownership to Electron.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "providers.checkAll",
+      "rationale": "The serving host resolves configured provider executables. Environment differences are explicit host observations, not a guessed remote installation.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "providers.listModels",
+      "rationale": "The serving owner requests the selected provider catalog; unsupported/unavailable sources are not invented as launchable models.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "search.project",
+      "rationale": "The serving host executes bounded project search with the shared query/result contract; frontend matches must come from that selected filesystem.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.attachTerminal",
+      "rationale": "Attaches the serving owner byte stream with caller-bound leases and replay; byte ownership stays with the engine.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.conversation",
+      "rationale": "Both read the same engine conversation; frontend retained-window and UI overlay behavior remains separately owned.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.detachTerminal",
+      "rationale": "Releases only that caller terminal lease; other viewers retain their stream.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.recent",
+      "rationale": "Rust now supplies owned persistent recents and metadata; Electron can have additional UI session history. Old peers with blank fields remain a compatibility concern.",
+      "requiresAdoptedNote": true
+    },
+    {
+      "method": "sessions.snapshot",
+      "rationale": "Reads one engine-backed snapshot through the serving owner projection; it is not an Electron in-memory mutation.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.snapshots",
+      "rationale": "Reads engine-backed snapshots through the serving owner projection and visibility filter.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.subagentConversation",
+      "rationale": "Reads the provider-owned child conversation rather than inventing a top-level local session.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.terminalInput",
+      "rationale": "Forwards raw bytes or text without synthesized newline; typed root/field validation and byte precedence are tested on the real handler.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.terminalKeepalive",
+      "rationale": "Renews only an existing lease belonging to the requesting connection.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.terminalResize",
+      "rationale": "Resizes the same owned PTY using validated dimensions; it does not create a new terminal.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "sessions.transcript",
+      "rationale": "Reads the engine/provider transcript through the serving owner path and shaping contract.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "terminals.create",
+      "rationale": "Creates an engine-owned headless PTY using the host login-shell policy and explicit cwd.",
+      "requiresAdoptedNote": false
+    },
+    {
+      "method": "terminals.open",
+      "rationale": "Rust publishes facade.openTerminal; Electron targets its renderer directly. Event acceptance does not guarantee an adopted Electron pane was displayed.",
+      "requiresAdoptedNote": true
+    }
+  ]
+}
