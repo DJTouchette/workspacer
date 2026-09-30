@@ -1,0 +1,50 @@
+{
+  "records": {
+    "services/hub/internal/integration/editor_sandbox_test.go": {
+      "sha256": "816bf428920274f35840912cb599213242cd0d6cb741d52e7942f40c3ab3d312",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/tests/integration_spine.rs",
+        "services/hub-rs/src/plugins/mod.rs",
+        "services/hub-rs/src/services/files.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/integration_spine.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Exact original already asserts ambient access: enabled shipped editor manifest, manager-minted per-pane identity, inside and outside absolute fs.read both succeed. New Rust actual WebSocket test loads that same non-Go shipped manifest into a temp plugin directory and reads real temporary files through installed filesystem handlers, with exact contents and correlation IDs.",
+          "Actual pane connection cannot register core fs.read/agents.spawn providers, cannot call owner-only token administration (exact authority error), and cannot reconnect after plugin disable. Actual owner token succeeds on the same administrative method, preventing missing-handler false positives.",
+          "Ambient plugin machine access remains distinct from selected-object UI/browser containment; unchanged UI symlink positive/refusal pair and browser roots/navigation/secret-path policy retain their own proof."
+        ],
+        "intentionalChanges": [
+          "Legacy agentCwd manifest paths are advisory, not an authorization grant; no retired workspace sandbox refusal is reinstated. The Rust pane-token API takes plugin identity only, while cwd may be request context. Fixture uses an outside temporary file instead of reading host /etc/passwd.",
+          "Shipped manifest remains services/hub/examples/editor/plugin.json as a non-Go asset, intentionally consumed exactly. This test does not launch Electron or claim Chromium end-to-end behavior."
+        ],
+        "validation": "2026-09-30 Linux: new actual socket integration_spine2 passed, zero failed/ignored, /tmp/workspacer-integration-spine-final.log. Desktop webviewGuard/webviewRoots91 policy tests passed /tmp/workspacer-spine-webview-gates.log; these are controlled policy fixtures, not real Chromium execution. Existing plugin_manager21 receipt /tmp/workspacer-library-git-plugins-audit.log includes UI symlink refusal plus ordinary-file floor and host-only installation controls. Complete original Go sources read; no production changes required. Witness returned new Rust target unmapped, so explicit owning Cargo target supplied proof. No Windows/macOS execution of new target claimed."
+      }
+    },
+    "services/hub/internal/integration/spine_test.go": {
+      "sha256": "8e62f45ed144ba59256ace98356427ef059507f48468321e4c2a277b3ec2a360",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/tests/integration_spine.rs",
+        "services/hub-rs/src/services/external_claudemon.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/integration_spine.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Actual fake external HTTP SSE daemon emits session.update; runtime-owned ExternalDaemon parses it, publishes through broker and sends it over the real authenticated WebSocket transport. New assertion preserves agent.state_changed type, claudemon source, nonempty event ID, RFC3339 timestamp and exact normalized Stop/input/session payload.",
+          "Client receives hello and subscribed acknowledgement before the fixture releases SSE data through a watch-channel handshake. No periodic timing luck is required. Hub shutdown cancels the never-ending borrowed stream within a bounded deadline and leaves external server reachable."
+        ],
+        "intentionalChanges": [
+          "Current HTTP/WebSocket owner uses explicit test credentials rather than Go unkeyed mode; bridge still produces source-independent bus envelopes. The retained SSE bridge is for borrowed external daemon mode, while standalone service uses the separately tested embedded engine adapter."
+        ],
+        "validation": "2026-09-30 Linux: new actual socket integration_spine2 passed, zero failed/ignored, /tmp/workspacer-integration-spine-final.log. Desktop webviewGuard/webviewRoots91 policy tests passed /tmp/workspacer-spine-webview-gates.log; these are controlled policy fixtures, not real Chromium execution. Existing plugin_manager21 receipt /tmp/workspacer-library-git-plugins-audit.log includes UI symlink refusal plus ordinary-file floor and host-only installation controls. Complete original Go sources read; no production changes required. Witness returned new Rust target unmapped, so explicit owning Cargo target supplied proof. No Windows/macOS execution of new target claimed."
+      }
+    }
+  }
+}
