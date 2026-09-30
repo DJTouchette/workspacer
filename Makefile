@@ -243,3 +243,10 @@ hub-capability-inventory:
 .PHONY: build-rust-backend
 build-rust-backend:
 	cargo build --release --manifest-path $(HUB_RUST)/Cargo.toml --bin workspacer-rust
+
+.PHONY: test-tui-rust-backend
+## test-tui-rust-backend: exercise the TUI client against an already-built real Rust backend.
+# Explicit probe; normal TUI unit tests do not require a backend executable.
+test-tui-rust-backend:
+	@test -n "$(WKS_RUST_BACKEND_BIN)" || (echo "Set WKS_RUST_BACKEND_BIN to an absolute built workspacer-rust executable" >&2; exit 1)
+	WKS_RUST_BACKEND_BIN="$(WKS_RUST_BACKEND_BIN)" cargo test --locked --manifest-path $(TUI)/Cargo.toml daemons::backend_smoke::real_rust_backend_calls_events_reconnect_and_owned_shutdown -- --ignored --exact --nocapture

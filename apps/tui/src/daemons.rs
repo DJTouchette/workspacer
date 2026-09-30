@@ -15,6 +15,8 @@ const CLAUDEMON_HOOK_PORT: u16 = 7890;
 pub struct Daemons {
     children: Vec<(&'static str, Child)>,
     rust_backend: Option<Child>,
+    #[cfg(test)]
+    exit_receipt: Option<std::sync::mpsc::Sender<std::io::Result<std::process::ExitStatus>>>,
 }
 
 impl Daemons {
@@ -22,6 +24,8 @@ impl Daemons {
         Daemons {
             children: Vec::new(),
             rust_backend: None,
+            #[cfg(test)]
+            exit_receipt: None,
         }
     }
 }
@@ -37,7 +41,11 @@ impl Drop for Daemons {
             if matches!(backend.try_wait(), Ok(None)) {
                 let _ = backend.kill();
             }
-            let _ = backend.wait();
+            let _status = backend.wait();
+            #[cfg(test)]
+            if let Some(receipt) = self.exit_receipt.take() {
+                let _ = receipt.send(_status);
+            }
         }
         for (name, child) in &mut self.children {
             let _ = child.kill();
@@ -426,3 +434,7 @@ mod tests {
         assert_eq!(bus_path("ws://127.0.0.1:7895"), "/bus");
     }
 }
+
+#[cfg(test)]
+#[path = "daemons_backend_smoke.rs"]
+mod backend_smoke;

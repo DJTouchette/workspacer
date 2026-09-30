@@ -237,13 +237,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: services/hub-rs
+          workspaces: |
+            services/hub-rs
+            apps/tui
       - name: Install search engine
         run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Rust backend format check
         run: cargo fmt -- --check
       - name: Test shared backend and standalone CLI
         run: cargo test --locked --no-fail-fast
+
+      # The preceding owning tests already built this exact backend executable.
+      # Keep the independent TUI unit job parallel; only this boundary probe
+      # needs both products, and it does not rebuild the hub.
+      - name: TUI against the owned Rust backend
+        working-directory: .
+        run: make test-tui-rust-backend WKS_RUST_BACKEND_BIN="$GITHUB_WORKSPACE/services/hub-rs/target/debug/workspacer-rust"
 
   hub-latency:
     runs-on: ubuntu-latest

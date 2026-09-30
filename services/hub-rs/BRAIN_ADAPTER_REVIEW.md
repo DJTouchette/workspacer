@@ -72,8 +72,13 @@ that proves invalid input did not remain queued.
   external observer cancellation and wake-backstop tests. These are historical
   supporting receipts, not a full-current-source CI claim.
 
-Registered stream-answer numeric-kind and child-conversation end-to-end
-extensions belong to the remaining registry review and are tracked separately.
+A subsequent Unix-only `local_spawn` integration passed with real registered
+stream-answer numeric-kind and child-conversation paths
+(`/tmp/workspacer-managed-adapter-proof.log`, 1 passed). Inert local Claude and
+Codex fixtures preserve two numeric text answers plus an option-kind positive
+control, enforce parent exposure before reading child rollout data, and verify
+provider process cleanup. This complements the portable inert-wrapper proof;
+it is not a Windows managed-provider execution receipt.
 The command dispatcher currently serializes owned router requests; whether a
 slow command creates an unacceptable unrelated-command stall remains a separate
 bounded reproduction task. No engine concurrency change or measured timing
