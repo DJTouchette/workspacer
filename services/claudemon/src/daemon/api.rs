@@ -1925,6 +1925,58 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn native_argv_recording_bin(
+        dir: &std::path::Path,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let script = dir.join("provider.sh");
+        let out = dir.join("argv.txt");
+        // The deliberate exit can trigger a second, fallback provider launch.
+        // Publish the first complete invocation without letting that fallback
+        // replace the native argv this fixture is supposed to observe.
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nrecord='{0}'.$$.part\nprintf '%s\\n' \"$@\" > \"$record\"\nln \"$record\" '{0}' 2>/dev/null\nrm -f \"$record\"\nexit 1\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (script, out)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_launch_recording_retains_first_invocation_after_fallback() {
+        let dir = crate::testtmp::dir().join(format!("engine-recording-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (script, out) = native_argv_recording_bin(&dir);
+        for args in [
+            vec!["app-server", "--listen", "ws://fixture"],
+            vec!["-c", "fallback"],
+        ] {
+            assert_eq!(
+                std::process::Command::new(&script)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .code(),
+                Some(1)
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(out).unwrap(),
+            "app-server\n--listen\nws://fixture\n"
+        );
+        assert!(std::fs::read_dir(dir).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".part")));
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn execution_engine_native_launch_golden_cases() {
         let fixture: Value = serde_json::from_str(include_str!(
@@ -1935,19 +1987,8 @@ mod tests {
             let provider = case["provider"].as_str().unwrap();
             let dir = crate::testtmp::dir().join(format!("engine-native-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&dir).unwrap();
-            let script = dir.join("provider.sh");
-            let out = dir.join("argv.txt");
             // Only argv is captured: no inherited environment or credentials.
-            std::fs::write(
-                &script,
-                format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{0}.part'\nmv '{0}.part' '{0}'\nexit 1\n",
-                    out.display()
-                ),
-            )
-            .unwrap();
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let (script, out) = native_argv_recording_bin(&dir);
             let state = test_state();
             let id = format!("fixture-{provider}");
             let mut payload = case.clone();

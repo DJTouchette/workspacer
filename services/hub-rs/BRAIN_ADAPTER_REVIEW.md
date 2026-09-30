@@ -79,7 +79,7 @@ Codex fixtures preserve two numeric text answers plus an option-kind positive
 control, enforce parent exposure before reading child rollout data, and verify
 provider process cleanup. This complements the portable inert-wrapper proof;
 it is not a Windows managed-provider execution receipt.
-The command dispatcher currently serializes owned router requests; whether a
-slow command creates an unacceptable unrelated-command stall remains a separate
-bounded reproduction task. No engine concurrency change or measured timing
-claim is made here.
+The subsequently reproduced serial-command stall is addressed by a bounded
+eight-future dispatcher; see `../claudemon/EMBEDDED_COMMAND_DISPATCH.md` for
+queue/deadline/cleanup semantics and its separate 905-pass library receipt.
+No general throughput or latency claim follows from the causal gate test.

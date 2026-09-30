@@ -1,5 +1,8 @@
 //! An owned, in-process daemon. No signals, stdin, or process-wide job objects
 //! are installed here; the host explicitly owns its lifetime.
+#[cfg(test)]
+#[path = "../../tests/support/embedded_control.rs"]
+mod control_tests;
 use super::{DaemonLease, ServeConfig};
 use anyhow::{anyhow, Context, Result};
 use axum::{
@@ -7,10 +10,15 @@ use axum::{
     http::Request,
     Router,
 };
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use serde_json::{json, Value};
 use std::{net::SocketAddr, thread::JoinHandle};
 use tokio::sync::{mpsc, oneshot, watch};
 use tower::ServiceExt;
+
+const COMMAND_QUEUE: usize = 64;
+const COMMAND_CONCURRENCY: usize = 8;
+const COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct ReadyInfo {
@@ -174,7 +182,7 @@ impl EmbeddedClient {
                     anyhow!("embedded daemon has stopped; command was not submitted")
                 }
             })?;
-        tokio::time::timeout(std::time::Duration::from_secs(30), result)
+        tokio::time::timeout(COMMAND_TIMEOUT, result)
             .await
             .context(
                 "embedded daemon reply timed out; outcome is unknown, do not automatically retry",
@@ -194,7 +202,7 @@ impl EmbeddedDaemon {
     }
     pub fn start_with_options(cfg: ServeConfig, options: Options) -> Result<Self> {
         let lease = DaemonLease::acquire()?;
-        let (commands, receiver) = mpsc::channel(64);
+        let (commands, receiver) = mpsc::channel(COMMAND_QUEUE);
         let (status_tx, status) = watch::channel(Status::Starting);
         let (shutdown, shutdown_rx) = oneshot::channel();
         let cleanup =
@@ -349,21 +357,38 @@ pub(super) fn serve_commands(
         api_addr,
     }));
     tokio::spawn(async move {
-        while let Some(envelope) = control.receiver.recv().await {
-            if envelope.reply.is_closed() {
-                continue;
+        // These futures are polled by this owner, not detached tasks. Aborting
+        // and joining it drops every active dispatch and queued reply. A normal
+        // sender close instead drains requests that were already admitted.
+        let mut pending = FuturesUnordered::new();
+        let mut receiving = true;
+        loop {
+            if !receiving && pending.is_empty() {
+                break;
             }
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                dispatch(router.clone(), envelope.command),
-            )
-            .await
-            .unwrap_or_else(|_| {
-                Err(anyhow!(
-                    "embedded command timed out; outcome is unknown, do not automatically retry"
-                ))
-            });
-            let _ = envelope.reply.send(result);
+            tokio::select! {
+                biased;
+                _ = pending.next(), if !pending.is_empty() => {},
+                envelope = control.receiver.recv(), if receiving && pending.len() < COMMAND_CONCURRENCY => {
+                    let Some(envelope) = envelope else {
+                        receiving = false;
+                        continue;
+                    };
+                    if envelope.reply.is_closed() {
+                        continue;
+                    }
+                    let router = router.clone();
+                    pending.push(async move {
+                        // Once started, caller cancellation does not undo a
+                        // possible effect. Keep the existing unknown-outcome
+                        // semantics and finish under the same dispatch bound.
+                        let result = tokio::time::timeout(COMMAND_TIMEOUT, dispatch(router, envelope.command))
+                            .await
+                            .unwrap_or_else(|_| Err(anyhow!("embedded command timed out; outcome is unknown, do not automatically retry")));
+                        let _ = envelope.reply.send(result);
+                    });
+                }
+            }
         }
     })
 }
