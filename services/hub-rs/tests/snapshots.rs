@@ -356,3 +356,139 @@ fn execution_engine_projection_keeps_exact_owner_metadata_without_inventing_supp
             .is_none()
     );
 }
+
+#[test]
+fn shipping_mobile_reads_are_backed_by_production_snapshot_and_metadata_projections() {
+    let mobile = include_str!("../assets/web/mobile.html");
+    let row = compat(json!({
+        "session_id":"s1","mode":"responding","cwd":"/tmp","provider":"claude",
+        "transport":"stream","archived":false,"updated_at":"2026-07-10T12:00:00Z",
+        "usage":{"model":"m","context_tokens":1,"context_limit":2,"cost_usd":0.1},
+        "tool_calls":7,"pending":null,
+        "status_line":{"model_display":"Opus","context_used_pct":12.5,"context_window_size":200000,
+            "total_input_tokens":100,"total_output_tokens":50,"cost_usd":0.2,
+            "five_hour_pct":10,"five_hour_resets_at":1234,"five_hour_window_minutes":300,
+            "seven_day_pct":20,"seven_day_resets_at":5678,"seven_day_window_minutes":10080,
+            "monthly_pct":30,"monthly_resets_at":9012,"rate_limit_warning":"careful",
+            "received_at":"2026-07-10T12:00:00Z"}
+    }));
+    let required = [
+        "sessionId",
+        "status",
+        "ambientState",
+        "lastActivity",
+        "cwd",
+        "transport",
+        "provider",
+        "usage",
+        "pendingApproval",
+        "pendingQuestions",
+        "statusLine",
+        "totalToolCalls",
+    ];
+    assert_eq!(
+        required.len(),
+        12,
+        "retained required-field coverage changed"
+    );
+    for field in required {
+        assert!(
+            mobile.contains(field),
+            "shipping mobile no longer reads {field}; review the field contract"
+        );
+        assert!(
+            row.get(field).is_some(),
+            "production projection omitted {field}"
+        );
+    }
+    for (field, reason) in [
+        (
+            "conversation",
+            "transcripts are fetched through sessions.conversation rather than repeated in every snapshot",
+        ),
+        (
+            "liveCwd",
+            "desktop-only live cwd remains optional; mobile falls back to cwd",
+        ),
+    ] {
+        assert!(!reason.is_empty());
+        assert!(mobile.contains(field), "stale declined field {field}");
+        assert!(
+            row.get(field).is_none(),
+            "review newly projected field {field}"
+        );
+    }
+    for (field, expected) in [
+        ("sessionId", json!("s1")),
+        ("status", json!("active")),
+        ("ambientState", json!("streaming")),
+        ("lastActivity", json!(1783684800000_i64)),
+        ("cwd", json!("/tmp")),
+        ("transport", json!("stream")),
+        ("provider", json!("claude")),
+        ("totalToolCalls", json!(7)),
+        ("pendingApproval", Value::Null),
+        ("pendingQuestions", Value::Null),
+    ] {
+        assert_eq!(row[field], expected, "{field}");
+    }
+    let usage = json!({"model":"m","contextTokens":1,"contextLimit":2,"costUSD":0.1});
+    assert_eq!(usage.as_object().unwrap().len(), 4);
+    for (field, expected) in usage.as_object().unwrap() {
+        assert!(
+            mobile.contains(field),
+            "mobile usage field removed: {field}"
+        );
+        assert_eq!(row["usage"][field], *expected, "usage.{field}");
+    }
+    let status = json!({"modelDisplay":"Opus","contextUsedPct":12.5,"contextWindowSize":200000,
+        "totalInputTokens":100,"totalOutputTokens":50,"costUSD":0.2,
+        "fiveHourPct":10,"fiveHourResetsAt":1234,"fiveHourWindowMins":300,
+        "sevenDayPct":20,"sevenDayResetsAt":5678,"sevenDayWindowMins":10080,
+        "monthlyPct":30,"monthlyResetsAt":9012,"monthlyWindowMins":null,
+        "rateLimitWarning":"careful","receivedAt":"2026-07-10T12:00:00Z"});
+    assert_eq!(status.as_object().unwrap().len(), 17);
+    for (field, expected) in status.as_object().unwrap() {
+        assert!(
+            mobile.contains(field),
+            "mobile status field removed: {field}"
+        );
+        assert_eq!(
+            row["statusLine"].get(field),
+            Some(expected),
+            "statusLine.{field}"
+        );
+    }
+    // Use the actual durable metadata owner that with_host_metadata invokes.
+    // A literal enriched JSON fixture would not detect a broken production overlay.
+    use workspacer_hub::services::manager_replacements::ReplacementState;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("manager-replacements.json");
+    let metadata = ReplacementState::open(path.clone()).unwrap();
+    metadata
+        .remember_child(json!({"sessionId":"s1","cwd":"/tmp","label":"proj: a task",
+        "parentSessionId":"mgr","isWakeTarget":true}))
+        .unwrap();
+    drop(metadata);
+    let metadata = ReplacementState::open(path).unwrap();
+    let enriched = metadata.enrich(row.clone());
+    for (field, expected) in [
+        ("parentSessionId", json!("mgr")),
+        ("isWakeTarget", json!(true)),
+        ("label", json!("proj: a task")),
+    ] {
+        assert!(
+            mobile.contains(field),
+            "mobile nesting field removed: {field}"
+        );
+        assert_eq!(enriched[field], expected, "nesting.{field}");
+        assert!(
+            row.get(field).is_none(),
+            "fixture must require actual enrichment"
+        );
+    }
+    let unknown = json!({"session_id":"unknown","cwd":"/tmp"});
+    assert_eq!(metadata.enrich(unknown.clone()), unknown);
+    let remote = json!({"session_id":"s1","cwd":"/remote","hub":"peer"});
+    assert_eq!(metadata.enrich(remote.clone()), remote);
+}
