@@ -235,6 +235,35 @@ jobs:
           fi
           npm run package -- --publish never "${extra[@]}"
 
+      - name: Packaged Electron ownership helper regressions
+        if: matrix.os == 'ubuntu-22.04'
+        run: node --test scripts/smoke-electron-ownership.test.mjs
+
+      - name: Smoke packaged Electron ownership under Xvfb
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2 libgbm1
+          xvfb-run -a make test-electron-ownership \
+            WKS_ELECTRON_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/release/linux-unpacked/workspacer" \
+            WKS_ELECTRON_SMOKE_REPORT="$GITHUB_WORKSPACE/apps/desktop/release/electron-ownership-smoke.json" \
+            2>&1 | tee apps/desktop/release/electron-ownership-smoke.log
+
+      # Keep diagnostics separate from published installers/update metadata.
+      # The report contains endpoint numbers/status, never fixture credentials.
+      - name: Upload Electron ownership receipt
+        if: always() && matrix.os == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-ownership-linux
+          path: |
+            apps/desktop/release/electron-ownership-smoke.json
+            apps/desktop/release/electron-ownership-smoke.log
+          if-no-files-found: warn
+
       # Shared Rust backend: one standalone executable, plus the separately
       # usable claudemon executable and browser/plugin assets.
       - name: Bundle standalone server

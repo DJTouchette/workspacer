@@ -250,3 +250,9 @@ build-rust-backend:
 test-tui-rust-backend:
 	@test -n "$(WKS_RUST_BACKEND_BIN)" || (echo "Set WKS_RUST_BACKEND_BIN to an absolute built workspacer-rust executable" >&2; exit 1)
 	WKS_RUST_BACKEND_BIN="$(WKS_RUST_BACKEND_BIN)" cargo test --locked --manifest-path $(TUI)/Cargo.toml daemons::backend_smoke::real_rust_backend_calls_events_reconnect_and_owned_shutdown -- --ignored --exact --nocapture
+
+.PHONY: test-electron-ownership
+## test-electron-ownership: Linux/Xvfb ownership probe of an already-packaged Electron app.
+test-electron-ownership:
+	@test -n "$(WKS_ELECTRON_EXECUTABLE)" -a -n "$(WKS_ELECTRON_SMOKE_REPORT)" || (echo "Set absolute WKS_ELECTRON_EXECUTABLE and WKS_ELECTRON_SMOKE_REPORT paths" >&2; exit 1)
+	node apps/desktop/scripts/smoke-electron-ownership.mjs "$(WKS_ELECTRON_EXECUTABLE)" "$(WKS_ELECTRON_SMOKE_REPORT)"
