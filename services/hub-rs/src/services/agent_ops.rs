@@ -110,7 +110,19 @@ pub fn orphans(rows: &[Value]) -> Value {
             .cmp(&a["children"].as_array().unwrap().len())
             .then_with(|| a["sessionId"].as_str().cmp(&b["sessionId"].as_str()))
     });
-    json!({"candidates":rows,"note":"Orphans are reported only; no workers were adopted. An unknown parent is not proof of a manager."})
+    let note = if rows.is_empty() {
+        "Nothing is orphaned here: every live agent either has a live parent or was never dispatched by one.".to_owned()
+    } else {
+        let confirmed = rows
+            .iter()
+            .filter(|row| row["confirmedManager"] == true)
+            .count();
+        format!(
+            "{} dead parent(s) still have live children; {confirmed} are confirmed managers. Pick the one you are replacing — match its label/cwd against what you were told to take over — and pass its sessionId as fromSessionId to adopt_workers. Adopting the wrong group re-points another manager's workers onto you, so do not guess between two candidates: read a worker of each first. An unknown parent is not proof of a manager.",
+            rows.len()
+        )
+    };
+    json!({"candidates":rows,"note":note})
 }
 #[cfg(test)]
 mod tests {

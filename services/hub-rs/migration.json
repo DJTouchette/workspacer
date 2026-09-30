@@ -2170,10 +2170,46 @@
       ]
     },
     "services/hub/cmd/brain/headlessport_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/progress.rs",
+        "services/hub-rs/src/services/thresholds.rs",
+        "services/hub-rs/src/services/agent_ops.rs",
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/fleet_messages.rs",
+        "services/hub-rs/src/services/live_controls.rs",
+        "services/hub-rs/src/services/briefs/mod.rs",
+        "services/hub-rs/src/services/image_preview.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all1394 source lines, including tier/brief declaration completeness, fleet grammar/mobile markers, progress refusals/budgets, raw correlated health and epoch behavior, close/orphan/reparent effects, visible terminal publication, recent projection, image bounds and additive brief persistence.",
+          "New independent standing guard retains exact view/triage privilege decisions for15 ported methods with nonwildcard/minimum scope controls. Brief methods are discovered from actual Rust MCP bindings, effective tool declarations and shared capability vocabulary, then checked against actual owned runtime providers; a newly declared missing handler or unclassified brief scope cannot disappear silently.",
+          "Fleet messages are generated from executing the live TypeScript fleetMessages/workerFailure source and --check verifies both Rust asset and portable18-case corpus. Existing Rust corpus, sender-header and manager-only workflow tests preserve the wire grammar. New mobile escalation markers, TS progress constant assertions and grouped numeric vectors restore original source-level guards.",
+          "Progress owning tests prove current-parent-only delivery, no completion claim, UTF16 note500 cap,60-second spacing, duplicate suppression,20 lifetime reports and budget charging before failed delivery. Added all original identity/note/parent refusal controls plus an actual bus malformed needsDecision regression; failed flags now refuse before delivery/budget mutation and valid null/same-note succeeds.",
+          "Threshold owning tests preserve fresh runtime-confirmed provider/window/epoch pairs, authoritative raw-null precedence over stale camel data, compaction versus cumulative counts, provider normalization, adjacent large string epochs, invalidation requiring re-arm, streaming idle detection and one-shot delivery/budgets. Shared context corpus and exact grouping vectors supply formatting evidence.",
+          "Session/lifecycle controls preserve working-session refusal before teardown, ended/unknown close behavior, credential revocation, local-only orphan provenance and live/pending child reparenting without adopting other parents. Restored actionable orphan notes including empty-fleet truth and do-not-guess guidance; pure matrix retains exact live child set/order/label/manager status.",
+          "Previously scoped owning proofs cover visible terminal full payload and stopped-bus refusal, actual recent list including archived rows and empty-on-unreachable compatibility, noninvented title/model/cost/token values, inline image extension/type/size/dimension boundaries, and all additive brief/newline/section/order/lock/cross-process/concurrent-write guarantees."
+        ],
+        "intentionalChanges": [
+          "Go process-local metadata/SSE callbacks are replaced by owned typed engine updates and durable generation-fenced lifecycle state. Remote progress/wakes use the verified return channel rather than local parent guesses.",
+          "Progress and message clipping follow the shipping TypeScript UTF16/whitespace contract; error wording can identify the current typed boundary. No scoped tier is widened.",
+          "Orphan guidance retains the original actionable selection warning and the Rust caution that an unknown parent is not itself a confirmed manager. The candidate algorithm and authority checks are unchanged."
+        ],
+        "validation": "2026-09-30 Linux: current headless_completeness3 passed /tmp/workspacer-headless-port-final.log and final progress5 passed /tmp/workspacer-progress-spine-final.log; before-fix failures in /tmp/workspacer-headless-port-before.log reproduced malformed needsDecision consuming budget and missing orphan guidance. Fleet asset generator --check passed. Witness could not map these four files; explicit owning integration targets supply changed-behavior proof. Prior exact owning receipts retained: thresholds7/agent_ops2 within full library396 (/tmp/workspacer-provider-recovery-full.log), briefs11 (/tmp/workspacer-brief-audit.log), config cross-process lock1 (/tmp/workspacer-configlock-brief-audit.log), fleet_messages3/wakes16 (/tmp/workspacer-cli-wakes-fleet-tests.log), agent_lifecycle11 (/tmp/workspacer-launch-truth-lifecycle.log), visible_terminal1 (/tmp/workspacer-visible-terminal-isolated.log), terminals1/library20 (/tmp/workspacer-library-terminals-projection-final.log), ui_assets7 (/tmp/workspacer-image-final.log). Prior receipts do not claim a full rerun at this commit or Windows/macOS execution. Complete original source read; adjacent implementation ownership and intentional changes mapped above."
+      },
       "sha256": "02aa49da51c07430cf7e3e7a8394ff4c000bcf2e91dd8447edc635df80e89b55",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/headless_completeness.rs",
+        "services/hub-rs/tests/progress.rs",
+        "services/hub-rs/tests/fleet_messages.rs",
+        "services/hub-rs/tests/briefs.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/tests/visible_terminal.rs",
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/src/services/thresholds.rs",
+        "services/hub-rs/src/services/agent_ops.rs"
+      ]
     },
     "services/hub/cmd/brain/hostgate_test.go": {
       "reason": "Go TestMain global registry, simulated skip flags and process-wide config-home redirection belong to the removed Go test harness. Rust service fixtures inject temporary directories; required host scenarios execute with hard-failing setup and retained source/removal guards. TS host capability simulation remains in its existing support.",

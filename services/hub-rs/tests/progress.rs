@@ -127,3 +127,84 @@ async fn total_report_and_utf16_note_caps_are_explicit() {
     assert_eq!(sent.lock().unwrap().len(), 20);
     assert_eq!(flatten_note("a\u{0085}b"), "a\u{0085}b");
 }
+
+#[tokio::test]
+async fn malformed_decision_flags_refuse_before_delivery_or_budget_use_on_the_bus() {
+    use workspacer_hub::{Hub, Options, client::Client};
+    for bad in [json!("true"), json!(1), json!([]), json!({})] {
+        let (reports, sent, _) = fixture(false);
+        let reports = Arc::new(reports);
+        let hub = Hub::start(Options::default().handler(
+            "agents.reportProgress",
+            move |_, params| {
+                let reports = reports.clone();
+                async move { reports.report(params, 0).await }
+            },
+        ))
+        .unwrap();
+        hub.ready().await.unwrap();
+        let client = Client::connect(&hub.handle()).await.unwrap();
+        let refused = client
+            .call(
+                "agents.reportProgress",
+                json!({"callerSessionId":"worker","note":"same note","needsDecision":bad}),
+            )
+            .await;
+        let accepted = client
+            .call(
+                "agents.reportProgress",
+                json!({"callerSessionId":"worker","note":"same note","needsDecision":null}),
+            )
+            .await;
+        client.close();
+        tokio::task::spawn_blocking(move || hub.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(refused.is_err(), "accepted malformed decision flag {bad}");
+        assert_eq!(accepted.unwrap(), json!({"deliveredTo":"parent"}));
+        assert_eq!(sent.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn identity_note_and_parent_refusals_have_no_delivery_or_budget_effect() {
+    let (reports, sent, rows) = fixture(false);
+    rows.lock().unwrap().extend([
+        json!({"sessionId":"lonely"}),
+        json!({"sessionId":"dead-parent","status":"ended"}),
+        json!({"sessionId":"orphan","parentSessionId":"dead-parent"}),
+    ]);
+    for (params, reason) in [
+        (json!({"note":"hi"}), "could not identify"),
+        (
+            json!({"callerSessionId":"worker","note":"   "}),
+            "non-empty note",
+        ),
+        (
+            json!({"callerSessionId":"missing","note":"hi"}),
+            "not a tracked session",
+        ),
+        (
+            json!({"callerSessionId":"lonely","note":"hi"}),
+            "no parent session",
+        ),
+        (json!({"callerSessionId":"orphan","note":"hi"}), "has ended"),
+        (
+            json!({"callerSessionId":"worker","note":"x".repeat(501)}),
+            "limit is 500",
+        ),
+    ] {
+        let error = reports.report(params, 0).await.unwrap_err();
+        assert!(error.to_string().contains(reason), "{error}");
+    }
+    assert!(sent.lock().unwrap().is_empty());
+    assert_eq!(
+        reports
+            .report(json!({"callerSessionId":"worker","note":"hi"}), 0)
+            .await
+            .unwrap(),
+        json!({"deliveredTo":"parent"})
+    );
+    assert_eq!(sent.lock().unwrap().len(), 1);
+}

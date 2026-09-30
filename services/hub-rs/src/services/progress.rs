@@ -78,6 +78,12 @@ impl Progress {
         self
     }
     pub async fn report(&self, params: Value, now: i64) -> Result<Value> {
+        if params
+            .get("needsDecision")
+            .is_some_and(|value| !value.is_null() && !value.is_boolean())
+        {
+            bail!("needsDecision must be a boolean");
+        }
         let caller = params["callerSessionId"].as_str().unwrap_or("").trim();
         if caller.is_empty() {
             bail!(
