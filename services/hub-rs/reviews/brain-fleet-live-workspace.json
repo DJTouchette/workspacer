@@ -1,0 +1,61 @@
+{
+  "records": {
+    "services/hub/cmd/brain/fleetview.go": {
+      "sha256": "9546561bbca1a77c086149fecbb32c467f4f535646a10ef2f9aec95e6a55147a",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/mod.rs",
+        "services/hub-rs/src/services/thresholds.rs",
+        "services/hub-rs/src/services/progress.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/src/services/wakes.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/thresholds.rs",
+        "services/hub-rs/src/services/live_streams.rs",
+        "services/hub-rs/tests/progress.rs",
+        "services/hub-rs/tests/wakes.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete source read, including decimal telemetry epoch parsing, provider/freshness/percentage validation, raw counter precedence, usage cost fallback, display label, full-store lookup, ended recipient delivery refusal and whitespace flattening.",
+          "Thresholds preserves exact nonzero u64 decimal epochs, legacy numbers only through 9007199254740991, runtime provenance, provider equality, 120-second age, 5-second future tolerance, bounded consistent occupancy and 0.01 percentage tolerance. Present raw context-health block prevents stale camel fallback; epoch transitions invalidate rather than rebind.",
+          "Cumulative tokens sum raw input/output with camel fallback per field; usage.costUSD takes precedence over raw/camel status cost. Existing tests explicitly contrast fresh raw counters with stale compatibility values and refuse cumulative tokens as runtime context evidence.",
+          "Fleet lookup uses the full internal snapshot map with host metadata, not sidebar-visible rows. Raw IDs are projected by snapshots::compat at ingestion. Live status ticks update both raw and camel blocks under one write lock before visibility filtering, so wakes reading camel credit metadata is current. Standing credit exhaustion only enriches an actual usage-limit failure marker, never creates a failure.",
+          "Progress/wakes retain named delivery failures, labels/cwd basename fallback, line-flattened notes and manager-replacement ownership. Actual progress5 target includes rejected delivery/budget and invalid decision-field controls."
+        ],
+        "intentionalChanges": [
+          "Rust stores projected JSON rather than repeatedly decoding the whole Go fleetSession struct. Unknown typed measurements remain absent or are refused at their owning accessors; malformed raw context does not obtain stale authority.",
+          "Go raw-first credit access compensated for its writer updating only raw status_line. Rust refreshes both representations atomically, so reproducing the accessor spelling is unnecessary. No stale-credit production defect was inferred or changed.",
+          "Whitespace flattening follows the shared desktop JavaScript whitespace contract and label paths understand both separators. Fleet presence remains distinct from process-live/sidebar-visible classifications."
+        ],
+        "validation": "2026-09-30 read-only audit, no production/test modifications. Current full library396 passed /tmp/workspacer-provider-recovery-full.log including thresholds7, paired statusline projection, library watcher2 and readiness3; watcher barrier also passed5 repeats in /tmp/workspacer-watcher-barrier-repeats.log. Actual progress5 passed /tmp/workspacer-progress-spine-final.log. Existing wakes21 passed /tmp/workspacer-direct-wakes-fd86d8cfa771afc8.log including marker/credit distinction. Related live-directory implementation/evidence is recorded in brain-live-directories.json. No new platform execution claimed; no entire current suite claim beyond the named396 snapshot."
+      }
+    },
+    "services/hub/cmd/brain/live_workspace_test.go": {
+      "sha256": "2e219a6f83bb075e19dd6b78434dfe5341c59b3ef5270c21da767654efeb137e",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/library_watch.rs",
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs",
+        "services/hub-rs/src/services/snapshots.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/library_watch.rs",
+        "services/hub-rs/src/services/remote_dispatch/readiness.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete original verifies empty inventory does not invent a cwd, adding a live row is visible on the next root read, and stopped replacement removes that live cwd. Current library roots derive directly from the current locked row map every scan; readiness requests current engine sessions for each capability read and recomputes directory choices.",
+          "Existing watcher test transitions from no project to observed live project and then stopped project, proving external edits enter/leave observation. Its sampled-revision plus same-channel marker barrier proves the final scan completed before the unchanged quiet assertion.",
+          "Readiness and pure roots controls exclude stopped, unknown-shell, archived, malformed and remote rows; configured existing project roots remain discovery entries independently of a live agent. Sorting/canonical deduplication keeps configured provenance."
+        ],
+        "intentionalChanges": [
+          "Retired Go agentCwds cache/root-grant plumbing is not recreated: authenticated ambient paths are not gated by a live-workspace authorization list. Still-required local discovery and library observation use current source inventory.",
+          "Polling intentionally remains periodic; immediate means no extra stale cwd cache when a consumer samples, not synchronous library.changed on every session mutation. Failed catalog inventory retains known roots instead of treating a transport failure as empty."
+        ],
+        "validation": "2026-09-30 read-only audit, no production/test modifications. Current full library396 passed /tmp/workspacer-provider-recovery-full.log including thresholds7, paired statusline projection, library watcher2 and readiness3; watcher barrier also passed5 repeats in /tmp/workspacer-watcher-barrier-repeats.log. Actual progress5 passed /tmp/workspacer-progress-spine-final.log. Existing wakes21 passed /tmp/workspacer-direct-wakes-fd86d8cfa771afc8.log including marker/credit distinction. Related live-directory implementation/evidence is recorded in brain-live-directories.json. No new platform execution claimed; no entire current suite claim beyond the named396 snapshot."
+      }
+    }
+  }
+}
