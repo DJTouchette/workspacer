@@ -182,6 +182,7 @@ pub struct View {
     pub transcript: Transcript,
     pub pending_messages: Vec<PendingMessage>,
     pub loading: bool,
+    pub sessions_loading: bool,
     pub busy: bool,
     pub notice: String,
     pub receipt: Option<Receipt>,
@@ -357,7 +358,10 @@ impl Worker {
                             self.dirty=true;
                         }
                     }
-                    Some(Command::Refresh) => {self.fetch_fleet();self.fetch_conversation();}
+                    Some(Command::Refresh) => {
+                        self.view.loading = self.view.connected && self.view.selected.is_some();
+                        self.fetch_fleet();self.fetch_conversation();self.dirty=true;
+                    }
                     _ => {}
                 },
                 event = events.recv() => match event {
@@ -521,6 +525,8 @@ impl Worker {
             return;
         }
         self.fleet_pending = true;
+        self.view.sessions_loading = true;
+        self.dirty = true;
         self.fleet_overlay.clear();
         self.last_fleet = Instant::now();
         let backend = self.backend.clone();
@@ -598,6 +604,7 @@ impl Worker {
         self.view.catalog.loading = false;
         self.view.catalog.error = Some("Hub disconnected. Reconnect to load models.".into());
         self.view.loading = false;
+        self.view.sessions_loading = false;
         self.view.power_paused = power_paused;
         if power_paused {
             self.view.power_pause_generation = self.epoch;
@@ -960,8 +967,12 @@ impl Worker {
             }
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;
+                self.view.sessions_loading = false;
                 match result {
                     Ok(Value::Array(rows)) => {
+                        if self.view.notice.starts_with("Sessions unavailable:") {
+                            self.view.notice.clear();
+                        }
                         let retained = self
                             .view
                             .selected
@@ -1002,8 +1013,11 @@ impl Worker {
                             self.select(self.sessions.keys().next().cloned()).await;
                         }
                     }
-                    Ok(_) => self.view.notice = "Hub returned an invalid session list".into(),
-                    Err(e) => self.view.notice = e.to_string(),
+                    Ok(_) => {
+                        self.view.notice =
+                            "Sessions unavailable: hub returned an invalid session list".into()
+                    }
+                    Err(e) => self.view.notice = format!("Sessions unavailable: {e}"),
                 }
             }
             Completion::Conversation(epoch, selection, result)
@@ -1027,6 +1041,9 @@ impl Worker {
                             return;
                         }
                         self.view.transcript.snapshot(snapshot);
+                        if self.view.notice.starts_with("Conversation unavailable:") {
+                            self.view.notice.clear();
+                        }
                         let streaming = self.streaming();
                         let mut gap = false;
                         for delta in self.buffered.drain(..) {

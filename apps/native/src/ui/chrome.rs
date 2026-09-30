@@ -77,6 +77,9 @@ impl Workspace {
     pub(super) fn chat_actions(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
         let selected = self.view.selected.is_some();
         let model_enabled = enabled && self.supported_session();
+        let can_refresh =
+            (self.view.connected && !self.view.loading && !self.view.sessions_loading)
+                || (self.view.power_paused && self.view.can_resume_power_pause);
         div()
             .flex()
             .items_center()
@@ -125,8 +128,19 @@ impl Workspace {
                 }),
             )
             .child(
-                self.icon_button("refresh", "Refresh conversation", IconName::Redo, true)
-                    .on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx))),
+                self.icon_button(
+                    "refresh",
+                    if self.view.power_paused {
+                        "Reconnect and wake"
+                    } else {
+                        "Refresh conversation"
+                    },
+                    IconName::Redo,
+                    can_refresh,
+                )
+                .when(can_refresh, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
+                }),
             )
     }
 

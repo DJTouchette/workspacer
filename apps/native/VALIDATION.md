@@ -349,3 +349,38 @@ focuses the existing input; it does not replace the query or composer.
 
 Captures: [expanded](docs/ui-sidebar-expanded.png),
 [collapsed](docs/ui-sidebar-collapsed.png).
+
+
+## Loading, empty and recovery states (2026-09-30)
+
+The conversation distinguishes workspace startup, session-list loading,
+conversation loading, unavailable reads, a fresh conversation and an empty
+workspace. Existing rows remain visible through automatic reconnection with a
+status banner. Intentional pauses stop the progress animation and expose the
+existing generation-bound wake action only for a resumable connection. Refresh
+is disabled while a read is already running or ordinary reconnect is underway.
+Drafts remain editable offline and retry/first-message actions retain them.
+Pinned unavailable sessions and ended empty sessions have separate guidance.
+
+`View.sessions_loading` follows actual fleet request admission, completion and
+disconnection. Explicit Refresh publishes conversation loading; routine polling
+does not disable the composer. Successful reads clear their matching read error
+without clearing unrelated action feedback.
+
+- Complete serialized native suite: **132 passed** (53 library, 48 UI/lifetime,
+  28 protocol, 3 Rust-host).
+- New GPUI interactions verify startup/loading/empty distinctions, retry and
+  composer focus without draft loss, cached scrollback during reconnect, and an
+  explicit click for a paused connection's wake action.
+- A real loopback WebSocket regression delays replies, fails a conversation
+  read, retries and verifies loading flags plus recovery/error clearing.
+- Formatting and diff whitespace checks passed. Witness left these files
+  unmapped, so the full native suite was run.
+- Real X11/software-Vulkan windows were inspected for the empty workspace,
+  compact first connection and reconnection retaining rich transcript content.
+  Fixture connections only; no provider/model call or Windows/macOS runtime
+  verification. The serialized-test and hardware-performance limits above apply.
+
+Captures: [empty workspace](docs/ui-state-empty.png),
+[connecting](docs/ui-state-connecting.png),
+[reconnecting](docs/ui-state-reconnecting.png).

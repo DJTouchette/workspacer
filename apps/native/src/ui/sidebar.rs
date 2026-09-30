@@ -399,18 +399,24 @@ impl Workspace {
                         .flex_col()
                         .gap_2()
                         .text_size(px(12.))
-                        .child(if filtered {
+                        .child(if !self.view.connected {
+                            self.connection_copy().label
+                        } else if self.view.sessions_loading {
+                            "Loading sessions…"
+                        } else if filtered {
                             "No matching sessions"
                         } else {
                             "No sessions yet"
                         })
                         .child(div().text_color(rgb(p.muted)).text_size(px(11.)).child(
-                            if filtered {
+                            if !self.view.connected {
+                                self.connection_copy().description
+                            } else if self.view.sessions_loading {
+                                "Checking your workspace for sessions."
+                            } else if filtered {
                                 "Try another search or clear the filters."
-                            } else if self.view.connected {
-                                "Start a new session to begin."
                             } else {
-                                "Sessions will appear when the hub connects."
+                                "Start a new session to begin."
                             },
                         ))
                         .when(filtered, |d| {
@@ -600,12 +606,8 @@ impl Workspace {
                             .text_color(rgb(p.muted))
                             .child(if self.demo {
                                 "Demo"
-                            } else if self.view.connected {
-                                "Connected"
-                            } else if self.view.power_paused {
-                                "Paused"
                             } else {
-                                "Connecting…"
+                                self.connection_copy().label
                             }),
                     )
                     .child(status_dot(if self.view.connected {

@@ -6,6 +6,7 @@ mod markdown;
 mod navigation;
 mod scroll;
 mod sidebar;
+mod states;
 mod tools;
 mod transcript;
 mod typography;
@@ -317,6 +318,7 @@ pub struct Workspace {
     search: Entity<InputState>,
     navigation_selected: Option<String>,
     sidebar_collapsed: bool,
+    has_connected: bool,
     sidebar_scroll: gpui::UniformListScrollHandle,
     projects_scroll: gpui::UniformListScrollHandle,
     _focus_watch: Vec<gpui::Subscription>,
@@ -498,6 +500,7 @@ impl Workspace {
             search,
             navigation_selected: None,
             sidebar_collapsed: false,
+            has_connected: false,
             sidebar_scroll: gpui::UniformListScrollHandle::new(),
             projects_scroll: gpui::UniformListScrollHandle::new(),
             _focus_watch: focus_watch,
@@ -575,6 +578,7 @@ impl Workspace {
     }
 
     fn update_view(&mut self, view: Arc<View>, window: &mut Window, cx: &mut Context<Self>) {
+        self.has_connected |= view.connected;
         self.capture_reading(window, cx);
         self.receive_chat_requests(&view, cx);
         self.sync_features(&view, window, cx);
@@ -1063,10 +1067,12 @@ impl Render for Workspace {
             .as_ref()
             .and_then(|id| self.turn_clocks.get(id));
         let working = self.view.connected && selected.as_ref().is_some_and(Session::working);
-        let animate_activity =
-            !self.view.connected || self.view.loading || self.view.busy || working;
+        let animate_activity = (!self.view.connected && self.connection_copy().animated)
+            || self.view.loading
+            || self.view.busy
+            || working;
         let activity = if !self.view.connected {
-            Some("Reconnecting…".to_owned())
+            Some(self.connection_copy().label.to_owned())
         } else if self.view.loading {
             Some("Loading conversation…".to_owned())
         } else if self.view.busy {
@@ -1091,6 +1097,13 @@ impl Render for Workspace {
             .unwrap_or_else(|| "Your sessions".into());
         let notice = if !self.local_notice.is_empty() {
             self.local_notice.clone()
+        } else if !self.view.connected && self.view.notice.starts_with("Starting Rust backend") {
+            String::new()
+        } else if !self.view.connected {
+            self.view
+                .notice
+                .trim_end_matches(". Reconnecting…")
+                .to_owned()
         } else {
             self.view.notice.clone()
         };
@@ -1298,27 +1311,17 @@ impl Render for Workspace {
                     .child(self.chat_actions(enabled, cx))))
                 .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
                 .when(!notice.is_empty(), |d| d.child(div().occlude().py_1().text_size(px(11.)).text_color(rgb(p.warning)).child(notice)))
+                .when(!self.view.connected && !self.view.transcript.rows.is_empty(), |d| d.child(self.render_connection_banner(cx)))
                 .when(self.view.transcript.omitted, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
-                .when(self.view.loading, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_color(rgb(p.muted)).child("Loading conversation…")))
+                .when(self.view.loading && !self.view.transcript.rows.is_empty(), |d| d.child(div().occlude().flex().items_center().gap_2().text_size(px(12.)).text_color(rgb(p.muted)).child(brand_spinner(12., p, "conversation-refresh")).child("Refreshing conversation…")))
+                .when(self.view.connected && !self.view.loading && self.view.notice.starts_with("Conversation unavailable:"), |d| d.child(self.button("retry-conversation", "Retry conversation", true).debug_selector(|| "retry-conversation".into()).on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
 );
 
         self.shell(window, cx)
             .child(sidebar)
             .child(div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
-                .when(!self.view.loading && self.view.transcript.rows.is_empty(), |d| d.child(
-                    div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().px_5().gap_4()
-                        .child(div().size(px(56.)).flex().items_center().justify_center().child(brand_mark(28., p)))
-                        .child(div().text_center().text_size(px(28.)).font_weight(FontWeight::BOLD).child("Start a conversation"))
-                        .child(div().max_w(px(380.)).text_center().text_size(px(14.)).text_color(rgb(p.muted)).child(
-                            if self.view.sessions.is_empty() {
-                                if self.view.connected { "Start a session to bring your next idea to life." }
-                                else { "Connecting to your workspace. Your sessions will appear here when the hub is ready." }
-                            } else { "Ask a question, explore your code, or describe what you want to build." }))
-                        .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-setup", "Set up an agent", self.view.connected).when(self.view.connected, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx))))))
-                        .when(self.view.sessions.is_empty(), |d| d.child(self.button("welcome-new", "Start a session", self.view.connected && !self.demo)
-                            .when(self.view.connected && !self.demo, |d| d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx))))))
-                ))
-                .when(!self.view.transcript.rows.is_empty() || self.view.loading, |d| d.child(transcript))
+                .when(self.view.transcript.rows.is_empty(), |d| d.child(self.render_empty_state(compact, window, cx)))
+                .when(!self.view.transcript.rows.is_empty(), |d| d.child(transcript))
                 .child(header)
                 .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).shadow(chrome::floating_shadow(p)).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, window, cx| {
                     this.follow = true;
@@ -1989,6 +1992,154 @@ mod tests {
                 "constructed {rendered} of 2000 rows"
             );
         });
+    }
+
+    #[gpui::test]
+    fn loading_and_empty_states_follow_the_real_request_state(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("state-connection").is_some());
+        assert!(visual.debug_bounds("welcome-new").is_none());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(
+                    Arc::new(View {
+                        connected: true,
+                        sessions_loading: true,
+                        ..Default::default()
+                    }),
+                    window,
+                    cx,
+                );
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("state-sessions-loading").is_some());
+        assert!(visual.debug_bounds("state-no-sessions").is_none());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(
+                    Arc::new(View {
+                        connected: true,
+                        ..Default::default()
+                    }),
+                    window,
+                    cx,
+                );
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("state-no-sessions").is_some());
+        assert!(visual.debug_bounds("welcome-setup").is_some());
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn conversation_retry_and_first_message_keep_the_draft(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.loading = true;
+                this.update_view(Arc::new(next), window, cx);
+                this.composer.update(cx, |input, cx| {
+                    input.set_value("Retain my draft", window, cx)
+                });
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("state-conversation-loading").is_some());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.notice = "Conversation unavailable: request timed out".into();
+                this.update_view(Arc::new(next), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("state-conversation-error").is_some());
+        let retry = visual.debug_bounds("retry-empty").unwrap();
+        visual.simulate_click(retry.center(), gpui::Modifiers::default());
+        assert!(matches!(commands.try_recv().unwrap(), Command::Refresh));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let write = visual.debug_bounds("focus-first-message").unwrap();
+        visual.simulate_click(write.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(visual.update(|window, cx| {
+            workspace
+                .read(cx)
+                .composer
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        }));
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_str(), "Retain my draft")
+        });
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn connection_pause_banner_requires_a_click_and_keeps_scrollback(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let mut next = state("a");
+        next.transcript.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![Item {
+                kind: "assistant_text".into(),
+                text: "Saved conversation".into(),
+                ..Default::default()
+            }],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(next.clone()), window, cx)
+            })
+        });
+        next.connected = false;
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(next.clone()), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.connection_copy().label, "Reconnecting…");
+            assert!(this.connection_copy().animated);
+        });
+        assert!(visual.debug_bounds("last-transcript-row").is_some());
+        assert!(visual.debug_bounds("wake-workspace").is_none());
+        next.power_paused = true;
+        next.can_resume_power_pause = true;
+        next.power_pause_generation = 42;
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(next), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("Offline draft", window, cx));
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("last-transcript-row").is_some());
+        assert!(visual.debug_bounds("connection-banner").is_some());
+        workspace.read_with(&visual, |this, _| assert!(!this.connection_copy().animated));
+        assert!(commands.try_recv().is_err());
+        let wake = visual.debug_bounds("wake-workspace").unwrap();
+        visual.simulate_click(wake.center(), gpui::Modifiers::default());
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::ResumePowerPause(42)
+        ));
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_str(), "Offline draft")
+        });
+        assert!(commands.try_recv().is_err());
     }
 
     #[gpui::test]

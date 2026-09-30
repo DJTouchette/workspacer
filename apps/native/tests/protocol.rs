@@ -186,6 +186,40 @@ async fn disconnect_fails_mutation_and_never_replays_it() {
 }
 
 #[tokio::test]
+async fn session_loading_and_read_retry_follow_actual_replies() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    view(&controller, |v| v.connected && v.sessions_loading).await;
+    fleet.result(json!([session("a")])).await;
+    let read = hub.frame("call", Some("sessions.conversation")).await;
+    view(&controller, |v| !v.sessions_loading && v.loading).await;
+    read.send
+        .send(Message::Text(
+            json!({"op":"error", "id":read.value["id"], "error":"Read failed"}).to_string(),
+        ))
+        .await
+        .unwrap();
+    view(&controller, |v| {
+        !v.loading && v.notice.starts_with("Conversation unavailable:")
+    })
+    .await;
+    controller.command(Command::Refresh).unwrap();
+    let retry_fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    let retry_read = hub.frame("call", Some("sessions.conversation")).await;
+    view(&controller, |v| v.sessions_loading && v.loading).await;
+    retry_fleet.result(json!([session("a")])).await;
+    retry_read
+        .result(snapshot(1, "Recovered conversation"))
+        .await;
+    let recovered = view(&controller, |v| {
+        !v.sessions_loading && !v.loading && !v.transcript.rows.is_empty()
+    })
+    .await;
+    assert!(recovered.notice.is_empty());
+}
+
+#[tokio::test]
 async fn controller_reconciles_snapshot_races_gaps_and_stale_selection() {
     let mut hub = Hub::new().await;
     let controller = Controller::start(hub.config.clone());

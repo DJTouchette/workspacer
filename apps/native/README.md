@@ -141,6 +141,13 @@ and a compact icon rail. The rail keeps session selection and navigation availab
 hover a session for its full name, project, provider and status. Search expands the
 sidebar and retains your query. Collapse is local to the window and preserves drafts.
 
+Startup and conversation loading have separate progress states. An empty workspace
+offers **Start a session** and **Set up an agent**; an empty conversation can focus
+your first message. Failed reads offer **Try again** and keep your draft. Ordinary
+connection loss reconnects automatically while keeping cached messages visible.
+An intentional server pause offers **Reconnect and wake** only when the connection
+supports it. Local startup failures explain that the app must be restarted.
+
 Open **Settings → Typography** to choose searchable interface and code fonts
 from the bundled defaults and fonts installed on your device. Inter and
 JetBrains Mono are embedded, so they work on a fresh installation. Text size,
