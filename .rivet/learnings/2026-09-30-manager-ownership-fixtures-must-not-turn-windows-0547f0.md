@@ -15,3 +15,8 @@ Windows a019 primary CI failed two manager_replacements ordering tests after acc
 
 ## Recommendation
 Assert ordering with operation completion and gates. Reserve accelerated deadlines for tests whose behavior is timeout; retain exact failed operation in assertions.
+
+## Validation
+Linux manager_replacements16 passed in /tmp/workspacer-manager-ci-deadline-final.log
+on 2026-09-30, including the distinct gated timeout regression. Native Windows
+CI rerun remains necessary; a Linux pass is not evidence of Windows execution.

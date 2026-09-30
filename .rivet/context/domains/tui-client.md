@@ -19,18 +19,24 @@ default, `tui.json` can supply `hubUrl`. Thus an explicitly supplied default
 URL is not distinguished from an omitted default. Token precedence is explicit
 CLI/environment, config, then the local saved hub token.
 
-`daemons.rs` optionally ensures claudemon and a hub with supervised full-scope
-brain. `--no-spawn` disables this. Each URL's loopback status is checked
-separately: selecting a remote bus does not by itself suppress local claudemon
-bootstrap if that URL is still local. Claudemon bootstrap probes/launches the
-fixed 7891 API and 7890 hook ports; it is not a general custom-port launcher.
-The `Daemons` guard kills/waits only for children this TUI started, leaving
-adopted processes alone. Port availability is not provider health proof.
+`daemons.rs` optionally starts `workspacer-rust serve` for a missing loopback
+bus. `--no-spawn` disables bootstrap. The Rust binary comes from an explicit
+`WKS_RUST_BACKEND_BIN`, beside the TUI, the repository release directory or
+PATH. The TUI passes its parent PID and holds the child's stdin open. Dropping
+the owner closes stdin, waits up to five seconds, then kills/waits if necessary.
+A pre-existing bus or daemon stays externally owned; an already-running daemon
+prevents the TUI from starting a competing shared backend. No Go hub or brain
+is launched.
+
+Each URL's loopback status is checked separately. Direct mode, a failed local
+Rust bootstrap, or a separately selected local daemon with a remote bus may
+still bootstrap standalone claudemon on fixed API/hook ports 7891/7890. This
+is not a general custom-port daemon launcher. The guard kills/waits only for
+children it started. Port availability alone is not provider health proof.
 
 An unusable loopback bus can cause startup fallback to direct claudemon. An
 explicit remote bus does not fall back to a different local machine. This is
-a startup choice, not per-call silent failover. The module header still contains
-older direct-only prose; executable bootstrap is authoritative.
+a startup choice, not per-call silent failover. Executable bootstrap and the ownership distinction above are authoritative.
 
 ## Transports and state
 
