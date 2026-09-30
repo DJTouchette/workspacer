@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HubBusClient } from './hubBusClient';
+import { createWebBackend } from './webBackend';
 
 /**
  * Drive-able WebSocket stand-in: records every instance the client opens and
@@ -89,6 +90,81 @@ describe('HubBusClient reconnect handling', () => {
     FakeWS.instances[1].open();
     expect(FakeWS.instances[1].sent.some((frame) => frame.includes('queued'))).toBe(false);
     reloaded.stop();
+    client.stop();
+  });
+
+  it('web hubPublish serializes the publish wire operation rather than an unprovided RPC', async () => {
+    const backend = createWebBackend('tok', 'ws://publication.example/bus');
+    const ws = FakeWS.instances[0];
+    ws.open();
+    const event = {
+      type: 'ui.pane.opened',
+      source: 'workspacer.ui',
+      data: { title: 'Exact 🦀', nested: [1, false] },
+    };
+    const pending = backend.hubPublish!(event);
+    const wire = JSON.parse(ws.sent[ws.sent.length - 1]);
+    // The old implementation receives this real protocol refusal shape and
+    // silently resolves. The assertion below independently inspects its wire.
+    if (wire.op === 'call')
+      ws.onmessage?.({
+        data: JSON.stringify({ op: 'error', id: wire.id, error: 'no provider for __publish' }),
+      });
+    await pending;
+    expect(wire).toEqual({ op: 'publish', event });
+  });
+
+  it('best-effort publication drops disconnected, failed-send and stopped events without replay', () => {
+    const client = new HubBusClient('tok', 'ws://publication-lifecycle.example/bus');
+    client.start();
+    const first = FakeWS.instances[0];
+    const event = { type: 'ui.pane.opened', source: 'workspacer.ui', data: { exact: true } };
+    client.publish(event); // CONNECTING is not a durable outbox.
+    first.open();
+    expect(first.sent.filter((frame) => JSON.parse(frame).op === 'publish')).toEqual([]);
+    client.publish(event);
+    expect(JSON.parse(first.sent[first.sent.length - 1])).toEqual({ op: 'publish', event });
+    first.die();
+    client.publish({ ...event, data: { mustNotReplay: true } });
+    vi.advanceTimersByTime(1000);
+    const second = FakeWS.instances[1];
+    second.open();
+    expect(second.sent.filter((frame) => JSON.parse(frame).op === 'publish')).toEqual([]);
+    const send = vi.spyOn(second, 'send').mockImplementation(() => {
+      throw new Error('closed during send');
+    });
+    expect(() => client.publish(event)).not.toThrow();
+    send.mockRestore();
+    client.stop();
+    client.publish(event);
+    expect(second.sent.filter((frame) => JSON.parse(frame).op === 'publish')).toEqual([]);
+  });
+
+  it('uncorrelated server publication refusal cannot settle an RPC or create a retry', async () => {
+    const client = new HubBusClient('view-token', 'ws://publication-refusal.example/bus');
+    client.start();
+    const ws = FakeWS.instances[0];
+    ws.open();
+    ws.onmessage?.({
+      data: JSON.stringify({ op: 'hello', scope: 'view', methods: ['config.get'] }),
+    });
+    const pending = client.call('config.get');
+    const call = JSON.parse(ws.sent[ws.sent.length - 1]);
+    client.publish({ type: 'ui.pane.opened', data: { denied: true } });
+    const count = ws.sent.length;
+    ws.onmessage?.({
+      data: JSON.stringify({
+        op: 'error',
+        id: '',
+        error: 'not authorized: publishing events is outside this token scope',
+      }),
+    });
+    ws.onmessage?.({
+      data: JSON.stringify({ op: 'result', id: call.id, result: { retained: true } }),
+    });
+    expect(await pending).toEqual({ retained: true });
+    vi.advanceTimersByTime(20000);
+    expect(ws.sent.length).toBe(count);
     client.stop();
   });
 

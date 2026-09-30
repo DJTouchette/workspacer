@@ -396,6 +396,24 @@ export class HubBusClient {
     }
   }
 
+  /** Best-effort UI publication. The wire has no success acknowledgement;
+   * server scope/topic checks remain authoritative. Never queue or replay it. */
+  publish(event: { type: string; source?: string; data?: unknown }): void {
+    if (
+      this.closedByUser ||
+      this.powerPaused ||
+      !this.connected ||
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN
+    )
+      return;
+    try {
+      this.ws.send(JSON.stringify({ op: 'publish', event }));
+    } catch {
+      // A socket may close between readyState and send. UI events are dropped.
+    }
+  }
+
   // ── RPC ───────────────────────────────────────────────────────────────
 
   /**

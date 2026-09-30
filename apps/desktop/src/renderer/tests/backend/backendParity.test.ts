@@ -238,6 +238,53 @@ function repoFile(...segments: string[]): string {
   return path.resolve(here, ...segments);
 }
 
+interface CoreRegistry {
+  hub: string[];
+  architecturalRetirements: Record<string, { reason: string; replacement: string; tests: string }>;
+}
+const CORE_REGISTRY: CoreRegistry = JSON.parse(
+  readFileSync(
+    repoFile('..', '..', '..', '..', '..', '..', 'contracts', 'backend-capabilities.json'),
+    'utf8',
+  ),
+);
+function registrationProblems(
+  webSource: string,
+  desktopSource: string,
+  registry: CoreRegistry,
+): string[] {
+  const called = new Set(
+    [...webSource.matchAll(/client\s*\.\s*call\s*(?:<[^>]*>)?\s*\(\s*'([^']+)'/g)].map((m) => m[1]),
+  );
+  const desktop = new Set(
+    [...desktopSource.matchAll(/(?:registerCapability|cat)\s*\(\s*'([^']+)'/g)].map((m) => m[1]),
+  );
+  const problems: string[] = [];
+  if (called.size < 74) problems.push(`web call population collapsed: ${called.size} < 74`);
+  if (desktop.size < 88)
+    problems.push(`desktop registration population collapsed: ${desktop.size} < 88`);
+  if (registry.hub.length < 43 || new Set(registry.hub).size !== registry.hub.length)
+    problems.push('portable hub registration population collapsed or duplicated');
+  for (const [method, retirement] of Object.entries(registry.architecturalRetirements)) {
+    if (!registry.hub.includes(method) || !retirement.reason.trim())
+      problems.push(`unexplained retirement ${method}`);
+  }
+  const registered = new Set([
+    ...desktop,
+    ...desktopMethods.ownerMethods,
+    ...desktopMethods.assetMethods,
+    ...registry.hub.filter(
+      (method) => !Object.prototype.hasOwnProperty.call(registry.architecturalRetirements, method),
+    ),
+  ]);
+  for (const method of called) {
+    if (Object.prototype.hasOwnProperty.call(registry.architecturalRetirements, method))
+      problems.push(`retired call ${method}`);
+    else if (!registered.has(method)) problems.push(`unregistered call ${method}`);
+  }
+  return problems.sort();
+}
+
 describe('backend parity — every ElectronAPI method is triaged into one bucket', () => {
   it('routes request-tagged chat through the real desktop bridge without changing ordinary bus chat', async () => {
     const receipt = { ok: false, requestId: 'host-request', delivery: 'unknown', mode: 'unknown' };
@@ -520,77 +567,49 @@ describe('backend parity — every ElectronAPI method is triaged into one bucket
     }
   });
 
-  it('every capability the web backend calls is a registered hub capability', () => {
-    // Extract the capability names webBackend issues via client.call('<cap>', …)
-    // and assert each is registered in hubCapabilities.ts (or is hub-core
-    // plumbing the hub itself owns). Catches a bus method wired to a capability
-    // the host never registers — a silent web-parity break.
-    const webSrc = readFileSync(repoFile('..', '..', 'src', 'backend', 'webBackend.ts'), 'utf-8');
-    const capSrc = readFileSync(
+  it('web capability registrations match the portable hub contract without legacy source reads', () => {
+    const web = readFileSync(repoFile('..', '..', 'src', 'backend', 'webBackend.ts'), 'utf8');
+    const desktop = readFileSync(
       repoFile('..', '..', '..', 'main', 'services', 'hubCapabilities.ts'),
-      'utf-8',
-    );
-
-    // client.call('cap', …) or client.call<T>('cap', …)
-    const called = new Set<string>();
-    for (const m of webSrc.matchAll(/client\s*\.\s*call\s*(?:<[^>]*>)?\s*\(\s*'([^']+)'/g)) {
-      called.add(m[1]);
-    }
-    // registerCapability('cap', …) and cat('cap', …) in hubCapabilities.ts
-    const registered = new Set<string>();
-    for (const m of capSrc.matchAll(/(?:registerCapability|cat)\s*\(\s*'([^']+)'/g)) {
-      registered.add(m[1]);
-    }
-    for (const method of [...desktopMethods.ownerMethods, ...desktopMethods.assetMethods])
-      registered.add(method);
-    const hubSource = readFileSync(
-      repoFile('..', '..', '..', '..', '..', '..', 'services', 'hub', 'cmd', 'hub', 'main.go'),
       'utf8',
     );
-    for (const match of hubSource.matchAll(/RegisterLocal(?:Ident)?\(\s*"([^"]+)"/g))
-      registered.add(match[1]);
-    // Hub-core surface the main process does NOT register (owned by the hub
-    // daemon / bus itself), so a match against hubCapabilities.ts is not
-    // expected. federation.peers is RegisterLocal'd by cmd/hub when peers are
-    // configured (see internal/federation).
-    const HUB_CORE = new Set([
-      'usage.report',
-      'layout.get',
-      'layout.set',
-      '__publish',
-      'federation.peers',
-      // Hub-owned remote-node registry (services/hub internal/nodes). Like
-      // federation.peers these are provided by the HUB itself, not by a
-      // desktop capability — and they are registered only when a nodes.json
-      // exists, which is what makes "no provider for nodes.list" the
-      // feature-absent signal the strip reads.
-      'nodes.list',
-      'nodes.wake',
-      'nodes.sleep',
-      'remote.pairingInfo',
-      'remote.tokensList',
-      'remote.tokenGetOrCreate',
-      'remote.tokenRevoke',
-      // Hub-owned job system (services/hub/internal/jobs), trusted-only RPCs.
-      'jobs.list',
-      'jobs.upsert',
-      'jobs.remove',
-      'jobs.run',
-      'jobs.history',
-      // Hub-owned Overview pacing preference (services/hub/internal/usageprefs).
-      // The reader is view tier beside usage.report; the writer is trusted-only.
-      'usage.pacingSchedule',
-      'usage.setPacingSchedule',
-    ]);
-
-    expect(called.size, 'expected to extract capability names from webBackend.ts').toBeGreaterThan(
-      20,
-    );
-    const missing = [...called].filter((c) => !registered.has(c) && !HUB_CORE.has(c)).sort();
+    expect(registrationProblems(web, desktop, CORE_REGISTRY)).toEqual([]);
+    // Independent runtime counterpart: services/hub-rs/tests/headless_completeness.rs
+    // starts Backend and compares shipping web literals to actual methodNames.
+    // This declaration guard is not a claim that a fixture-only name is installed.
     expect(
-      missing,
-      `webBackend calls hub capabilities that hubCapabilities.ts does not register: ${missing.join(', ')}`,
-    ).toEqual([]);
+      registrationProblems(
+        web + "\nclient.call('fixture.unprovided', {});",
+        desktop,
+        CORE_REGISTRY,
+      ),
+    ).toContain('unregistered call fixture.unprovided');
+    const withoutRead = desktop.replace(/cat\('fs\.read'/, "cat('fixture.relocatedRead'");
+    expect(withoutRead).not.toBe(desktop);
+    expect(registrationProblems(web, withoutRead, CORE_REGISTRY)).toContain(
+      'unregistered call fs.read',
+    );
+    const removed = {
+      ...CORE_REGISTRY,
+      hub: CORE_REGISTRY.hub.filter((method) => method !== 'usage.report'),
+    };
+    expect(registrationProblems(web, desktop, removed)).toContain('unregistered call usage.report');
+    expect(
+      registrationProblems(
+        web + "\nclient.call('plugins.prepareLaunch', {});",
+        desktop,
+        CORE_REGISTRY,
+      ),
+    ).toContain('retired call plugins.prepareLaunch');
+    expect(registrationProblems('', desktop, CORE_REGISTRY)).toContain(
+      'web call population collapsed: 0 < 74',
+    );
+    expect(registrationProblems(web, '', CORE_REGISTRY)).toContain(
+      'desktop registration population collapsed: 0 < 88',
+    );
+    expect(registrationProblems(web, desktop, { ...CORE_REGISTRY, hub: [] })).toContain(
+      'portable hub registration population collapsed or duplicated',
+    );
   });
 });
 

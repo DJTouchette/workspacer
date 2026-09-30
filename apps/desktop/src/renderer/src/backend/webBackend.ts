@@ -1532,11 +1532,10 @@ export function createWebBackend(
         return null;
       }
     },
-    hubPublish: (event) =>
-      client
-        .call<void>('__publish', event)
-        .then(() => {})
-        .catch(() => {}),
+    hubPublish: (event) => {
+      client.publish(event);
+      return Promise.resolve();
+    },
     ...createWebPluginAdmin(hubHttpBase, token),
     // Pane tokens are minted over the hub's guarded route, exactly as the
     // desktop does it — this client holds a bearer token and already uses it for
