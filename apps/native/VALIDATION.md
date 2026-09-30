@@ -290,3 +290,37 @@ Witness returned no usable selection from its original-checkout index; the full
 native suite was used. The X11 real-window smoke was not run on this host because
 Xvfb/xdotool are unavailable. Windows/macOS runtime checks remain CI coverage;
 this validation does not claim fresh cross-platform or hardware GPU results.
+
+
+## Centered chat and compact elevation (2026-09-30)
+
+Transcript, header and composer now share the same centered 900 px content
+column and gutters. Virtual-list items stay full width so their content can
+center inside the viewport. At short, narrow sizes the sidebar uses 200 px,
+approval controls share a compact heading row, and the composer omits the
+shortcut footer. The dock retains its measured scroll geometry and has a
+45 percent height cap in short windows. Floating composer, approval and jump
+controls use palette-specific shadows; Allow once uses the primary color.
+
+Validation on Linux:
+
+- `cargo test --locked --features ui-tests --no-fail-fast -- --test-threads=1`:
+  **126 passed** (53 library, 43 UI/lifetime, 27 protocol, 3 Rust-host).
+- The new GPUI regression checks matching chat/composer edges, viewport center,
+  and conversation space with an approval at 1600 × 900, 1000 × 700 and 720 × 480.
+- Formatting and diff whitespace checks passed.
+- Real X11 windows rendered the rich fixture in Dark, Light and Nord at
+  720 × 480, plus Dark at 1600 × 900. Captures were visually inspected.
+- Parallel full-suite runs failed the existing scroll-to-end follow test;
+  the isolated test and complete serialized suite passed. The concurrency
+  sensitivity remains unresolved and this pass does not claim parallel green.
+
+The host needed an isolated Cargo cache and locally extracted Linux libraries.
+These did not change repository dependencies or build configuration. Window
+checks used Xvfb/software Vulkan, no real provider, and do not establish
+hardware performance or Windows/macOS runtime behavior.
+
+Captures: [wide](docs/ui-centered-wide.png),
+[compact Dark](docs/ui-centered-compact-dark.png),
+[compact Light](docs/ui-centered-compact-light.png),
+[compact Nord](docs/ui-centered-compact-nord.png).

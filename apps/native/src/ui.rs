@@ -1112,7 +1112,13 @@ impl Render for Workspace {
         let filtered = !self.search.read(cx).value().is_empty() || self.project_filter.is_some();
         let no_visible_sessions = visible_sessions.is_empty();
         let sidebar = div()
-            .w(px(if narrow { 232. } else { 264. }))
+            .w(px(if narrow && compact {
+                200.
+            } else if narrow {
+                232.
+            } else {
+                264.
+            }))
             .h_full()
             .flex_shrink_0()
             .bg(rgb(p.base))
@@ -1628,7 +1634,7 @@ impl Render for Workspace {
         }
 
         let header = div().absolute().top_0().left_0().w_full().occlude().bg(rgb(p.chat)).border_b_1().border_color(rgb(p.border)).flex().justify_center()
-            .child(div().relative().w_full().max_w(px(CHAT_WIDTH + 40.)).px_5().py_3().flex().flex_col().gap_2()
+            .child(chrome::chat_column().relative().py_3().flex().flex_col().gap_2()
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
                         let _ = header_view.update(cx, |this, cx| {
@@ -1679,12 +1685,12 @@ impl Render for Workspace {
                 ))
                 .when(!self.view.transcript.rows.is_empty() || self.view.loading, |d| d.child(transcript))
                 .child(header)
-                .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, window, cx| {
+                .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).shadow(chrome::floating_shadow(p)).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, window, cx| {
                     this.follow = true;
                     this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); this.chat.unread = None; this.capture_reading(window, cx); cx.notify();
                 })))))
                 .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center()
-                    .child(div().id("conversation-dock").relative().w_full().max_w(px(CHAT_WIDTH + 40.)).px_5().pt_3().pb_4().max_h(window.viewport_size().height * 0.55).overflow_y_scroll().flex().flex_col().gap_2()
+                    .child(chrome::chat_column().id("conversation-dock").relative().pt_3().pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * if compact { 0.45 } else { 0.55 }).overflow_y_scroll().flex().flex_col().gap_2()
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
                         let _ = dock_view.update(cx, |this, cx| {
@@ -1704,19 +1710,20 @@ impl Render for Workspace {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
                     let summary = approval.pointer("/toolInput/command").or_else(|| approval.pointer("/toolInput/file_path")).and_then(serde_json::Value::as_str).unwrap_or("").lines().next().unwrap_or("").to_owned();
                     let details = serde_json::to_string_pretty(approval.get("toolInput").or_else(|| approval.get("raw")).unwrap_or(approval)).unwrap_or_default();
-                    d.child(div().occlude().w_full().p_3().rounded(px(10.)).bg(rgb(p.surface)).flex_shrink_0().flex().flex_col().gap_2().text_size(px(12.))
-                        .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}")))
-                        .child(div().flex().items_center().gap_2().child(div().flex_1().min_w_0().truncate().font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(if summary.is_empty() { "Review request details".to_owned() } else { summary })).child(self.button("approval-toggle", if self.extras.approval_details { "Hide details" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); }))))
+                    d.child(div().occlude().w_full().p(px(if compact { 8. } else { 12. })).rounded(px(10.)).shadow(chrome::floating_shadow(p)).bg(rgb(p.surface)).flex_shrink_0().flex().flex_col().gap_2().text_size(px(12.))
+                        .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}"))
+                            .when(compact, |d| d.child(div().flex_1().min_w_0().truncate().text_color(rgb(p.text)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(summary.clone())).child(self.button("approval-toggle-compact", if self.extras.approval_details { "Hide" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
+                        .when(!compact, |d| d.child(div().flex().items_center().gap_2().child(div().flex_1().min_w_0().truncate().font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(if summary.is_empty() { "Review request details".to_owned() } else { summary })).child(self.button("approval-toggle", if self.extras.approval_details { "Hide details" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
                         .when(self.extras.approval_details, |d| d.child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded_md().bg(rgb(p.surface)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).text_color(rgb(p.muted)).child(details)))
                         .child(div().flex().gap_2()
-                            .child(self.button("approve", "Allow once", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
+                            .child(self.button("approve", "Allow once", enabled).bg(rgb(if enabled { p.primary } else { p.selected })).text_color(rgb(if enabled { p.on_primary } else { p.disabled })).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
                 .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, cx)))
                 .when(selected.is_some(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
-                    .child(div().id("floating-composer").occlude().bg(rgb(p.surface)).border_1()
+                    .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).occlude().bg(rgb(p.surface)).border_1()
                         .border_color(rgb(if self.composer.read(cx).focus_handle(cx).is_focused(window) { p.accent } else { p.border }))
-                        .rounded(px(20.)).p_3().flex().flex_col().gap_2()
+                        .rounded(px(20.)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
                         .when(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).is_some_and(|v| !v.is_empty()), |d| d.child(div().flex().flex_wrap().gap_2()
                             .children(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).into_iter().flatten().enumerate().map(|(ix, (name, _))| {
                                 div().id(("attachment", ix)).pl_2().pr_1().py_1().rounded_md().bg(rgb(p.selected)).max_w_full().flex().items_center().gap_2()
@@ -1736,7 +1743,7 @@ impl Render for Workspace {
                                 .child(self.icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).size(px(32.)).rounded_full()
                                     .bg(rgb(if enabled && !self.uploading() { p.primary } else { p.selected })).text_color(rgb(if enabled && !self.uploading() { p.on_primary } else { p.disabled }))
                                     .when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
-                    .child(div().occlude().bg(rgb(p.chat)).rounded_md().px_2().py_1().flex().items_center().justify_between().gap_2().text_size(px(10.)).text_color(rgb(p.muted))
+                    .child(div().when(compact, |d| d.hidden()).occlude().bg(rgb(p.chat)).rounded_md().px_2().py_1().flex().items_center().justify_between().gap_2().text_size(px(10.)).text_color(rgb(p.muted))
                         .child(div().flex_1().min_w_0().flex().items_center().gap_2()
                             .when(animate_activity, |d| d.child(brand_spinner(12., p, "composer-activity")))
                             .child(div().truncate().child(activity.unwrap_or_else(|| if enabled { "Ready" } else { "Session unavailable" }.into()))))
@@ -2350,6 +2357,50 @@ mod tests {
     }
 
     #[gpui::test]
+    fn chat_and_composer_share_centered_edges_with_compact_approval(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.sessions = Arc::new(vec![Session {
+            id: "a".into(),
+            label: "Alpha".into(),
+            approval: Some(serde_json::json!({
+                "toolName": "Bash", "toolInput": {"command": "cargo test"}
+            })),
+            ..Default::default()
+        }]);
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![Item {
+                kind: "assistant_text".into(),
+                text: "Ready for review".into(),
+                ..Default::default()
+            }],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        for (width, height) in [(1600., 900.), (1000., 700.), (720., 480.)] {
+            visual.simulate_resize(size(px(width), px(height)));
+            visual.run_until_parked();
+            let chat = visual.debug_bounds("chat-content-column").unwrap();
+            let composer = visual.debug_bounds("chat-composer").unwrap();
+            assert!(
+                (f32::from(chat.left() - composer.left())).abs() < 1.,
+                "{width}x{height}: chat={chat:?}, composer={composer:?}"
+            );
+            assert!((f32::from(chat.right() - composer.right())).abs() < 1.);
+            workspace.read_with(&visual, |this, _| {
+                assert!(
+                    (f32::from(chat.center().x - this.list.viewport_bounds().center().x)).abs()
+                        < 1.
+                );
+                assert!(this.composer_dock_bounds.top() - this.header_bounds.bottom() > px(140.));
+            });
+        }
+    }
+
+    #[gpui::test]
     fn floating_composer_keeps_the_last_message_clear_without_shortening_the_viewport(
         cx: &mut TestAppContext,
     ) {
@@ -2677,7 +2728,17 @@ mod tests {
                 ..Default::default()
             });
             visual.run_until_parked();
-            workspace.read_with(&visual, |this, _| assert_eq!(this.follow, delta < 0.));
+            workspace.read_with(&visual, |this, _| {
+                assert_eq!(
+                    this.follow,
+                    delta < 0.,
+                    "delta={delta}, viewport={:?}, dock={:?}, tail={:?}, offset={:?}",
+                    this.list.viewport_bounds(),
+                    this.composer_dock_bounds,
+                    this.list.bounds_for_item(39),
+                    this.list.logical_scroll_top()
+                )
+            });
             assert_eq!(visual.debug_bounds("jump-latest").is_none(), delta < 0.);
         }
         visual.update(|window, cx| {

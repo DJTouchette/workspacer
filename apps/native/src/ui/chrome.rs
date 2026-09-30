@@ -2,6 +2,20 @@
 use super::*;
 use gpui_component::tooltip::Tooltip;
 
+/// Shared outer measure and gutters for transcript, header and composer.
+pub(super) fn chat_column() -> Div {
+    div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5()
+}
+
+pub(super) fn floating_shadow(p: Palette) -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: gpui::Hsla::from(rgb(p.shadow)).opacity(p.shadow_opacity),
+        offset: gpui::point(px(0.), px(6.)),
+        blur_radius: px(20.),
+        spread_radius: px(-4.),
+    }]
+}
+
 pub(super) fn section(title: &'static str, description: &'static str, p: Palette) -> Div {
     div()
         .py_5()

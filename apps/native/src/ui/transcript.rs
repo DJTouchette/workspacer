@@ -405,9 +405,10 @@ impl Workspace {
         let mut body = div()
             .group("message")
             .w_full()
-            .px_5()
             .py_2()
-            .child(div().w_full().max_w(px(CHAT_WIDTH)).mx_auto());
+            .when(ix + 1 == rows.len(), |d| {
+                d.debug_selector(|| "chat-content-column".into())
+            });
         if self.chat.unread == Some(ix) {
             body = body.child(
                 div()
@@ -514,16 +515,16 @@ impl Workspace {
             .left_0()
             .size_full()
         });
+        // Virtual list items are placed directly at the viewport origin. Center
+        // the column inside a full-width item rather than on the item itself.
         div()
+            .w_full()
             .relative()
             .children(tail_probe)
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "last-transcript-row".into())
             })
-            .w_full()
-            .max_w(px(CHAT_WIDTH))
-            .mx_auto()
-            .child(body)
+            .child(chrome::chat_column().child(body))
             .into_any_element()
     }
     pub(super) fn render_message(

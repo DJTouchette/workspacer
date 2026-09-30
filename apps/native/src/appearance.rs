@@ -29,6 +29,8 @@ pub struct Palette {
     pub success: u32,
     pub busy: u32,
     pub user: u32,
+    pub shadow: u32,
+    pub shadow_opacity: f32,
 }
 
 impl Appearance {
@@ -63,6 +65,8 @@ impl Appearance {
                 success: 0x43c59e,
                 busy: 0xc084fc,
                 user: 0x1b1e23,
+                shadow: 0x000000,
+                shadow_opacity: 0.32,
             },
             Self::Light => Palette {
                 base: 0xf4f4f5,
@@ -81,6 +85,8 @@ impl Appearance {
                 success: 0x16a34a,
                 busy: 0x9333ea,
                 user: 0xe9eef9,
+                shadow: 0x18181b,
+                shadow_opacity: 0.10,
             },
             Self::Nord => Palette {
                 base: 0x2e3440,
@@ -99,6 +105,8 @@ impl Appearance {
                 success: 0xa3be8c,
                 busy: 0xb48ead,
                 user: 0x303843,
+                shadow: 0x171b22,
+                shadow_opacity: 0.28,
             },
         }
     }

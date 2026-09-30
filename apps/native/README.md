@@ -127,6 +127,15 @@ Existing-hub mode does not own or stop backend processes on exit. The connected 
 
 ## Typography
 
+Native appearance uses Dark, Light and Nord semantic palettes, selected in
+**Settings → Appearance** and saved on this device. Floating composer and approval
+surfaces use palette-specific shadows. Native palettes are independent of the
+Electron client's custom-theme registry.
+
+The transcript, conversation header and composer share a centered 900 px content
+column with matching gutters. Short, narrow windows use a slimmer sidebar and
+compact approval controls to retain more conversation space.
+
 Open **Settings → Typography** to choose searchable interface and code fonts
 from the bundled defaults and fonts installed on your device. Inter and
 JetBrains Mono are embedded, so they work on a fresh installation. Text size,
