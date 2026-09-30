@@ -10,21 +10,154 @@ use std::{
     time::Duration,
 };
 use workspacer_hub::{Options, backend::Backend, client::Client, services::config::Config};
+// Diagnostic branch only: retain selected state, never argv/env/bearer fields.
+static LAST_OBSERVATION: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+fn observe(value: Value) {
+    *LAST_OBSERVATION.lock().unwrap() = Some(value);
+}
+fn safe_error(error: impl std::fmt::Display) -> String {
+    let text = error.to_string();
+    let lower = text.to_ascii_lowercase();
+    if ["token", "authorization", "bearer", "secret"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        return "credential-related error text omitted".into();
+    }
+    text.chars().take(2000).collect()
+}
+fn selected_snapshot(value: &Value) -> Value {
+    json!({"sessionId":value["sessionId"],"status":value["status"],
+        "ambientState":value["ambientState"],"mode":value["mode"],"provider":value["provider"],
+        "subagentIds":value["subagents"].as_array().into_iter().flatten().map(|row|row["id"].clone()).collect::<Vec<_>>()})
+}
+struct ObservedClient(Client);
+impl std::ops::Deref for ObservedClient {
+    type Target = Client;
+    fn deref(&self) -> &Client {
+        &self.0
+    }
+}
+impl ObservedClient {
+    async fn call(&self, method: &str, params: Value) -> anyhow::Result<Value> {
+        let session = params["sessionId"].clone();
+        let result = self.0.call(method, params).await;
+        let state = match &result {
+            Ok(value) if method == "sessions.snapshot" => selected_snapshot(value),
+            Ok(value) => json!({"ok":value["ok"],"sessionId":value["sessionId"]}),
+            Err(error) => json!({"error":safe_error(error)}),
+        };
+        observe(json!({"method":method,"sessionId":session,"reply":state}));
+        result
+    }
+}
+fn selected_log(row: &Value) -> Value {
+    let message = row["message"].as_str().unwrap_or("");
+    let markers: Vec<_> = [
+        "parent-ready-fixture",
+        "ask-numeric-fixture",
+        "/effort high",
+        "/effort low",
+        "finish-child-fixture",
+        "fixture milestone",
+        "child-finished-fixture",
+        "CORRECTION FROM YOUR DISPATCHER",
+    ]
+    .into_iter()
+    .filter(|marker| message.contains(marker))
+    .collect();
+    json!({"ready":row["ready"],"pid":row["pid"],"session":row["session"],
+        "scopedMcpCall":row["scopedMcpCall"],"progressMcpCall":row["progressMcpCall"],
+        "numericAnswers":row["numericAnswers"],"messageBytes":message.len(),"messageMarkers":markers})
+}
 fn rows(root: &Path, id: &str) -> Vec<Value> {
-    std::fs::read_to_string(root.join(format!("received-{id}.jsonl")))
+    let rows: Vec<_> = std::fs::read_to_string(root.join(format!("received-{id}.jsonl")))
         .unwrap_or_default()
         .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect();
+    observe(json!({"fixtureSession":id,"rowCount":rows.len(),
+        "lastRows":rows.iter().rev().take(8).map(selected_log).collect::<Vec<_>>()}));
+    rows
 }
-async fn until(mut condition: impl AsyncFnMut() -> bool) {
+fn timed_out(phase: &str) -> ! {
+    eprintln!(
+        "[diag] phase={phase} last={}",
+        LAST_OBSERVATION
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap_or(&Value::Null)
+    );
+    if let Some(root) = std::env::var_os("WKS_LOCAL_SPAWN_FIXTURE") {
+        let root = PathBuf::from(root);
+        let mut pids = std::collections::BTreeSet::new();
+        for entry in std::fs::read_dir(&root).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !(name.starts_with("received-") && name.ends_with(".jsonl"))
+                && name != "codex-processes.jsonl"
+            {
+                continue;
+            }
+            let bytes = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let records: Vec<Value> = bytes
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect();
+            for row in &records {
+                if let Some(pid) = row["pid"].as_i64().filter(|pid| *pid > 0) {
+                    pids.insert(pid);
+                }
+            }
+            eprintln!(
+                "[diag] file={name} bytes={} records={} last={}",
+                bytes.len(),
+                records.len(),
+                json!(
+                    records
+                        .iter()
+                        .rev()
+                        .take(8)
+                        .map(selected_log)
+                        .collect::<Vec<_>>()
+                )
+            );
+        }
+        if !pids.is_empty() {
+            let ids = pids
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            match Command::new("ps")
+                .args(["-o", "pid=,ppid=,state=", "-p", &ids])
+                .output()
+            {
+                Ok(output) => {
+                    for line in String::from_utf8_lossy(&output.stdout).lines() {
+                        eprintln!("[diag] ps {line}");
+                    }
+                }
+                Err(error) => eprintln!("[diag] ps failed: {}", safe_error(error)),
+            }
+        }
+    }
+    panic!("local launch fixture timed out in phase {phase}");
+}
+async fn until(phase: &str, mut condition: impl AsyncFnMut() -> bool) {
+    eprintln!("[phase] begin {phase}");
+    let began = std::time::Instant::now();
     tokio::time::timeout(Duration::from_secs(20), async {
         while !condition().await {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("local launch fixture timed out");
+    .unwrap_or_else(|_| timed_out(phase));
+    eprintln!(
+        "[phase] complete {phase} elapsed_ms={}",
+        began.elapsed().as_millis()
+    );
 }
 #[test]
 fn owned_rpc_spawn_uses_scoped_mcp_and_routes_real_finish_wake_without_models() {
@@ -101,6 +234,12 @@ fn owned_rpc_spawn_uses_scoped_mcp_and_routes_real_finish_wake_without_models() 
         std::thread::sleep(Duration::from_millis(25));
     }
     let output = child.wait_with_output().unwrap();
+    for line in String::from_utf8_lossy(&output.stderr)
+        .lines()
+        .filter(|line| line.starts_with("[phase]") || line.starts_with("[diag]"))
+    {
+        eprintln!("{line}");
+    }
     assert!(
         output.status.success(),
         "isolated local-spawn fixture failed:\n{}\n{}",
@@ -147,18 +286,21 @@ async fn run(root: PathBuf) {
     )
     .await
     .unwrap();
-    until(async || {
-        backend
-            .handle()
-            .health()
-            .await
-            .is_ok_and(|health| health["launchReady"] == true)
+    until("backend-launch-ready", async || {
+        let health = backend.handle().health().await;
+        observe(match &health {
+            Ok(value) => json!({"healthStatus":value["status"],"launchReady":value["launchReady"],"mcpReady":value["mcpReady"]}),
+            Err(error) => json!({"healthError":safe_error(error)}),
+        });
+        health.is_ok_and(|health| health["launchReady"] == true)
     })
     .await;
     let address = backend.handle().ready().await.unwrap().unwrap();
-    let client = Client::connect_remote(&format!("ws://{address}/bus"), "fixture-owner")
-        .await
-        .unwrap();
+    let client = ObservedClient(
+        Client::connect_remote(&format!("ws://{address}/bus"), "fixture-owner")
+            .await
+            .unwrap(),
+    );
     let mut events = client.events();
     client
         .topics(["agent.snapshot".into()].into())
@@ -167,13 +309,13 @@ async fn run(root: PathBuf) {
     let parent=client.call("agents.spawn",json!({"cwd":project,"provider":"claude","transport":"stream","profileId":"isolated","message":"parent-ready-fixture","label":"Fixture parent"})).await.unwrap();
     assert_eq!(parent["messageQueued"], true);
     let parent_id = parent["sessionId"].as_str().unwrap().to_owned();
-    until(async || {
+    until("parent-scoped-mcp-call", async || {
         rows(&root, &parent_id)
             .iter()
             .any(|row| row["scopedMcpCall"] == true)
     })
     .await;
-    until(async || {
+    until("parent-initial-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -187,7 +329,7 @@ async fn run(root: PathBuf) {
         )
         .await
         .unwrap();
-    until(async || {
+    until("parent-numeric-question", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -195,14 +337,14 @@ async fn run(root: PathBuf) {
     })
     .await;
     client.call("claude.answer",json!({"sessionId":parent_id,"answers":["2","3","2"],"answerKinds":["text","text","option"]})).await.unwrap();
-    until(async || {
+    until("numeric-answer-receipt", async || {
         rows(&root, &parent_id).iter().any(|row| {
             row["numericAnswers"]
                 == json!({"Literal first":"2","Literal second":"3","Option control":"Blue"})
         })
     })
     .await;
-    until(async || {
+    until("parent-after-question-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -237,13 +379,13 @@ async fn run(root: PathBuf) {
             .is_err()
     );
     std::fs::write(root.join(format!("release-{child_id}")), "go").unwrap();
-    until(async || {
+    until("child-progress-receipt", async || {
         rows(&root, &child_id)
             .iter()
             .any(|row| row["progressMcpCall"] == true)
     })
     .await;
-    until(async || {
+    until("parent-finish-wake-receipt", async || {
         rows(&root, &parent_id)
             .iter()
             .filter_map(|row| row["message"].as_str())
@@ -272,7 +414,7 @@ async fn run(root: PathBuf) {
     }
     let successor=client.call("agents.spawn",json!({"cwd":project,"provider":"claude","transport":"stream","profileId":"isolated","message":"parent-ready-fixture","manager":true,"label":"Successor"})).await.unwrap();
     let successor_id = successor["sessionId"].as_str().unwrap().to_owned();
-    until(async || {
+    until("successor-initial-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":successor_id}))
             .await
@@ -305,7 +447,7 @@ async fn run(root: PathBuf) {
         .await
         .unwrap();
     assert_eq!(effort, json!({"ok":true,"effort":"high"}));
-    until(async || {
+    until("successor-effort-high-receipt", async || {
         rows(&root, &successor_id)
             .iter()
             .any(|row| row["message"] == "/effort high")
@@ -335,11 +477,14 @@ async fn run(root: PathBuf) {
     assert_eq!(accepted["ok"], true);
     assert_eq!(accepted["effort"], "low");
     assert!(accepted["warning"].as_str().is_some());
-    until(async || {
-        rows(&root, &successor_id)
-            .iter()
-            .any(|row| row["message"] == "/effort low")
-    })
+    until(
+        "successor-effort-low-after-bookkeeping-failure",
+        async || {
+            rows(&root, &successor_id)
+                .iter()
+                .any(|row| row["message"] == "/effort low")
+        },
+    )
     .await;
     assert_eq!(
         client
@@ -366,7 +511,7 @@ async fn run(root: PathBuf) {
     assert_eq!(handoff["ok"], true, "{handoff}");
     assert!(std::path::Path::new(handoff["path"].as_str().unwrap()).is_file());
 
-    until(async || {
+    until("parent-before-close-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
             .await
@@ -405,7 +550,7 @@ async fn run(root: PathBuf) {
             .unwrap()["parentSessionId"],
         successor_id
     );
-    until(async || {
+    until("reparented-child-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":child_id}))
             .await
@@ -450,7 +595,7 @@ async fn run(root: PathBuf) {
     assert_eq!(redispatch["clonedFrom"], child_id);
     assert_eq!(redispatch["taskTracking"], false);
     std::fs::write(root.join(format!("release-{retry_id}")), "go").unwrap();
-    until(async || {
+    until("retry-progress-receipt", async || {
         rows(&root, &retry_id)
             .iter()
             .any(|row| row["progressMcpCall"] == true)
@@ -507,7 +652,7 @@ async fn run(root: PathBuf) {
     }
     let codex = client.call("agents.spawn",json!({"cwd":project,"provider":"codex","transport":"stream","model":"gpt-5.6-luna","message":"fixture subagent parent","trackTask":false})).await.unwrap();
     let codex_id = codex["sessionId"].as_str().unwrap();
-    until(async || {
+    until("codex-parent-idle", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":codex_id}))
             .await
@@ -542,7 +687,7 @@ async fn run(root: PathBuf) {
         "rollout must not be readable before parent exposure"
     );
     std::fs::write(root.join("expose-codex-child"), "go").unwrap();
-    until(async || {
+    until("codex-child-exposed", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":codex_id}))
             .await
@@ -597,9 +742,13 @@ async fn run(root: PathBuf) {
     );
     pids.extend(codex_pids);
     backend.shutdown().await.unwrap();
-    until(async || {
-        pids.iter()
-            .all(|pid| unsafe { libc::kill(*pid as i32, 0) } != 0)
+    until("all-provider-pids-reaped", async || {
+        let probes:Vec<_> = pids.iter().map(|pid| {
+            let result = unsafe {libc::kill(*pid as i32,0)};
+            json!({"pid":pid,"killZero":result,"errno":if result==0 {None} else {std::io::Error::last_os_error().raw_os_error()}})
+        }).collect();
+        observe(json!({"pidProbes":probes}));
+        probes.iter().all(|probe| probe["killZero"] != 0)
     })
     .await;
 }

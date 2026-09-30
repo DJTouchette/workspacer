@@ -1,5 +1,6 @@
 name: Rust backend and native preview
 
+# Diagnostic branch only: macOS local_spawn RCA; do not merge workflow changes.
 # Validation artifacts only. This workflow never updates a release, tag,
 # Electron feed or rolling nightly. Node is build tooling, not runtime payload.
 on:
@@ -40,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -52,117 +53,11 @@ jobs:
         with:
           workspaces: services/hub-rs
           key: rust-service-preview
-      - name: Install search engine (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
       - name: Install search engine (macOS)
-        if: runner.os == 'macOS'
         run: command -v rg || brew install ripgrep
-      - name: Verify macOS unreaped process-group cleanup
-        if: runner.os == 'macOS'
-        run: |
-          cargo test --locked --no-fail-fast --manifest-path services/claudemon/Cargo.toml --lib child_group::tests
-          cargo test --locked --no-fail-fast --manifest-path services/claudemon/Cargo.toml --lib pty_owned::macos_tests
-      - name: Test shared Rust services and standalone lifecycle
-        run: cargo test --locked --no-fail-fast --manifest-path services/hub-rs/Cargo.toml
-      - name: Repeat macOS owned-process cleanup regressions
-        if: ${{ !cancelled() && runner.os == 'macOS' }}
-        shell: bash
-        run: |
-          fleet_capture_failed=0
-          for attempt in 1 2 3 4 5; do
-            cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test fleet_review oversize_file_diff_and_record_retention_never_publish_partial_ranges -- --exact --nocapture || fleet_capture_failed=1
-            cargo test --locked --manifest-path services/hub-rs/Cargo.toml --lib services::owned_process::tests::json_exchange_owns_multi_step_dialogue_and_kills_after_final_answer -- --exact --nocapture || fleet_capture_failed=1
-          done
-          exit "$fleet_capture_failed"
-
-  windows-preview:
-    runs-on: windows-latest
-    timeout-minutes: 90
-    env:
-      CARGO_INCREMENTAL: '0'
-      NATIVE_BACKEND: rust
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            apps/native
-            services/hub-rs
-            services/claudemon
-            tools/windows-contract-check
-          key: rust-native-preview
-      - name: Install packaging compiler tooling
-        working-directory: apps/desktop
-        run: npm ci --ignore-scripts
-      - name: Install ripgrep (search.project's engine)
-        shell: pwsh
-        run: |
-          # Pin the upstream archive: Chocolatey feed outages can report success
-          # without installing rg, making the later containment test misleading.
-          $rgArchive = Join-Path $env:RUNNER_TEMP 'ripgrep.zip'
-          $rgRoot = Join-Path $env:RUNNER_TEMP 'ripgrep'
-          Invoke-WebRequest -Uri 'https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-pc-windows-msvc.zip' -OutFile $rgArchive -MaximumRetryCount 3
-          if ((Get-FileHash $rgArchive -Algorithm SHA256).Hash -ne '124510b94b6baa3380d051fdf4650eaa80a302c876d611e9dba0b2e18d87493a') {
-            throw 'ripgrep archive checksum mismatch'
-          }
-          Expand-Archive -Path $rgArchive -DestinationPath $rgRoot
-          $rgBin = Join-Path $rgRoot 'ripgrep-15.1.0-x86_64-pc-windows-msvc'
-          Add-Content -Path $env:GITHUB_PATH -Value $rgBin
-          & (Join-Path $rgBin 'rg.exe') --version
-          if ($LASTEXITCODE -ne 0) { throw 'ripgrep is not runnable' }
-
-      - name: Enable Developer Mode for actual symlink contracts
-        shell: cmd
-        run: reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
-      - name: Test Rust hub and owned native backend
-        shell: pwsh
-        run: |
-          cargo test --locked --no-fail-fast --manifest-path tools/windows-contract-check/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw 'Windows process and filesystem contract tests failed' }
-          cargo test --locked --manifest-path services/claudemon/Cargo.toml --lib native_pty_child_exit_retires_current_generation_with_conpty_master_retained
-          if ($LASTEXITCODE -ne 0) { throw 'Windows native PTY exit and generation regression failed' }
-          cargo test --locked --no-fail-fast --manifest-path services/hub-rs/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw 'Rust hub tests failed' }
-          cargo test --locked --no-fail-fast --manifest-path apps/native/Cargo.toml --no-default-features --features rust-hub
-          if ($LASTEXITCODE -ne 0) { throw 'Rust native backend tests failed' }
-      - name: Build native Rust app, owned-backend harness and standalone CLI
-        shell: pwsh
-        run: |
-          cargo build --locked --release --manifest-path apps/native/Cargo.toml --features rust-hub --bin wks-native --bin native-harness
-          if ($LASTEXITCODE -ne 0) { throw 'Rust native build failed' }
-          cargo build --locked --release --manifest-path services/hub-rs/Cargo.toml --bin workspacer-rust
-          if ($LASTEXITCODE -ne 0) { throw 'Rust standalone build failed' }
-      - name: Resolve installer compiler
-        run: node apps/native/scripts/resolve-nsis.mjs
-      - name: Test payload and create separate unsigned preview installer
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (!$vs) { throw 'Visual Studio C++ tools not found' }
-          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" -Directory |
-            Sort-Object FullName -Descending | Select-Object -First 1
-          if (!$crt) { throw 'Redistributable x64 CRT not found' }
-          $env:NATIVE_CRT_DIR = $crt.FullName
-          node --test apps/native/scripts/windows-payload.test.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Payload/compiler tests failed' }
-          node apps/native/scripts/package-windows.mjs
-          if ($LASTEXITCODE -ne 0) { throw 'Rust preview packaging failed' }
-      - name: Install, upgrade, own Rust backend, join shutdown and uninstall
-        shell: pwsh
-        run: |
-          $version = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version
-          ./apps/native/scripts/test-windows-installer.ps1 -Backend rust -Installer "apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-$version-x64.exe"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: workspacer-native-rust-preview-windows-x64
-          if-no-files-found: error
-          path: apps/desktop/release/Workspacer-Native-Rust-Preview-Setup-*-x64.exe
+      - name: Diagnostic local_spawn attempt 1
+        run: cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test local_spawn -- --nocapture
+      - name: Diagnostic local_spawn attempt 2
+        run: cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test local_spawn -- --nocapture
+      - name: Diagnostic local_spawn attempt 3
+        run: cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test local_spawn -- --nocapture
