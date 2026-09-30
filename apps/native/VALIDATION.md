@@ -324,3 +324,28 @@ Captures: [wide](docs/ui-centered-wide.png),
 [compact Dark](docs/ui-centered-compact-dark.png),
 [compact Light](docs/ui-centered-compact-light.png),
 [compact Nord](docs/ui-centered-compact-nord.png).
+
+
+## Sidebar hierarchy and collapse (2026-09-30)
+
+Expanded navigation now uses 64 px session rows: title first, then project and
+non-routine status. Provider and full path remain available in tooltips. Selected
+rows retain their highlight on hover. A per-window collapse toggle switches to a
+56 px icon rail with two-character session initials, status indicators, navigation,
+search expansion, settings and the paused-connection wake control. Both layouts
+reuse the same filter, selection command and scroll handle. Search expansion
+focuses the existing input; it does not replace the query or composer.
+
+- Full native suite, serialized: **128 passed** (53 library, 45 UI/lifetime,
+  27 protocol, 3 Rust-host). New interaction coverage verifies preservation of
+  drafts/filters, search focus, rail width and explicit session selection.
+- Rust formatting, diff whitespace and Python syntax checks passed.
+- Real X11/software-Vulkan rich-fixture windows were inspected at 1200 × 800
+  expanded and 720 × 480 collapsed. The smoke script moves the pointer away
+  after its scripted click so a displaced control tooltip does not obscure the
+  resulting layout.
+- Witness left these files unmapped, so the full suite was run. This retains
+  the serialized-test scope and cross-platform limitations recorded above.
+
+Captures: [expanded](docs/ui-sidebar-expanded.png),
+[collapsed](docs/ui-sidebar-collapsed.png).

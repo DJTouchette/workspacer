@@ -156,6 +156,9 @@ def main():
         time.sleep(1)
         if click:
             drive("mousemove", "--window", window, str(click[0]), str(click[1]), "click", "1")
+            # Capture the resulting layout, without a tooltip left behind by
+            # the button that moved or disappeared after the click.
+            drive("mousemove", "--window", window, str(args.width - 1), str(args.height - 1))
             time.sleep(1)
         colors = screenshot(int(window), args.width, args.height, args.output)
         animation_frames = None

@@ -5,6 +5,7 @@ mod launch;
 mod markdown;
 mod navigation;
 mod scroll;
+mod sidebar;
 mod tools;
 mod transcript;
 mod typography;
@@ -315,6 +316,7 @@ pub struct Workspace {
     project_path: Entity<InputState>,
     search: Entity<InputState>,
     navigation_selected: Option<String>,
+    sidebar_collapsed: bool,
     sidebar_scroll: gpui::UniformListScrollHandle,
     projects_scroll: gpui::UniformListScrollHandle,
     _focus_watch: Vec<gpui::Subscription>,
@@ -495,6 +497,7 @@ impl Workspace {
             project_path,
             search,
             navigation_selected: None,
+            sidebar_collapsed: false,
             sidebar_scroll: gpui::UniformListScrollHandle::new(),
             projects_scroll: gpui::UniformListScrollHandle::new(),
             _focus_watch: focus_watch,
@@ -1108,375 +1111,7 @@ impl Render for Workspace {
             px(0.)
         });
 
-        let visible_sessions = self.visible_sessions(cx);
-        let filtered = !self.search.read(cx).value().is_empty() || self.project_filter.is_some();
-        let no_visible_sessions = visible_sessions.is_empty();
-        let sidebar = div()
-            .w(px(if narrow && compact {
-                200.
-            } else if narrow {
-                232.
-            } else {
-                264.
-            }))
-            .h_full()
-            .flex_shrink_0()
-            .bg(rgb(p.base))
-            .border_r_1()
-            .border_color(rgb(p.border))
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .px_4()
-                    .py_4()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(brand_mark(18., p))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(16.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Workspacer"),
-                    )
-                    .child(
-                        self.icon_button("new-session", "New session", IconName::Plus, !self.demo)
-                            .debug_selector(|| "new-session-button".into())
-                            .when(!self.demo, |d| {
-                                d.on_click(cx.listener(|this, _, window, cx| {
-                                    this.show_new_session(window, cx)
-                                }))
-                            }),
-                    ),
-            )
-            .child(
-                div().px_3().pb_2().child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_1()
-                        .child(
-                            Icon::new(IconName::Search)
-                                .size(px(14.))
-                                .text_color(rgb(p.muted)),
-                        )
-                        .child(Input::new(&self.search).appearance(false)),
-                ),
-            )
-            .child(
-                div().px_3().pb_1().child(
-                    self.quiet_button("nav-projects", "All projects", IconName::Folder, true)
-                        .w_full()
-                        .when(!self.new_session && self.screen == Screen::Projects, |d| {
-                            d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_screen(Screen::Projects, window, cx)
-                        })),
-                ),
-            )
-            .child(
-                div().px_3().pb_3().child(
-                    self.quiet_button("nav-history", "Session history", IconName::BookOpen, true)
-                        .w_full()
-                        .when(!self.new_session && self.screen == Screen::Recent, |d| {
-                            d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_feature(Screen::Recent, window, cx)
-                        })),
-                ),
-            )
-            .when(self.view.power_paused, |d| {
-                d.child(
-                    div()
-                        .px_3()
-                        .pb_3()
-                        .text_size(px(12.))
-                        .text_color(rgb(p.warning))
-                        .child(self.view.notice.clone())
-                        .when(self.view.can_resume_power_pause, |d| {
-                            d.child(
-                                self.button("resume-power-pause", "Reconnect and wake", true)
-                                    .mt_2()
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.command(Command::Refresh, cx)
-                                    })),
-                            )
-                        }),
-                )
-            })
-            .when(!self.ui_bus.notice.is_empty(), |d| {
-                d.child(self.render_ui_notice(cx))
-            })
-            .child(
-                div()
-                    .px_4()
-                    .pb_2()
-                    .flex()
-                    .justify_between()
-                    .text_size(px(10.))
-                    .text_color(rgb(p.muted))
-                    .child("SESSIONS")
-                    .child(if filtered {
-                        let total = self
-                            .view
-                            .sessions
-                            .iter()
-                            .filter(|s| !self.archived(&s.id))
-                            .count();
-                        format!("{} / {total}", visible_sessions.len())
-                    } else {
-                        visible_sessions.len().to_string()
-                    }),
-            )
-            .when_some(self.project_filter.as_ref(), |d, path| {
-                d.child(
-                    div()
-                        .px_3()
-                        .pb_2()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(11.))
-                                .text_color(rgb(p.accent))
-                                .child(path.clone()),
-                        )
-                        .child(
-                            self.button("all-projects", "All", true)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.project_filter = None;
-                                    cx.notify();
-                                })),
-                        ),
-                )
-            })
-            .when(no_visible_sessions, |d| {
-                d.child(
-                    div()
-                        .px_4()
-                        .py_3()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .text_size(px(12.))
-                        .child(if filtered {
-                            "No matching sessions"
-                        } else {
-                            "No sessions yet"
-                        })
-                        .child(div().text_color(rgb(p.muted)).text_size(px(11.)).child(
-                            if filtered {
-                                "Try another search or clear the filters."
-                            } else if self.view.connected {
-                                "Start a new session to begin."
-                            } else {
-                                "Sessions will appear when the hub connects."
-                            },
-                        ))
-                        .when(filtered, |d| {
-                            d.child(
-                                self.button("clear-session-filters", "Clear filters", true)
-                                    .debug_selector(|| "clear-session-filters".into())
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.project_filter = None;
-                                        this.search.update(cx, |input, cx| {
-                                            input.set_value("", window, cx)
-                                        });
-                                        cx.notify();
-                                    })),
-                            )
-                        }),
-                )
-            })
-            .child(
-                uniform_list(
-                    "sessions",
-                    visible_sessions.len(),
-                    cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                        range
-                            .map(|ix| {
-                                let session = &this.view.sessions[visible_sessions[ix]];
-                                let id = session.id.clone();
-                                let active = this
-                                    .navigation_selected
-                                    .as_ref()
-                                    .or(this.view.selected.as_ref())
-                                    == Some(&id);
-                                div().h(px(80.)).px_2().pb_1().child(
-                                    div()
-                                        .id(ix)
-                                        .h_full()
-                                        .px_3()
-                                        .py_2()
-                                        .rounded(px(6.))
-                                        .cursor_pointer()
-                                        .overflow_hidden()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .when(active, |d| d.bg(rgb(p.selected)))
-                                        .hover(|style| style.bg(rgb(p.surface)))
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .text_size(px(11.))
-                                                .text_color(rgb(p.muted))
-                                                .child(Icon::new(IconName::Folder).size(px(12.)))
-                                                .child(div().flex_1().min_w_0().truncate().child(
-                                                    chrome::project_label(&session.cwd).to_owned(),
-                                                ))
-                                                .when(
-                                                    session.working() && this.view.connected,
-                                                    |d| {
-                                                        d.child(brand_spinner(
-                                                            12.,
-                                                            p,
-                                                            SharedString::from(format!(
-                                                                "sidebar-working-{}",
-                                                                session.id
-                                                            )),
-                                                        ))
-                                                    },
-                                                )
-                                                .when(
-                                                    session.approval.is_some()
-                                                        || session.questions.is_some(),
-                                                    |d| d.child(status_dot(p.warning)),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .truncate()
-                                                .text_size(px(14.))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .child(this.session_title(session)),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .text_size(px(11.))
-                                                .text_color(rgb(p.muted))
-                                                .child(div().flex_1().min_w_0().truncate().child(
-                                                    if session.provider.is_empty() {
-                                                        session.cwd.clone()
-                                                    } else {
-                                                        session.provider.clone()
-                                                    },
-                                                ))
-                                                .child(
-                                                    div()
-                                                        .flex_shrink_0()
-                                                        .text_color(rgb(
-                                                            if session.approval.is_some()
-                                                                || session.questions.is_some()
-                                                            {
-                                                                p.warning
-                                                            } else {
-                                                                p.muted
-                                                            },
-                                                        ))
-                                                        .child(if this.view.connected {
-                                                            session_status(session, p).0.to_owned()
-                                                        } else {
-                                                            "Offline".to_owned()
-                                                        }),
-                                                ),
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.new_session = false;
-                                            this.screen = Screen::Conversation;
-                                            this.command(Command::Select(id.clone()), cx)
-                                        })),
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .track_scroll(self.sidebar_scroll.clone())
-                .flex_1()
-                .min_h_0(),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(keycap(
-                        if !self.settings.vim_navigation {
-                            "SHORTCUTS"
-                        } else if self.focus.is_focused(window) {
-                            "NORMAL"
-                        } else {
-                            "INSERT"
-                        },
-                        p,
-                    ))
-                    .child(div().text_size(px(10.)).text_color(rgb(p.muted)).child(
-                        if !self.settings.vim_navigation {
-                            "Ctrl P · Ctrl ,"
-                        } else if self.focus.is_focused(window) {
-                            "i edit · g p projects"
-                        } else {
-                            "Esc to navigate"
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_t_1()
-                    .border_color(rgb(p.border))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        self.quiet_button("nav-settings", "Settings", IconName::Settings, true)
-                            .when(!self.new_session && self.screen == Screen::Settings, |d| {
-                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_screen(Screen::Settings, window, cx)
-                            })),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .text_size(px(10.))
-                            .text_color(rgb(p.muted))
-                            .child(if self.demo {
-                                "Demo"
-                            } else if self.view.connected {
-                                "Connected"
-                            } else if self.view.power_paused {
-                                "Paused"
-                            } else {
-                                "Connecting…"
-                            }),
-                    )
-                    .child(status_dot(if self.view.connected {
-                        p.success
-                    } else {
-                        p.warning
-                    })),
-            );
+        let sidebar = self.render_sidebar(narrow, compact, window, cx);
 
         if self.new_session {
             let busy = self.spawn_pending || self.view.creating;
@@ -2354,6 +1989,77 @@ mod tests {
                 "constructed {rendered} of 2000 rows"
             );
         });
+    }
+
+    #[gpui::test]
+    fn sidebar_collapse_preserves_draft_filter_and_search_focus(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer.update(cx, |input, cx| {
+                    input.set_value("Keep this draft", window, cx)
+                });
+                this.search
+                    .update(cx, |input, cx| input.set_value("Alpha", window, cx));
+            });
+        });
+        visual.run_until_parked();
+        let expanded = visual.debug_bounds("session-sidebar").unwrap();
+        let toggle = visual.debug_bounds("sidebar-toggle").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("session-sidebar").unwrap().size.width,
+            px(56.)
+        );
+        assert!(expanded.size.width > px(56.));
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.sidebar_collapsed);
+            assert_eq!(this.composer.read(cx).value().as_str(), "Keep this draft");
+            assert_eq!(this.search.read(cx).value().as_str(), "Alpha");
+            assert_eq!(this.visible_sessions(cx), vec![0]);
+            assert_eq!(this.view.selected.as_deref(), Some("a"));
+        });
+        assert!(commands.try_recv().is_err());
+        let search = visual.debug_bounds("sidebar-search").unwrap();
+        visual.simulate_click(search.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(visual.update(|window, cx| {
+            workspace
+                .read(cx)
+                .search
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        }));
+        workspace.read_with(&visual, |this, cx| {
+            assert!(!this.sidebar_collapsed);
+            assert_eq!(this.search.read(cx).value().as_str(), "Alpha");
+            assert_eq!(this.composer.read(cx).value().as_str(), "Keep this draft");
+        });
+        assert_eq!(
+            visual.debug_bounds("session-sidebar").unwrap().size.width,
+            expanded.size.width
+        );
+    }
+
+    #[gpui::test]
+    fn collapsed_sidebar_selects_the_explicit_session(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.sidebar_collapsed = true;
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let row = visual.debug_bounds("sidebar-session-1").unwrap();
+        visual.simulate_click(row.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
+        assert!(commands.try_recv().is_err());
     }
 
     #[gpui::test]

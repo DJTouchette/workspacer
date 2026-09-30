@@ -136,6 +136,11 @@ The transcript, conversation header and composer share a centered 900 px content
 column with matching gutters. Short, narrow windows use a slimmer sidebar and
 compact approval controls to retain more conversation space.
 
+Use the sidebar toggle beside **Workspacer** to switch between the session list
+and a compact icon rail. The rail keeps session selection and navigation available;
+hover a session for its full name, project, provider and status. Search expands the
+sidebar and retains your query. Collapse is local to the window and preserves drafts.
+
 Open **Settings → Typography** to choose searchable interface and code fonts
 from the bundled defaults and fonts installed on your device. Inter and
 JetBrains Mono are embedded, so they work on a fresh installation. Text size,
