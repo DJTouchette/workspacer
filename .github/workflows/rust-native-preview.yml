@@ -29,6 +29,12 @@ on:
 permissions:
   contents: read
 
+# Only the newest automatic preview for a ref needs an installer. Explicit
+# manual validations keep a unique group so pushes cannot cancel their receipt.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-service:
     strategy:
