@@ -276,3 +276,82 @@ fn local_unknown_raw_sinks_remain_gaps_and_key_inspection_does_not_hide_serializ
     assert!(b.key_inspections.contains("$"));
     assert!(b.opaque_transforms.contains("$"));
 }
+
+#[test]
+fn method_selected_literal_lists_and_optional_keys_do_not_leak_into_other_methods() {
+    let report = fixture(
+        r#"
+    fn validate(method:&str, params:&mut Value) {
+        let texts:&[&str]=match method {"sessions.transcript"=>&["cwd"],"claude.answer"=>&["text"],_=>&[]};
+        for key in texts {let _=params.get(*key);}
+        let integer=match method {"sessions.conversation"=>Some("sinceSeq"),"claude.answer"=>Some("option"),_=>None};
+        if let Some(key)=integer {let _=params.get(key);}
+        if method=="claude.gate" && params.get("on").is_some() {}
+    }
+    fn install(options:Options) {for method in ["sessions.snapshot","sessions.transcript","sessions.conversation","claude.answer","claude.gate"] {
+      options.handler(method,move|_,mut params|async move {validate(method,&mut params);Ok(())});
+    }}
+    "#,
+    );
+    for (method, expected) in [
+        ("sessions.snapshot", vec![]),
+        ("sessions.transcript", vec!["cwd"]),
+        ("sessions.conversation", vec!["sinceSeq"]),
+        ("claude.answer", vec!["option", "text"]),
+        ("claude.gate", vec!["on"]),
+    ] {
+        let bound = &report.methods[method];
+        assert_eq!(
+            bound.fields.iter().map(String::as_str).collect::<Vec<_>>(),
+            expected,
+            "{method}"
+        );
+        assert!(bound.unresolved.is_empty(), "{method}: {bound:?}");
+    }
+}
+
+#[test]
+fn short_circuit_is_literal_only_and_optional_payload_false_does_not_mean_no_match() {
+    let report = fixture(
+        r#"
+    fn install(options:Options){options.handler("fixture.read",|_,params|async move {
+        if false && params.get(dynamic()).is_some() {}
+        if true || params.get(other_dynamic()).is_some() {}
+        let absent=None;
+        if let Some(key)=absent { let _=params.get(key); }
+        if let Some(_)=Some(false) { let _=params.get("required"); }
+        if runtime_condition() && params.get(unknown_key()).is_some() {}
+        Ok(())
+    });}
+    "#,
+    );
+    let bound = &report.methods["fixture.read"];
+    assert!(bound.fields.contains("required"));
+    assert_eq!(bound.unresolved.len(), 1, "{bound:?}");
+    assert!(
+        bound
+            .unresolved
+            .iter()
+            .next()
+            .unwrap()
+            .contains("dynamic field")
+    );
+}
+
+#[test]
+fn unknown_optional_keys_and_none_fallbacks_remain_unresolved_instead_of_becoming_inert() {
+    for expression in [
+        "if runtime_condition(){Some(\"cwd\")}else{None}",
+        "None.unwrap_or(Some(dynamic_key()))",
+        "unknown_optional_key()",
+    ] {
+        let report = fixture(&format!(
+            "fn install(options:Options){{options.handler(\"fixture.read\",|_,params|async move{{let selected={expression};if let Some(key)=selected{{let _=params.get(key);}}Ok(())}});}}"
+        ));
+        assert!(
+            !report.methods["fixture.read"].unresolved.is_empty(),
+            "{expression}: {:?}",
+            report.methods["fixture.read"]
+        );
+    }
+}

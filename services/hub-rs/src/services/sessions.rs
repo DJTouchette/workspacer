@@ -1,4 +1,5 @@
 //! Session service over claudemon's in-process API and typed update stream.
+mod params;
 use super::{layout::Layout, snapshots};
 use crate::{Handle, Options, protocol::Event};
 use anyhow::{Result, anyhow, bail};
@@ -578,7 +579,8 @@ impl Sessions {
             json!({"moved":moved,"pending":pending,"note":"Task ownership and local worker parentage transferred to the successor."}),
         )
     }
-    async fn call(&self, method: &str, params: Value) -> Result<Value> {
+    async fn call(&self, method: &str, mut params: Value) -> Result<Value> {
+        params::validate(method, &mut params)?;
         if method == "agents.orphans" {
             let mut rows: Vec<_> = self
                 .rows
@@ -724,7 +726,15 @@ impl Sessions {
                             "claude.approve requires {{ sessionId, decision: 'yes'|'no'|'always' }}"
                         )
                     })?;
-                self.request("POST",format!("{root}/approve"),Some(json!({"decision":decision,"reason":params["reason"].as_str().unwrap_or("")}))).await?;
+                let mut payload = json!({"decision":decision});
+                if let Some(reason) = params["reason"]
+                    .as_str()
+                    .filter(|reason| !reason.is_empty())
+                {
+                    payload["reason"] = reason.into();
+                }
+                self.request("POST", format!("{root}/approve"), Some(payload))
+                    .await?;
                 Ok(json!({"ok":true}))
             }
             "claude.signal" => {

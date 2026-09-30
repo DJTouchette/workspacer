@@ -12,6 +12,7 @@ struct Value {
     hint: Option<String>,
     text: Option<String>,
     boolean: Option<bool>,
+    known_none: bool,
     items: Vec<Value>,
     known_items: bool,
     closure: Option<Box<syn::ExprClosure>>,
@@ -22,6 +23,7 @@ fn join_values(mut left: Value, right: Value) -> Value {
     if !left.raw && right.raw {
         left.prefix = right.prefix.clone();
     }
+    left.known_none &= right.known_none;
     left.raw |= right.raw;
     left.map |= right.map;
     left.known_items &= right.known_items;
@@ -257,6 +259,7 @@ impl Trace<'_> {
         }
         value.text = None;
         value.boolean = None;
+        value.known_none = false;
         value.hint = None;
         value.map = false;
         value.items.clear();
@@ -482,6 +485,17 @@ impl Trace<'_> {
                     .cloned()
                 {
                     self.expr(&value, env, expected)
+                } else if matches!(
+                    name.as_str(),
+                    "None"
+                        | "Option::None"
+                        | "std::option::Option::None"
+                        | "core::option::Option::None"
+                ) {
+                    Value {
+                        known_none: true,
+                        ..Default::default()
+                    }
                 } else {
                     Value::default()
                 }
@@ -650,7 +664,21 @@ impl Trace<'_> {
                 self.returning = previous || (!exits.is_empty() && exits.iter().all(|e| *e));
                 results.into_iter().reduce(join_values).unwrap_or(result)
             }
-            Expr::Let(l) => self.expr(&l.expr, env, None),
+            Expr::Let(l) => {
+                let mut value = self.expr(&l.expr, env, None);
+                // Payload booleans are not pattern success (Some(false) matches
+                // Some). Only a known absent variant can make this branch dead.
+                value.boolean = match &*l.pat {
+                    Pat::TupleStruct(p)
+                        if p.path.segments.last().is_some_and(|p| p.ident == "Some")
+                            && value.known_none =>
+                    {
+                        Some(false)
+                    }
+                    _ => None,
+                };
+                value
+            }
             Expr::Unary(u) => {
                 let mut value = self.expr(&u.expr, env, None);
                 if matches!(u.op, syn::UnOp::Not(_)) {
@@ -660,6 +688,14 @@ impl Trace<'_> {
             }
             Expr::Binary(b) => {
                 let left = self.expr(&b.left, env, None);
+                if (matches!(b.op, syn::BinOp::And(_)) && left.boolean == Some(false))
+                    || (matches!(b.op, syn::BinOp::Or(_)) && left.boolean == Some(true))
+                {
+                    return Value {
+                        boolean: left.boolean,
+                        ..Default::default()
+                    };
+                }
                 let right = self.expr(&b.right, env, None);
                 let boolean = match &b.op {
                     syn::BinOp::Eq(_) => left.text.zip(right.text).map(|(a, b)| a == b),
@@ -905,7 +941,11 @@ impl Trace<'_> {
                 }
                 if self.index.locals.get(&self.scope_key).is_some_and(|types|matches!(types.get(&name),Some(Data::Struct(s)) if matches!(s.fields,syn::Fields::Unnamed(_)))){return Value{items:args,hint:Some(format!("{}::local::{name}",self.module)),..Default::default()}}
                 if matches!(name.as_str(), "Some" | "Ok") {
-                    return args.first().cloned().unwrap_or_default();
+                    let mut result = args.first().cloned().unwrap_or_default();
+                    if name == "Some" {
+                        result.known_none = false;
+                    }
+                    return result;
                 }
                 if args.iter().any(|v| v.raw) {
                     self.bound
@@ -957,6 +997,13 @@ impl Trace<'_> {
                         | "into_iter"
                         | "or_else"
                 ) {
+                    let mut receiver = receiver;
+                    if !matches!(
+                        name.as_str(),
+                        "clone" | "cloned" | "to_owned" | "as_ref" | "as_mut"
+                    ) {
+                        receiver.known_none = false;
+                    }
                     return receiver;
                 }
                 if name == "to_string" && receiver.raw {
