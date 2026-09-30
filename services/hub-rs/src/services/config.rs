@@ -76,6 +76,31 @@ pub fn merge_patch(current: &Value, mut partial: Value, owner: bool) -> Result<V
     Ok(merged)
 }
 
+// JSON/YAML writers may encode the same revision as 3 or 3.0. Compare only
+// revision counters numerically; never coerce selected IDs or caller strings.
+fn equal_workflow_revision(left: &Value, right: &Value) -> Option<u64> {
+    if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
+        return (left == right).then_some(left);
+    }
+    fn safe_integer(value: &Value) -> Option<u64> {
+        const MAX_SAFE: u64 = 9_007_199_254_740_991;
+        if let Some(value) = value.as_u64() {
+            return (value <= MAX_SAFE).then_some(value);
+        }
+        value
+            .as_f64()
+            .filter(|value| {
+                value.is_finite()
+                    && *value >= 0.0
+                    && value.fract() == 0.0
+                    && *value <= MAX_SAFE as f64
+            })
+            .map(|value| value as u64)
+    }
+    let left = safe_integer(left)?;
+    (left == safe_integer(right)?).then_some(left)
+}
+
 fn preserve_workflows(current: &Value, partial: &mut Value) -> Result<()> {
     let old = &current["agents"];
     if partial
@@ -85,10 +110,23 @@ fn preserve_workflows(current: &Value, partial: &mut Value) -> Result<()> {
     {
         bail!("workflow selections cannot be removed by replacing agents");
     }
-    for key in ["defaultWorkflowId", "workflowSelectionRevision"] {
-        if partial["agents"].get(key).is_some_and(|v| v != &old[key]) {
-            bail!("use the desktop Fleet workflow selection API with expectedRevision");
-        }
+    if partial["agents"]
+        .get("defaultWorkflowId")
+        .is_some_and(|v| v != &old["defaultWorkflowId"])
+    {
+        bail!("use the desktop Fleet workflow selection API with expectedRevision");
+    }
+    if let Some(value) = partial["agents"]
+        .get("workflowSelectionRevision")
+        .filter(|value| !value.is_null() || !old["workflowSelectionRevision"].is_null())
+    {
+        let revision = equal_workflow_revision(value, &old["workflowSelectionRevision"])
+            .ok_or_else(|| {
+                anyhow!("use the desktop Fleet workflow selection API with expectedRevision")
+            })?;
+        // Keep subsequent CAS reads on an integer; a retained float would make
+        // as_u64() mistake the existing revision for an absent counter.
+        partial["agents"]["workflowSelectionRevision"] = json!(revision);
     }
     if let Some(projects) = partial.get_mut("projects").and_then(Value::as_object_mut) {
         for (cwd, project) in projects.iter_mut() {

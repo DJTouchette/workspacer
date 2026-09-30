@@ -1,0 +1,125 @@
+{
+  "records": {
+    "services/hub/cmd/brain/fleet_workflows.go": {
+      "status": "ported",
+      "sha256": "08be435cc56af5d81b9070afc32dab8cf437c89e688b8ec55d3e72ccd27f7d77",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/workflows.rs",
+        "services/hub-rs/src/services/workflow_runtime.rs",
+        "services/hub-rs/src/services/manager_requests.rs",
+        "services/hub-rs/src/services/manager_replacements/messages.rs",
+        "services/hub-rs/src/services/desktop_workflows.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/workflows.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/workflow_runtime.rs",
+        "services/hub-rs/tests/task_store.rs",
+        "services/hub-rs/tests/manager_replacements.rs",
+        "services/hub-rs/src/services/desktop_workflows.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read complete generic-config protection: selected global workflow/revision, selected project retention/backfill, rejection of project removal/replacement and exact ID comparison. Rust config::preserve_workflows remains the owner; only the workflow selection API mutates selections with expectedRevision CAS.",
+          "Measured actual raw JSON3.0 echo against persisted3 failing before fix. Revision-only comparison now permits finite integral safe float/int equivalence, preserves exact integer equality and canonicalizes accepted counters before merge so later CAS cannot mistake a float for absent0.",
+          "Absent/null old revision plus explicitnull remains a no-op and never invents0. Null against an established numeric counter still refuses; selected IDs/maps are not numerically coerced."
+        ],
+        "intentionalChanges": [
+          "Native owned workflow and request services replace the obsolete headless refusal/private Node ownership boundary.",
+          "The numeric correction is revision-only; no string-to-number coercion, selected-ID normalization or silent counter reset.",
+          "Uncertain delivery is retained, not treated as a rejected operation or permission to retry."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/fleet_workflows_test.go": {
+      "status": "ported",
+      "sha256": "c1bdb98213a393c16a4b01682ebe1b647795ff94a194c8980b9755550818d7a1",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/workflows.rs",
+        "services/hub-rs/src/services/workflow_runtime.rs",
+        "services/hub-rs/src/services/manager_requests.rs",
+        "services/hub-rs/src/services/manager_replacements/messages.rs",
+        "services/hub-rs/src/services/desktop_workflows.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/workflows.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/workflow_runtime.rs",
+        "services/hub-rs/tests/task_store.rs",
+        "services/hub-rs/tests/manager_replacements.rs",
+        "services/hub-rs/src/services/desktop_workflows.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "New actual YAML Config save/reopen test preserves research/global selection, project custom selection and revision while ordinary labels/fleetRoot change; the original snapshot remains untouched.",
+          "Twenty owner/nonowner malformed/type-confused/deletion attempts leave both current value and original file bytes unchanged. Safe numeric echoes are canonical integer counters; stale expected0 fails and expected3 advances to4.",
+          "Boundary controls preserve exact large integer equality but refuse unsafe floating conversion, fractional/negative/changed revisions, booleans, strings and numeric null replacement; null/absent no-op and exact selected-ID/map semantics are pinned.",
+          "Old blanket headless workflow-unavailable behavior is architecturally retired: WorkflowStore/WorkflowRuntime and coordinator admission now implement native workflows. Existing task pin/CAS/ownership/exact metadata/uncertainty tests provide actual behavior rather than method inventory."
+        ],
+        "intentionalChanges": [
+          "Native owned workflow and request services replace the obsolete headless refusal/private Node ownership boundary.",
+          "The numeric correction is revision-only; no string-to-number coercion, selected-ID normalization or silent counter reset.",
+          "Uncertain delivery is retained, not treated as a rejected operation or permission to retry."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/managerrequests.go": {
+      "status": "ported",
+      "sha256": "e90855255f47a2b59a9cf18b06d221f6b5dabe2d07b3951fcdfeabf1679ab6e2",
+      "replacement": [
+        "services/hub-rs/src/services/config.rs",
+        "services/hub-rs/src/services/workflows.rs",
+        "services/hub-rs/src/services/workflow_runtime.rs",
+        "services/hub-rs/src/services/manager_requests.rs",
+        "services/hub-rs/src/services/manager_replacements/messages.rs",
+        "services/hub-rs/src/services/desktop_workflows.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/workflows.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/workflow_runtime.rs",
+        "services/hub-rs/tests/task_store.rs",
+        "services/hub-rs/tests/manager_replacements.rs",
+        "services/hub-rs/src/services/desktop_workflows.rs",
+        "services/claudemon/src/daemon/embedded.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all capture/route/send/ack/ordinary-submit functions. Rust ManagerRequests, MessageTracker and desktop_workflows owner adapter replace the private Node bridge; host-captured content and attempt IDs remain authoritative, not caller text.",
+          "begin_delivery journals uncertainty before IO; pending/accepted/unknown attempts do not replay. Held messages remain durable and report pending to captured callers; accepted/rejected/unknown outcomes stay distinct. TrackedDelivery Drop preserves interrupted-send uncertainty and no raw PTY fallback is introduced.",
+          "Typed embedded CommandRejected retains the exact old definitive status boundary400/401/403/404/409/410/413/422/429 plus503 with exact queue-full body. Other server failures/transport loss remain unknown. Explicit valid JSON ok:false can now report a definitive engine refusal even under2xx; malformed reply JSON stays unknown.",
+          "Exact existing proofs: captured_send_uses_engine_receipts_and_never_replays_unknown passed in full391 /tmp/workspacer-watcher-barrier-full-lib.log; manager_replacements16 /tmp/workspacer-manager-ci-deadline-final.log includes real held-message exactly-once delivery; TaskStore13 /tmp/workspacer-mcp-task-workflow-batch.log pins durable request uncertainty/idempotent resolution.",
+          "Embedded response matrix and side-effect-before500 tests passed /tmp/workspacer-engine-outcome-tests.log and actual claudemon CI checkout b80c9e14 in /tmp/workspacer-window-owner-ci.log. Exact embedded/manager request/desktop adapter/message tracker production source bytes remain unchanged from that checkout."
+        ],
+        "intentionalChanges": [
+          "Native owned workflow and request services replace the obsolete headless refusal/private Node ownership boundary.",
+          "The numeric correction is revision-only; no string-to-number coercion, selected-ID normalization or silent counter reset.",
+          "Uncertain delivery is retained, not treated as a rejected operation or permission to retry."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "status": "READY: final workflows7/config20 and source guard passed",
+    "before": "5pass1fail /tmp/workspacer-workflow-selection-proof.log (raw3.0 echo rejection)",
+    "workflows": "7 passed final null no-op and CAS proof /tmp/workspacer-workflow-selection-null-final.log",
+    "config": "20 passed /tmp/workspacer-workflow-config-null-final.log",
+    "prior_receipts": "Source-specific existing transport/inbox/held-message receipts documented above, no whole-current-CI claim",
+    "source_guard": "122 methods123 dangerous23 opaque0errors /tmp/workspacer-workflow-null-source-check.log on exact final null-preserving source; no policy suppressions",
+    "format": "rustfmt and git diff --check passed",
+    "witness": "workflows integration unmapped; owning workflows/config targets chosen explicitly"
+  },
+  "readyToStage": [
+    "services/hub-rs/src/services/config.rs",
+    "services/hub-rs/tests/workflows.rs",
+    ".rivet/learnings/2026-09-30-workflow-revision-echoes-must-normalize-numeric-6901b3.md",
+    "services/hub-rs/reviews/brain-workflow-manager.json"
+  ]
+}

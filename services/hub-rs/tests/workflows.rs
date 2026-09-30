@@ -121,3 +121,166 @@ fn malformed_policy_and_corrupt_store_never_silently_relax_review() {
             .contains("\"version\":2")
     );
 }
+
+#[test]
+fn ordinary_config_roundtrip_preserves_global_and_project_workflow_selections() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("config.yaml");
+    std::fs::write(&file, "agents:\n  defaultWorkflowId: research\n  workflowSelectionRevision: 3\nprojects:\n  /repo:\n    workflowId: custom\n").unwrap();
+    let config = Config::open(file.clone());
+    let before = config.get();
+    config.save(json!({"projects":{"/repo":{"label":"After native save"}},"agents":{"fleetRoot":"/work","workflowSelectionRevision":3}}), true).unwrap();
+    config
+        .save(
+            serde_json::from_str(r#"{"agents":{"workflowSelectionRevision":3.0}}"#).unwrap(),
+            true,
+        )
+        .unwrap();
+    let reopened = Arc::new(Config::open(file));
+    let restored = reopened.get();
+    assert_eq!(restored["agents"]["defaultWorkflowId"], "research");
+    assert_eq!(restored["agents"]["workflowSelectionRevision"], 3);
+    assert_eq!(restored["projects"]["/repo"]["workflowId"], "custom");
+    assert_eq!(restored["projects"]["/repo"]["label"], "After native save");
+    assert_eq!(restored["agents"]["fleetRoot"], "/work");
+    assert_eq!(before["agents"]["defaultWorkflowId"], "research");
+    assert!(before["projects"]["/repo"].get("label").is_none());
+    assert_eq!(
+        restored["agents"]["workflowSelectionRevision"].as_u64(),
+        Some(3)
+    );
+    let selections = WorkflowStore::new(root.path().into(), reopened);
+    assert!(
+        selections
+            .select(None, Some("implement-review"), 0)
+            .is_err()
+    );
+    assert_eq!(
+        selections
+            .select(None, Some("implement-review"), 3)
+            .unwrap()["selectionRevision"],
+        4
+    );
+}
+
+#[test]
+fn generic_config_cannot_remove_or_type_confuse_selected_workflows_and_refusal_is_atomic() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("config.yaml");
+    std::fs::write(&file, "agents:\n  defaultWorkflowId: research\n  workflowSelectionRevision: 3\nprojects:\n  /repo:\n    workflowId: custom\n").unwrap();
+    let config = Config::open(file.clone());
+    let before = config.get();
+    let bytes = std::fs::read(&file).unwrap();
+    for owner in [false, true] {
+        for patch in [
+            json!({"agents":{"defaultWorkflowId":"other"}}),
+            json!({"agents":{"workflowSelectionRevision":"3"}}),
+            json!({"agents":{"workflowSelectionRevision":4}}),
+            json!({"agents":"replacement"}),
+            json!({"agents":[]}),
+            json!({"projects":{}}),
+            json!({"projects":{"/repo":null}}),
+            json!({"projects":{"/repo":"replacement"}}),
+            json!({"projects":{"/repo":{"workflowId":{"evil":true}}}}),
+            json!({"projects":{"/repo":{"workflowId":"other"}}}),
+        ] {
+            assert!(
+                config.save(patch.clone(), owner).is_err(),
+                "owner={owner}: {patch}"
+            );
+            assert_eq!(config.get(), before, "owner={owner}: {patch}");
+            assert_eq!(
+                std::fs::read(&file).unwrap(),
+                bytes,
+                "owner={owner}: {patch}"
+            );
+        }
+    }
+}
+
+#[test]
+fn revision_equivalence_preserves_exact_integers_without_rounding_or_coercing_ids() {
+    use workspacer_hub::services::config::{defaults, merge_patch};
+    for (old, echoed, expected) in [
+        (json!(0), json!(0.0), 0u64),
+        (json!(3.0), json!(3), 3),
+        (
+            json!(9_007_199_254_740_991u64),
+            json!(9_007_199_254_740_991f64),
+            9_007_199_254_740_991,
+        ),
+        (
+            json!(9_007_199_254_740_993u64),
+            json!(9_007_199_254_740_993u64),
+            9_007_199_254_740_993,
+        ),
+    ] {
+        let mut current = defaults();
+        current["agents"]["workflowSelectionRevision"] = old;
+        let merged = merge_patch(
+            &current,
+            json!({"agents":{"workflowSelectionRevision":echoed}}),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            merged["agents"]["workflowSelectionRevision"].as_u64(),
+            Some(expected)
+        );
+    }
+    for (old, echoed) in [
+        (json!(3), json!("3")),
+        (json!(3), json!(3.5)),
+        (json!(3), json!(4.0)),
+        (json!(3), json!(true)),
+        (json!(3), Value::Null),
+        (
+            json!(9_007_199_254_740_993u64),
+            json!(9_007_199_254_740_992f64),
+        ),
+        (
+            json!(9_007_199_254_740_992f64),
+            json!(9_007_199_254_740_992f64),
+        ),
+        (json!(-1), json!(-1.0)),
+    ] {
+        let mut current = defaults();
+        current["agents"]["workflowSelectionRevision"] = old;
+        assert!(
+            merge_patch(
+                &current,
+                json!({"agents":{"workflowSelectionRevision":echoed}}),
+                true
+            )
+            .is_err()
+        );
+    }
+    for old in [None, Some(Value::Null)] {
+        let mut current = defaults();
+        if let Some(old) = old {
+            current["agents"]["workflowSelectionRevision"] = old;
+        }
+        let merged = merge_patch(
+            &current,
+            json!({"agents":{"workflowSelectionRevision":null}}),
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            merged["agents"].get("workflowSelectionRevision"),
+            current["agents"].get("workflowSelectionRevision")
+        );
+    }
+    let mut current = defaults();
+    current["agents"]["defaultWorkflowId"] = json!(3);
+    assert!(merge_patch(&current, json!({"agents":{"defaultWorkflowId":3.0}}), true).is_err());
+    current["projects"] = json!({"/repo":{"workflowId":3}});
+    assert!(
+        merge_patch(
+            &current,
+            json!({"projects":{"/repo":{"workflowId":3.0}}}),
+            true
+        )
+        .is_err()
+    );
+}
