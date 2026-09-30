@@ -29,8 +29,10 @@ processes because they are external integrations.
 The shared service graph and standalone launcher are implemented. The current
 work is client/build cutover, running preserved end-to-end assertions against
 Rust, reviewing source-by-source replacement evidence, and platform validation.
-Desktop, native local mode and TUI startup now select Rust. A testing nightly
-was published on 2026-09-29 from `1bf2f53aeff4f08e5a65f0a58d5b42908269d908`.
+Desktop, native local mode and TUI startup now select Rust. The current testing nightly, `0.169.0-nightly.202609291804`,
+was published on 2026-09-29 from `9f786d734f996f487aa0894b8b5fae08aeba4ce3`.
+It includes the native UI changes and modern MCP cache metadata fix. Later
+reviewed parity fixes on main require a subsequent artifact.
 This is explicitly an incomplete-migration preview. Native launches without
 `--local` still attach to an existing service.
 
@@ -42,7 +44,7 @@ completed migration.
 
 The native Windows artifact uses the isolated Rust Preview identity/data folder.
 Release packaging now selects that artifact and a standalone Rust server bundle.
-[Release run 36596973339](https://github.com/DJTouchette/workspacer/actions/runs/36596973339)
+[Release run 36609384642](https://github.com/DJTouchette/workspacer/actions/runs/36609384642)
 successfully built Electron Windows/macOS/Linux packages, all three standalone
 bundles and the Native Rust Preview Windows installer, including its install,
 backend and uninstall smoke. The live nightly tag and assets were verified against

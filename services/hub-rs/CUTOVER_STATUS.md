@@ -1,4 +1,35 @@
-# Rust backend cutover evidence — 2026-09-29
+# Rust backend cutover evidence
+
+## Current checkpoint — 2026-09-30
+
+The source review ledger at `632ead3a` contains **497 ported, 29 retired and
+8 pending** entries. All 14 final cutover gates remain pending. Run
+`python3 scripts/hub-migration.py backlog` for the live count; it measures
+unclosed source reviews, not missing implementations.
+
+The published nightly is **0.169.0-nightly.202609291804**, from
+`9f786d734f996f487aa0894b8b5fae08aeba4ce3`. It includes the native UI changes,
+modern MCP list cache metadata and the Opus 5.5 default context-window fix.
+[Release run 36609384642](https://github.com/DJTouchette/workspacer/actions/runs/36609384642)
+completed successfully. Later parity fixes on main are not in that artifact.
+
+Subsequent reviewed batches repaired provider re-registration without reconnect,
+owned shutdown ordering, YAML/profile compatibility, empty-node capability
+registration, canonical spawn-field spelling, progress validation and other
+source-mapped contracts. The review JSON files preserve exact original source
+hashes, behavior mappings, intentional changes and scoped execution receipts.
+Aggregate test totals do not replace those individual reviews.
+
+The final consumer/platform gates below still require integrated-revision
+receipts. Do not remove the remaining Go reference tree based on the source
+review count: shipped non-Go plugin examples still live beneath it, and source
+reference/generator dependencies must be deliberately retired first.
+
+## Historical audit — 2026-09-29
+
+The following checkpoint predates the published nightly above and subsequent
+main commits. Its implementation/evidence boundaries remain useful; its counts,
+publication state and statements that fixes require a new build are historical.
 
 This is an audit of checkout `1bf2f53aeff4f08e5a65f0a58d5b42908269d908`
 and its uncommitted integration work. It does not mark any migration gate verified.
