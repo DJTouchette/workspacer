@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import net from 'node:net';
 import { randomInt, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 export function requireCleanExit(result, label) {
@@ -160,9 +160,19 @@ export async function smoke(executable, output) {
     const capture = (data) => { diagnostics = (diagnostics + String(data).replaceAll(token, '[fixture-token]')).slice(-32000); };
     try {
       if (adopted) {
-        external = spawn(backend, ['--config-dir', config, '--data-dir', path.join(root, 'external'),
-          '--host', '127.0.0.1', '--hub-port', String(hub), 'serve', '--hub-only', '--quiet',
-          '--mcp-port', String(mcp), '--external-claudemon', `http://127.0.0.1:${api}`],
+        // This external process owns only the control plane. Electron starts
+        // its own daemon later; pre-borrowing that daemon would require it to
+        // be healthy before Electron has even launched.
+        const args = ['serve', '--config-dir', config, '--data-dir', path.join(root, 'external'),
+          '--host', '127.0.0.1', '--hub-port', String(hub), '--hub-only', '--quiet',
+          '--mcp-port', String(mcp), '--no-claudemon-init'];
+        // Exercise the packaged parser before waiting for a service that a bad
+        // argument vector could never start. --help has no startup effects.
+        const parsed = spawnSync(backend, [...args, '--help'], { env, encoding: 'utf8', timeout: 5000 });
+        capture(parsed.stderr ?? '');
+        if (parsed.error) throw parsed.error;
+        requireCleanExit({ code: parsed.status, signal: parsed.signal }, 'external Rust argument preflight');
+        external = spawn(backend, args,
         { env: { ...env, HUB_TOKEN: token, WORKSPACER_PARENT_PID: String(process.pid) }, stdio: ['pipe', 'pipe', 'pipe'] });
         externalExit = exitReceipt(external);
         external.stdout.on('data', capture); external.stderr.on('data', capture);
