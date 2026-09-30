@@ -16,6 +16,8 @@
 # Retained non-Go assets keep captured byte provenance across platform checkouts.
 /services/hub/examples/** text eol=lf
 /plugins/examples/** text eol=lf
+# This captured third-party bundle retains upstream whitespace and a pinned hash.
+/plugins/examples/editor/ui/cm.bundle.js -whitespace
 /plugins/examples.provenance.json text eol=lf
 /services/hub/internal/routing/testdata/preferences-view.json text eol=lf
 /apps/desktop/tests/fixtures/routing-preferences-view.json text eol=lf

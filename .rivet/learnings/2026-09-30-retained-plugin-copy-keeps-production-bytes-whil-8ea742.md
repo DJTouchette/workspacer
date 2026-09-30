@@ -20,3 +20,5 @@ Run check-retained-plugin-assets plus actual Headroom/editor/native payload owne
 
 ## Rust evidence boundary
 The later local hub link exhausted scratch space before running tests, so it is not a pass. Exact915960b9 CI36659897298 hub job109712115244 passed integration_spine2 with the original manifest; its copied manifest has identical SHA256 df8e11cc7981286dde1e5239f999ff1735fb7718bd2c4f61ccb302b210fd27a2. The next committed CI/release must validate the new include/package paths.
+
+The staged whitespace check initially reported upstream whitespace in the byte-pinned CodeMirror bundle. Its contents remain unchanged; a file-specific `-whitespace` attribute records the vendored exception. The final diff check and13+1 provenance check pass.
