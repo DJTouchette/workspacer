@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "referenceCommit": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+  "reason": "These exact Go loader declarations are historical after tracked Go removal. Active vocabulary.blocks.loaders continue requiring actual retained Rust/TypeScript sources; no missing-file exemption is introduced.",
+  "loaders": [
+    {
+      "fixture": "model-context-windows.json",
+      "block": "windows",
+      "loader": "services/hub/cmd/brain/windows_test.go::Windows",
+      "sourceSha256": "eac95f2873ecea2591a5eb1dacd7f7f5bb170a59c8f9268e4b08eedc38a27bcf",
+      "caseCount": 19,
+      "retainedLoaders": [
+        "services/claudemon/src/session/windows.rs::model-context-windows.json",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::windows"
+      ]
+    },
+    {
+      "fixture": "model-context-windows.json",
+      "block": "lookupCases",
+      "loader": "services/hub/cmd/brain/windows_test.go::LookupCases",
+      "sourceSha256": "eac95f2873ecea2591a5eb1dacd7f7f5bb170a59c8f9268e4b08eedc38a27bcf",
+      "caseCount": 28,
+      "retainedLoaders": [
+        "services/claudemon/src/session/windows.rs::lookup_cases",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::lookupCases"
+      ]
+    },
+    {
+      "fixture": "model-context-windows.json",
+      "block": "markerCases",
+      "loader": "services/hub/cmd/brain/windows_test.go::MarkerCases",
+      "sourceSha256": "eac95f2873ecea2591a5eb1dacd7f7f5bb170a59c8f9268e4b08eedc38a27bcf",
+      "caseCount": 12,
+      "retainedLoaders": [
+        "services/claudemon/src/session/windows.rs::marker_cases",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::markerCases"
+      ]
+    },
+    {
+      "fixture": "model-context-windows.json",
+      "block": "selectionCases",
+      "loader": "services/hub/internal/modelselection/modelselection_test.go::SelectionCases",
+      "sourceSha256": "da3a5b9063a7718bae6b4cbc94546b9b9c7be1e5336afb955f6154da7449e2e3",
+      "caseCount": 13,
+      "retainedLoaders": [
+        "services/claudemon/src/session/windows.rs::selection_cases",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::selectionCases"
+      ]
+    },
+    {
+      "fixture": "model-context-windows.json",
+      "block": "claudeArgvCases",
+      "loader": "services/hub/internal/modelselection/modelselection_test.go::ClaudeArgvCases",
+      "sourceSha256": "da3a5b9063a7718bae6b4cbc94546b9b9c7be1e5336afb955f6154da7449e2e3",
+      "caseCount": 9,
+      "retainedLoaders": [
+        "services/claudemon/src/session/windows.rs::claude_argv_cases",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::claudeArgvCases"
+      ]
+    },
+    {
+      "fixture": "model-context-windows.json",
+      "block": "inputCases",
+      "loader": "services/hub/internal/modelselection/modelselection_test.go::InputCases",
+      "sourceSha256": "da3a5b9063a7718bae6b4cbc94546b9b9c7be1e5336afb955f6154da7449e2e3",
+      "caseCount": 20,
+      "retainedLoaders": [
+        "services/claudemon/src/session/windows.rs::input_cases",
+        "apps/desktop/src/main/lib/spawnModel.test.ts::inputCases"
+      ]
+    },
+    {
+      "fixture": "model-context-windows.json",
+      "block": "resolutionCases",
+      "loader": "services/hub/cmd/brain/windows_test.go::ResolutionCases",
+      "sourceSha256": "eac95f2873ecea2591a5eb1dacd7f7f5bb170a59c8f9268e4b08eedc38a27bcf",
+      "caseCount": 24,
+      "retainedLoaders": [
+        "services/claudemon/src/session/windows.rs::resolution_cases",
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::resolutionCases"
+      ]
+    },
+    {
+      "fixture": "model-context-windows.json",
+      "block": "providerContextDefaults",
+      "loader": "services/hub/internal/modelselection/modelselection_test.go::ProviderContextDefaults",
+      "sourceSha256": "da3a5b9063a7718bae6b4cbc94546b9b9c7be1e5336afb955f6154da7449e2e3",
+      "caseCount": 1,
+      "retainedLoaders": [
+        "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::providerContextDefaults",
+        "services/claudemon/src/session/windows.rs::provider_context_defaults"
+      ]
+    },
+    {
+      "fixture": "node-view-cases.json",
+      "block": "states",
+      "loader": "services/hub/internal/nodes/view_test.go::TestTheStateVocabularyMatchesTheContract",
+      "sourceSha256": "de82001aed1a9045014f20bf3a7ed25f44899078e321acf0ef7e4c48c691eb6c",
+      "caseCount": 5,
+      "retainedLoaders": [
+        "apps/desktop/src/renderer/tests/remoteNodes.test.ts::the state vocabulary (contracts/node-view-cases.json)",
+        "apps/tui/src/nodes.rs::node_view_contract_states"
+      ]
+    },
+    {
+      "fixture": "node-view-cases.json",
+      "block": "lastExit.cases",
+      "loader": "services/hub/internal/nodes/view_test.go::TestTheExitRecordVerdictsMatchTheContract",
+      "sourceSha256": "de82001aed1a9045014f20bf3a7ed25f44899078e321acf0ef7e4c48c691eb6c",
+      "caseCount": 12,
+      "retainedLoaders": [
+        "apps/desktop/src/renderer/tests/remoteNodes.test.ts::lastExit verdicts (contracts/node-view-cases.json)",
+        "apps/tui/src/nodes.rs::node_view_contract_last_exit"
+      ]
+    },
+    {
+      "fixture": "node-view-cases.json",
+      "block": "presentation.cases",
+      "loader": "services/hub/internal/nodes/view_test.go::TestEveryContractStateReachedTheMobileClient",
+      "sourceSha256": "de82001aed1a9045014f20bf3a7ed25f44899078e321acf0ef7e4c48c691eb6c",
+      "caseCount": 5,
+      "retainedLoaders": [
+        "apps/desktop/src/renderer/tests/remoteNodes.test.ts::presentation (contracts/node-view-cases.json)",
+        "apps/tui/src/nodes.rs::node_view_contract_presentation"
+      ]
+    },
+    {
+      "fixture": "path-containment-cases.json",
+      "block": "projectDirNames.cases",
+      "loader": "services/hub/cmd/brain/providerparity_test.go::TestClaudeProjectDirNameContractCases(",
+      "sourceSha256": "21a5131acbf8f2cfb2e09335defdf2b702d0d31c462a9eb9c6996810e891146e",
+      "caseCount": 8,
+      "retainedLoaders": [
+        "apps/desktop/src/main/services/claudeSessionList.test.ts::claudeProjectDirName \u2014 contracts/path-containment-cases.json projectDirNames",
+        "services/hub-rs/src/services/discovery.rs::project_dir_names_match_reference_corpus"
+      ]
+    }
+  ]
+}

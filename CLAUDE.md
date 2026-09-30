@@ -116,30 +116,30 @@ When a caveat applies, say so rather than reporting the number as settled, and r
 
 # Using Rivet & Recon in this repo
 
-This is a polyglot monorepo. Recon is **language-aware for all three primary stacks** —
-verified working, not assumed:
+This is a polyglot monorepo. Recon understands the production Rust/TypeScript
+stacks and the optional Go reference tools:
 
 | Stack | Where | `symbols` / `callers` / `tests` |
 |-------|-------|--------------------------------|
 | TypeScript / TSX | `apps/desktop`, plus some web | ✅ interfaces, functions, classes, methods |
-| Go | `services/hub`, `services/claudemon` glue, brain | ✅ structs, interfaces, methods, consts |
-| Rust | `services/claudemon`, `apps/tui` | ✅ enums, structs, methods, consts |
+| Rust | `services/hub-rs`, `services/claudemon`, `apps/native`, `apps/tui` | ✅ enums, structs, methods, consts |
+| Go | Optional historical capture tools under `tools/go-*` | ✅ structs, interfaces, methods, consts |
 
-(The `landing/*.html` + CSS are ~3% of the repo and have no symbols to parse.)
+The retired `services/hub` implementation is available in the pinned historical
+checkout described by `scripts/reference/README.md`. It is not a current runtime
+owner. HTML and CSS do not have language symbols to parse.
 
 ## The one feature to reach for first here
 
-`recon.search` / `recon symbols <query>` resolve **across all three languages in a single
-call**. In this repo the same concept is deliberately reimplemented per stack, so one query
-surfaces every parallel copy at once. Example — `symbols Config` returns:
+`recon.search` / `recon symbols <query>` resolve across languages in one call.
+Start cross-cutting changes with a symbol search to find the current parallel
+owners, then inspect the concrete implementations.
 
-- `apps/tui/src/config.rs` (Rust) — `struct Config`
-- `services/hub/cmd/brain/config.go` (Go) — `configService`, `writeConfigYAML`
-- `apps/desktop/src/main/services/configService.ts` (TS) — `class ConfigService`
-
-That is exactly the set you must keep in agreement when touching config (config.yaml has
-**two writers**, TS + Go — see the hotspots doc). Start cross-cutting changes with a symbol
-search, not a file search.
+For configuration, review `services/hub-rs/src/services/config.rs`,
+`apps/desktop/src/main/services/configService.ts` and the TUI config consumer.
+The shared config file has Rust and public Electron TypeScript writers; keep their
+locking, defaults and persistence semantics aligned. Historical Go symbols belong
+to the explicit reference checkout, not an expected missing production file.
 
 ## Gotchas (learned by testing, not documented elsewhere)
 

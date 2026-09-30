@@ -508,3 +508,64 @@ fn retired_anonymous_parameter_harness_is_explicitly_archived() {
         );
     }
 }
+
+#[test]
+fn retired_go_block_loaders_have_sealed_provenance_and_live_replacements() {
+    use sha2::{Digest, Sha256};
+    let bytes = repo::read(
+        &root(),
+        Path::new("contracts/retired/block-loader-provenance.json"),
+    )
+    .unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        "174f82db9374ba473137afd695563f06c281b362cc9b6e630dfbe06a5e29e016"
+    );
+    let archived: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(archived["version"], 1);
+    assert_eq!(
+        archived["referenceCommit"],
+        "0c077b82e62965ce51f85b2d2a4c0f1aec872fea"
+    );
+    let rows = archived["loaders"].as_array().unwrap();
+    assert_eq!(rows.len(), 12);
+    let active = fixtures();
+    let mut seen = BTreeSet::new();
+    for row in rows {
+        let fixture = row["fixture"].as_str().unwrap();
+        let block = row["block"].as_str().unwrap();
+        let loader = row["loader"].as_str().unwrap();
+        assert!(seen.insert((fixture, block, loader)));
+        let (file, needle) = loader.split_once("::").unwrap();
+        assert!(file.starts_with("services/hub/") && !needle.is_empty());
+        let expected = row["sourceSha256"].as_str().unwrap();
+        assert_eq!(expected.len(), 64);
+        assert!(expected.bytes().all(|c| c.is_ascii_hexdigit()));
+        // If a reviewed original is deliberately restored, changed bytes do
+        // not inherit its archived provenance. Absence never excuses a LIVE loader.
+        match fs::read(root().join(file)) {
+            Ok(original) => assert_eq!(format!("{:x}", Sha256::digest(original)), expected),
+            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
+        }
+        let doc = &active[fixture];
+        let mut cases = doc;
+        for key in block.split('.') {
+            cases = &cases[key];
+        }
+        assert!(cases.as_array().unwrap().len() >= row["caseCount"].as_u64().unwrap() as usize);
+        let declared = strings(&doc["vocabulary"]["blocks"][block]["loaders"]);
+        assert!(!declared.contains(&loader));
+        let retained = strings(&row["retainedLoaders"]);
+        assert!(retained.len() >= 2);
+        for entry in retained {
+            assert!(declared.contains(&entry), "lost retained loader {entry}");
+            let (path, needle) = entry.split_once("::").unwrap();
+            assert!(!path.starts_with("services/hub/"));
+            assert!(
+                fs::read_to_string(root().join(path))
+                    .unwrap()
+                    .contains(needle)
+            );
+        }
+    }
+}

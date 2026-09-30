@@ -42,7 +42,6 @@
           "why"
         ],
         "loaders": [
-          "services/hub/internal/nodes/view_test.go::TestTheStateVocabularyMatchesTheContract",
           "apps/desktop/src/renderer/tests/remoteNodes.test.ts::the state vocabulary (contracts/node-view-cases.json)",
           "apps/tui/src/nodes.rs::node_view_contract_states"
         ]
@@ -62,7 +61,6 @@
           "recordAbsent"
         ],
         "loaders": [
-          "services/hub/internal/nodes/view_test.go::TestTheExitRecordVerdictsMatchTheContract",
           "apps/desktop/src/renderer/tests/remoteNodes.test.ts::lastExit verdicts (contracts/node-view-cases.json)",
           "apps/tui/src/nodes.rs::node_view_contract_last_exit"
         ]
@@ -82,7 +80,6 @@
           "why"
         ],
         "loaders": [
-          "services/hub/internal/nodes/view_test.go::TestEveryContractStateReachedTheMobileClient",
           "apps/desktop/src/renderer/tests/remoteNodes.test.ts::presentation (contracts/node-view-cases.json)",
           "apps/tui/src/nodes.rs::node_view_contract_presentation"
         ]

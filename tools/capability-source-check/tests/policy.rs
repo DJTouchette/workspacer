@@ -132,12 +132,25 @@ fn legacy_reference_checks_each_binding_and_source_digest() {
             .iter()
             .any(|s| s == "missing original Go caller binding sessions.terminalInput.bytesB64")
     );
+    r.methods
+        .get_mut("sessions.terminalInput")
+        .unwrap()
+        .fields
+        .insert("bytesB64".into());
+    assert!(reference.check(&root, &r).is_empty());
+    let scanner_digest = reference.scanner_sha256.clone();
     reference.scanner_sha256 = "tampered".into();
+    // The original file may have been deliberately removed. A changed digest
+    // must still fail exact sealed-capture equality, independently of disk
+    // presence. reference_capture tests present-byte mismatches in isolation.
     assert!(
-        reference.check(&root, &r).iter().any(
-            |s| s.contains("provenance changed: services/hub/cmd/brain/capspec_params_test.go")
-        )
+        reference
+            .check(&root, &r)
+            .iter()
+            .any(|s| s == "parsed Go reference differs from sealed capture")
     );
+    reference.scanner_sha256 = scanner_digest;
+    assert!(reference.check(&root, &r).is_empty());
     reference.dangerous_bindings = 1;
     assert!(
         reference

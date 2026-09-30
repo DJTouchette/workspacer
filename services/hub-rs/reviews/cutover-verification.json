@@ -141,7 +141,7 @@
             "Smoke extracted standalone server without Node",
             "Upload artifacts"
           ],
-          "scope": "Completed Linux job only; whole release remains in progress."
+          "scope": "Completed Linux package and runtime checks; the whole release subsequently passed and published as recorded above."
         },
         {
           "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
@@ -211,7 +211,7 @@
           "targets": [
             "Install, upgrade, own Rust backend, join shutdown and uninstall"
           ],
-          "scope": "Pending at observation; not evidence of completed installation."
+          "scope": "Completed Windows preview installation, upgrade, embedded-backend shutdown and uninstall; final release installer also passed separately."
         },
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
@@ -257,7 +257,7 @@
             "Smoke extracted standalone server without Node",
             "Upload artifacts"
           ],
-          "scope": "Completed Linux job only; whole release remains in progress."
+          "scope": "Completed Linux package and runtime checks; the whole release subsequently passed and published as recorded above."
         },
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
@@ -371,7 +371,7 @@
             "Smoke extracted standalone server without Node",
             "Upload artifacts"
           ],
-          "scope": "Completed Linux job only; whole release remains in progress."
+          "scope": "Completed Linux package and runtime checks; the whole release subsequently passed and published as recorded above."
         },
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
@@ -410,7 +410,7 @@
     },
     "federation-and-remote-workers": {
       "status": "verified",
-      "scope": "Exact main SHA actual worker relay/container boot and hub integration; no source-equivalence substitution needed now.",
+      "scope": "Actual worker relay/container boot and hub integration passed at de2687fc. The production backend is unchanged in01888095/5809551b; updated container validation at01888095 also covers the browser publication change.",
       "evidence": [
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
@@ -546,7 +546,7 @@
             "Smoke extracted standalone server without Node",
             "Upload artifacts"
           ],
-          "scope": "Completed Linux job only; whole release remains in progress."
+          "scope": "Completed Linux package and runtime checks; the whole release subsequently passed and published as recorded above."
         },
         {
           "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
@@ -623,7 +623,7 @@
             "Smoke extracted standalone server without Node",
             "Stage verified Windows backend input"
           ],
-          "scope": "In progress, no success presumed."
+          "scope": "Completed Windows Electron/server package and extracted standalone smoke."
         },
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
@@ -635,7 +635,7 @@
           "targets": [
             "native-windows-build"
           ],
-          "scope": "In progress; compiler output alone would not prove installer."
+          "scope": "Completed native compilation; installer execution is established by the separate native-windows-package receipt."
         },
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
@@ -698,7 +698,7 @@
             "Package (unsigned)",
             "Smoke extracted standalone server without Node"
           ],
-          "scope": "Still in progress; runtime macOS preview already passed."
+          "scope": "Completed macOS package and extracted standalone smoke, alongside the separately recorded runtime preview."
         },
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
@@ -752,7 +752,7 @@
             "Smoke extracted standalone server without Node",
             "Upload artifacts"
           ],
-          "scope": "Completed Linux job only; whole release remains in progress."
+          "scope": "Completed Linux package and runtime checks; the whole release subsequently passed and published as recorded above."
         },
         {
           "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",

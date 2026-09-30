@@ -219,7 +219,6 @@
           "why"
         ],
         "loaders": [
-          "services/hub/cmd/brain/providerparity_test.go::TestClaudeProjectDirNameContractCases(",
           "apps/desktop/src/main/services/claudeSessionList.test.ts::claudeProjectDirName — contracts/path-containment-cases.json projectDirNames",
           "services/hub-rs/src/services/discovery.rs::project_dir_names_match_reference_corpus"
         ]

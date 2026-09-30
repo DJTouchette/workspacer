@@ -13,8 +13,7 @@
         "required": ["match", "kind", "window", "note"],
         "loaders": [
           "services/claudemon/src/session/windows.rs::model-context-windows.json",
-          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::windows",
-          "services/hub/cmd/brain/windows_test.go::Windows"
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::windows"
         ]
       },
       "lookupCases": {
@@ -22,8 +21,7 @@
         "required": ["model", "expected", "note"],
         "loaders": [
           "services/claudemon/src/session/windows.rs::lookup_cases",
-          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::lookupCases",
-          "services/hub/cmd/brain/windows_test.go::LookupCases"
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::lookupCases"
         ]
       },
       "markerCases": {
@@ -31,8 +29,7 @@
         "required": ["requested", "expected", "note"],
         "loaders": [
           "services/claudemon/src/session/windows.rs::marker_cases",
-          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::markerCases",
-          "services/hub/cmd/brain/windows_test.go::MarkerCases"
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::markerCases"
         ]
       },
       "selectionCases": {
@@ -48,8 +45,7 @@
         ],
         "loaders": [
           "services/claudemon/src/session/windows.rs::selection_cases",
-          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::selectionCases",
-          "services/hub/internal/modelselection/modelselection_test.go::SelectionCases"
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::selectionCases"
         ]
       },
       "claudeArgvCases": {
@@ -64,8 +60,7 @@
         ],
         "loaders": [
           "services/claudemon/src/session/windows.rs::claude_argv_cases",
-          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::claudeArgvCases",
-          "services/hub/internal/modelselection/modelselection_test.go::ClaudeArgvCases"
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::claudeArgvCases"
         ]
       },
       "inputCases": {
@@ -84,8 +79,7 @@
         ],
         "loaders": [
           "services/claudemon/src/session/windows.rs::input_cases",
-          "apps/desktop/src/main/lib/spawnModel.test.ts::inputCases",
-          "services/hub/internal/modelselection/modelselection_test.go::InputCases"
+          "apps/desktop/src/main/lib/spawnModel.test.ts::inputCases"
         ]
       },
       "resolutionCases": {
@@ -102,8 +96,7 @@
         ],
         "loaders": [
           "services/claudemon/src/session/windows.rs::resolution_cases",
-          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::resolutionCases",
-          "services/hub/cmd/brain/windows_test.go::ResolutionCases"
+          "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::resolutionCases"
         ]
       },
       "providerContextDefaults": {
@@ -111,7 +104,6 @@
         "required": ["provider", "freshContextWindow", "note"],
         "loaders": [
           "apps/desktop/src/main/shared/modelContextWindowsContract.test.ts::providerContextDefaults",
-          "services/hub/internal/modelselection/modelselection_test.go::ProviderContextDefaults",
           "services/claudemon/src/session/windows.rs::provider_context_defaults"
         ]
       },
