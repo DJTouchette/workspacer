@@ -2,38 +2,38 @@
 
 ## Current checkpoint — 2026-09-30
 
-The source review ledger at `7140a680` contains **505 ported, 29 retired and
-zero pending** entries. All 14 final cutover gates remain pending. Run
-`python3 scripts/hub-migration.py backlog` for the live count; it measures
-unclosed source reviews, not missing implementations.
+The source ledger contains **505 ported, 29 retired and zero pending** entries.
+The13 non-deletion cutover gates are verified against the scoped execution
+receipts in [cutover-verification.json](reviews/cutover-verification.json).
+The tracked Go reference tree has been removed. **The legacy-deletion gate
+remains pending until post-removal CI is reviewed.** Runtime completion remains
+false until that final gate is closed.
 
-The published nightly is **0.169.0-nightly.202609291804**, from
-`9f786d734f996f487aa0894b8b5fae08aeba4ce3`. It includes the native UI changes,
-modern MCP list cache metadata and the Opus 5.5 default context-window fix.
-[Release run 36609384642](https://github.com/DJTouchette/workspacer/actions/runs/36609384642)
-completed successfully. Later parity fixes on main are not in that artifact.
+The published nightly is **0.169.0-nightly.202609300525**, from
+`de2687fc2db35d1d3ea25fff3f89d18bfb4806a8`.
+[Release36673333608](https://github.com/DJTouchette/workspacer/actions/runs/36673333608)
+passed all three package legs, modern/legacy MCP catalogs, real packaged Electron
+owned/adopted startup and shutdown, and native Windows installation/upgrade/
+backend/uninstall. The tag and all three updater YAML asset names/sizes were
+checked after publication. This artifact contains the latest native UI commit
+`7348414f`; the later web publication/portable-cutover batch is not in it.
 
-Subsequent reviewed batches repaired provider re-registration without reconnect,
-owned shutdown ordering, YAML/profile compatibility, empty-node capability
-registration, canonical spawn-field spelling, progress validation and other
-source-mapped contracts. The review JSON files preserve exact original source
-hashes, behavior mappings, intentional changes and scoped execution receipts.
-Aggregate test totals do not replace those individual reviews.
+That later batch passed full [CI36673551314](https://github.com/DJTouchette/workspacer/actions/runs/36673551314)
+and [container36674585697](https://github.com/DJTouchette/workspacer/actions/runs/36674585697)
+at `01888095`. Main integrated it as `5809551b`; only three contributor documents
+changed between those revisions. Actual TS-writer task/review/replacement imports,
+reopen/recovery and broker publication/refusal now have executing Rust/browser
+evidence. Native tests, TUI reconnect/owned shutdown and the published package
+receipts retain their exact source revisions and claim limits.
 
-The real TUI-to-Rust connection/reconnect/owned-shutdown smoke now runs in CI.
-Exact runtime commit `915960b9` passed primary CI36659897298, including the
-bounded embedded command dispatcher and its representative hub integration
-targets. The source support guard independently checks50 reviewed spawn fields.
+Original source hashes and all534 review records remain. The optional historical
+oracle requires the sealed pinned checkout; it does not fall back to current
+Go files. [Non-Go disposition](reviews/legacy-asset-disposition.json) records
+32 retained active files and six historical-only inputs. Tracked removal leaves
+any ignored local build artifacts untouched; these are not shipped inputs.
 
-Live plugin examples now have a retained owner at `plugins/examples`; the old
-reference copies remain byte-preserved. A provenance guard checks13 copied
-assets and the relocated routing UI fixture. New package paths and the packaged
-Electron ownership smoke still need their final release execution receipt.
-
-The final consumer/platform gates below still require integrated-revision
-receipts. Do not remove the remaining Go reference tree based on the source
-review count: shipped non-Go plugin examples still live beneath it, and source
-reference/generator dependencies must be deliberately retired first.
+The earlier audits below are historical context, not the current backlog.
+Run `python3 scripts/hub-migration.py backlog` for the live source/gate count.
 
 ## Historical audit — 2026-09-29
 

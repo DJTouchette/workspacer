@@ -1,69 +1,141 @@
 {
   "cutover": {
     "ci-and-generators": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490447",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490517",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490416",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490523",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534807"
+      ],
+      "status": "verified"
     },
     "deployment": {
       "evidence": [
-        ".github/workflows/rust-container-contract.yml",
-        "deploy/fly/rust/boot-rehearsal.sh",
-        "https://github.com/DJTouchette/workspacer/actions/runs/36512096125"
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672608745/job/109750669632",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36674585697/job/109756692738"
       ],
-      "status": "pending",
+      "status": "verified",
       "verified_checkpoint": {
-        "commit": "379d3b34",
-        "final_head_rerun_required": true,
-        "result": "Three default Rust role images built and fresh-volume hub, worker and combined boot/shutdown contracts passed; only Tailscale simulated, no cloud/provider mutations."
+        "commit": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+        "final_head_rerun_required": false,
+        "result": "Current runtime and web inputs passed container validation36674585697;5809551b differs only in three contributor documents."
       }
     },
     "electron-and-web": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490416",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534807"
+      ],
+      "status": "verified"
     },
     "federation-and-remote-workers": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672608745/job/109750669632"
+      ],
+      "status": "verified"
     },
     "legacy-deletion": {
       "evidence": [],
       "status": "pending"
     },
     "linux-package": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847"
+      ],
+      "status": "verified"
     },
     "macos-package": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795"
+      ],
+      "status": "verified"
     },
     "mcp-and-plugins": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490416",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847"
+      ],
+      "status": "verified"
     },
     "native-embedded": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553397/job/109750490662",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553397/job/109750490829",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553397/job/109750490858",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553301/job/109750490195",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109758838484"
+      ],
+      "status": "verified"
     },
     "node-companion-replacement": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534843",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109758838484"
+      ],
+      "status": "verified"
     },
     "persisted-state-upgrade": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534843",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490430",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534807"
+      ],
+      "status": "verified"
     },
     "standalone-service": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847"
+      ],
+      "status": "verified"
     },
     "tui": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490503",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522"
+      ],
+      "status": "verified"
     },
     "windows-package": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/cutover-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916810",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109758838484"
+      ],
+      "status": "verified"
     }
   },
   "files": {

@@ -1,0 +1,828 @@
+{
+  "schemaVersion": 1,
+  "kind": "reviewed-non-deletion-cutover-evidence",
+  "recordedAtUTC": "2026-09-30T05:58:18.524858+00:00",
+  "reviewedTree": "5809551b413056ebe3683e3ad0db7d62a22f8ac4",
+  "sourceReview": {
+    "ported": 505,
+    "retired": 29,
+    "pending": 0
+  },
+  "scopeEquivalence": {
+    "testedPrep": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+    "reviewedTree": "5809551b413056ebe3683e3ad0db7d62a22f8ac4",
+    "onlyLaterChanges": [
+      "CONTRIBUTING.md",
+      "apps/desktop/COMMAND_LAYER.md",
+      "apps/desktop/DESIGN_LANGUAGE.md"
+    ],
+    "packagedRevision": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+    "packageBoundary": "The later production change is browser broker publication, covered by actual Rust/browser CI and rebuilt container validation; backend/native/package owners are unchanged. No later artifact is mislabeled as published."
+  },
+  "publication": {
+    "version": "0.169.0-nightly.202609300525",
+    "run": 36673333608,
+    "tag": "nightly",
+    "tagCommit": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+    "url": "https://github.com/DJTouchette/workspacer/releases/tag/nightly",
+    "publishedAt": "2026-09-30T05:53:36Z",
+    "metadata": "All3 latest YAML versions, asset names and sizes match published assets; checksum fields are consistent, not a claim of rehashing every download."
+  },
+  "gates": {
+    "ci-and-generators": {
+      "status": "verified",
+      "scope": "Primary CI passed at de2687fc and the portable-check/import/web-publication batch passed full CI at01888095. The three later contributor documents change no executable input.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490447,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490447",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "make check-hub-capability-parameters"
+          ],
+          "scope": "Production Rust binding trace and original binding closure."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490517,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490517",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "release-check-runner"
+          ],
+          "scope": "Current generator/packaging helper checks."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490416,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490416",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "desktop typecheck/main+renderer tests",
+            "test:dispatch-chain",
+            "test:e2e:ci"
+          ],
+          "scope": "Current desktop/browser fixtures against Rust; not an installed GUI visual claim."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490522,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "cargo test --locked --no-fail-fast",
+            "services/hub-rs/tests/backend_owner.rs",
+            "services/hub-rs/tests/shutdown.rs"
+          ],
+          "scope": "Actual main hub owning integrations; target-specific evidence below, not inferred from an aggregate count."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490523,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490523",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "services/hub-rs/tests/bus_latency.rs optimized ignored tests"
+          ],
+          "scope": "Executed latency gate."
+        },
+        {
+          "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+          "run": 36673551314,
+          "job": 109753534807,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534807",
+          "observedJobConclusion": "success",
+          "targets": [
+            "desktop"
+          ],
+          "scope": "Integrated desktop tests including real Rust/browser publication and capture provenance"
+        }
+      ]
+    },
+    "electron-and-web": {
+      "status": "verified",
+      "scope": "Packaged Linux Electron owned/adopted lifecycle passed at de2687fc with100 tools before quit, real configuration access and clean exit/listener receipts. The web publish fix passed actual Chromium/Rust publication and view-token refusal at01888095. This is not a visual/model-session claim on every installed OS.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490416,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490416",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "desktop typecheck/main+renderer tests",
+            "test:dispatch-chain",
+            "test:e2e:ci"
+          ],
+          "scope": "Current desktop/browser fixtures against Rust; not an installed GUI visual claim."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Package (unsigned)",
+            "Smoke packaged Electron ownership under Xvfb",
+            "Smoke extracted standalone server without Node",
+            "Upload artifacts"
+          ],
+          "scope": "Completed Linux job only; whole release remains in progress."
+        },
+        {
+          "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+          "run": 36673551314,
+          "job": 109753534807,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534807",
+          "observedJobConclusion": "success",
+          "targets": [
+            "desktop"
+          ],
+          "scope": "Integrated desktop tests including real Rust/browser publication and capture provenance"
+        }
+      ]
+    },
+    "native-embedded": {
+      "status": "verified",
+      "scope": "Three-OS native client/embedding checks and Linux real-window smoke passed at de2687fc. Windows preview and final release installer both passed install, upgrade, embedded backend, joined shutdown and uninstall. Isolated preview identity does not establish production-state upgrade.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553397,
+          "job": 109750490662,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553397/job/109750490662",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Reducer, WebSocket and GPUI interaction tests",
+            "Link native application"
+          ],
+          "scope": "Actual native supported matrix; platform GUI scope as named."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553397,
+          "job": 109750490829,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553397/job/109750490829",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Reducer, WebSocket and GPUI interaction tests",
+            "Link native application"
+          ],
+          "scope": "Actual native supported matrix; platform GUI scope as named."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553397,
+          "job": 109750490858,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553397/job/109750490858",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Reducer, WebSocket and GPUI interaction tests",
+            "Link native application",
+            "Real Linux window, keyboard and pixel smoke",
+            "Rich transcript real-window smoke"
+          ],
+          "scope": "Actual native supported matrix; platform GUI scope as named."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553301,
+          "job": 109750490195,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553301/job/109750490195",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Install, upgrade, own Rust backend, join shutdown and uninstall"
+          ],
+          "scope": "Pending at observation; not evidence of completed installation."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109758838484,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109758838484",
+          "observedJobConclusion": "success",
+          "targets": [
+            "native-windows-package"
+          ],
+          "scope": "Final native installer and exact input provenance"
+        }
+      ]
+    },
+    "standalone-service": {
+      "status": "verified",
+      "scope": "All three extracted standalone bundles passed source stamps, authenticated readiness/brain and modern/legacy catalogs, no-Node core operation and owned shutdown at de2687fc. CLI runtime source is unchanged in01888095 and5809551b.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490522,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "cargo test --locked --no-fail-fast",
+            "services/hub-rs/tests/backend_owner.rs",
+            "services/hub-rs/tests/shutdown.rs"
+          ],
+          "scope": "Actual main hub owning integrations; target-specific evidence below, not inferred from an aggregate count."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Package (unsigned)",
+            "Smoke packaged Electron ownership under Xvfb",
+            "Smoke extracted standalone server without Node",
+            "Upload artifacts"
+          ],
+          "scope": "Completed Linux job only; whole release remains in progress."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (ubuntu-22.04, linux, linux-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916795,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (windows-latest, windows, windows-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916847,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (macos-14, macos-arm64, darwin-arm64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        }
+      ]
+    },
+    "tui": {
+      "status": "verified",
+      "scope": "Actual TUI integration with shared Rust backend and ownership/reconnection, not merely source bindings.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490503,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490503",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "apps/tui format/tests/clippy"
+          ],
+          "scope": "Normal TUI checks."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490522,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "daemons::backend_smoke::real_rust_backend_calls_events_reconnect_and_owned_shutdown --ignored --exact"
+          ],
+          "scope": "Explicitly executed1 test,0 ignored: real Rust calls/events/reconnect/owned shutdown."
+        }
+      ]
+    },
+    "mcp-and-plugins": {
+      "status": "verified",
+      "scope": "Runtime/plugin suites and all three packaged modern2026-07-28/legacy2025-11-25 catalogs passed at de2687fc. Electron provider removal retains working local help and removes desktop tools. Plugin examples and source captures retain independent provenance.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490522,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "services/hub-rs/tests/mcp.rs",
+            "services/hub-rs/tests/mcp_sse.rs",
+            "services/hub-rs/tests/plugins.rs",
+            "services/hub-rs/tests/plugin_manager.rs",
+            "services/hub-rs/tests/integration_spine.rs"
+          ],
+          "scope": "Executed native HTTP/SSE/plugin lifecycle, identity and retained editor integration."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490416,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490416",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "desktop typecheck/main+renderer tests",
+            "test:dispatch-chain",
+            "test:e2e:ci"
+          ],
+          "scope": "Current desktop/browser fixtures against Rust; not an installed GUI visual claim."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Package (unsigned)",
+            "Smoke packaged Electron ownership under Xvfb",
+            "Smoke extracted standalone server without Node",
+            "Upload artifacts"
+          ],
+          "scope": "Completed Linux job only; whole release remains in progress."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (ubuntu-22.04, linux, linux-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916795,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (windows-latest, windows, windows-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916847,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (macos-14, macos-arm64, darwin-arm64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        }
+      ]
+    },
+    "federation-and-remote-workers": {
+      "status": "verified",
+      "scope": "Exact main SHA actual worker relay/container boot and hub integration; no source-equivalence substitution needed now.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490522,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "services/hub-rs/tests/federation.rs",
+            "services/hub-rs/tests/remote_client.rs",
+            "federation::pause_tests::two_hubs_pause_without_redial_and_only_owner_resumes_without_replaying_mutation",
+            "provider_relay::tests::individual_deadline_keeps_sibling_and_caller_lease_and_never_replays_accepted_effect"
+          ],
+          "scope": "Multiple-hub authority, forwarding, remote ownership/reconnect and no unsafe replay."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672608745,
+          "job": 109750669632,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672608745/job/109750669632",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "deploy/fly/preflight.sh build",
+            "deploy/fly/rust/test-supervisor.py",
+            "deploy/fly/{node,hub}/test-bootstrap.sh",
+            "deploy/fly/rust/test-launch.sh",
+            "deploy/fly/rust/test-provision.sh",
+            "deploy/fly/preflight.sh boot"
+          ],
+          "scope": "Real hub/worker/combined images, provider relay registration, credentials and graceful stop; Tailscale simulated, no cloud rollout claim."
+        }
+      ]
+    },
+    "persisted-state-upgrade": {
+      "status": "verified",
+      "scope": "Supported persisted representations, path/identity preservation and owning-crate recovery/refusal tests passed. Three independent current TypeScript-writer task/review/replacement imports, ownership/recovery and rewrite/reopen passed at01888095; production stores/writers are unchanged from de2687fc. No claim covers every old release schema, arbitrary unknown root fields or restored process liveness.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490522,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "services/hub-rs/tests/legacy_preservation.rs",
+            "config.rs",
+            "stores.rs",
+            "layout.rs",
+            "jobs.rs",
+            "task_store.rs",
+            "fleet_review.rs",
+            "manager_replacements.rs",
+            "provider_parity.rs"
+          ],
+          "scope": "Current supported state families, reopen/error/identity and YAML parity contracts."
+        },
+        {
+          "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+          "run": 36673551314,
+          "job": 109753534843,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534843",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "persisted_ts_imports::typescript_task_history_import_keeps_ids_metrics_and_owner_cas_across_rewrite",
+            "persisted_ts_imports::typescript_git_review_import_survives_absent_worktree_and_preserves_access",
+            "persisted_ts_imports::typescript_replacement_import_recovers_uncertain_delivery_without_replay",
+            "services/hub-rs/tests/session_facade.rs"
+          ],
+          "scope": "Actual prep imports3 passed and session_facade11 passed; imported bytes emitted by real retained TS writers, not Rust seed serialization."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490430,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490430",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "store::schema::tests::migrate_forward_from_older_version_preserves_data",
+            "store::schema::tests::migrate_is_idempotent",
+            "store::schema::tests::migrate_refuses_a_newer_database",
+            "store::schema::tests::a_failed_step_leaves_neither_body_nor_version",
+            "store::schema::tests::fully_migrated_v8_database_passes_the_read_only_open_probe",
+            "execution::tests::legacy_hydration_and_durable_resume_keep_known_lineage"
+          ],
+          "scope": "Actual daemon SQLite migration, failed-step rollback, newer-schema refusal and retained lineage execution; distinct from hub JSON writer imports."
+        },
+        {
+          "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+          "run": 36673551314,
+          "job": 109753534807,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534807",
+          "observedJobConclusion": "success",
+          "targets": [
+            "desktop"
+          ],
+          "scope": "Integrated desktop tests including real Rust/browser publication and capture provenance"
+        }
+      ]
+    },
+    "node-companion-replacement": {
+      "status": "verified",
+      "scope": "All three packaged standalone cores passed without Node; native Windows payload and owned-backend installer checks passed. Public Electron JavaScript services and optional provider/plugin runtimes remain distinct from the retired private companion. Operational docs now describe current owners.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672553384,
+          "job": 109750490522,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672553384/job/109750490522",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "cargo test --locked --no-fail-fast",
+            "services/hub-rs/tests/backend_owner.rs",
+            "services/hub-rs/tests/shutdown.rs"
+          ],
+          "scope": "Actual main hub owning integrations; target-specific evidence below, not inferred from an aggregate count."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Package (unsigned)",
+            "Smoke packaged Electron ownership under Xvfb",
+            "Smoke extracted standalone server without Node",
+            "Upload artifacts"
+          ],
+          "scope": "Completed Linux job only; whole release remains in progress."
+        },
+        {
+          "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+          "run": 36673551314,
+          "job": 109753534843,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673551314/job/109753534843",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "services/hub-rs/tests/session_facade.rs",
+            "services/hub-rs/tests/integration_spine.rs"
+          ],
+          "scope": "Current Rust service replacements and explicit facade caller contract."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (ubuntu-22.04, linux, linux-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916795,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (windows-latest, windows, windows-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916847,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (macos-14, macos-arm64, darwin-arm64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109758838484,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109758838484",
+          "observedJobConclusion": "success",
+          "targets": [
+            "native-windows-package"
+          ],
+          "scope": "Final native installer and exact input provenance"
+        }
+      ]
+    },
+    "windows-package": {
+      "status": "verified",
+      "scope": "Final de2687fc release passed Electron/server packaging, native/backend input hash/CRT/source/run provenance, and native installer install/upgrade/owned shutdown/uninstall. Native and Electron installers plus matching updater metadata are published.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916795,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Package (unsigned)",
+            "Smoke extracted standalone server without Node",
+            "Stage verified Windows backend input"
+          ],
+          "scope": "In progress, no success presumed."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916810,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916810",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "native-windows-build"
+          ],
+          "scope": "In progress; compiler output alone would not prove installer."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (ubuntu-22.04, linux, linux-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916795,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (windows-latest, windows, windows-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916847,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (macos-14, macos-arm64, darwin-arm64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109758838484,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109758838484",
+          "observedJobConclusion": "success",
+          "targets": [
+            "native-windows-package"
+          ],
+          "scope": "Final native installer and exact input provenance"
+        }
+      ]
+    },
+    "macos-package": {
+      "status": "verified",
+      "scope": "Final de2687fc arm64 DMG/server archive and extracted standalone smoke passed and assets are published. No native macOS installer or automatic Electron updater claim.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916847,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Package (unsigned)",
+            "Smoke extracted standalone server without Node"
+          ],
+          "scope": "Still in progress; runtime macOS preview already passed."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (ubuntu-22.04, linux, linux-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916795,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (windows-latest, windows, windows-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916847,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (macos-14, macos-arm64, darwin-arm64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        }
+      ]
+    },
+    "linux-package": {
+      "status": "verified",
+      "scope": "Final de2687fc AppImage/server packaging, actual owned/adopted packaged Electron and extracted no-Node server smoke passed. Assets are published.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "Package (unsigned)",
+            "Smoke packaged Electron ownership under Xvfb",
+            "Smoke extracted standalone server without Node",
+            "Upload artifacts"
+          ],
+          "scope": "Completed Linux job only; whole release remains in progress."
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916782,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916782",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (ubuntu-22.04, linux, linux-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916795,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916795",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (windows-latest, windows, windows-x64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        },
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36673333608,
+          "job": 109752916847,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36673333608/job/109752916847",
+          "observedJobConclusion": "success",
+          "targets": [
+            "build (macos-14, macos-arm64, darwin-arm64)"
+          ],
+          "scope": "Final published package and extracted standalone smoke"
+        }
+      ]
+    },
+    "deployment": {
+      "status": "verified",
+      "scope": "Actual hub/worker/combined images, fresh-volume boot/shutdown, credentials, artifact and supervisor checks passed at de2687fc and again at01888095 with the web publication fix. Only three contributor docs differ at5809551b. Tailscale is simulated; no cloud rollout or universal existing-volume upgrade is claimed.",
+      "evidence": [
+        {
+          "sha": "de2687fc2db35d1d3ea25fff3f89d18bfb4806a8",
+          "run": 36672608745,
+          "job": 109750669632,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36672608745/job/109750669632",
+          "observedJobStatus": "completed",
+          "observedJobConclusion": "success",
+          "targets": [
+            "deploy/fly/preflight.sh build",
+            "deploy/fly/rust/test-supervisor.py",
+            "deploy/fly/{node,hub}/test-bootstrap.sh",
+            "deploy/fly/rust/test-launch.sh",
+            "deploy/fly/rust/test-provision.sh",
+            "deploy/fly/preflight.sh boot"
+          ],
+          "scope": "Real hub/worker/combined images, provider relay registration, credentials and graceful stop; Tailscale simulated, no cloud rollout claim."
+        },
+        {
+          "sha": "018880954e3a324e695e2c9a4a9d7a328d73d9c1",
+          "run": 36674585697,
+          "job": 109756692738,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36674585697/job/109756692738",
+          "observedJobConclusion": "success",
+          "targets": [
+            "images-and-owned-boot"
+          ],
+          "scope": "Container validation including web publication fix"
+        }
+      ]
+    }
+  },
+  "legacyDeletion": "pending; no deletion certified by this receipt"
+}
