@@ -2247,16 +2247,90 @@
       ]
     },
     "services/hub/cmd/brain/handlers.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/profiles.rs",
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete 2221-line original reviewed: full/catalog registrations, host identity and cached last exit, shared service dispatch, spawn resolution/admission and credential publication, managed/PTY requests, controls, saved documents, filesystem and Git wrappers, and JSON helpers.",
+          "Production Rust ownership is split across registered services and the owned launch coordinator. Source-specific profiles/providers, facade, dispatch, launch-truth, model-window, terminal, saved-document, filesystem, Git, provider-scope and snapshot reviews preserve the detailed behavior and execution receipts instead of certifying this registry merely from its method names.",
+          "Spawn resolution retains configuration and manager preferences, provider/profile selection, exact model/window/effort fields, PTY resume versus fresh session ID, managed provider-specific transport/resume/env, permission-mode passthrough, first-message acceptance truth, and publication of host metadata/credentials before launch. Host-owned workflow admission supersedes optional Node callbacks.",
+          "Known session DTO fields now validate before any daemon query or mutation. The real embedded-engine/registered-bus/inert-wrapper test reproduces malformed gate, answer and optional-field gaps, proves no malformed PTY input via a same-stream delivery marker, and retains nullable Go defaults and answer precedence.",
+          "Canonical spawn key policy has one portable registry with real source closure and wrong-case rejection. Ambient host paths do not restore retired workspace token grants; selected object boundaries remain in store/library/Git owners. Unknown methods and stopped owners refuse rather than inventing successful actions."
+        ],
+        "intentionalChanges": [
+          "Typed in-process engine commands replace private loopback HTTP for full local ownership; optional external daemon is a separate read-only bridge. Transport errors remain visible, and ambiguous mutations are not retried.",
+          "Canonical exact spellings are authoritative; null defaults apply only to known typed DTO fields. Unknown extension payloads are not globally coerced.",
+          "Pi remains explicitly unsupported where the mandatory MCP bridge is absent. Worktree/template/result validation now belongs to the Rust coordinator rather than retaining historical desktop-only silent omissions."
+        ],
+        "validation": "2026-09-30: exact runtime commit915960b9 passed complete primary CI36659897298 (https://github.com/DJTouchette/workspacer/actions/runs/36659897298), including Rust backend, daemon, TUI, desktop/browser and Windows jobs. Current source-only support guard passed scanner29 (/tmp/workspacer-spawn-support-rust-final.log), desktop66 (/tmp/workspacer-spawn-support-ts-final.log), corpus ownership6/vocabulary5, and repository check122methods/123dangerous/23opaque/0errors (/tmp/workspacer-spawn-support-check.log). Whole desktop main/renderer typecheck passed /tmp/workspacer-final-desktop-typecheck.log. Managed local_spawn1 passed /tmp/workspacer-managed-adapter-proof.log (Unix-only inert provider fixtures, no real model requests); mobile snapshots10 passed /tmp/workspacer-snapshot-mobile-final.log. Source-specific owner reviews retain detailed prior receipts for profiles, stores, filesystem, Git, launch planning and lifecycle. The attempted later local hub rebuild hit linker SIGBUS/disk exhaustion before tests and is not a pass; exact successful CI supplies runtime evidence. Retained-asset relocation and packaged Electron ownership still require their own final CI/release receipts. No cutover gate or publication is certified by these rows."
+      },
       "sha256": "2506b12a11a361ae4a0200efd6dd152d4b2b6c64b8b12d0bcbda4b60c6779f61",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/engine_adapter.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/profiles.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/tests/fixtures/fake_claude_stream.py",
+        "services/hub-rs/tests/fixtures/fake_codex_subagent.py",
+        "tools/capability-source-check/tests/spawn_support.rs",
+        "apps/desktop/src/main/services/spawnSupport.test.ts"
+      ]
     },
     "services/hub/cmd/brain/handlers_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/profiles.rs",
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/git.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete 603-line test source read, including stale comments whose assertions now require permission passthrough. Production spawn_plan and public Lifecycle tests retain executable argv/order, default Claude stream with canonical model/window, explicit/config transport precedence, Codex stream wire fields, Claude stream absence of a transport key, provider resume rules, independent permission and skip flags, and returned pinned identity.",
+          "Existing real coordinator and fleet-message tests preserve named/unlabelled sender attribution, untouched text without attribution, required field refusal, no replay after ambiguous delivery and definitive stopped-session errors. Registered list/snapshot ownership intentionally projects typed daemon rows rather than forwarding arbitrary fixture bytes.",
+          "Current engine_adapter integration supplies real gate and PTY answer behavior and malformed-field refusal before effects. Extended Unix-isolated local_spawn drives actual registered claude.answer through the managed Claude adapter to a captured provider control_response: text kinds preserve literal 2 and 3, while option kind 2 becomes Blue. A real managed Codex app-server fixture exposes a child thread only after a marker; registered subagentConversation then returns exact two rollout items and correlation IDs. Existing-but-unexposed child, missing ID and path traversal all refuse; actual owned shutdown reaps every fake provider PID."
+        ],
+        "intentionalChanges": [
+          "Typed in-process engine commands replace private loopback HTTP for full local ownership; optional external daemon is a separate read-only bridge. Transport errors remain visible, and ambiguous mutations are not retried.",
+          "Canonical exact spellings are authoritative; null defaults apply only to known typed DTO fields. Unknown extension payloads are not globally coerced.",
+          "Pi remains explicitly unsupported where the mandatory MCP bridge is absent. Worktree/template/result validation now belongs to the Rust coordinator rather than retaining historical desktop-only silent omissions."
+        ],
+        "validation": "2026-09-30: exact runtime commit915960b9 passed complete primary CI36659897298 (https://github.com/DJTouchette/workspacer/actions/runs/36659897298), including Rust backend, daemon, TUI, desktop/browser and Windows jobs. Current source-only support guard passed scanner29 (/tmp/workspacer-spawn-support-rust-final.log), desktop66 (/tmp/workspacer-spawn-support-ts-final.log), corpus ownership6/vocabulary5, and repository check122methods/123dangerous/23opaque/0errors (/tmp/workspacer-spawn-support-check.log). Whole desktop main/renderer typecheck passed /tmp/workspacer-final-desktop-typecheck.log. Managed local_spawn1 passed /tmp/workspacer-managed-adapter-proof.log (Unix-only inert provider fixtures, no real model requests); mobile snapshots10 passed /tmp/workspacer-snapshot-mobile-final.log. Source-specific owner reviews retain detailed prior receipts for profiles, stores, filesystem, Git, launch planning and lifecycle. The attempted later local hub rebuild hit linker SIGBUS/disk exhaustion before tests and is not a pass; exact successful CI supplies runtime evidence. Retained-asset relocation and packaged Electron ownership still require their own final CI/release receipts. No cutover gate or publication is certified by these rows."
+      },
       "sha256": "91819f0ff54265c3b8f429d3b96262a0c6d6136ae42fb60036f6ce8edd92cd42",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/engine_adapter.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/profiles.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/tests/fixtures/fake_claude_stream.py",
+        "services/hub-rs/tests/fixtures/fake_codex_subagent.py",
+        "tools/capability-source-check/tests/spawn_support.rs",
+        "apps/desktop/src/main/services/spawnSupport.test.ts"
+      ]
     },
     "services/hub/cmd/brain/headless_completeness_test.go": {
       "replacement": [
@@ -2884,10 +2958,50 @@
       ]
     },
     "services/hub/cmd/brain/parity_test.go": {
-      "replacement": [],
+      "replacement": [
+        "services/hub-rs/src/services/sessions.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/agent_lifecycle.rs",
+        "services/hub-rs/src/services/profiles.rs",
+        "services/hub-rs/src/services/stores.rs",
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/git.rs",
+        "contracts/spawn-parameter-support.json",
+        "tools/capability-source-check/src/spawn_support.rs",
+        "apps/desktop/tests/support/spawnSupport.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Complete 650-line original read, including helper fake HTTP recorder, PTY/stream answers, empty answer refusal, no message-to-input fallback, shell/gate/resize, profile persistence/default protection, filesystem roundtrip and directory classification.",
+          "Existing actual shell fixture checks input, resize with stty, output, attachment leases and shutdown. Existing real persisted profile/store/file targets preserve Default materialization and protection, ordinary read/write/size, visible directory-only picker entries and normalized host roots.",
+          "Shipping Rust mobile asset is checked against12 required and2 declined fields, exact usage4/statusLine17 values and durable metadata nesting3 through real ReplacementState reopen/enrich. Window durations300/10080 and absent monthly duration are pinned, with unknown/remote non-enrichment controls.",
+          "A portable50-row support policy replaces the old reflection/destructure mirror guard. Independent Rust/TypeScript checks close over ordinary handler and actual workflow-admission caller roots, require exact bidirectional source exceptions and supported intersection, and separately classify supported/refused/host-derived/ignored behavior. Actual implementation anchors reject comment/string decoys; stale directional reasons, contradictory semantic exceptions, removed implementations and new/dynamic middleware fields fail mutations. Source observation is explicitly narrower than semantic support: paired adapter behavior is separately anchored, and parsing legacy facade/grant inputs does not confer authority."
+        ],
+        "intentionalChanges": [
+          "Typed in-process engine commands replace private loopback HTTP for full local ownership; optional external daemon is a separate read-only bridge. Transport errors remain visible, and ambiguous mutations are not retried.",
+          "Canonical exact spellings are authoritative; null defaults apply only to known typed DTO fields. Unknown extension payloads are not globally coerced.",
+          "Pi remains explicitly unsupported where the mandatory MCP bridge is absent. Worktree/template/result validation now belongs to the Rust coordinator rather than retaining historical desktop-only silent omissions."
+        ],
+        "validation": "2026-09-30: exact runtime commit915960b9 passed complete primary CI36659897298 (https://github.com/DJTouchette/workspacer/actions/runs/36659897298), including Rust backend, daemon, TUI, desktop/browser and Windows jobs. Current source-only support guard passed scanner29 (/tmp/workspacer-spawn-support-rust-final.log), desktop66 (/tmp/workspacer-spawn-support-ts-final.log), corpus ownership6/vocabulary5, and repository check122methods/123dangerous/23opaque/0errors (/tmp/workspacer-spawn-support-check.log). Whole desktop main/renderer typecheck passed /tmp/workspacer-final-desktop-typecheck.log. Managed local_spawn1 passed /tmp/workspacer-managed-adapter-proof.log (Unix-only inert provider fixtures, no real model requests); mobile snapshots10 passed /tmp/workspacer-snapshot-mobile-final.log. Source-specific owner reviews retain detailed prior receipts for profiles, stores, filesystem, Git, launch planning and lifecycle. The attempted later local hub rebuild hit linker SIGBUS/disk exhaustion before tests and is not a pass; exact successful CI supplies runtime evidence. Retained-asset relocation and packaged Electron ownership still require their own final CI/release receipts. No cutover gate or publication is certified by these rows."
+      },
       "sha256": "a3dd094f8df4adf158723dbfde2e6ba246b3a36105ed249c21078ef21943e3df",
-      "status": "pending",
-      "tests": []
+      "status": "ported",
+      "tests": [
+        "services/hub-rs/tests/engine_adapter.rs",
+        "services/hub-rs/tests/spawn_plan.rs",
+        "services/hub-rs/tests/agent_spawn.rs",
+        "services/hub-rs/tests/agent_lifecycle.rs",
+        "services/hub-rs/tests/profiles.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/tests/snapshots.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/tests/fixtures/fake_claude_stream.py",
+        "services/hub-rs/tests/fixtures/fake_codex_subagent.py",
+        "tools/capability-source-check/tests/spawn_support.rs",
+        "apps/desktop/src/main/services/spawnSupport.test.ts"
+      ]
     },
     "services/hub/cmd/brain/pathmatch_other.go": {
       "replacement": [
