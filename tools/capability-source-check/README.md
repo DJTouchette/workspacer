@@ -54,3 +54,10 @@ input receivers, dynamic untyped indexes and unsupported serde shapes fail.
 Known scalar conversions stop JSON-key provenance. The helper depth limit
 still fails rather than silently declaring an input inert. Runtime boundary
 and behavior tests remain necessary.
+
+Spawn-key closure is checked separately from dangerous-parameter policy.
+`contracts/spawn-parameter-keys.json` is the runtime's authoritative spelling
+registry: it preserves all46 historical keys plus5 reviewed reservations and
+must cover every source-traced `agents.spawn` root. The historical Go vocabulary
+is unchanged. The desktop AST guard checks the same registry. Membership only
+reserves spelling; it does not authorize a parameter or enable an operation.

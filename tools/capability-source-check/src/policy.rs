@@ -266,3 +266,88 @@ impl Policy {
         out
     }
 }
+
+/// Runtime spelling ownership is independent of the historical Go snapshot.
+/// All traced roots are reserved, including stripped or conservatively read keys;
+/// membership never means that a provider accepts that field or its value.
+pub fn check_spawn_keys(
+    report: &Report,
+    contract: &serde_json::Value,
+    historical: &serde_json::Value,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    let Some(rows) = contract["keys"].as_array() else {
+        return vec!["spawn key contract lacks keys".into()];
+    };
+    let keys: BTreeSet<_> = rows.iter().filter_map(serde_json::Value::as_str).collect();
+    if rows.len() != 51 || keys.len() != 51 {
+        errors.push("spawn key registry must contain exactly51 unique reviewed keys".into());
+    }
+    if keys.iter().any(|key| {
+        !key.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+            || !key.bytes().all(|b| b.is_ascii_alphanumeric())
+    }) {
+        errors.push("spawn key registry contains malformed canonical spelling".into());
+    }
+    if keys
+        .iter()
+        .map(|key| key.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>()
+        .len()
+        != keys.len()
+    {
+        errors.push("spawn key registry has ambiguous case-folded names".into());
+    }
+    let old: BTreeSet<_> = historical["spawnKeys"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    if old.len() != 46 {
+        errors.push("historical spawn key population changed".into());
+    }
+    for key in &old {
+        if !keys.contains(key) {
+            errors.push(format!("historical spawn key omitted: {key}"));
+        }
+    }
+    let additions: BTreeSet<_> = keys.difference(&old).copied().collect();
+    let reservations = contract["reservations"].as_object();
+    let reviewed: BTreeSet<_> = reservations
+        .into_iter()
+        .flat_map(|m| m.keys().map(String::as_str))
+        .collect();
+    if additions != reviewed {
+        errors
+            .push("spawn key reservations do not exactly explain the historical additions".into());
+    }
+    for (key, reason) in reservations.into_iter().flatten() {
+        if !reason.as_str().is_some_and(|s| !s.trim().is_empty()) {
+            errors.push(format!("spawn key reservation lacks review: {key}"));
+        }
+    }
+    let Some(bound) = report.methods.get("agents.spawn") else {
+        errors.push("agents.spawn source binding missing".into());
+        return errors;
+    };
+    let roots: BTreeSet<_> = bound
+        .fields
+        .iter()
+        .filter_map(|p| p.split('.').next())
+        .collect();
+    if roots.len() < 40 {
+        errors.push(format!(
+            "agents.spawn source root population collapsed: {}",
+            roots.len()
+        ));
+    }
+    for field in roots {
+        if !keys.contains(field) {
+            errors.push(format!(
+                "agents.spawn caller root missing canonical spelling: {field}"
+            ));
+        }
+    }
+    errors
+}

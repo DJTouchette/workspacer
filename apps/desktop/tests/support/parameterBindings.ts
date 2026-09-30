@@ -2,7 +2,11 @@ import ts from 'typescript';
 /** Caller-object provenance, not a scan of every nearby identifier. This keeps
  * rename source keys, nested binding/type/member paths, and computed literals;
  * comments and unrelated objects cannot manufacture coverage. */
-export function desktopParameterFields(handler: ts.Node, source: ts.SourceFile): string[] {
+export function desktopParameterFields(
+  handler: ts.Node,
+  source: ts.SourceFile,
+  topLevelOnly = false,
+): string[] {
   while (ts.isParenthesizedExpression(handler) || ts.isCallExpression(handler)) {
     if (ts.isParenthesizedExpression(handler)) handler = handler.expression;
     else {
@@ -18,22 +22,26 @@ export function desktopParameterFields(handler: ts.Node, source: ts.SourceFile):
   const first = handler.parameters[0];
   if (!first) return [];
   const add = (parts: string[]): void => {
-    for (const part of parts) if (part) fields.add(part);
+    for (const part of topLevelOnly ? parts.slice(0, 1) : parts) if (part) fields.add(part);
   };
-  const typeFields = (type: ts.TypeNode | undefined): void => {
+  const typeFields = (type: ts.TypeNode | undefined, prefix: string[] = []): void => {
     if (!type) return;
+    if (topLevelOnly && prefix.length) {
+      add(prefix);
+      return;
+    }
     if (ts.isTypeLiteralNode(type))
       for (const member of type.members) {
         if (ts.isPropertySignature(member) && member.name) {
           if (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)) {
             fields.add(member.name.text);
-            typeFields(member.type);
+            typeFields(member.type, [...prefix, member.name.text]);
           } else throw Error('unresolved caller type property');
         }
       }
     else if (ts.isUnionTypeNode(type) || ts.isIntersectionTypeNode(type))
-      type.types.forEach(typeFields);
-    else if (ts.isArrayTypeNode(type)) typeFields(type.elementType);
+      type.types.forEach((part) => typeFields(part, prefix));
+    else if (ts.isArrayTypeNode(type)) typeFields(type.elementType, prefix);
   };
   const provenance = (expr: ts.Expression): string[] | undefined => {
     if (ts.isIdentifier(expr)) return aliases.get(expr.text);
@@ -92,7 +100,7 @@ export function desktopParameterFields(handler: ts.Node, source: ts.SourceFile):
       const value = provenance(node.initializer);
       if (value) {
         pattern(node.name, value);
-        typeFields(node.type);
+        typeFields(node.type, value);
         let initial: ts.Expression = node.initializer;
         while (
           ts.isParenthesizedExpression(initial) ||
@@ -100,7 +108,7 @@ export function desktopParameterFields(handler: ts.Node, source: ts.SourceFile):
           ts.isTypeAssertionExpression(initial)
         ) {
           if (ts.isAsExpression(initial) || ts.isTypeAssertionExpression(initial))
-            typeFields(initial.type);
+            typeFields(initial.type, value);
           initial = initial.expression;
         }
       }

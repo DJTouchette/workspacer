@@ -333,8 +333,6 @@ mod diagnostic_tests {
 struct Vocabulary {
     scopes: BTreeMap<String, Vec<String>>,
     topics: Vec<Topic>,
-    #[serde(rename = "spawnKeys")]
-    spawn_keys: Vec<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -352,7 +350,19 @@ fn vocabulary() -> &'static Vocabulary {
     })
 }
 pub(crate) fn spawn_keys() -> &'static [String] {
-    &vocabulary().spawn_keys
+    // Live provider key ownership is independent of the historical Go snapshot.
+    // Reserved spellings reject aliases; they confer no launch authority.
+    #[derive(Deserialize)]
+    struct SpawnKeys {
+        keys: Vec<String>,
+    }
+    static KEYS: OnceLock<SpawnKeys> = OnceLock::new();
+    &KEYS
+        .get_or_init(|| {
+            serde_json::from_str(include_str!("../../../contracts/spawn-parameter-keys.json"))
+                .expect("validated spawn parameter key contract")
+        })
+        .keys
 }
 fn desktop_service(method: &str) -> bool {
     static METHODS: OnceLock<Vec<String>> = OnceLock::new();

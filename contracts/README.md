@@ -53,3 +53,8 @@ mispriced session or a clobbered config.
 
 Retired anonymous-harness parameter-shape cases are preserved separately under
 [`retired/`](retired/README.md). They do not define current authenticated path policy.
+
+`spawn-parameter-keys.json` is the language-neutral authoritative spawn spelling
+registry, consumed directly by the Rust bus and checked against Rust source
+bindings and desktop TypeScript AST bindings. Its five reviewed reservations do
+not grant launch authority; the captured Go vocabulary remains historical.

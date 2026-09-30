@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "description": "Authoritative top-level spawn key spellings for the Rust bus gate. This registry rejects case aliases; it does not accept operations or grant authority. Historical Go snapshot remains unchanged.",
+  "keys": [
+    "afterDispatchId",
+    "capability",
+    "cols",
+    "contextWindow",
+    "cwd",
+    "decisionId",
+    "dispatchOwnerSessionId",
+    "effort",
+    "escalationScrubbed",
+    "exactModel",
+    "executionTarget",
+    "expectedTaskRevision",
+    "fleetFullAccess",
+    "intents",
+    "label",
+    "launchIntegrationGranted",
+    "launchIntegrationId",
+    "manager",
+    "mcpFacade",
+    "mcpItemIds",
+    "message",
+    "model",
+    "modelIdentity",
+    "op",
+    "parentSessionId",
+    "permissionMode",
+    "pluginTools",
+    "profileGranted",
+    "profileId",
+    "projectCwd",
+    "provider",
+    "remoteCwd",
+    "remoteOrigin",
+    "resultSchema",
+    "resumeSessionId",
+    "retrySourceSessionId",
+    "role",
+    "rows",
+    "skipPermissions",
+    "stage",
+    "targetHub",
+    "taskId",
+    "template",
+    "templateParams",
+    "toolScope",
+    "trackTask",
+    "transport",
+    "workflowReservationToken",
+    "workflowStepId",
+    "worktree",
+    "yoloGranted"
+  ],
+  "reservations": {
+    "intents": "The shared workflow admission normalizer inspects caller intents; reserving spelling does not enable a new spawn operation.",
+    "op": "Conservative source closure includes the shared workflow normalizer operation read behind historical_reads=false; this reservation grants no operation.",
+    "projectCwd": "The launch coordinator removes this caller key and derives project identity itself.",
+    "targetHub": "The local launch coordinator refuses this selector without its complete remote admission adapter.",
+    "workflowReservationToken": "The launch coordinator removes this caller key and mints its own workflow admission token."
+  },
+  "vocabulary": {
+    "blocks": {
+      "cases": {
+        "why": "Recognized root aliases must fail at the real bus while canonical spellings retain existing provider semantics.",
+        "required": [
+          "name",
+          "key",
+          "alias",
+          "why"
+        ],
+        "loaders": [
+          "services/hub-rs/tests/spawn_key_boundary.rs::fn every_recognized_spawn_root_requires_its_canonical_spelling_on_the_real_bus(",
+          "apps/desktop/src/main/services/spawnKeyDrift.test.ts::canonical spawn spelling closes over actual provider fields"
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "intents canonical spelling",
+      "key": "intents",
+      "alias": "INTENTS",
+      "why": "The shared workflow admission normalizer inspects caller intents; reserving spelling does not enable a new spawn operation."
+    },
+    {
+      "name": "op canonical spelling",
+      "key": "op",
+      "alias": "OP",
+      "why": "Conservative source closure includes the shared workflow normalizer operation read behind historical_reads=false; this reservation grants no operation."
+    },
+    {
+      "name": "projectCwd canonical spelling",
+      "key": "projectCwd",
+      "alias": "PROJECTCWD",
+      "why": "The launch coordinator removes this caller key and derives project identity itself."
+    },
+    {
+      "name": "targetHub canonical spelling",
+      "key": "targetHub",
+      "alias": "TARGETHUB",
+      "why": "The local launch coordinator refuses this selector without its complete remote admission adapter."
+    },
+    {
+      "name": "workflowReservationToken canonical spelling",
+      "key": "workflowReservationToken",
+      "alias": "WORKFLOWRESERVATIONTOKEN",
+      "why": "The launch coordinator removes this caller key and mints its own workflow admission token."
+    }
+  ]
+}

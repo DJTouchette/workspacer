@@ -625,3 +625,42 @@ fn restore_field_lists_stay_in_agreement_with_desktop_and_drive_real_scrubbing()
         .collect();
     assert_eq!(document["agents"][0]["escalationScrubbed"], json!(expected));
 }
+
+#[cfg(unix)]
+#[test]
+fn quarantine_copy_keeps_original_bytes_private_without_changing_the_source() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("sessions");
+    std::fs::create_dir(&dir).unwrap();
+    let source = dir.join("private.yaml");
+    let bytes = b"secret: [unreadable\n";
+    std::fs::write(&source, bytes).unwrap();
+    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let service = Stores::new(root.path().into());
+    assert_eq!(service.call("sessions.list", json!({})).unwrap(), json!([]));
+    let copies: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(Result::unwrap)
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("private.yaml.broken-")
+        })
+        .collect();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(std::fs::read(copies[0].path()).unwrap(), bytes);
+    assert_eq!(
+        std::fs::metadata(copies[0].path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+    assert_eq!(
+        std::fs::metadata(source).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+}

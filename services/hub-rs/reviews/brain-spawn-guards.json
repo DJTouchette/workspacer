@@ -1,0 +1,139 @@
+{
+  "records": {
+    "services/hub/cmd/brain/spawncwd_test.go": {
+      "status": "ported",
+      "sha256": "7389648acb16cc183931409ac499cdf8a76c12c20ed72775c7d7b3ecba40b6d9",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "contracts/spawn-parameter-keys.json",
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/stores.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_cwd.rs",
+        "services/hub-rs/tests/spawn_key_boundary.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/agent_spawn.rs",
+        "tools/capability-source-check/tests/spawn_keys.rs",
+        "apps/desktop/src/main/services/spawnKeyDrift.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all14 raw vectors, executed-case/tilde checks and no-expandTilde call-site guard. New portable Rust integration executes the entire frozen corpus through the production terminal normalizer, substitutes only HOME, observes a tilde body, and requires14 executed assertions with Tally.",
+          "Separate production spawn_plan controls prove empty/ASCII-blank default canonical home, rejection of relative literal tilde/NEL/BOM/NBSP spellings, unchanged embedded tilde in a real absolute directory, and canonical missing absolute tail without creating it or falling back home.",
+          "Only vocabulary loader metadata changed: the retiring Go loader is referenceLoaders; actual TypeScript/TUI/Rust loaders remain. Exact entire spawnCwds block bytes were preserved and generic corpus guards rerun."
+        ],
+        "intentionalChanges": [
+          "Raw terminal normalization is separate from canonical absolute spawn selection; frozen raw-string expectations are not forced onto the later canonicalization stage.",
+          "New registry membership reserves spelling only, not accepted parameters or authority. op is conservatively source-traced behind historical_reads=false; projectCwd/workflowReservationToken are removed and host-derived, targetHub is refused without its adapter, and intents is inspected by shared workflow normalization.",
+          "Rust reports invalid library.remove IDs as errors rather than silently succeeding; destructive targets remain untouched. POSIX quarantine permission proof stays Unix-only."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/spawnkeydrift_test.go": {
+      "status": "ported",
+      "sha256": "224267e3533905bdcb635bb1cc6d292c97b5bedfd332cc6040a550880d1d754b",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "contracts/spawn-parameter-keys.json",
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/stores.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_cwd.rs",
+        "services/hub-rs/tests/spawn_key_boundary.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/agent_spawn.rs",
+        "tools/capability-source-check/tests/spawn_keys.rs",
+        "apps/desktop/src/main/services/spawnKeyDrift.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "Read both old reflection/destructure guards and their20-field anti-blindness floors. Current Rust gate lacked5 source-traced roots. Real registered-provider bus regression against cached pre-change hub accepted uppercase INTENTS unchanged; after the fix all5 fixture aliases fail before provider while canonical spellings and an unknown extension retain existing boundary semantics.",
+          "New language-neutral contracts/spawn-parameter-keys.json is consumed directly by auth::spawn_keys. It preserves historical46 plus5 reasoned reservations. Original Go spawnkeys.go and generated hub-vocabulary.json are byte-identical; no stale reference hashes rewritten.",
+          "Existing source-only Rust scanner now checks canonical registry closure over actual traced agents.spawn roots, exactly51 unique canonical keys, preserved historical46, and exact explained reservation additions. Actual source mutation tests add a novel params.get read, remove a required key, collapse tracing, remove explanations and duplicate/lose historical keys; all fail.",
+          "TypeScript AST guard checks actual wrapped desktop registration. Optional root-only provenance keeps wire rename keys without treating nested schema keys as top-level params; existing dangerous-field classifier semantics remain unchanged. Added/removed fields and blind parsing negatives are exercised.",
+          "Actual native coordinator control proves reserved spellings are not authority: caller project/reservation claims are replaced by host facts, op/intents do not become daemon request fields, targetHub still refuses unsupported local remote selection with no additional spawn."
+        ],
+        "intentionalChanges": [
+          "Raw terminal normalization is separate from canonical absolute spawn selection; frozen raw-string expectations are not forced onto the later canonicalization stage.",
+          "New registry membership reserves spelling only, not accepted parameters or authority. op is conservatively source-traced behind historical_reads=false; projectCwd/workflowReservationToken are removed and host-derived, targetHub is refused without its adapter, and intents is inspected by shared workflow normalization.",
+          "Rust reports invalid library.remove IDs as errors rather than silently succeeding; destructive targets remain untouched. POSIX quarantine permission proof stays Unix-only."
+        ]
+      }
+    },
+    "services/hub/cmd/brain/unpinnedguards_test.go": {
+      "status": "ported",
+      "sha256": "a22b8d8aec4eb41c4766eb81a4168b72ebad539500fb308614cd32452f6aeb59",
+      "replacement": [
+        "services/hub-rs/src/auth.rs",
+        "contracts/spawn-parameter-keys.json",
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/src/services/spawn_plan.rs",
+        "services/hub-rs/src/services/library.rs",
+        "services/hub-rs/src/services/stores.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/spawn_cwd.rs",
+        "services/hub-rs/tests/spawn_key_boundary.rs",
+        "services/hub-rs/tests/library.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/agent_spawn.rs",
+        "tools/capability-source-check/tests/spawn_keys.rs",
+        "apps/desktop/src/main/services/spawnKeyDrift.test.ts"
+      ],
+      "review": {
+        "behaviors": [
+          "New actual bus library.remove loop sends hostile skill/agent/command IDs including dot/ancestor/both separator forms, verifies every planted settings/agent/skill/command file survives, then positively removes only a genuine skill.",
+          "Existing owned library target proves symlinked global config roots stay visible and project/Claude atomic writes preserve aliases while updating exactly the resolved target. Existing stores target proves both layout/session save/delete use canonical alias targets and selected_path read returns a regular resolved file.",
+          "New Unix quarantine control proves one600-mode byte-for-byte malformed source copy, leaves original bytes/mode644 untouched, and does not invent Windows ACL proof.",
+          "Existing files8 target pins blank defaults/ASCII-only fallback, directory/file symlink classification and real .git exclusion via git init plus exact fs.listEntries output. The owning file_tree_uses_git_ignore_rules_and_bytewise_directory_first_order passed in /tmp/workspacer-headless-files-final.log; its other headless target failure is not claimed green.",
+          "Stale comments about ambient cwd confinement are not restored: authenticated callers may select absolute host paths, while the selected library/store object boundaries remain enforced."
+        ],
+        "intentionalChanges": [
+          "Raw terminal normalization is separate from canonical absolute spawn selection; frozen raw-string expectations are not forced onto the later canonicalization stage.",
+          "New registry membership reserves spelling only, not accepted parameters or authority. op is conservatively source-traced behind historical_reads=false; projectCwd/workflowReservationToken are removed and host-derived, targetHub is refused without its adapter, and intents is inspected by shared workflow normalization.",
+          "Rust reports invalid library.remove IDs as errors rather than silently succeeding; destructive targets remain untouched. POSIX quarantine permission proof stays Unix-only."
+        ]
+      }
+    }
+  },
+  "validation": {
+    "status": "READY: all owned checks green",
+    "rust": "52 passed: key1 /tmp/workspacer-spawn-key-after.log; cwd2 /tmp/workspacer-spawn-cwd-final.log; library21 /tmp/workspacer-unpinned-library-final.log; stores12 /tmp/workspacer-unpinned-stores-final.log; agent_spawn16 /tmp/workspacer-spawn-reservations-final.log",
+    "scanner": "22 passed /tmp/workspacer-spawn-key-scanner-tests.log; --check122 methods126 dangerous23 opaque zero errors /tmp/workspacer-spawn-key-source-check.log",
+    "desktop": "89 passed after exact final metadata /tmp/workspacer-spawn-guards-desktop.log",
+    "corpus": "6+5 passed /tmp/workspacer-spawn-corpus-fixed.log and /tmp/workspacer-spawn-vocabulary-fixed.log; exact existing compiled owning executables read live final metadata, unchanged test sources. Initial failures solely other in-flight monolingual provider reference later relocated by its owner; not suppressed.",
+    "before": "Real old-runtime uppercase INTENTS forwarded unchanged: /tmp/workspacer-spawn-key-before.log; exact integration source linked against cached pre-change rlib, temporary executable removed after proof.",
+    "format": "rustfmt, isolated cargo fmt and git diff --check passed",
+    "limits": "Owning new Rust execution is Linux; no fresh Windows claim. Go snapshot/reference files unchanged. Separate analytics CI fixture fix is not part of this plan."
+  },
+  "readyToStage": [
+    "services/hub-rs/src/auth.rs",
+    "contracts/spawn-parameter-keys.json",
+    "contracts/path-containment-cases.json",
+    "contracts/README.md",
+    "services/hub-rs/tests/spawn_key_boundary.rs",
+    "services/hub-rs/tests/spawn_cwd.rs",
+    "services/hub-rs/tests/library.rs",
+    "services/hub-rs/tests/stores.rs",
+    "services/hub-rs/tests/agent_spawn.rs",
+    "tools/capability-source-check/src/main.rs",
+    "tools/capability-source-check/src/policy.rs",
+    "tools/capability-source-check/tests/spawn_keys.rs",
+    "tools/capability-source-check/README.md",
+    "apps/desktop/tests/support/parameterBindings.ts",
+    "apps/desktop/src/main/services/spawnKeyDrift.test.ts",
+    ".rivet/learnings/2026-09-30-spawn-spelling-guards-need-live-source-closure-b-2638ac.md",
+    "services/hub-rs/reviews/brain-spawn-guards.json"
+  ]
+}

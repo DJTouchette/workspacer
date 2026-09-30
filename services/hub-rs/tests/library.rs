@@ -866,3 +866,66 @@ fn dispatch_frontmatter_keeps_schema_but_never_projects_spawn_arguments() {
         assert!(row.get(key).is_none(), "{key}");
     }
 }
+
+#[tokio::test]
+async fn bus_library_remove_checks_basename_before_deriving_any_recursive_target() {
+    use workspacer_hub::{Hub, Options, client::Client};
+    let root = tempfile::tempdir().unwrap();
+    let cwd = root.path().join("project");
+    let protected = [
+        ".claude/settings.local.json",
+        ".claude/agents/reviewer.md",
+        ".claude/skills/real-skill/SKILL.md",
+        ".claude/commands/ship.md",
+    ];
+    for name in protected {
+        let file = cwd.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "keep").unwrap();
+    }
+    let mut options = Options::default();
+    options.config_dir = Some(root.path().join("config"));
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let client = Client::connect(&hub.handle()).await.unwrap();
+    for (kind, id) in [
+        ("skill", ".."),
+        ("skill", "."),
+        ("skill", "../.."),
+        ("skill", "a/b"),
+        ("skill", "a\\b"),
+        ("agent", ".."),
+        ("command", ".."),
+    ] {
+        assert!(
+            client
+                .call(
+                    "library.remove",
+                    json!({"scope":"claude","kind":kind,"id":id,"cwd":cwd})
+                )
+                .await
+                .is_err(),
+            "{kind}/{id}"
+        );
+        for name in protected {
+            assert_eq!(
+                std::fs::read_to_string(cwd.join(name)).unwrap(),
+                "keep",
+                "{kind}/{id}: {name}"
+            );
+        }
+    }
+    client
+        .call(
+            "library.remove",
+            json!({"scope":"claude","kind":"skill","id":"real-skill","cwd":cwd}),
+        )
+        .await
+        .unwrap();
+    assert!(!cwd.join(".claude/skills/real-skill").exists());
+    for name in [protected[0], protected[1], protected[3]] {
+        assert_eq!(std::fs::read_to_string(cwd.join(name)).unwrap(), "keep");
+    }
+    drop(client);
+    hub.shutdown().unwrap();
+}

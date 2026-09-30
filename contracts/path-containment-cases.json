@@ -231,10 +231,13 @@
           "out",
           "why"
         ],
+        "referenceLoaders": [
+          "services/hub/cmd/brain/spawncwd_test.go::TestSpawnCwdNormalizationContractCases("
+        ],
         "loaders": [
-          "services/hub/cmd/brain/spawncwd_test.go::TestSpawnCwdNormalizationContractCases(",
           "apps/desktop/src/main/lib/spawnCwd.test.ts::spawn cwd normalization — cross-language contract",
-          "apps/tui/src/profiles.rs::fn spawn_cwds_contract_cases("
+          "apps/tui/src/profiles.rs::fn spawn_cwds_contract_cases(",
+          "services/hub-rs/tests/spawn_cwd.rs::fn terminal_cwd_executes_the_entire_raw_normalization_contract("
         ]
       }
     }

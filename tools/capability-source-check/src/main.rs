@@ -45,6 +45,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 root.join("tools/capability-source-check/go-reference.json"),
             )?)?;
         checked.errors.extend(original.check(&root, &report));
+        let spawn_keys = serde_json::from_slice(&std::fs::read(
+            root.join("contracts/spawn-parameter-keys.json"),
+        )?)?;
+        let historical = serde_json::from_slice(&std::fs::read(
+            root.join("services/hub-rs/assets/hub-vocabulary.json"),
+        )?)?;
+        checked.errors.extend(
+            workspacer_capability_source_check::policy::check_spawn_keys(
+                &report,
+                &spawn_keys,
+                &historical,
+            ),
+        );
         println!("{}", serde_json::to_string_pretty(&checked)?);
         if !checked.errors.is_empty() {
             return Err(format!("{} source-policy errors", checked.errors.len()).into());

@@ -1003,3 +1003,39 @@ async fn owned_routing_audit_is_once_across_both_resolutions_and_records_refusal
         fixture.coordinator.close().await;
     }
 }
+
+#[tokio::test]
+async fn reserved_spawn_spellings_do_not_grant_caller_workflow_or_project_authority() {
+    let fixture = Fixture::new(None);
+    let mut params = fixture.workflow_params();
+    params["projectCwd"] = json!("/caller-forged-project");
+    params["workflowReservationToken"] = json!("caller-forged-reservation");
+    params["op"] = json!("cancel");
+    params["intents"] = json!([{"cwd":fixture.project}]);
+    fixture.coordinator.spawn_sanitized(params).await.unwrap();
+    {
+        let plans = fixture.fake.plans.lock().unwrap();
+        assert_eq!(plans.len(), 1);
+        let plan = &plans[0];
+        assert_eq!(
+            plan.metadata["projectCwd"],
+            json!(
+                workspacer_hub::services::paths::canonicalize(Path::new(&fixture.project)).unwrap()
+            )
+        );
+        let token = plan.metadata["workflowReservationToken"].as_str().unwrap();
+        assert!(!token.is_empty() && token != "caller-forged-reservation");
+        for key in ["projectCwd", "workflowReservationToken", "op", "intents"] {
+            assert!(plan.request.get(key).is_none(), "{key}");
+        }
+    }
+    assert!(
+        fixture
+            .coordinator
+            .spawn_sanitized(json!({"cwd":fixture.project,"targetHub":"remote"}))
+            .await
+            .is_err()
+    );
+    assert_eq!(fixture.fake.plans.lock().unwrap().len(), 1);
+    fixture.coordinator.close().await;
+}
