@@ -5,9 +5,11 @@ rules without compiling the Go hub or MCP SDK. It records a rule for each of
 100 built-in tools plus SHA-256 digests of the16 original production inputs.
 
 ```sh
-go run ./tools/go-mcp-wire-reference/main.go --root . --check services/hub-rs/assets/mcp-wire-contract.json
-# Explicitly reviewed recapture only:
-go run ./tools/go-mcp-wire-reference/main.go --root . > services/hub-rs/assets/mcp-wire-contract.json
+export WKS_HUB_REFERENCE_ROOT=/absolute/path/to/pinned-reference-checkout
+python3 scripts/hub-reference.py verify
+go run ./tools/go-mcp-wire-reference/main.go --root "$WKS_HUB_REFERENCE_ROOT" --check services/hub-rs/assets/mcp-wire-contract.json
+# Prospective output for explicit source/schema review; do not overwrite a capture blindly:
+go run ./tools/go-mcp-wire-reference/main.go --root "$WKS_HUB_REFERENCE_ROOT" > /tmp/mcp-wire-contract.json
 ```
 
 Rules distinguish omitted zero-valued scalars, nil pointers, empty slices/maps,
@@ -22,3 +24,8 @@ Go pointer semantics.
 This is an optional historical oracle, not a routine generation or build
 requirement. `python3 scripts/mcp-catalog.py --write` and `--check` consume the
 reviewed JSON contracts and need neither Go nor the legacy source tree.
+
+The historical checkout is separate from the shipping tree; setup and named
+full-suite/parity commands are in [scripts/reference/README.md](../../scripts/reference/README.md).
+Do not recreate a current-tree Go fallback after source removal. A successful
+source-only capture proves typed-rule extraction, not historical runtime tests.

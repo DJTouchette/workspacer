@@ -1,5 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'node:crypto';
+import promptFixture from '../../../tests/fixtures/worker-escalation-prompt.json';
 import { describe, expect, it } from 'vitest';
 import {
   buildWorkerEscalationContract,
@@ -25,21 +27,21 @@ describe('worker escalation terminal contract', () => {
     expect(isFleetDispatchedWorker({ parentSessionId: 'manager-1', manager: true })).toBe(false);
   });
 
-  it('is byte-for-byte identical to the Go headless contract', () => {
-    const go = fs.readFileSync(
-      path.join(__dirname, '../../../../../services/hub/cmd/brain/workerescalation.go'),
-      'utf8',
-    );
-    const expression = /workerEscalationContract\s*=([\s\S]*?)\n\)/.exec(go)?.[1];
-    expect(
-      expression,
-      'Go workerEscalationContract declaration moved or changed shape',
-    ).toBeTruthy();
-    const literals = [...expression!.matchAll(/"(?:\\.|[^"\\])*"/g)].map((match) =>
-      JSON.parse(match[0]),
-    );
-    expect(literals.length).toBeGreaterThan(5);
-    expect(literals.join('')).toBe(buildWorkerEscalationContract());
+  it('preserves the captured exact escalation prompt without a live Go checkout', () => {
+    expect(promptFixture.schemaVersion).toBe(1);
+    expect(promptFixture.literalCount).toBeGreaterThan(5);
+    expect(promptFixture.prompt.length).toBeGreaterThan(900);
+    expect(promptFixture.referenceCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(promptFixture.sourceSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(promptFixture.source).toBe('services/hub/cmd/brain/workerescalation.go');
+    expect(buildWorkerEscalationContract()).toBe(promptFixture.prompt);
+    // Retain provenance verification while the historical file exists. The
+    // exact live TS assertion above remains mandatory after its deletion.
+    const original = path.join(__dirname, '../../../../..', promptFixture.source);
+    if (fs.existsSync(original))
+      expect(createHash('sha256').update(fs.readFileSync(original)).digest('hex')).toBe(
+        promptFixture.sourceSha256,
+      );
   });
 
   it('advertises the fixed shape and its relationship to optional wks-result', () => {

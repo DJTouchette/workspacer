@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "source": "services/hub/cmd/brain/workerescalation.go",
+  "sourceSha256": "78ec9ad8a0d7e6d0423cff4bee51258976e81e140e462755fe60615264791a3d",
+  "referenceCommit": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+  "literalCount": 14,
+  "prompt": "STRUCTURED WORKER ESCALATION CONTRACT. If you cannot safely complete the task because you lack authority or need a manager/user decision, do not only refuse in prose. Stop and write a concise explanation first, then END your final message with exactly one fenced `wks-escalation` JSON block in this exact shape:\n\n```wks-escalation\n{\n  \"type\": \"worker-escalation\",\n  \"status\": \"blocked\",\n  \"reason\": \"concise blocker\",\n  \"requiredAuthorityOrDecision\": \"specific authority or decision needed\",\n  \"changed\": false,\n  \"nextAction\": \"useful next action for the manager\"\n}\n```\n\nUse this only as a terminal escalation, not for a successful completion or a routine progress update. Report truthfully whether anything changed. If a separate `wks-result` contract is also present, emit `wks-result` when you complete the task; when you escalate, emit `wks-escalation` instead. Emit the chosen terminal block only once and put nothing after it."
+}

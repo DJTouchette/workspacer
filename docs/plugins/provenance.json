@@ -1,0 +1,26 @@
+{
+  "referenceCommit": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+  "files": [
+    {
+      "source": "services/hub/docs/plugin-theming.md",
+      "destination": "docs/plugins/plugin-theming.md",
+      "sourceSha256": "79e9599f6abbfcd9b72d496395d38a615c3755a9337c0bd1394aba2e98492252",
+      "destinationSha256": "79e9599f6abbfcd9b72d496395d38a615c3755a9337c0bd1394aba2e98492252",
+      "adjustment": "None; exact copy."
+    },
+    {
+      "source": "services/hub/docs/rules-engine-plugin.md",
+      "destination": "docs/plugins/rules-engine-plugin.md",
+      "sourceSha256": "4113bab126227acc393a08aa3b237ee1313350c61d65bbb6b9724e6d74693bfd",
+      "destinationSha256": "535eb83b0892d456eebc5989fa8c99dd82ffb7b4c1dbddf9e1f05940d30fe0b1",
+      "adjustment": "Documentation-only backend ownership/source paths and obsolete Go hub build/start recipe updated to current Rust control-plane CLI with repository-root versus installed-CLI distinction; rule schemas and fenced plugin API examples unchanged. Removed trailing spaces from four roadmap list lines."
+    },
+    {
+      "source": "services/hub/docs/workflow-events.md",
+      "destination": "docs/plugins/workflow-events.md",
+      "sourceSha256": "302fbd66cb7f631dda410a7634ee52b678c196b1bba1f305ba9f21c6486b4c72",
+      "destinationSha256": "78b0f37e2e396f60eda7582eacff0a202a2023cc333b1356b46b1a30293de020",
+      "adjustment": "Documentation-only bridge language/source path update; event schemas/examples unchanged."
+    }
+  ]
+}

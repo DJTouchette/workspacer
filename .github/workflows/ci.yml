@@ -24,6 +24,10 @@ jobs:
         run: python3 -B -m unittest discover -s scripts -p 'test_release_check.py' -v
       - name: Migration review evidence regressions
         run: python3 -B -m unittest discover -s scripts -p 'test_hub_migration.py' -v
+      - name: Historical reference wrapper regressions (no compilers)
+        run: python3 -B -m unittest discover -s scripts -p 'test_hub_reference.py' -v
+      - name: Required documentation guard regressions
+        run: python3 -B -m unittest discover -s scripts -p 'test_check_doc_drift.py' -v
       - name: Manual migration-preview release policy
         run: python3 -B -m unittest discover -s scripts -p 'test_nightly_preview.py' -v
 
@@ -76,6 +80,12 @@ jobs:
           cache-dependency-path: |
             apps/desktop/package-lock.json
             apps/desktop/src/renderer/package-lock.json
+
+      - name: Retained TypeScript store fixture provenance
+        working-directory: .
+        run: |
+          node --test scripts/capture-persisted-ts.test.mjs
+          node scripts/capture-persisted-ts.mjs --check
 
       # apps/desktop's postinstall runs electron-rebuild (better-sqlite3 against
       # Electron's ABI). It needs Electron's prebuilt binaries; on a headless

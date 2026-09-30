@@ -6,27 +6,25 @@ subscription capacity, resolves the work role a caller names into a concrete
 per-directory ceiling. Settings → Routing edits safe model-policy preferences
 on the connected hub. Host security policy remains in the trusted matrix file.
 
-Relevant code:
+Current Rust owners:
 
-- `services/hub/internal/routing/routing.default.yaml` is the shipped matrix and
-  the primary reference for whoever edits the file. It is compiled into the hub
-  binary and written to disk verbatim on first run.
-- `services/hub/internal/routing/load.go` is the merge, the alias folding and
-  the load-time validation.
-- `services/hub/internal/routing/service.go` seeds the file, polls it, and holds
-  the matrix in force.
-- `services/hub/internal/routing/policy.go` reads capacity, decides the routing
-  mode, and answers `routing.select`.
-- `services/hub/internal/routing/ceiling.go` turns the `ceilings:` block into one
-  verdict per spawn.
-- `services/hub/internal/routing/decisionlog.go` is the append-only audit trail.
-- `services/hub/internal/limits/window.go` is the window-currency rule, which is
-  the single most load-bearing thing in the feature.
-- `services/hub/cmd/hub/routing.go`, `routingselect.go` and `routingceiling.go`
-  are the hub-side wiring: the usage poll, the `routing.select` handler, and the
-  spawn gate.
-- `services/hub/scripts/routing-limit-harness.mjs` is the runtime harness
-  (`make test-routing-harness`).
+- `services/hub-rs/src/services/routing.default.yaml` is the embedded matrix.
+- `services/hub-rs/src/services/routing.rs` owns matrix loading, validation,
+  route selection, model/effort stepping and ceilings.
+- `services/hub-rs/src/services/routing/sampler.rs` owns the daemon adapter,
+  bounded shared fetch lifetime and registered routing/usage capabilities.
+- `services/hub-rs/src/services/routing/preferences.rs`, `raw.rs` and
+  `preview.rs` own safe preference mutation and read-only preview.
+- `services/hub-rs/src/services/routing/audit.rs` records admission outcomes.
+- `services/hub-rs/src/services/limits.rs` owns window validity and pacing.
+- `services/hub-rs/src/runtime.rs` and `src/services/remote_dispatch/origin.rs`
+  enforce local and qualified source-side spawn admission.
+
+The policy/wire descriptions below are retained across the Rust migration.
+Current evidence is in `services/hub-rs/CMD_HUB_ROUTING_REVIEW.md` and its linked
+tests. `make test-routing-harness` is an optional **historical Go oracle**, not
+an invocation of the shipped Rust runtime; it requires the separate pinned
+checkout described in `scripts/reference/README.md`.
 
 ## What it does
 
@@ -63,7 +61,7 @@ decide whether to move anything. When a mode shift or a fallover lands the
 answer on a different provider, `shiftCapacity`/`shiftMode` carry that landing
 provider's own reading, and the published `health`/`pace` fields are drawn from
 whichever of the two actually describes `provider` (`Decision.EffectiveCapacity`
-in `internal/routing/policy.go`). Both readings are kept on the wire rather than
+in `services/hub-rs/src/services/routing.rs`). Both readings are kept on the wire rather than
 only the second, because "we looked at claude before sending claude the work"
 is the claim a decision that never moved is making, and a field that appeared
 only after a shift would not support it.
@@ -379,7 +377,7 @@ only time-to-reset available to the policy layer is
 `limits.BucketReport.ResetsInSeconds`, which is populated solely from
 `Reading.TimeToReset`, and that accessor is reachable only on a current window,
 so it cannot return a non-positive duration. There is no comparison in
-`policy.go` that a stale reading can reach.
+`routing.rs` that a stale reading can reach.
 
 Two consequences to expect when reading an answer:
 
@@ -584,7 +582,7 @@ included.
 It is a count rather than a level name because **the ladders are not portable**:
 claude runs `low, medium, high, xhigh, max`, codex stops at `xhigh`, and copilot
 starts below both at `none`. One notch down means the same thing on all three;
-`medium` does not. The ladders live in `internal/routing/effort.go`, taken from
+`medium` does not. The ladders live in `services/hub-rs/src/services/routing.rs`, taken from
 the adapters that build each CLI's argv.
 
 Three things stop a step:
@@ -933,7 +931,8 @@ misspelled parent block shows up.
 make test-routing-harness
 ```
 
-It starts a real hub against a fake claudemon that serves usage states you cannot
+With the pinned historical checkout selected, this optional oracle starts the
+historical Go hub against a fake claudemon that serves usage states you cannot
 reproduce on demand: a stale Codex window, a window resetting exactly now, a
 Copilot 403, providers absent from the document entirely, and two **pacing**
 states that are indistinguishable from a healthy one by used-percentage alone.
@@ -959,12 +958,16 @@ provider whose catalog reports no launchable model being routed around while an
 unprobeable one is not. `ROUTING_HARNESS_REQUIRE_ROUTING=1` makes a parked
 assertion a failure rather than a note.
 
-The Go unit tests cover the merge, the validation, the mode rules and the ceiling
-arms:
+Current Rust policy and window tests run without that historical checkout:
 
 ```sh
-cd services/hub && go test ./internal/routing/... ./internal/limits/... ./cmd/hub/...
+cargo test --locked --manifest-path services/hub-rs/Cargo.toml --lib services::routing
+cargo test --locked --manifest-path services/hub-rs/Cargo.toml --lib services::limits
 ```
+
+The full hub suite additionally exercises admission through real registered
+handlers, federation source policy and MCP; filtered units alone are not those
+integration receipts.
 
 ## Routing preferences and Settings
 
@@ -1005,7 +1008,7 @@ profiles/roles/capabilities, ranks, ceilings, legacy tool-scope fields and arbit
 are rejected. Existing host-defined profiles and roles can be edited. A patch
 can map a role only to an existing capability. Unedited fields survive every
 save. Manual modes use a closed enum; forecast weights must be between 0 and
-1,000,000. See `internal/routing/preferences.go` for the exact schema.
+1,000,000. See `services/hub-rs/src/services/routing/raw.rs` for the exact schema.
 
 The revision fingerprints both source layers. A concurrent managed save or
 human YAML edit invalidates a draft; conflict responses include the current
@@ -1050,21 +1053,18 @@ host authority to edit it. An older hub shows unavailable; there is no
 
 ### Verification
 
-`make test-routing-harness` exercises the production registered handlers with a
-scratch hub and fake claudemon, including apply/select, preview without audit,
-CAS, host gating, reset and unchanged YAML alongside existing routing and spawn
-clamps. Go tests additionally cover restart persistence, invalid sources,
-forbidden fields, catalog uncertainty, model relabel attempts, the authenticated
-bus handshake and actual MCP `select_model` consumption over HTTP and SSE.
+The current Rust routing sampler/preview tests exercise registered handlers,
+uncertainty, bounded fetches, safe projection, and no-audit preview. Admission
+and MCP integration targets cover actual spawn and tool boundaries. The optional
+`make test-routing-harness` retains the historical Go comparison under the
+pinned-checkout contract; it does not validate new Rust behavior by itself.
 
-The renderer shares the Go-generated safe projection fixture at
-`internal/routing/testdata/preferences-view.json`. Regenerate after a wire or
-compiled-default change with:
-
-```sh
-cd services/hub
-UPDATE_ROUTING_FIXTURE=1 go test ./internal/routing -run TestPreferencesWireFixture
-```
+The renderer retains the reviewed safe projection bytes at
+`apps/desktop/tests/fixtures/routing-preferences-view.json`; provenance is in
+`plugins/examples.provenance.json`. Do not regenerate this from a deleted local
+Go tree. A wire/default change needs a reviewed fixture update and current
+Rust/renderer assertions, with historical comparison explicitly selected when
+needed.
 
 Renderer tests pin sparse payloads, validation, conflict reload, unavailable
 hubs and reset semantics. The `routingSettings` Playwright fixture covers 360px

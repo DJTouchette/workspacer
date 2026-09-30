@@ -14,7 +14,7 @@ Set `ui` to a subdirectory of static assets and **omit `server`**. There is no p
 
 - Reach for it when your plugin *is* a UI: a dashboard, a panel, an editor, a rule editor.
 - Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.
-- Bundled examples (in `services/hub/examples/`): the `editor` and the `transcript-timeline` replay pane.
+- Bundled examples (in `plugins/examples/`): the `editor` and the `transcript-timeline` replay pane.
 
 ### sidecar plugin (`server`)
 
@@ -454,7 +454,7 @@ The Workspacer MCP facade picks the tool up (normally within ~15s) and exposes i
 
 Rules, all enforced at load or serve time: the tool `name` is lowercase `[a-z0-9_]` starting with a letter; `description` is required (keep it to a line; it's what the model reads); `inputSchema`, when present, must be a JSON Schema **object** (`"type": "object"`); and `method` must be covered by your own-namespace `provides`. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.
 
-> **Source of truth.** The exact params/return shape of each host capability isn't a frozen public API yet. Treat `apps/desktop/src/main/services/hubCapabilities.ts` and `services/hub/examples/` as authoritative for field names, and the MCP tool list (`cmd/mcp/main.go`) for the stable subset.
+> **Source of truth.** The exact params/return shape of each host capability isn't a frozen public API yet. Treat `apps/desktop/src/main/services/hubCapabilities.ts` and `plugins/examples/` as authoritative for field names, and the MCP tool list (`services/hub-rs/assets/mcp-effective-tools.json`, implemented in `services/hub-rs/src/mcp.rs`) for the stable subset.
 
 ## Events you can consume
 
@@ -514,10 +514,10 @@ For a **sidecar**, a settings edit publishes `plugin.settings.changed` on the bu
 
 ## Developing with hot-reload
 
-For iterating on a plugin, point a dev hub at your own dir and drop the folder in:
+With the installed Rust CLI on PATH, point a development control plane at your plugin directory:
 
 ```
-go run ./cmd/hub --plugins-dir /path/to/plugins
+workspacer serve --hub-only --plugins-dir /absolute/path/to/plugins
 ```
 
 The hub scans on load and emits `plugin.loaded`. For a tighter loop, `workspacer plugin dev <dir>` watches a single plugin folder and hot-reloads it on change: it poll-watches your source, runs the manifest's `install` build step when files change, tells the hub to reload the plugin, and streams the sidecar's logs to your terminal.

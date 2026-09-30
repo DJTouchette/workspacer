@@ -1,15 +1,14 @@
 # Hub Federation — Hub-of-Hubs
 
-**Status:** ALL PHASES BUILT 2026-08-15/16. Go substrate (phases 1–3) plus the
-client phases (4–5, reshaped — see notes): main-process ingest/seed/tombstones/
-action-routing (`federationBridge.ts`), renderer hub badges + offline
-tombstones + remote pane/respawn/pill gating + a spawn-dialog Machine picker,
-and the fs-root security exclusion. Harness:
-`services/hub/scripts/federation-harness.sh`. See "Implementation notes" for
-where the build deviated from this proposal and why.
+**Status:** shipped through the Rust hub, with desktop ingest/seed/tombstones
+and action routing in `federationBridge.ts`. This document retains the original
+2026-08 design discussion and phase plan as historical protocol rationale;
+Go symbols/snippets inside that plan are not current build instructions.
+Current ownership and proof: `services/hub-rs/reviews/federation.json` and
+the Rust sources/tests below.
 
-One workspacer client can only see one hub. This document proposes letting a
-local hub link *upstream* to remote hubs and republish their events and
+One Workspacer client connects to one hub. That local hub can link
+*upstream* to remote hubs and republish their events and
 capabilities, so that a single client sees a single fleet spanning several
 machines — without any client, plugin, or the Fleet Manager learning to hold N
 connections.
@@ -21,20 +20,24 @@ peers on a trusted network (a tailnet), reusing the auth the remote-share
 feature already ships. See [remote-sharing-security.md](./remote-sharing-security.md)
 for that threat model, which federation inherits unchanged.
 
-Relevant code:
+Current source and validation:
 
-- `services/hub/internal/bus/bus.go` — `Frame`, connection classification, the
-  per-conn policy gates.
-- `services/hub/internal/bus/rpc.go` — `router`: provider ownership, `call`
-  routing, the 30s `callTimeout`.
-- `services/hub/internal/busclient/client.go` — the Go bus client, with dial,
-  backoff, and call correlation already written.
-- `services/hub/internal/authtoken/authtoken.go` — scoped tokens, `view` /
-  `triage` / `operator` tiers.
-- `services/hub/internal/event/event.go` — `Envelope` and `Matches`.
-- `services/hub/cmd/hub/main.go` — flags, where peers get declared.
-- `apps/desktop/src/main/services/hubClient.ts` — the desktop's bus client and
-  its capability-drift report.
+- `services/hub-rs/src/runtime.rs` — connection policy, provider ownership,
+  correlated calls and local/qualified admission.
+- `services/hub-rs/src/client.rs` — bus transport and call correlation.
+- `services/hub-rs/src/auth.rs` — scoped identities and method grants.
+- `services/hub-rs/src/federation.rs` and `src/federation/config.rs` — peer
+  links, retained configuration, reconnect and forwarding.
+- `services/hub-rs/src/cli/serve.rs` — standalone peer configuration.
+- `apps/desktop/src/main/services/hubClient.ts` and `federationBridge.ts` —
+  desktop connection and remote session projection.
+
+```sh
+cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test federation
+cargo test --locked --manifest-path services/hub-rs/Cargo.toml --lib runtime::federation_routing_tests
+```
+
+These fixtures use real isolated hubs; they do not claim a live cloud deployment.
 
 ## The idea
 
@@ -61,7 +64,7 @@ sessions have a hub label.
 It looks cheaper and isn't. Every consumer of the bus would need connection
 state, per-connection auth, per-connection reconnect, and a merge policy — the
 renderer, the PWA, the TUI, the MCP facade, and every plugin, each solving it
-slightly differently. Federating in the hub solves it once, in Go, in the
+slightly differently. Federating in the hub solves it once in the shared hub, in the
 process that already owns a broker and a router. The Fleet Manager gains the
 ability to drive remote agents as a side effect, with no Fleet Manager changes.
 
@@ -197,7 +200,7 @@ naive implementation breaks:
 - **The register hijack guard applies to trusted connections too**, on purpose.
   Federation must not add an exemption; qualified names mean it never needs one.
 
-## The path
+## Original implementation plan (historical Go substrate)
 
 Five phases. Each is independently useful and independently revertible; nothing
 after phase 1 is required for phase 1 to be worth having.
@@ -382,8 +385,8 @@ What shipped, and where reality corrected the proposal:
   flow, with action routing branching on `hub`. Remote sessions are excluded
   from local-directory context by `snapshotIsLocalLiveSession`, and their
   cwd-bound panes (terminal, git review, editor) are hidden.
-- **Harness:** `services/hub/scripts/federation-harness.sh` runs the fake
-  second PC — a peer hub on :8895 with synthetic agents republished every 2s —
-  and prints the peers.json line to point a real hub at it. (Run it with
-  `WORKSPACER_PARENT_PID` unset if launched from inside a workspacer session,
-  and don't bind the scratch local hub on 7895 while the desktop app runs.)
+- **Current verification:** the Rust federation integration and qualified-routing
+  unit commands above cover real isolated peer links. The original
+  `services/hub/scripts/federation-harness.sh` is historical tooling, available
+  from the retained Git revision rather than the current runtime tree. Do not
+  launch it against a live desktop profile or present it as a Rust smoke.

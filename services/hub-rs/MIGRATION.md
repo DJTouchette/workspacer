@@ -30,9 +30,9 @@ The shared service graph and standalone launcher are implemented. The source-by-
 retired. Current work is final client/build cutover evidence, platform/package
 validation and removal preparation. The14 cutover gates remain separate from
 source-review completion.
-Desktop, native local mode and TUI startup now select Rust. The current testing nightly, `0.169.0-nightly.202609291804`,
+Desktop, native local mode and TUI startup now select Rust. The historical testing-nightly checkpoint `0.169.0-nightly.202609291804`
 was published on 2026-09-29 from `9f786d734f996f487aa0894b8b5fae08aeba4ce3`.
-It includes the native UI changes and modern MCP cache metadata fix. Later
+It includes the modern MCP cache metadata fix. Later native UI changes and
 reviewed parity fixes on main require a subsequent artifact.
 This is explicitly an incomplete-migration preview. Native launches without
 `--local` still attach to an existing service.
@@ -94,7 +94,7 @@ in-process native adapter. It is not a visual or cross-platform UI test.
 
 ```sh
 make test-hub-rust       # Rust runtime, transports, lifecycle and contract tests
-make test-hub-parity     # same fixtures against the actual Go bus
+make test-hub-parity     # explicit pinned-checkout Go oracle; setup below
 make hub-migration      # inventory status and source-drift checks
 python3 scripts/hub-migration.py backlog  # pending review groups, not missing implementation counts
 python3 scripts/hub-migration.py backlog --json --prefix services/hub/cmd/brain/
@@ -102,9 +102,19 @@ make test-native-rust   # native protocol/controller + in-memory hub adapter
 python3 scripts/hub-migration.py ready  # completion gate, currently fails
 ```
 
-`make hub-vocabulary` exports the Go capability/topic/HTTP registry to a portable
-contract. It is vocabulary coverage, not behavioral parity. Add shared fixture
-cases before porting behavior; test the fixtures against both implementations.
+Historical Go commands require a separate clean checkout at the exact captured
+reference revision. Set `WKS_HUB_REFERENCE_ROOT` and run
+`python3 scripts/hub-reference.py verify` before `make test-hub-reference`,
+`make test-hub-parity` or `make test-routing-harness`. There is no fallback to the
+current working tree. See [the pinned-reference instructions](../../scripts/reference/README.md).
+
+`make hub-vocabulary` now checks historical output against the retained asset; it
+does not overwrite it. `python3 scripts/hub-reference.py vocabulary-export` emits
+an explicitly requested historical export to stdout for review. Routine Rust
+assets are generated from portable contracts/current public TypeScript owners;
+`make check-hub-rust-assets` needs no historical Go execution. Vocabulary coverage
+is not behavioral parity; preserve independent fixture loaders and actual
+installed-capability checks.
 
 For local core experiments, `wks-hub --listen 127.0.0.1:0 --token-file <file>`
 uses an existing credential and prints its assigned address. Add `--database`,
@@ -146,3 +156,19 @@ The standard standalone configuration retains the old `workspacer-hub` directory
 for layout, scheduled jobs/history, pacing preferences and push identity. Explicit
 `--data-dir` overrides shared hub state; a custom `--config-dir` remains isolated.
 The native preview continues to use its separate data directory.
+
+
+## Retained assets and future source removal
+
+Shipped trusted plugin examples now live under `plugins/examples`; installed
+bundle paths remain unchanged. The original Go-tree copies are reference bytes,
+not the packaging source. `make check-retained-plugin-assets` checks exact hashes
+and the documented test-import/README relocation exceptions. Public Electron
+JavaScript services and optional Node plugin sidecars remain live product owners.
+
+The TS-only routing-preferences sample lives under
+`apps/desktop/tests/fixtures/routing-preferences-view.json`; its original fixture
+is retained for provenance. See [the deletion preparation map](LEGACY_DELETION_PREPARATION.md)
+and [persisted-state evidence](PERSISTED_STATE_REVIEW.md). Neither source review,
+portable capture validation nor a successful historical oracle authorizes source
+deletion or certifies the remaining cutover gates.

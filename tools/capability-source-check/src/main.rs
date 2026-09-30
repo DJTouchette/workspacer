@@ -11,19 +11,40 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut method = None;
     let mut summary = false;
     let mut check = false;
+    let mut historical = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--root" => root = PathBuf::from(args.next().ok_or("--root needs a directory")?),
             "--method" => method = Some(args.next().ok_or("--method needs a name")?),
             "--summary" => summary = true,
             "--check" => check = true,
+            "--verify-go-reference" => {
+                historical = Some(PathBuf::from(
+                    args.next()
+                        .ok_or("--verify-go-reference needs a pinned checkout")?,
+                ))
+            }
             "--help" => {
                 println!(
-                    "capability-source-check --root REPOSITORY\nParses production Rust capability handlers; emits JSON fields, opaque payloads and unresolved source flows. No providers are invoked."
+                    "capability-source-check --root REPOSITORY\nParses production Rust capability handlers; emits JSON fields, opaque payloads and unresolved source flows. No providers are invoked.\n--verify-go-reference CHECKOUT verifies sealed original bytes against the pinned Git checkout."
                 );
                 return Ok(());
             }
             _ => return Err(format!("unknown argument {arg}").into()),
+        }
+    }
+    if let Some(checkout) = historical {
+        let original: workspacer_capability_source_check::reference::Reference =
+            serde_json::from_slice(&std::fs::read(
+                root.join("tools/capability-source-check/go-reference.json"),
+            )?)?;
+        let errors = original.verify_historical(&root, &checkout);
+        if !errors.is_empty() {
+            return Err(errors.join("\n").into());
+        }
+        println!("Pinned historical Go capture verified (84 dangerous bindings).");
+        if !check {
+            return Ok(());
         }
     }
     let sources = workspacer_capability_source_check::read_sources(&root)?;

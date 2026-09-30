@@ -1,5 +1,6 @@
 [tools]
-# Go: services/hub/ requires go 1.25.4 (see services/hub/go.mod)
+# Optional historical oracle tooling only; shipping backends build with Rust.
+# Pinned Go checkout commands: scripts/reference/README.md (no current-tree fallback).
 go = "1.25"
 # Node: Electron app + renderer (README requires Node 18+; pin to current LTS)
 node = "22"

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "mode": "captured-provenance",
+  "referenceCommit": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+  "referenceTree": "e35caa0d3d2772de1322619c9c1c06e771381ca2",
+  "capturePath": "tools/capability-source-check/go-reference.json",
+  "captureSha256": "745a8479001d1e6da7d96ae51e81a601ab40823c26d5f166b132fc1889a6876d",
+  "dangerousBindings": 84,
+  "review": "Explicit preparation for later deliberate legacy source deletion. Only original paths sealed in this capture may be absent; live vocabulary and Rust/desktop owners remain mandatory."
+}

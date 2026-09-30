@@ -81,22 +81,23 @@ another service manager or contact live services.
 
 From the release worktree containing this runner, execute an explicit reviewed
 package/test selection and stop at the first failure. The following is a bounded
-Go example, not a declaration that these packages are the whole release gate:
+Rust example, not a declaration that these targets are the whole release gate:
 
 ```bash
 set -euo pipefail
-for package in ./internal/routing ./internal/usageprefs ./cmd/brain; do
-  python3 scripts/release-check.py --cwd services/hub -- \
-    go test -race -count=1 -p=1 -parallel=1 -timeout=20m "$package"
+for target in backend_owner shutdown federation; do
+  python3 scripts/release-check.py -- \
+    cargo test --locked --manifest-path services/hub-rs/Cargo.toml \
+      --test "$target" -j1
 done
 ```
 
-Do not replace that selection with concurrent `go test -race ./...`, cargo and
-desktop checks. If brain exceeds the ceiling, select reviewed `-run` groups and
-retain evidence of their combined coverage; do not count an OOM or timeout as a
-pass. `cmd/brain/hostgate_test.go` keeps its package-wide config-home sandbox;
-`internal/routing/effort_test.go` can intentionally read the real routing file
-read-only. This runner changes neither policy.
+Keep the runner's resource bound around each selected command and retain its
+exit and test receipts. Do not replace the sequence with concurrent Cargo and
+desktop builds on a constrained host. Split larger test selections only with
+explicit coverage accounting; an OOM, link failure or timeout is not a pass.
+The optional Go oracle uses a separate pinned checkout through
+[the historical reference workflow](../scripts/reference/README.md).
 
 After the Go checks finish, run other explicit checks one at a time, for example:
 

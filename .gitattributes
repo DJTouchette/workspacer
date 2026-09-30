@@ -21,3 +21,13 @@
 /plugins/examples.provenance.json text eol=lf
 /services/hub/internal/routing/testdata/preferences-view.json text eol=lf
 /apps/desktop/tests/fixtures/routing-preferences-view.json text eol=lf
+
+/tools/capability-source-check/go-reference-provenance.json text eol=lf
+# Current TypeScript-writer import captures retain exact disk bytes/source hashes.
+/services/hub-rs/assets/persisted-ts/*.json text eol=lf
+/apps/desktop/src/main/services/dispatchHistoryStore.ts text eol=lf
+/apps/desktop/src/main/services/fleetReviewStore.ts text eol=lf
+/apps/desktop/src/main/services/managerReplacementState.ts text eol=lf
+/apps/desktop/src/main/lib/atomicWriteFile.ts text eol=lf
+/apps/desktop/src/main/services/persistedWriterCapture.test.ts text eol=lf
+/scripts/capture-persisted-ts.mjs text eol=lf

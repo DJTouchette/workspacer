@@ -3,7 +3,7 @@
 A sidecar plugin can prepare a **selected local desktop agent launch** through
 its existing hub capability connection. This extends the plugin manifest with
 one optional contribution; it does not introduce a second plugin system.
-[Headroom](../services/hub/examples/headroom/README.md) is the bundled example,
+[Headroom](../plugins/examples/headroom/README.md) is the bundled example,
 installed on demand from **Plugins → Browse examples**.
 
 ```json

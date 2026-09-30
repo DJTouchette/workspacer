@@ -630,6 +630,18 @@ async fn failed_launch_and_retrying_end_cleanup_use_real_generation_credentials(
 
 #[tokio::test]
 async fn worker_escalation_survives_facade_preparation_and_profile_prompt_forms() {
+    let captured: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../apps/desktop/tests/fixtures/worker-escalation-prompt.json"
+    ))
+    .unwrap();
+    let expected = captured["prompt"].as_str().unwrap();
+    assert!(expected.len() > 900);
+    assert!(captured["literalCount"].as_u64().unwrap() > 5);
+    assert_eq!(
+        workspacer_hub::services::worker_results::ESCALATION_CONTRACT,
+        expected
+    );
+    let mut checked = 0;
     use workspacer_hub::services::{profiles::Profile, session_facade::Readiness};
     let dir = tempfile::tempdir().unwrap();
     let facade = SessionFacade {
@@ -679,7 +691,13 @@ async fn worker_escalation_survives_facade_preparation_and_profile_prompt_forms(
             };
             assert!(instructions.contains("wks-escalation"));
             assert!(instructions.contains("requiredAuthorityOrDecision"));
+            assert!(
+                instructions.contains(expected),
+                "full captured prompt must survive facade preparation"
+            );
+            checked += 1;
         }
     }
+    assert_eq!(checked, 6);
     assert!(!facade.tokens.exists());
 }

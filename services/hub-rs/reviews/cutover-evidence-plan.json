@@ -1,0 +1,679 @@
+{
+  "schemaVersion": 1,
+  "kind": "draft-cutover-evidence-plan",
+  "certification": false,
+  "writtenAtUTC": "2026-09-30T03:48:08.970011+00:00",
+  "candidate": {
+    "sha": "a265b956fb5ba8fa2b7c8f92210d52e16f578f5c",
+    "sourcePending": 0,
+    "frozen": true
+  },
+  "scope": "Non-deletion gates only; no main/ledger change, no workflow dispatch or publication. Root reviews all closure decisions.",
+  "receiptInventory": {
+    "primary": {
+      "sha": "a265b956fb5ba8fa2b7c8f92210d52e16f578f5c",
+      "run": 36664561981,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981",
+      "observedStatus": "completed",
+      "observedConclusion": "success",
+      "observedPassedJobs": [
+        "release-check-runner",
+        "desktop",
+        "conflict-markers",
+        "capability-parameters",
+        "claudemon",
+        "hub",
+        "hub-latency",
+        "containment-windows",
+        "tui"
+      ],
+      "observedPendingJobs": [],
+      "observedFailedJobs": [],
+      "jobs": [
+        {
+          "name": "release-check-runner",
+          "id": 109726360909,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726360909",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "desktop",
+          "id": 109726361028,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361028",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "conflict-markers",
+          "id": 109726361052,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361052",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "capability-parameters",
+          "id": 109726361056,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361056",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "claudemon",
+          "id": 109726361074,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361074",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "hub",
+          "id": 109726361099,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361099",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "hub-latency",
+          "id": 109726361104,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361104",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "containment-windows",
+          "id": 109726361137,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361137",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "tui",
+          "id": 109726361158,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561981/job/109726361158",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "native": {
+      "sha": "a265b956fb5ba8fa2b7c8f92210d52e16f578f5c",
+      "run": 36664561965,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561965",
+      "observedStatus": "completed",
+      "observedConclusion": "success",
+      "observedPassedJobs": [
+        "native (macos-latest)",
+        "native (windows-latest)",
+        "native (ubuntu-latest)"
+      ],
+      "observedPendingJobs": [],
+      "observedFailedJobs": [],
+      "jobs": [
+        {
+          "name": "native (macos-latest)",
+          "id": 109726360863,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561965/job/109726360863",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native (windows-latest)",
+          "id": 109726361008,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561965/job/109726361008",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native (ubuntu-latest)",
+          "id": 109726361047,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561965/job/109726361047",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "preview": {
+      "sha": "a265b956fb5ba8fa2b7c8f92210d52e16f578f5c",
+      "run": 36664562055,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664562055",
+      "observedStatus": "in_progress",
+      "observedConclusion": null,
+      "observedPassedJobs": [
+        "rust-service (ubuntu-latest)",
+        "rust-service (macos-latest)"
+      ],
+      "observedPendingJobs": [
+        "windows-preview"
+      ],
+      "observedFailedJobs": [],
+      "jobs": [
+        {
+          "name": "rust-service (ubuntu-latest)",
+          "id": 109726361298,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664562055/job/109726361298",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "windows-preview",
+          "id": 109726361448,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664562055/job/109726361448",
+          "status": "in_progress",
+          "conclusion": null
+        },
+        {
+          "name": "rust-service (macos-latest)",
+          "id": 109726361555,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664562055/job/109726361555",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "containers": {
+      "sha": "a265b956fb5ba8fa2b7c8f92210d52e16f578f5c",
+      "run": 36664561953,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561953",
+      "observedStatus": "completed",
+      "observedConclusion": "success",
+      "observedPassedJobs": [
+        "images-and-owned-boot"
+      ],
+      "observedPendingJobs": [],
+      "observedFailedJobs": [],
+      "jobs": [
+        {
+          "name": "images-and-owned-boot",
+          "id": 109726360989,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664561953/job/109726360989",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "release": {
+      "sha": "a265b956fb5ba8fa2b7c8f92210d52e16f578f5c",
+      "run": 36665384077,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36665384077",
+      "observedStatus": "in_progress",
+      "observedConclusion": null,
+      "observedPassedJobs": [
+        "gate"
+      ],
+      "observedPendingJobs": [
+        "native-windows-build",
+        "build (windows-latest, windows, windows-x64)",
+        "build (macos-14, macos-arm64, darwin-arm64)",
+        "build (ubuntu-22.04, linux, linux-x64)"
+      ],
+      "observedFailedJobs": [],
+      "jobs": [
+        {
+          "name": "gate",
+          "id": 109728835746,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36665384077/job/109728835746",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "native-windows-build",
+          "id": 109728866890,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36665384077/job/109728866890",
+          "status": "in_progress",
+          "conclusion": null
+        },
+        {
+          "name": "build (windows-latest, windows, windows-x64)",
+          "id": 109728866951,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36665384077/job/109728866951",
+          "status": "in_progress",
+          "conclusion": null
+        },
+        {
+          "name": "build (macos-14, macos-arm64, darwin-arm64)",
+          "id": 109728866975,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36665384077/job/109728866975",
+          "status": "in_progress",
+          "conclusion": null
+        },
+        {
+          "name": "build (ubuntu-22.04, linux, linux-x64)",
+          "id": 109728867003,
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36665384077/job/109728867003",
+          "status": "in_progress",
+          "conclusion": null
+        }
+      ],
+      "owner": "root",
+      "requiredJobs": [
+        "gate",
+        "build windows-x64",
+        "build darwin-arm64",
+        "build linux-x64",
+        "native-windows-build",
+        "native-windows-package",
+        "publish-nightly when publication requested"
+      ],
+      "requiredProvenance": "One gate version stamp, exact GITHUB_SHA in server build stamp and native/backend handoff manifests; verified hashes/source/version/run/platform before native package; final release tag/assets must match requested candidate."
+    }
+  },
+  "auxiliarySourceEquivalence": {
+    "fromSha": "a3b1a2fa13f59b133f5140b4ea31f4a45299b9e8",
+    "toSha": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+    "changedFiles": [
+      ".gitattributes",
+      ".rivet/learnings/2026-09-30-retained-plugin-copy-keeps-production-bytes-whil-8ea742.md"
+    ],
+    "attributeChange": "Adds -whitespace for already LF-pinned plugins/examples/editor/ui/cm.bundle.js; does not change text/eol/filter or asset bytes. Other change is learning prose.",
+    "result": "No build/runtime/workflow inputs changed. Existing auxiliary runs are not literally candidate-SHA runs; root may explicitly carry successful scoped test coverage forward. Never relabel their SHA or artifact provenance. A failed source-equivalent macOS test remains relevant, not excused by this equivalence."
+  },
+  "gates": [
+    {
+      "gate": "ci-and-generators",
+      "assessment": "exact_candidate_primary_success_ready_for_owner_review",
+      "existingEvidence": [
+        ".github/workflows/ci.yml",
+        "scripts/hub-migration.py",
+        "tools/capability-source-check",
+        "scripts/mcp-catalog.py",
+        "scripts/check-retained-plugin-assets.mjs",
+        "Makefile check-store-yaml-parity"
+      ],
+      "receiptRequirements": [
+        "primary: all jobs success on candidate, including source/schema/generator/asset guards and optimized latency receipt"
+      ],
+      "remainingConcreteItems": [
+        "Retain exact job receipts rather than infer all jobs from hub success. Legacy reference-only generator deletion/default-command recheck belongs to the later deletion stage."
+      ],
+      "claimScopeAndLimits": "Source pending count is0. Default capability/catalog/YAML guards are Rust/Python/Node; manual Go reference targets are not silently counted as portable final-deletion checks.",
+      "certified": false
+    },
+    {
+      "gate": "electron-and-web",
+      "assessment": "new_execution_receipt_required",
+      "existingEvidence": [
+        "apps/desktop/src/main/services/hubDaemon.ts",
+        "apps/desktop/scripts/ELECTRON_OWNERSHIP_SMOKE.md",
+        ".github/workflows/ci.yml desktop job",
+        ".github/workflows/release.yml packaged Electron ownership steps"
+      ],
+      "receiptRequirements": [
+        "primary: desktop typecheck/tests, real Rust-backed dispatch provenance and browser/mobile e2e",
+        "release: Linux packaged Electron Xvfb ownership smoke, successful JSON/log receipt from actual packaged main entrypoint"
+      ],
+      "remainingConcreteItems": [
+        "The new packaged ownership harness has local helper tests but no real packaged execution receipt yet. Its first release execution remains necessary."
+      ],
+      "claimScopeAndLimits": "Smoke must prove owned app.quit exits0/listeners close and adopted external bus/MCP remain live until their own owner shuts down. This is process ownership, not universal installed-OS or visual parity. Do not impose a new GUI smoke on every OS merely because only Linux Xvfb is wired.",
+      "certified": false
+    },
+    {
+      "gate": "native-embedded",
+      "assessment": "exact_candidate_native_and_macos_success_pending_windows_installer_receipt",
+      "existingEvidence": [
+        "apps/native/Cargo.toml defaults rust-hub",
+        ".github/workflows/native-client.yml",
+        ".github/workflows/rust-native-preview.yml",
+        "apps/native/scripts/test-windows-installer.ps1"
+      ],
+      "receiptRequirements": [
+        "native: three-OS matrix, Rust owner/reducer/interaction tests and real Linux window receipts",
+        "preview/release: native Windows installer and owned-backend harness install/upgrade/shutdown/uninstall",
+        "Relevant macOS shared-backend failure resolved"
+      ],
+      "remainingConcreteItems": [
+        "Exact candidate three-platform native-client matrix succeeded. Windows preview installer and final release native installer receipts remain in progress."
+      ],
+      "claimScopeAndLimits": "Linux window harness, owned backend tests and installed Windows backend harness are distinct evidence. No native macOS/Linux installer or installed Windows visual GUI requirement is invented.",
+      "certified": false
+    },
+    {
+      "gate": "standalone-service",
+      "assessment": "pending_release_and_platform_result",
+      "existingEvidence": [
+        "services/hub-rs/CLI_MIGRATION.md",
+        "services/hub-rs/BOOTSTRAP_REVIEW.md",
+        "services/hub-rs/tests/cli.rs",
+        "services/hub-rs/tests/backend_owner.rs",
+        "services/hub-rs/tests/shutdown.rs",
+        "scripts/smoke-server-bundle.py"
+      ],
+      "receiptRequirements": [
+        "primary: actual CLI/owner/shutdown suite",
+        "release: extracted server smoke on windows-x64, darwin-arm64, linux-x64 with exact source stamp",
+        "Relevant platform lifecycle/managed-service failures resolved"
+      ],
+      "remainingConcreteItems": [
+        "Current macOS managed-service blocker resolved by fixture DNS isolation and full platform rerun. Final extracted-bundle readiness/quit receipts remain pending."
+      ],
+      "claimScopeAndLimits": "Archive smoke checks retained isolated identity, no Node dependency, authenticated launch/MCP readiness, modern+legacy tools catalogs, exact web bytes, no disabled-hook writes, joined termination and released listeners. It launches no model and is not a generic service-install/systemd proof.",
+      "certified": false
+    },
+    {
+      "gate": "tui",
+      "assessment": "exact_candidate_primary_success_ready_for_owner_review",
+      "existingEvidence": [
+        "apps/tui/src/daemons.rs",
+        "apps/tui/src/daemons_backend_smoke.rs",
+        "Makefile test-tui-rust-backend",
+        ".github/workflows/ci.yml hub/TUI jobs"
+      ],
+      "receiptRequirements": [
+        "primary: TUI normal format/tests/clippy AND hub job explicit real_rust_backend_calls_events_reconnect_and_owned_shutdown (execution count1, not ignored)"
+      ],
+      "remainingConcreteItems": [],
+      "claimScopeAndLimits": "The new real Rust process/bus smoke covers calls/events/reconnect and owned shutdown; ordinary ignored helper listing alone does not count. No new interactive terminal screenshot requirement.",
+      "certified": false
+    },
+    {
+      "gate": "mcp-and-plugins",
+      "assessment": "existing_behavior_proof_plus_pending_package_receipt",
+      "existingEvidence": [
+        "services/hub-rs/tests/mcp.rs",
+        "services/hub-rs/tests/mcp_sse.rs",
+        "services/hub-rs/tests/plugin_manager.rs",
+        "services/hub-rs/tests/auth_composition.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/tests/integration_spine.rs",
+        "apps/desktop test:dispatch-chain"
+      ],
+      "receiptRequirements": [
+        "primary: hub MCP/plugin/identity/cancellation/real editor+SSE integrations and desktop provenance",
+        "release: actual packaged modern and legacy tools/list metadata/catalog smoke"
+      ],
+      "remainingConcreteItems": [],
+      "claimScopeAndLimits": "No remaining source rows or unresolved parameter-scanner defects identified. Numeric managed answerKinds and child exposure are real Unix inert-provider proofs; do not rebrand them as live provider-account tests.",
+      "certified": false
+    },
+    {
+      "gate": "federation-and-remote-workers",
+      "assessment": "exact_candidate_primary_and_container_success_ready_for_owner_review",
+      "existingEvidence": [
+        "services/hub-rs/tests/federation.rs",
+        "services/hub-rs/src/provider_relay",
+        "services/hub-rs/src/services/remote_dispatch",
+        "services/hub-rs/tests/worker_results.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "deploy/fly/rust/boot-rehearsal.sh"
+      ],
+      "receiptRequirements": [
+        "primary: actual multiple-hub identity/dispatch/reconnect/retry/uncertain-outcome tests",
+        "containers: real hub/worker/combined boot and authenticated registration, executed on exact candidate in run36664561953"
+      ],
+      "remainingConcreteItems": [],
+      "claimScopeAndLimits": "Container readiness alone is insufficient, but actual dispatch and multi-hub tests already exist. Local Docker plus simulated Tailscale does not claim real Fly operations; do not add paid cloud deployment/provider calls as universal requirements.",
+      "certified": false
+    },
+    {
+      "gate": "persisted-state-upgrade",
+      "assessment": "bounded_provenance_review_plus_final_receipts",
+      "existingEvidence": [
+        "services/hub-rs/PERSISTED_STATE_REVIEW.md",
+        "services/hub-rs/tests/legacy_preservation.rs",
+        "services/hub-rs/tests/config.rs",
+        "services/hub-rs/tests/stores.rs",
+        "services/hub-rs/tests/layout.rs",
+        "services/hub-rs/tests/jobs.rs",
+        "services/hub-rs/tests/task_store.rs",
+        "services/hub-rs/tests/fleet_review.rs",
+        "services/hub-rs/tests/manager_replacements.rs",
+        "services/claudemon/src/store/schema.rs",
+        "services/hub-rs/PERSISTED_HISTORY_FINDINGS.md (prep-only source audit)"
+      ],
+      "receiptRequirements": [
+        "primary: named per-family fixture/reopen/failure tests, actual historical-path CLI fixture and separate claudemon owning schema migration tests",
+        "Windows/macOS applicable path and persistence assertions must have passing relevant receipts",
+        "release: preserve package-path/identity assertions, without mistaking fresh native Preview identity for production upgrade"
+      ],
+      "remainingConcreteItems": [
+        "All three stores have retained TS writers with matching current envelope/field shapes; none is Rust-only. Existing Rust reopen/recovery tests are concrete but independent TS-written nonempty import fixture was not identified. See prep PERSISTED_HISTORY_FINDINGS.md for exact scope and optional three small provenance controls. No current-writer import defect found; avoid claiming arbitrary historical schemas or unknown root-envelope extension preservation."
+      ],
+      "claimScopeAndLimits": "Per-family decomposed proofs suffice. Do not require a universal all-store fixture, power-loss guarantee or arbitrary downgrade support. Preserve intentional distinctions: lost host token refuses; lost VAPID key resets unusable subscriptions; layout write failure keeps live state with warning; plugin malformed overlay fallback matches Go; retired intent SQLite is preserved, not converted. Missing unreadable-profile fault coverage alone is not a new cutover blocker.",
+      "certified": false
+    },
+    {
+      "gate": "node-companion-replacement",
+      "assessment": "replacement_implemented_pending_artifact_receipts",
+      "existingEvidence": [
+        "services/hub-rs/COMPANION_RETIREMENT.md",
+        "services/hub-rs/tests/legacy_preservation.rs",
+        "services/hub-rs/tests/local_spawn.rs",
+        "services/hub-rs/tests/agent_spawn.rs",
+        "apps/native/scripts/windows-payload.test.mjs",
+        "apps/desktop/scripts/prepare-main-build.mjs"
+      ],
+      "receiptRequirements": [
+        "primary: native service replacements, companion source-retirement/output cleanup and retained Electron business tests",
+        "release: no-Node standalone and native Windows harness plus payload exclusion of Go/CJS/Node backend artifacts"
+      ],
+      "remainingConcreteItems": [],
+      "claimScopeAndLimits": "Retained Go desktophost.go is not a current Rust fallback and is removed only at deletion gate. External plugin/provider Node runtimes and Electron itself remain legitimate; this gate is private companion replacement, not a Node-free whole product.",
+      "certified": false
+    },
+    {
+      "gate": "windows-package",
+      "assessment": "pending_release_receipt",
+      "existingEvidence": [
+        ".github/workflows/release.yml native build/package split",
+        "apps/native/scripts/windows-payload.test.mjs",
+        "apps/native/scripts/test-windows-installer.ps1",
+        "scripts/smoke-server-bundle.py"
+      ],
+      "receiptRequirements": [
+        "release: Windows Electron installers/update metadata, source-stamped standalone zip, verified native/compiler CRT handoff, native package install/upgrade/harness/shutdown/uninstall",
+        "primary: Windows containment/shared hub tests success"
+      ],
+      "remainingConcreteItems": [
+        "No final-candidate release artifact/smoke receipt yet."
+      ],
+      "claimScopeAndLimits": "Nightly is deliberately unsigned; do not require stable-tag Azure signing for a testing nightly. Native preview installer and Electron installer retain separate ownership/update behavior. A successful Windows backend harness is not a visual GPUI launch claim.",
+      "certified": false
+    },
+    {
+      "gate": "macos-package",
+      "assessment": "platform_failure_resolved_pending_release_receipt",
+      "existingEvidence": [
+        ".github/workflows/release.yml macos-14/darwin-arm64 leg",
+        ".github/workflows/rust-native-preview.yml macOS shared services",
+        "scripts/smoke-server-bundle.py"
+      ],
+      "receiptRequirements": [
+        "release: arm64 Electron DMG, updater/package metadata and source-stamped standalone bundle smoke",
+        "preview: passing relevant macOS Rust service/cleanup tests after local_spawn failure is diagnosed"
+      ],
+      "remainingConcreteItems": [
+        "Full exact-candidate macOS shared service/cleanup tests passed. Final DMG/server archive and extracted smoke receipt pending."
+      ],
+      "claimScopeAndLimits": "No Intel Mac or native macOS installer requirement is invented. macOS signing/notarization and automatic updater are not currently supported release claims; unsigned build must be described honestly. Server smoke is not installed Electron visual/OS integration.",
+      "certified": false
+    },
+    {
+      "gate": "linux-package",
+      "assessment": "pending_actual_package_execution",
+      "existingEvidence": [
+        ".github/workflows/release.yml ubuntu-22.04/linux-x64 leg",
+        "apps/desktop/scripts/ELECTRON_OWNERSHIP_SMOKE.md",
+        "scripts/smoke-server-bundle.py"
+      ],
+      "receiptRequirements": [
+        "release: x64 AppImage/update metadata plus exact server archive/stamp",
+        "release: real packaged Electron ownership smoke and extracted standalone startup/shutdown"
+      ],
+      "remainingConcreteItems": [
+        "First final-candidate packaged Electron ownership execution and package receipts pending."
+      ],
+      "claimScopeAndLimits": "No native Linux installer requirement; existing Linux native window smoke belongs to native gate. Helper tests and raw build success cannot stand in for packaged ownership execution.",
+      "certified": false
+    },
+    {
+      "gate": "deployment",
+      "assessment": "exact_candidate_primary_and_container_success_ready_for_owner_review",
+      "existingEvidence": [
+        ".github/workflows/rust-container-contract.yml",
+        "deploy/fly/rust/boot-rehearsal.sh",
+        "deploy/fly/rust/test-supervisor.py",
+        "deploy/fly/rust/test-artifact.sh",
+        "deploy/fly/rust/test-provision.sh"
+      ],
+      "receiptRequirements": [
+        "containers: successful exact-candidate run36664561953",
+        "release artifact source/build stamps when claiming artifact-based deployment path"
+      ],
+      "remainingConcreteItems": [],
+      "claimScopeAndLimits": "Existing run built all three default Rust role images and ran real fresh-volume boots, persistence/artifact/protected-supervisor and credential migration contracts. Tailscale simulated; no claim of live Fly rollout or existing-volume upgrade from fresh boot alone. Store upgrade evidence is supplied separately, not invented from container health.",
+      "certified": false
+    }
+  ],
+  "summary": {
+    "potentialClosureAfterPrimaryAndRelease": [
+      "ci-and-generators",
+      "electron-and-web",
+      "native-embedded subject to installer receipt",
+      "standalone-service",
+      "tui",
+      "mcp-and-plugins",
+      "federation-and-remote-workers",
+      "node-companion-replacement",
+      "windows-package",
+      "macos-package",
+      "linux-package",
+      "deployment"
+    ],
+    "additionalAuxiliaryReceipts": [
+      "Exact-candidate native-client and container runs succeeded; exact-candidate Linux/macOS service jobs succeeded. Windows preview installer and requested release still running at this snapshot."
+    ],
+    "concreteOpenFailure": null,
+    "boundedReviewItem": "Persisted-family provenance/claim scope; do not convert documentation uncertainty into a universal new migration fixture requirement.",
+    "notMissingImplementation": [
+      "TUI real-backend smoke exists and executes in primary hub job",
+      "Source/parameter/corpus audits complete with0 pending source rows",
+      "Store/schema/restart/failure tests exist across owning crates",
+      "Native Windows compiler/package split preserves provenance and installer smoke",
+      "Electron packaged ownership harness is wired but awaits actual execution"
+    ],
+    "publicationPolicy": "Requested nightly run36665384077 is in progress on exact a265 after successful primary CI. Root owns publication and existing publish-time gate. No publication or migration certification is inferred before actual completion.",
+    "excluded": "legacy-deletion; no gate status may be changed from this draft alone.",
+    "remainingTrueProofGapsAfterSuccessfulRelease": [
+      "Persisted task/review/manager family provenance: bound any historical import claim to supported old shapes or intentional preservation; current reopen proof must not be described as every historical version. This remains a scoped review item, not an asserted defect.",
+      "Verify successful release actually executed packaged Electron owned/adopted smoke, all three extracted-server smokes, native Windows installer/harness, and source/version/hash provenance; retain receipts and verify published assets. Pipeline start/build success alone cannot close these.",
+      "If the release native installer supplies the same required scope, a still-running duplicate preview job is not a newly invented requirement; an actual failure, if one appears, needs scoped diagnosis.",
+      "Legacy deletion remains separately excluded and requires the prepared deletion patch and its post-deletion source/generator/CI checks; publishing the pre-deletion nightly does not execute that gate."
+    ]
+  },
+  "historicalReceiptInventory": {
+    "primary": {
+      "sha": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+      "run": 36661585633,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36661585633",
+      "observedStatus": "in_progress",
+      "observedPassedJobs": [
+        "hub",
+        "claudemon",
+        "tui",
+        "hub-latency",
+        "capability-parameters",
+        "release-check-runner",
+        "conflict-markers"
+      ],
+      "observedPendingJobs": [
+        "desktop",
+        "containment-windows"
+      ],
+      "requiredConclusion": "success"
+    },
+    "native": {
+      "sha": "a3b1a2fa13f59b133f5140b4ea31f4a45299b9e8",
+      "run": 36661497098,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36661497098",
+      "observedStatus": "in_progress",
+      "observedPassedJobs": [
+        "native (ubuntu-latest)",
+        "native (windows-latest)"
+      ],
+      "observedPendingJobs": [
+        "native (macos-latest)"
+      ],
+      "candidateRelationship": "source_equivalence_requires_explicit_review"
+    },
+    "preview": {
+      "sha": "a3b1a2fa13f59b133f5140b4ea31f4a45299b9e8",
+      "run": 36661497145,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36661497145",
+      "observedStatus": "in_progress",
+      "observedPassedJobs": [
+        "rust-service (ubuntu-latest)"
+      ],
+      "observedFailedJobs": [
+        {
+          "job": 109717150185,
+          "name": "rust-service (macos-latest)",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36661497145/job/109717150185",
+          "failure": "local_spawn::owned_rpc_spawn_uses_scoped_mcp_and_routes_real_finish_wake_without_models timed out at generic until helper after22.80s; child log contains expected accepted-control bookkeeping warning before timeout, but no named phase/backtrace. All other targets continued. This is a test failure, not a build failure.",
+          "nextAction": "Diagnose the failing stage and establish a passing relevant macOS receipt; do not raise timeouts blindly or substitute Linux success."
+        }
+      ],
+      "observedPendingJobs": [
+        "windows-preview"
+      ],
+      "candidateRelationship": "source_equivalent_failure_applies_until_resolved"
+    },
+    "containers": {
+      "sha": "a3b1a2fa13f59b133f5140b4ea31f4a45299b9e8",
+      "run": 36661497130,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36661497130",
+      "observedStatus": "completed",
+      "observedConclusion": "success",
+      "job": 109717140245,
+      "candidateRelationship": "source_equivalence_requires_explicit_review"
+    },
+    "release": {
+      "sha": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+      "run": null,
+      "observedStatus": "not_dispatched_at_audit_snapshot",
+      "owner": "root",
+      "requiredJobs": [
+        "gate",
+        "build windows-x64",
+        "build darwin-arm64",
+        "build linux-x64",
+        "native-windows-build",
+        "native-windows-package",
+        "publish-nightly when publication requested"
+      ],
+      "requiredProvenance": "One gate version stamp, exact GITHUB_SHA in server build stamp and native/backend handoff manifests; verified hashes/source/version/run/platform before native package; final release tag/assets must match requested candidate."
+    }
+  },
+  "candidateSourceComparison": {
+    "fromSha": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+    "toSha": "a265b956fb5ba8fa2b7c8f92210d52e16f578f5c",
+    "changedFiles": [
+      ".rivet/learnings/2026-09-30-loopback-python-fixtures-must-avoid-reverse-dns-80a1b6.md",
+      "services/hub-rs/tests/fixtures/fake_codex_subagent.py",
+      "services/hub-rs/tests/local_spawn.rs"
+    ],
+    "productionRuntimeChanged": false,
+    "result": "Only test fixture, named test waits/readiness assertion, and learning prose changed. No production runtime, manifests/locks, workflow, or packaged payload changed. Current exact-SHA primary/native/container success supersedes need to carry old source-equivalent receipts forward."
+  },
+  "macosFailureResolution": {
+    "historicalFailure": {
+      "run": 36661497145,
+      "phase": "codex-child-exposed",
+      "diagnosticRun": 36663252203,
+      "causeEvidence": "Next diagnostic recorded interpreter/before-bind but no bound; app-server readiness expired. HTTPServer.server_bind adds socket.getfqdn after TCP bind. Fixture-specific TCPServer.server_bind bypass with getfqdn refusal guard passed three Mac attempts."
+    },
+    "diagnosticProof": {
+      "run": 36664199884,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664199884",
+      "scope": "Three actual macOS local_spawn attempts; test-only DNS-free loopback binding; no production fix, timeout increase, or relaxed assertion."
+    },
+    "candidateProof": {
+      "run": 36664562055,
+      "job": 109726361555,
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36664562055/job/109726361555",
+      "conclusion": "success",
+      "scope": "Full current candidate macOS shared Rust service/lifecycle job plus repeated process cleanup; production unchanged."
+    },
+    "resolved": true,
+    "limits": "Does not replace pending darwin-arm64 release bundle/DMG evidence. Diagnostic workflows/subscriber/dev dependency were not merged."
+  }
+}

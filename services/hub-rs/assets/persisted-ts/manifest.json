@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "origin": "current-retained-typescript-writers",
+  "capturedAt": "2026-09-30T05:22:43.840Z",
+  "description": "Exact disk bytes produced by real TypeScript writers. This is not a captured historical release or Rust-generated input.",
+  "variableProvenance": "UUIDs and wall-clock timestamps are real writer output. Review paths are a fresh temporary Git repository/worktree, removed before capture completes. Git identity and commit timestamps are fixed. No byte normalization is applied; --check verifies this captured run and current source hashes, not a fresh byte-identical replay.",
+  "sources": {
+    "apps/desktop/src/main/services/dispatchHistoryStore.ts": "69154c0d7b8e5c82b2ba5629ed064e033deb5d87909319e0764a0d05aa58e681",
+    "apps/desktop/src/main/services/fleetReviewStore.ts": "a7ff12fb23f6c17d3659493e131777894e04839e66809731fbe51e30b7527e63",
+    "apps/desktop/src/main/services/managerReplacementState.ts": "1dd4a68ca0a7e54bc0746df72eed12d202c906c89120d2f47625dc2fbcbb7474",
+    "apps/desktop/src/main/lib/atomicWriteFile.ts": "b58a43e8905bf2d2e79f00dd7502cda3dea6c051c02c038a8777678eef0eec6c",
+    "apps/desktop/src/main/services/persistedWriterCapture.test.ts": "a52f77c1b4d0a38d1e52f2f9365bf8983d68e1c4bce13702e46191dea0634476",
+    "scripts/capture-persisted-ts.mjs": "477b8dad9fab3bb93bc1e228f8b91fff3a873043cf9b5cbcd05aee4ba5fdd23b"
+  },
+  "artifacts": {
+    "dispatch-history.json": "9f16bd812e62edd9640a754a3f423d2e19aadf452b12f1a5d10ed463bd75695c",
+    "fleet-review.json": "8041c5f9ce4508a2f512acaa092903b5a4c25139883f839c56f77f1628dd9edc",
+    "manager-replacements.json": "6090ca10a9a433b59671a042261f09013f80bd9aedb4d78543754b7e8cb2e996"
+  }
+}

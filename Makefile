@@ -96,7 +96,7 @@ build-desktop:
 
 build-hub: build-rust-backend
 
-.PHONY: test-hub-rust test-hub-parity hub-migration hub-vocabulary test-native-rust hub-mcp-catalog
+.PHONY: test-hub-rust test-hub-reference test-hub-parity hub-migration hub-vocabulary test-native-rust hub-mcp-catalog
 hub-mcp-catalog:
 	python3 scripts/mcp-catalog.py --write
 
@@ -113,22 +113,10 @@ test-hub-rust:
 test-hub-latency:
 	cargo test --locked --release --manifest-path $(HUB_RUST)/Cargo.toml --test bus_latency -- --ignored --nocapture
 
-# Build the reference in a disposable directory. The environment variable is
-# mandatory in the ignored test: this target never silently skips Go parity.
-test-hub-parity: test-hub-rust
-	@fixture_dir=$$(mktemp -d); trap 'rm -rf "$$fixture_dir"' EXIT; \
-	(cd $(HUB) && go build -o "$$fixture_dir/hub-reference" ./cmd/hub-reference) && \
-	WKS_GO_HUB_REFERENCE="$$fixture_dir/hub-reference" cargo test --locked --manifest-path $(HUB_RUST)/Cargo.toml --test compatibility shared_contracts_go_reference -- --ignored
-	cd $(HUB) && go test ./cmd/brain -run '^Test(RustMigrationSnapshotFixtures|ContextHealthFormattingMatchesDesktopContract|ContextWatchRejectsUnsupportedProvidersWithoutUsingSlots|CumulativeCodexContractCannotFireContextWatch|TelemetryEpochKeepsAdjacentProductionValuesDistinct|ClaudeProjectDirNameContractCases|HeadlessFileWatch.*)$$' -count=1
-	cd $(HUB) && go test ./internal/bus -run '^TestMigrationBusFixtures$$' -count=1
-	cd $(HUB) && go test ./cmd/mcp -run '^TestRustMigrationToolCatalog$$' -count=1
-	cd $(HUB) && go test ./internal/jobs -run '^TestRustMigrationJobFixtures$$' -count=1
-	cd $(HUB) && go test ./internal/quiescence -run '^TestPortableFleetQuiescenceContract$$' -count=1
-	cd $(HUB) && go test ./internal/routing ./internal/limits -run '^TestPortableRust(Routing|Pacing)Contract$$' -count=1
-	cd apps/desktop && npm run test:main -- src/main/shared/structuredResult.test.ts src/main/shared/workerEscalation.test.ts src/main/shared/fleetMessages.test.ts src/main/services/thresholdWatch.test.ts
-	@vocabulary=$$(mktemp); trap 'rm -f "$$vocabulary"' EXIT; \
-	(cd $(HUB) && go run ./cmd/hub-reference --snapshot) > "$$vocabulary" && \
-	cmp "$$vocabulary" $(HUB_RUST)/assets/hub-vocabulary.json
+# Optional historical oracle: validation fails before any compiler runs unless
+# WKS_HUB_REFERENCE_ROOT names the pinned, clean historical repository checkout.
+test-hub-parity:
+	python3 scripts/hub-reference.py parity
 
 hub-migration:
 	python3 scripts/hub-migration.py check
@@ -166,8 +154,9 @@ check-hub-rust-assets:
 	node scripts/generate-rust-workflow-watcher-fixtures.cjs --check
 	node scripts/generate-rust-brain-capabilities.cjs --check
 
+# Read-only comparison; explicit export is available through hub-reference.py.
 hub-vocabulary:
-	cd $(HUB) && go run ./cmd/hub-reference --snapshot > ../hub-rs/assets/hub-vocabulary.json
+	python3 scripts/hub-reference.py vocabulary-check
 
 ## build-cli: build the standalone shared Rust backend.
 build-cli: build-rust-backend
@@ -188,9 +177,9 @@ test-desktop:
 test-hub:
 	cargo test --locked --manifest-path $(HUB_RUST)/Cargo.toml
 
-## test-hub-reference: temporary Go oracle, retained until cutover validation.
+## test-hub-reference: explicit pinned historical Go oracle, never a live backend.
 test-hub-reference:
-	cd $(HUB) && go test -race -count=1 ./...
+	python3 scripts/hub-reference.py test
 
 test-claudemon:
 	cd $(CLAUDEMON) && cargo test
@@ -205,7 +194,7 @@ test-tui:
 ##                       assertion (i.e. routing.select gone) fatal rather than
 ##                       a note.
 test-routing-harness:
-	env -u NO_COLOR node $(HUB)/scripts/routing-limit-harness.mjs
+	python3 scripts/hub-reference.py routing-harness
 
 ## claudemon-routes: regenerate contracts/claudemon-routes.json from the two
 ##                    axum routers in services/claudemon/src/daemon/{api,hook}.rs.

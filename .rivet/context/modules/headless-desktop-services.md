@@ -1,133 +1,102 @@
 ---
-title: Shared desktop services in the headless brain
-tags: [headless, desktop-host, brain, node, services, parity, authentication, stdio, bundle]
+title: Shared desktop services in the Rust backend
+tags: [headless, desktop-host, services, parity, authentication, rust]
 related_paths:
   - "contracts/desktop-service-methods.json"
   - "apps/desktop/scripts/gen-desktop-services.mjs"
-  - "apps/desktop/scripts/build-desktop-host.mjs"
-  - "apps/desktop/src/main/headless/*.ts"
+  - "apps/desktop/src/main/headless/desktopHost.ts"
   - "apps/desktop/src/main/services/nativeDesktopServices.ts"
   - "apps/desktop/src/renderer/src/backend/desktopServices.ts"
-  - "services/hub/cmd/brain/desktophost*.go"
-  - "services/hub/internal/bus/desktop.go"
+  - "services/hub-rs/src/backend.rs"
+  - "services/hub-rs/src/services/mod.rs"
+  - "services/hub-rs/COMPANION_RETIREMENT.md"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
-# Shared desktop services in the headless brain
+# Shared desktop services in the Rust backend
 
-## Current Rust ownership
+## Current owners
 
-The default standalone backend now lives in `services/hub-rs`; native embeds
-that same backend. Its owned Rust services replace the private Node companion.
-The companion entry point, callback adapters, bundle builder, and
-`build:desktop-host`/`test:desktop-host` scripts have been removed. Use
-`npm run test:desktop-services` from `apps/desktop` for the retained cross-stack
-service checks. The public desktop-service generator no longer requires Go.
+`services/hub-rs` supplies the standalone service and the backend embedded by the
+native client. Its owned Rust services replace the private Node companion. No
+`desktop-host.cjs`, private stdio host bridge, `build:desktop-host`, or
+`test:desktop-host` command is required by the current product.
 
-Electron still uses `nativeDesktopServices.ts` and the public dispatcher in
-`headless/desktopHost.ts`, with their shared service dependencies. The
-`headless` directory name does not make those live Electron implementations
-safe to delete. See [the companion retirement map](../../../services/hub-rs/COMPANION_RETIREMENT.md)
-for exact retained and removed owners. Remaining Go source is migration reference;
-source-review and final platform cutover gates remain separate from runtime use.
+Electron retains `apps/desktop/src/main/services/nativeDesktopServices.ts`, the
+public dispatcher in `main/headless/desktopHost.ts`, and their shared JavaScript
+services. The `headless` directory name does not make those live implementations
+retired. In Electron's normal local composition, Rust owns the control plane and
+Electron registers its desktop services; standalone/native composition installs
+Rust owners. See [the companion retirement map](../../../services/hub-rs/COMPANION_RETIREMENT.md)
+for the exact boundary.
 
-## Retained Go/Node reference
+Enabled plugin sidecars and provider CLIs remain external programs. In particular,
+`plugins/examples/headroom` is a public trusted Node sidecar, not a replacement
+private backend process. Node also remains desktop/build/test tooling.
 
-The remaining sections describe the former companion protocol and its reference
-behavior. They are historical migration context, not current launch instructions;
-in particular, the old build/test commands below are no longer available.
+## Registry and authority
 
-## Purpose and ownership
+`contracts/desktop-service-methods.json` is the shared declaration. The current
+`apps/desktop/scripts/gen-desktop-services.mjs` emits the TypeScript registry;
+Rust imports the portable declaration through its own service composition. The
+generator no longer edits Go capspec or bus sources. Declaration membership is
+not proof a runtime handler was installed: retain actual service inventory and
+call/refusal tests.
 
-The headless brain can execute shared TypeScript services in a private Node
-child, packaged as `desktop-host.cjs`. This reuses desktop configuration,
-worktree, pricing, workflow, review, dispatch-history, and other service logic
-without starting Electron. The Go brain remains the bus provider and supplies
-daemon/session context to the child. This companion is distinct from the hub,
-MCP facade, and plugin sidecars.
+Public `desktop.*` methods require authenticated host provenance at the bus
+boundary; a scoped operator bearer alone does not acquire it. The manifest's
+owner methods and `ui.fonts`/`ui.asset` have distinct gates. Preserve those
+boundaries when adding a method to native services, Rust services and the
+renderer bus adapter in `renderer/src/backend/desktopServices.ts`.
 
-`services/hub/cmd/brain/desktophost.go` locates the bundle beside the brain
-executable, unless `WKS_DESKTOP_HOST` overrides it. It starts `node <bundle>`
-on demand and reuses that process for subsequent calls. On Windows it prefers
-a regular `node.exe` beside the brain executable (the native installer bundles
-one), falling back to PATH for existing installations. Bundle overrides and the
-working directory do not select the private runtime. `available()` checks
-for a regular bundle file; it does not prove Node is installed or that startup
-will succeed. Node runs as the brain's OS user and is not a sandbox boundary.
+Host snapshots, observed context, launch attribution and caller identity must
+come from their actual owners, not browser-supplied fields. Rust's local lookup,
+launch coordinator, session facade and workflow observers supply those facts.
 
-## Public registry and authority
+## Launch and replacement ownership
 
-`contracts/desktop-service-methods.json` is the method-list source of truth.
-`apps/desktop/scripts/gen-desktop-services.mjs` validates it and updates the
-shared TypeScript registry, Go capspec lists, and literal per-method cases in
-the bus owner gate. Do not hand-edit those generated sections. The generator
-formats TypeScript through the repository's Prettier configuration.
+The old Node `internal.prepareIntegration` callback maps to
+`services/hub-rs/src/plugins/launch.rs`: an opaque permit belongs to a pending
+owner launch, is rechecked after asynchronous plugin preparation, and cannot be
+forged by a JSON grant. The plugin gets minimal context, not the host's credential
+bearing environment. Generation-scoped lifecycle cleanup retains failed
+revocations for retry.
 
-Public `desktop.*` calls require an authenticated, trusted, non-revoked host
-connection. A scoped operator bearer by itself is insufficient. The manifest
-separates owner methods from `ui.fonts`/`ui.asset`; do not infer identical
-authority merely because both are included in generated service lists.
+The old private `replacement.*` callbacks map to the typed
+`manager_replacements::NativeHost` and durable `ReplacementService`. The journal
+owns uncertain delivery, task-before-worker transfer, held messages and actual
+viewer acknowledgement. Do not recreate the callback strings as public RPCs.
+Caller cancellation or lost acknowledgement is not proof a mutation was rolled
+back and is not authorization to replay it. The spawn coordinator retains
+accepted work beyond its caller, and actual engine observations fence teardown.
 
-The renderer adapter in `apps/desktop/src/renderer/src/backend/desktopServices.ts`
-maps shared `ElectronAPI` methods onto bus calls. The native implementation is
-`apps/desktop/src/main/services/nativeDesktopServices.ts`. Adding a method
-requires its registry entry, intended native/headless implementations, renderer
-mapping, and authority/parity coverage.
+## Persistence and retirement
 
-## Private protocol and host context
+Current configuration has Rust and public Electron writers. The Rust runtime
+owns its launch/replacement journals and standalone analytics store; it does not
+silently convert all Electron history. `PERSISTED_STATE_REVIEW.md` distinguishes
+per-family byte/reopen/failure evidence. Retired intent-workspace SQLite/artifact
+preservation is tested across two real Backend lifetimes; preserving old user
+data is separate from restoring the retired feature.
 
-`apps/desktop/src/main/headless/stdio.ts` reads newline-delimited JSON requests
-with `id`, `method`, `params`, and `context`. Replies carry the same ID and
-either `result` or `error`. Events are separate `{event,data}` frames; private
-lifecycle callbacks use `hostCallId` and `hostResultId`.
+Original Go source, where retained, is a reference only. Historical private-pipe
+framing, Node discovery and bundle commands are documented in Git history and
+source-specific migration reviews. For deliberate oracle execution use the
+pinned-checkout commands in [scripts/reference/README.md](../../../scripts/reference/README.md).
+There is no automatic fallback to a current-tree Go service or private companion.
 
-Stdout belongs exclusively to this protocol. Both the bundle banner and the
-entry point redirect `console.log` to stderr so service logs cannot corrupt
-reply framing. Malformed input closes the reader with a failing exit code;
-stdin closure stops cleanup scheduling and waits for active requests before
-exit. The Go side correlates pending replies and ignores malformed output.
+## Validation
 
-`desktopInternalCall` builds context outside caller-controlled parameters:
-workspace/setup roots, current snapshots, daemon URL, and method-specific data
-such as recent sessions or analytics snapshots. Preserve this separation;
-browser-supplied params must not impersonate host observations. The public
-dispatcher also handles some operations directly in Go, including runtime
-status and heartbeat reads, rather than forwarding every method to Node.
+From `apps/desktop`, `npm run test:desktop-services` runs the maintained Rust
+integration targets, Electron service tests and stale private-build-output guard.
+It uses both existing language owners; it does not build a private Node bundle.
+From the repository root, `make check-hub-rust-assets` checks portable generators
+and retained assets, and `make test-hub-rust` exercises the shared backend.
 
-Private lifecycle callbacks are not public hub RPCs. The Node host bridge caps
-pending callbacks at 128 and times them out after 60 seconds; Go bounds callback
-handling at 55 seconds and fences replies to the same child process generation.
-
-## Failures and lifecycle
-
-A missing bundle reports that desktop services are not installed; a missing
-Node executable reports a startup error. Child exit fails pending operations
-with an **unknown outcome** message and clears the cached process so a later
-call can launch another. Caller cancellation removes its pending reply but does
-not prove the operation was rolled back or cancel the child-side action. Do not
-blindly retry a mutating operation after an acknowledgement failure.
-
-The full-scope brain observes shared desktop state periodically. Spawn admission
-uses private prepare/accept/cancel operations when the bundle is available;
-remote-origin dispatch retains its own lease path. Without the companion,
-`spawn` falls back to `spawnCore`, so bundle presence affects more than visible
-Settings features. Check workflow/result/replacement integration when changing it.
-
-## Build and validation
-
-From `apps/desktop`:
-
-```bash
-npm run test:desktop-host
-```
-
-This builds the Node 22-targeted bundle into `dist/headless` and copies it beside
-the Go binaries, then runs Node service tests and Go brain integration tests
-with `WKS_DESKTOP_HOST_TEST_BUNDLE` set. The build rejects an Electron import.
-An ordinary Go test run can skip companion integration when that test variable
-is absent; a skipped integration test is not proof the packaged service works.
-
-After changing the manifest or generator, inspect generated-file diffs and run
-the authority tests in `services/hub/internal/bus`, plus desktop service and
-backend parity tests. The generated bundle is ignored build output.
+Relevant actual tests include launch lifecycle/spawn, plugin preparation,
+manager replacement, workflow/task ownership, fleet review, legacy preservation,
+and headless capability completeness. Browser dispatch fixtures use the actual
+Rust broker with explicit test-support setup; mocked service tests alone do not
+prove process ownership. Electron packaged, native installer and platform gate
+receipts remain separate. This context does not mark any migration gate verified.

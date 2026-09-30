@@ -32,3 +32,9 @@ class contexts and repetition limits while retaining Unicode literals/dot and
 properties. Property membership and case folding still use the Rust regex
 library's Unicode tables, which may be newer than Unicode 15.0. The namespace
 capture does not prove equality of every Unicode codepoint across table versions.
+
+Unlike the source-reading Go binding/MCP oracles, this tool uses the selected Go
+standard-library regexp engine and checked-in case input; it does not need a
+historical hub checkout. The optional pinned hub commands in
+[scripts/reference/README.md](../../scripts/reference/README.md) have a different
+scope. Keep the recorded Go/Unicode versions when comparing results.

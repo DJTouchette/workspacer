@@ -81,9 +81,10 @@ was individually fine and collectively a clone.
   `apps/desktop/src/renderer/src/hooks/configDefaults.ts`, and Escape is the
   interrupt. The review panel has no key chips because the review pane has no
   bindings; only the Fleet Deck and the Inbox do. Don't invent one to fill a
-  gap. Same rule for the paths and commands in there: `internal/bus/*.go` are
-  real files and the hub is its own Go module, so the test command is the one
-  you'd actually run from `services/hub`, not from the repo root.
+  gap. Same rule for the paths and commands in there: use current Rust paths such
+  as `services/hub-rs/src/runtime.rs` and repo-root commands such as
+  `cargo test --locked --manifest-path services/hub-rs/Cargo.toml`.
+  Historical Go examples must be labeled historical, not advertised as live commands.
 
 ## Logos
 

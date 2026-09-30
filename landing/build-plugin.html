@@ -154,7 +154,7 @@
 <ul>
 <li>Reach for it when your plugin <em>is</em> a UI: a dashboard, a panel, an editor, a rule editor.</li>
 <li>Any language that compiles to static HTML/JS/CSS. No build step needed if you ship plain files.</li>
-<li>Bundled examples (in <code>services/hub/examples/</code>): the <code>editor</code> and the <code>transcript-timeline</code> replay pane.</li>
+<li>Bundled examples (in <code>plugins/examples/</code>): the <code>editor</code> and the <code>transcript-timeline</code> replay pane.</li>
 </ul>
 <h3>sidecar plugin (<code>server</code>)</h3>
 <p>Set <code>server.command</code> to a long-lived process the hub spawns and supervises (spawn → health-poll → restart-on-crash, SIGTERM then SIGKILL on stop). It's a polyglot sidecar: <strong>any language</strong>. It connects to the bus itself, so it can run <em>always-on with no pane at all</em> (an automation), <code>provide</code> capabilities other clients call, and/or serve its own webview panes from its port (the host loads <code>http://127.0.0.1:&lt;port&gt;&lt;path&gt;</code> directly in the pane's webview).</p>
@@ -453,7 +453,7 @@ const wks = connect();
 <p>A sidecar may contribute <code>launchIntegration: { version: 1, agents: ["claude", "codex"], prepareMethod: "your.plugin.prepareLaunch" }</code>. Declare that exact method in <code>provides</code> and register it on the existing scoped bus. The loader requires a sidecar, version 1, and a method within the plugin's namespace.</p>
 <p>When a user selects the integration in Spawn agent, the desktop calls it before launch with <code>{ version: 1, agent, cwd, model?, resume, provider? }</code>. Codex's <code>provider</code> contains only the resolved ID and optional upstream base URL. The request omits raw config, credentials and inherited environment.</p>
 <p>Return optional <code>env</code> (string map) and <code>args</code> (string array): the host overlays the child environment and appends arguments after profile/host arguments. It rejects extra fields, nulls, NUL characters and oversized patches. Executable and cwd overrides are not allowed. Errors stop the launch; None bypasses the hook entirely.</p>
-<p>The selected plugin ID persists with the workspace and runs again on resume. Current entry points are local desktop Claude PTY/stream and Codex managed/hybrid sessions. This is a trusted-sidecar contribution. The <a href="https://github.com/DJTouchette/workspacer/blob/master/services/hub/examples/headroom/README.md">Headroom example</a> uses supervisor-issued <code>HUB_TOKEN</code> and <code>WKS_SETTINGS</code>, with no runtime npm dependencies. See the <a href="https://github.com/DJTouchette/workspacer/blob/master/docs/launch-integrations.md">full contract</a> for limits and <a href="docs.html#launch-integrations">setup instructions</a>.</p>
+<p>The selected plugin ID persists with the workspace and runs again on resume. Current entry points are local desktop Claude PTY/stream and Codex managed/hybrid sessions. This is a trusted-sidecar contribution. The <a href="https://github.com/DJTouchette/workspacer/blob/master/plugins/examples/headroom/README.md">Headroom example</a> uses supervisor-issued <code>HUB_TOKEN</code> and <code>WKS_SETTINGS</code>, with no runtime npm dependencies. See the <a href="https://github.com/DJTouchette/workspacer/blob/master/docs/launch-integrations.md">full contract</a> for limits and <a href="docs.html#launch-integrations">setup instructions</a>.</p>
 </section>
     <section id="bus" class="doc">
 <h2>the bus protocol</h2>
@@ -513,7 +513,7 @@ wks.provide('myorg.jira.search', async (params) =&gt; {
 });</code></pre>
 <p>The Workspacer MCP facade exposes the tool as <code>mcp__workspacer__myorg_jira_search</code> to every supported agent while the plugin is enabled. The initial catalog is loaded before the facade reports ready; later changes are polled (normally within ~15s). Clients that cache <code>tools/list</code> may need to reconnect or refresh because no list-changed notification is currently emitted.</p>
 <p>Rules, all enforced at load or serve time: the tool <code>name</code> is lowercase <code>[a-z0-9_]</code> starting with a letter; <code>description</code> is required; <code>inputSchema</code> must be a JSON Schema object; and <code>method</code> must be covered by the plugin's own-namespace <code>provides</code>. Return plain JSON-serializable data; a thrown error becomes the agent's error result verbatim.</p>
-<div class="callout"><strong>Source of truth.</strong> The exact params/return shape of each host capability isn't a frozen public API yet. Treat <code>apps/desktop/src/main/services/hubCapabilities.ts</code> and <code>services/hub/examples/</code> as authoritative for field names, and the MCP tool list (<code>cmd/mcp/main.go</code>) for the stable subset.</div>
+<div class="callout"><strong>Source of truth.</strong> The exact params/return shape of each host capability isn't a frozen public API yet. Treat <code>apps/desktop/src/main/services/hubCapabilities.ts</code> and <code>plugins/examples/</code> as authoritative for field names, and the MCP tool list (<code>services/hub-rs/assets/mcp-effective-tools.json</code> (implemented in <code>services/hub-rs/src/mcp.rs</code>)) for the stable subset.</div>
     </section>
 
     <section id="events" class="doc">
@@ -558,8 +558,8 @@ window.addEventListener('wks-settings', (e) =&gt; { settings = e.detail; render(
 
     <section id="dev" class="doc">
 <h2>developing with hot-reload</h2>
-<p>For iterating on a plugin, point a dev hub at your own dir and drop the folder in:</p>
-<pre><code>go run ./cmd/hub --plugins-dir /path/to/plugins</code></pre>
+<p>With the installed Rust CLI on PATH, point a development control plane at your plugin directory:</p>
+<pre><code>workspacer serve --hub-only --plugins-dir /absolute/path/to/plugins</code></pre>
 <p>The hub scans on load and emits <code>plugin.loaded</code>. For a tighter loop, <code>workspacer plugin dev &lt;dir&gt;</code> watches a single plugin folder and hot-reloads it on change: it poll-watches your source, runs the manifest's <code>install</code> build step when files change, tells the hub to reload the plugin, and streams the sidecar's logs to your terminal.</p>
 <pre><code>workspacer plugin dev ./my-hello     # watch → rebuild → hot-reload → tail logs</code></pre>
 <p>A webview plugin needs no build step: edit the files and reopen the pane. A sidecar with an <code>install</code> step is rebuilt before reload. The Plugins Manager's Enable/Disable toggles a <code>.disabled</code> marker and reloads, so you can flip a plugin off without uninstalling it.</p>

@@ -55,7 +55,7 @@
     "test:headroom": "node --test ../../plugins/examples/headroom/adapter.test.mjs",
     "cleanup:agents": "node scripts/cleanup-agent-artifacts.mjs",
     "test:cleanup-agents": "node --test scripts/cleanup-agent-artifacts.test.mjs",
-    "test:hub-reference": "cd ../../services/hub && go test -race ./...",
+    "test:hub-reference": "python3 ../../scripts/hub-reference.py test",
     "test:desktop-services": "node scripts/test-desktop-services.mjs"
   },
   "dependencies": {

@@ -21,7 +21,7 @@ Relevant code:
   token auth, and which routes are guarded.
 - `services/hub/internal/plugin/manager.go` — plugin identity, lifecycle, and
   direct sidecar launch.
-- `services/hub/cmd/mcp/main.go` — the MCP facade (loopback-only).
+- `services/hub-rs/src/mcp.rs` — the MCP facade (loopback-only).
 
 ---
 
@@ -37,7 +37,7 @@ from authenticated plugin sidecars and webviews, each of which carries its own
 revocable plugin identity. Loopback binding, not the token, is what keeps the default
 posture closed to the network.
 
-The **MCP facade** (`services/hub/cmd/mcp`, `127.0.0.1:7897`) is always
+The **MCP facade** (`services/hub-rs/src/mcp.rs`, `127.0.0.1:7897`) is always
 loopback-only and is *not* affected by the remote-sharing toggle. It is intended
 for a local MCP client (e.g. Claude Code via `--mcp-config`) on the same
 machine.
@@ -181,7 +181,7 @@ These are real limitations, stated plainly:
 - **Driving an agent is code execution on the host.** The remote surface can
   spawn agents and terminals, send input, approve permission prompts, set the
   approval gate, read and write files (`fs.read` / `fs.write`), and run searches
-  on the host — see the MCP facade tool list in `cmd/mcp/main.go` for the full
+  on the host — see the MCP facade tool list in `services/hub-rs/assets/mcp-effective-tools.json` for the full
   capability surface, which mirrors what the bus exposes. **Anyone with the link
   effectively has a shell on your machine.** This is the point of the feature,
   but it means the link is as sensitive as SSH access.
