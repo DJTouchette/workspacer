@@ -1,0 +1,48 @@
+{
+  "records": {
+    "services/hub/cmd/brain/shellallow.go": {
+      "sha256": "4aaafbde64f377a50f0fc0a598881936207d8a20839523c40193c724ae1b503c",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/terminals.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/tests/terminals.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Matches host SHELL, /etc/shells and platform fallback admission. Host entries are trimmed and blank/comments discarded, while caller argv is matched exactly. Empty or whitespace-only request preserves the raw nonempty host default; absent/empty SHELL falls back to the platform first choice. Windows additionally compares lowercased basenames.",
+          "Fixed Rust inserting raw SHELL directly into allowed set: wrapped host paths now match their trimmed allowlist identity and comment values cannot qualify an explicitly requested executable. Private input seam exercises environment/file/fallback positive floors, arbitrary executable/argument/relative/bare-command/comment refusals and exact default spelling without mutating global environment.",
+          "Actual registered terminals.create refusal now checks the login-shell error, preventing missing executable/backend failures from passing. The same real embedded PTY integration launches the valid fallback and exercises replay/input/resize/leases/shutdown, preserving a handler admission floor."
+        ],
+        "intentionalChanges": [
+          "No new shell policy or authority layer: retained host login-shell selection is separate from ambient filesystem paths. The legacy POSIX /etc/shells fixture maps to deterministic private-input tests; Windows runtime and Windows basename assertions remain a host-gated validation requirement."
+        ],
+        "validation": "2026-09-29 Linux: all3 services::terminals unit tests passed in /tmp/workspacer-shellallow-unit-audit.log, including the new normalization regression; subsequently included in parameter-agent full library377 passing checkpoint /tmp/workspacer-provider-final-lib.log. Actual terminals integration1 passed /tmp/workspacer-provider-final-terminals.log, including precise login-shell refusal and successful real PTY controls. Four scoped passing tests, zero ignored on Linux. Witness reported both Rust files unmapped; explicit owning tests were selected. Windows-specific unit branches and POSIX-gated integration are not claimed as Windows runtime proof. Later full library382 checkpoint /tmp/workspacer-shutdown-final-lib.log and updated terminals1 integration /tmp/workspacer-shutdown-library-terminals-final.log retained these assertions after shutdown/input corrections."
+      }
+    },
+    "services/hub/cmd/brain/shellallow_test.go": {
+      "sha256": "4efa77c8ecdce4318fbe2c8aa54f6b82c498301908cec21b307299b625eabe42",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/terminals.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/tests/terminals.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Matches host SHELL, /etc/shells and platform fallback admission. Host entries are trimmed and blank/comments discarded, while caller argv is matched exactly. Empty or whitespace-only request preserves the raw nonempty host default; absent/empty SHELL falls back to the platform first choice. Windows additionally compares lowercased basenames.",
+          "Fixed Rust inserting raw SHELL directly into allowed set: wrapped host paths now match their trimmed allowlist identity and comment values cannot qualify an explicitly requested executable. Private input seam exercises environment/file/fallback positive floors, arbitrary executable/argument/relative/bare-command/comment refusals and exact default spelling without mutating global environment.",
+          "Actual registered terminals.create refusal now checks the login-shell error, preventing missing executable/backend failures from passing. The same real embedded PTY integration launches the valid fallback and exercises replay/input/resize/leases/shutdown, preserving a handler admission floor."
+        ],
+        "intentionalChanges": [
+          "No new shell policy or authority layer: retained host login-shell selection is separate from ambient filesystem paths. The legacy POSIX /etc/shells fixture maps to deterministic private-input tests; Windows runtime and Windows basename assertions remain a host-gated validation requirement."
+        ],
+        "validation": "2026-09-29 Linux: all3 services::terminals unit tests passed in /tmp/workspacer-shellallow-unit-audit.log, including the new normalization regression; subsequently included in parameter-agent full library377 passing checkpoint /tmp/workspacer-provider-final-lib.log. Actual terminals integration1 passed /tmp/workspacer-provider-final-terminals.log, including precise login-shell refusal and successful real PTY controls. Four scoped passing tests, zero ignored on Linux. Witness reported both Rust files unmapped; explicit owning tests were selected. Windows-specific unit branches and POSIX-gated integration are not claimed as Windows runtime proof. Later full library382 checkpoint /tmp/workspacer-shutdown-final-lib.log and updated terminals1 integration /tmp/workspacer-shutdown-library-terminals-final.log retained these assertions after shutdown/input corrections."
+      }
+    }
+  }
+}

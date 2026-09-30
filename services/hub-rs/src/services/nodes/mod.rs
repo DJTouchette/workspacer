@@ -64,7 +64,7 @@ impl Owner {
         self.service.close();
     }
 }
-/// Registers nothing for the usual install with no node registry.
+/// Keep the node API available for an empty registry without starting polling.
 pub(crate) async fn install(mut options: Options, hub: Handle) -> Result<(Options, Option<Owner>)> {
     let Some(path) = options.nodes_file.clone().or_else(|| {
         options
@@ -74,19 +74,20 @@ pub(crate) async fn install(mut options: Options, hub: Handle) -> Result<(Option
     }) else {
         return Ok((options, None));
     };
-    if path.as_os_str().is_empty() {
-        return Ok((options, None));
-    }
-    let nodes = load(&path)?;
-    if nodes.is_empty() {
-        return Ok((options, None));
-    }
-    let exposure = exposure::file(&path);
-    if exposure != exposure::Exposure::OwnerOnly {
-        eprintln!(
-            "nodes: credential registry file exposure is {}",
-            exposure.name()
-        );
+    let nodes = if path.as_os_str().is_empty() {
+        Vec::new()
+    } else {
+        load(&path)?
+    };
+    let empty = nodes.is_empty();
+    if !empty {
+        let exposure = exposure::file(&path);
+        if exposure != exposure::Exposure::OwnerOnly {
+            eprintln!(
+                "nodes: credential registry file exposure is {}",
+                exposure.name()
+            );
+        }
     }
     let mut clients: BTreeMap<String, Arc<dyn cloud::Cloud>> = BTreeMap::new();
     for node in &nodes {
@@ -162,6 +163,11 @@ pub(crate) async fn install(mut options: Options, hub: Handle) -> Result<(Option
                 Ok(serde_json::to_value(view)?)
             }
         });
+    }
+    // The former launcher installed an empty supervisor when startNodes was
+    // dormant. Preserve []/unknown-node answers instead of missing providers.
+    if empty {
+        return Ok((options, None));
     }
     let running = service.clone();
     let task = tokio::spawn(async move {

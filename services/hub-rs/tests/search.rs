@@ -36,6 +36,20 @@ async fn live_search_obeys_ignore_rules_and_never_treats_query_as_a_flag() {
         .await
         .unwrap();
     assert_eq!(absent, json!({"results":[],"truncated":false}));
+    std::fs::write(dir.path().join("many.txt"), "needle\n".repeat(500)).unwrap();
+    let capped = search(json!({"cwd":dir.path(),"query":"needle","maxResults":10}))
+        .await
+        .unwrap();
+    assert_eq!(capped["truncated"], true);
+    assert_eq!(
+        capped["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| file["matches"].as_array().unwrap().len())
+            .sum::<usize>(),
+        10
+    );
 }
 
 #[test]
@@ -144,13 +158,13 @@ async fn empty_query_and_typed_flags_preserve_request_contract() {
     );
     std::fs::write(
         dir.path().join("minified.txt"),
-        format!("{}NEEDLE", "x".repeat(100_000)),
+        format!("{}NEEDLE{}\n", "x".repeat(200_000), "y".repeat(200_000)),
     )
     .unwrap();
     let found = search(json!({"cwd":dir.path(),"query":"NEEDLE","caseSensitive":true}))
         .await
         .unwrap();
-    assert_eq!(found["results"][0]["matches"][0]["column"], 100_001);
+    assert_eq!(found["results"][0]["matches"][0]["column"], 200_001);
     assert_eq!(
         found["results"][0]["matches"][0]["text"]
             .as_str()

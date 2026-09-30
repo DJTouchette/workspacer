@@ -1,0 +1,62 @@
+{
+  "records": {
+    "services/hub/cmd/brain/visibleterm.go": {
+      "sha256": "13cbebe2265f3ecbe890ee2d1cfb3896fe2bed89761f09df4d46edb14a6cff7a",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/tests/visible_terminal.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Visible open validates each known string field, normalizes cwd with the common helper, publishes exact cwd/command/label/parentSessionId on facade.openTerminal and reports acceptance. Actual subscribed client compares full payload and confirms no headless session was created; invalid known fields fail.",
+          "A live owned service accepts an ordinary request, then the same service after bus shutdown refuses with the publication error. Rust cannot have the Go nil publisher because a Handle is required, so stopped-owner refusal preserves the no-silent-success boundary.",
+          "Raw nonempty bytesB64 takes precedence over text; actual PTY command output proves this while conflicting text would exit the shell. Text input independently executes and returns the shell PID. Invalid base64 never falls back to text. Both paths explicitly preserve newline=false and use the owned engine command boundary.",
+          "Actual-handler regression exposed bytesB64 with data42 being accepted; fixed upfront typed data validation to match Go whole-struct decoding. The before log /tmp/workspacer-terminal-controls-before.log records the exact failing assertion.",
+          "Existing actual PTY proof retains two viewer leases, replay reset, raw non-UTF8 output, resize, detach/keepalive ownership, natural exit, and owned-child shutdown; lease-expiry unit joins the final forwarder.",
+          "Bounded real stopped-bus fixture exposed a startup/shutdown race even in an isolated child: the actor joined a library observer awaiting a queued Connect reply after it had stopped pumping. Runtime now closes, drains and drops the command receiver immediately after loop exit, before observer joins, retaining plugin-stop pumping beforehand. A deterministic production Handle queue test proves live health success, queued connect cancellation and post-close refusal.",
+          "Actual registered root-shape probe showed terminals.open accepted an array. A narrow object-or-null guard now rejects arrays/scalars for terminal methods while preserving Go null/default visible-open behavior; regression includes real open/input/create entry points and a null positive control."
+        ],
+        "intentionalChanges": [
+          "An owned typed embedded engine command replaces Go loopback HTTP forwarding; no duplicate external provider protocol is introduced. Visible success means an event request was submitted, as in Go, not that a UI acknowledged displaying a pane. Existing session-ID/base64 validation remains in force. POSIX PTY integration does not claim Windows ConPTY runtime coverage."
+        ],
+        "validation": "2026-09-29 Linux: full library382 passed /tmp/workspacer-shutdown-final-lib.log, including deterministic queued-connection cancellation and unchanged library watcher. Dedicated visible_terminal integration1 passed with8 independent child lifecycles /tmp/workspacer-shutdown-visible-final.log; each child has a20s watchdog and completion marker. Lifecycle8 and plugin_manager21 passed /tmp/workspacer-shutdown-ordering-final.log, preserving plugin stop/RPC ordering. Updated real terminal integration1 passed /tmp/workspacer-shutdown-library-terminals-final.log after the two-line typed-field fix and shutdown fix; the unrelated library target in that same command failed separately and is not claimed green. Before-fix logs reproduce both malformed terminal data acceptance (/tmp/workspacer-terminal-controls-before.log) and isolated shutdown stall (/tmp/workspacer-visible-terminal-repeat.log). Shutdown is fixed by cancelling queued actor replies, not by the fixture watchdog. Witness has incomplete Rust mapping; explicit owner and lifecycle targets ran. POSIX PTY proof does not imply Windows ConPTY execution. Follow-up root-shape probe reproduced terminals.open accepting [] in /tmp/workspacer-search-terminal-root-probe.log. Object-or-null guard is applied; Final actual terminals integration1 passed /tmp/workspacer-terminal-root-final.log on2026-09-30, covering array/scalar refusals on open/input/create and the null/default positive control. The related library20+terminals1 refresh also passed /tmp/workspacer-library-terminals-projection-final.log after its independent get_mut correction."
+      }
+    },
+    "services/hub/cmd/brain/terminput_test.go": {
+      "sha256": "1282bdec6d0309365dbb2907502bd5af59937d8ea3567e765f3b1b2914943a37",
+      "status": "ported",
+      "replacement": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/terminals.rs",
+        "services/hub-rs/tests/terminals.rs",
+        "services/hub-rs/tests/visible_terminal.rs",
+        "services/hub-rs/src/runtime.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Visible open validates each known string field, normalizes cwd with the common helper, publishes exact cwd/command/label/parentSessionId on facade.openTerminal and reports acceptance. Actual subscribed client compares full payload and confirms no headless session was created; invalid known fields fail.",
+          "A live owned service accepts an ordinary request, then the same service after bus shutdown refuses with the publication error. Rust cannot have the Go nil publisher because a Handle is required, so stopped-owner refusal preserves the no-silent-success boundary.",
+          "Raw nonempty bytesB64 takes precedence over text; actual PTY command output proves this while conflicting text would exit the shell. Text input independently executes and returns the shell PID. Invalid base64 never falls back to text. Both paths explicitly preserve newline=false and use the owned engine command boundary.",
+          "Actual-handler regression exposed bytesB64 with data42 being accepted; fixed upfront typed data validation to match Go whole-struct decoding. The before log /tmp/workspacer-terminal-controls-before.log records the exact failing assertion.",
+          "Existing actual PTY proof retains two viewer leases, replay reset, raw non-UTF8 output, resize, detach/keepalive ownership, natural exit, and owned-child shutdown; lease-expiry unit joins the final forwarder.",
+          "Bounded real stopped-bus fixture exposed a startup/shutdown race even in an isolated child: the actor joined a library observer awaiting a queued Connect reply after it had stopped pumping. Runtime now closes, drains and drops the command receiver immediately after loop exit, before observer joins, retaining plugin-stop pumping beforehand. A deterministic production Handle queue test proves live health success, queued connect cancellation and post-close refusal.",
+          "Actual registered root-shape probe showed terminals.open accepted an array. A narrow object-or-null guard now rejects arrays/scalars for terminal methods while preserving Go null/default visible-open behavior; regression includes real open/input/create entry points and a null positive control."
+        ],
+        "intentionalChanges": [
+          "An owned typed embedded engine command replaces Go loopback HTTP forwarding; no duplicate external provider protocol is introduced. Visible success means an event request was submitted, as in Go, not that a UI acknowledged displaying a pane. Existing session-ID/base64 validation remains in force. POSIX PTY integration does not claim Windows ConPTY runtime coverage."
+        ],
+        "validation": "2026-09-29 Linux: full library382 passed /tmp/workspacer-shutdown-final-lib.log, including deterministic queued-connection cancellation and unchanged library watcher. Dedicated visible_terminal integration1 passed with8 independent child lifecycles /tmp/workspacer-shutdown-visible-final.log; each child has a20s watchdog and completion marker. Lifecycle8 and plugin_manager21 passed /tmp/workspacer-shutdown-ordering-final.log, preserving plugin stop/RPC ordering. Updated real terminal integration1 passed /tmp/workspacer-shutdown-library-terminals-final.log after the two-line typed-field fix and shutdown fix; the unrelated library target in that same command failed separately and is not claimed green. Before-fix logs reproduce both malformed terminal data acceptance (/tmp/workspacer-terminal-controls-before.log) and isolated shutdown stall (/tmp/workspacer-visible-terminal-repeat.log). Shutdown is fixed by cancelling queued actor replies, not by the fixture watchdog. Witness has incomplete Rust mapping; explicit owner and lifecycle targets ran. POSIX PTY proof does not imply Windows ConPTY execution. Follow-up root-shape probe reproduced terminals.open accepting [] in /tmp/workspacer-search-terminal-root-probe.log. Object-or-null guard is applied; Final actual terminals integration1 passed /tmp/workspacer-terminal-root-final.log on2026-09-30, covering array/scalar refusals on open/input/create and the null/default positive control. The related library20+terminals1 refresh also passed /tmp/workspacer-library-terminals-projection-final.log after its independent get_mut correction."
+      }
+    }
+  }
+}

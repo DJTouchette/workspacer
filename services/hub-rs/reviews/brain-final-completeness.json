@@ -1,0 +1,53 @@
+{
+  "records": {
+    "services/hub/cmd/brain/final_test.go": {
+      "status": "ported",
+      "sha256": "09dc46d17ae9b9b2309e85d8be5416b9f90bea44368fe7b108ccc221e584d254",
+      "replacement": [
+        "services/hub-rs/src/services/discovery.rs",
+        "services/hub-rs/src/services/files.rs",
+        "services/hub-rs/src/services/search.rs"
+      ],
+      "tests": [
+        "services/hub-rs/src/services/discovery.rs",
+        "services/hub-rs/tests/files.rs",
+        "services/hub-rs/tests/search.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Read all original cases: portable directory encoding, actual session files and subagent exclusion, summary precedence, Git ignored/.git hiding and directory-first ordering, lossless text/byte length and NUL refusal, supervisor-home path and mkdir, live search positions/cap/no-match/long lines.",
+          "Existing discovery corpus and actual25-file picker prove directory selection/newest20/subagent exclusion; summary parser tests prove user fallback and explicit summary precedence. Owning file target verifies exact selected supervisor path creation, Git ignored set/order and binary refusal.",
+          "Live ripgrep test now asserts exactly10 retained matches from500 input lines with truncated true, and reads the original400KB long-line scale with byte-column200001. Existing source owner streams output, kills/reaps on overflow and treats no matches as success."
+        ],
+        "intentionalChanges": [
+          "Rust caller directories are validated by current selected-path contracts rather than accepting every string the old encode helper could transform. Extra validation does not rewrite or expand tilde input."
+        ],
+        "validation": "Owning files target8 passed /tmp/workspacer-headless-files-final.log; search4 passed /tmp/workspacer-search-terminal-root-probe.log. The unrelated headless/terminal targets in those logs failed separately and are not counted green. All5 unchanged discovery tests and supervisor directory-mode test passed in full library382 /tmp/workspacer-shutdown-final-lib.log. No production changes in discovery/files/search."
+      }
+    },
+    "services/hub/cmd/brain/headless_completeness_test.go": {
+      "status": "ported",
+      "sha256": "adb8e61238b02903a2b12c1e901ea0ded9b4c7b8e02432a5ae2996748c622ba5",
+      "replacement": [
+        "services/hub-rs/src/runtime.rs",
+        "services/hub-rs/src/cli/serve.rs",
+        "services/hub-rs/src/services/nodes/mod.rs"
+      ],
+      "tests": [
+        "services/hub-rs/tests/headless_completeness.rs"
+      ],
+      "review": {
+        "behaviors": [
+          "Enumerates literal calls from the three actual shipped web/mobile/remote sources with reviewed floors71/19/8, then compares them to the actual owned runtime health registration inventory. No compiled-in provider method list is fabricated.",
+          "Uses the full standalone composition inputs for data/config/home/jobs/tokens and MCP, awaits asynchronous provider registration, and requires launchReady. Current gap map is empty, so every parsed call must be provided; removing a capability produces its exact missing name.",
+          "All source files are compile-time required. Named floors prevent empty/partial parsing from silently passing. The real runtime is shut down before inventory assertions.",
+          "Actual full composition exposed missing nodes.list/wake/sleep for an empty registry. Old Go main created an empty supervisor even when its startup helper returned nil. Rust now retains those handlers and returns before any reconciliation task; the real owner test checks [] and unknown-node refusals."
+        ],
+        "intentionalChanges": [
+          "Replaces parsing Go RegisterLocal text plus brain.methods with actual registered Rust inventory. Retains the original scope: literal shipped client calls, not arbitrary computed method strings or proof of all action semantics."
+        ],
+        "validation": "Actual full headless backend target1 passed /tmp/workspacer-headless-completeness-final.log after correcting incomplete fixture composition and restoring the real missing empty-node fallback. The final test checks all71/19/8 client floors, real method inventory/launchReady, empty list and unknown-node refusals, then owned shutdown. Original missing nodes failure /tmp/workspacer-headless-files-final.log. Witness left Rust files unmapped; explicit owning targets supplied proof."
+      }
+    }
+  }
+}

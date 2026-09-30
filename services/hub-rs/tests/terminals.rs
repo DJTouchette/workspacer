@@ -50,14 +50,16 @@ async fn actual_shell_pty_replay_raw_input_resize_viewer_leases_and_owned_shutdo
     .unwrap();
     let first = Client::connect(&backend.handle()).await.unwrap();
     let second = Client::connect(&backend.handle()).await.unwrap();
+    let error = first
+        .call(
+            "terminals.create",
+            json!({"shell":"/tmp/untrusted-program","cwd":dir.path()}),
+        )
+        .await
+        .unwrap_err();
     assert!(
-        first
-            .call(
-                "terminals.create",
-                json!({"shell":"/tmp/untrusted-program","cwd":dir.path()})
-            )
-            .await
-            .is_err()
+        error.to_string().contains("login shells"),
+        "wrong refusal: {error}"
     );
     let mut first_events = first.events();
     first
@@ -67,7 +69,7 @@ async fn actual_shell_pty_replay_raw_input_resize_viewer_leases_and_owned_shutdo
     first
         .call(
             "terminals.open",
-            json!({"cwd":dir.path(),"command":"echo visible-only","label":"Visible request"}),
+            json!({"cwd":format!(" \t{}/\r", dir.path().display()),"command":"echo visible-only","label":"Visible request","parentSessionId":"parent-fixture"}),
         )
         .await
         .unwrap();
@@ -76,7 +78,48 @@ async fn actual_shell_pty_replay_raw_input_resize_viewer_leases_and_owned_shutdo
         .unwrap()
         .unwrap();
     assert_eq!(visible.topic, "facade.openTerminal");
-    assert_eq!(visible.data.unwrap()["command"], "echo visible-only");
+    assert_eq!(
+        visible.data.unwrap(),
+        json!({"cwd":dir.path(),"command":"echo visible-only","label":"Visible request","parentSessionId":"parent-fixture"})
+    );
+    for field in ["cwd", "command", "label", "parentSessionId"] {
+        let mut params = json!({});
+        params[field] = json!(42);
+        assert!(
+            first.call("terminals.open", params).await.is_err(),
+            "{field}"
+        );
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), first_events.recv())
+            .await
+            .is_err()
+    );
+    // Go's typed struct decoder accepts null defaults, but not scalar/array roots.
+    assert_eq!(
+        first.call("terminals.open", Value::Null).await.unwrap(),
+        json!({"ok":true})
+    );
+    let defaults = tokio::time::timeout(Duration::from_secs(5), first_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        defaults.data.unwrap(),
+        json!({"cwd":dir.path(),"command":"","label":"","parentSessionId":""})
+    );
+    for method in [
+        "terminals.open",
+        "sessions.terminalInput",
+        "terminals.create",
+    ] {
+        for params in [json!([]), json!(42), json!("invalid"), json!(false)] {
+            assert!(
+                first.call(method, params.clone()).await.is_err(),
+                "{method} accepted {params}"
+            );
+        }
+    }
     assert!(
         first
             .call("sessions.snapshots", json!({}))
@@ -143,6 +186,26 @@ async fn actual_shell_pty_replay_raw_input_resize_viewer_leases_and_owned_shutdo
         .unwrap();
     first.call("sessions.terminalInput",json!({"sessionId":id,"bytesB64":base64::engine::general_purpose::STANDARD.encode(b"stty size\r")})).await.unwrap();
     bytes_until(&mut first_events, &id, b"40 90").await;
+    first.call("sessions.terminalInput",json!({"sessionId":id,"bytesB64":base64::engine::general_purpose::STANDARD.encode(b"printf 'wire-' ; printf 'bytes\\n'\r"),"data":"exit\r"})).await.unwrap();
+    bytes_until(&mut first_events, &id, b"wire-bytes").await;
+    assert!(
+        first
+            .call(
+                "sessions.terminalInput",
+                json!({"sessionId":id,"bytesB64":"invalid!","data":"exit\r"})
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        first
+            .call(
+                "sessions.terminalInput",
+                json!({"sessionId":id,"bytesB64":"AQI=","data":42})
+            )
+            .await
+            .is_err()
+    );
     let mut second_events = second.events();
     second
         .topics([format!("pty.bytes.{id}")].into())

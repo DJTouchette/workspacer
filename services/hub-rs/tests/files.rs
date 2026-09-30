@@ -209,6 +209,12 @@ fn text_reads_enforce_byte_limit_and_utf8_without_loss_or_write_side_effects() {
 fn empty_containment_roots_refuse_and_directory_defaults_preserve_literal_paths() {
     let home = tempfile::tempdir().unwrap();
     let home_path = std::fs::canonicalize(home.path()).unwrap();
+    let supervisor = home_path.join(".workspacer");
+    assert_eq!(
+        files::call("app.supervisorHome", Value::Null, &home_path).unwrap(),
+        json!(supervisor)
+    );
+    assert!(supervisor.is_dir());
     for target in [
         home_path.clone(),
         home_path.join("child"),

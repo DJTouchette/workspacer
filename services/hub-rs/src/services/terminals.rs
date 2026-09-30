@@ -83,6 +83,15 @@ fn dimension(params: &Value, key: &str, default: Option<u16>) -> Result<u16> {
     }
 }
 pub fn resolve_shell(requested: &str) -> Result<String> {
+    let shell = std::env::var("SHELL").ok();
+    let listed = if requested.trim().is_empty() {
+        String::new()
+    } else {
+        std::fs::read_to_string("/etc/shells").unwrap_or_default()
+    };
+    resolve_shell_from(requested, shell.as_deref(), &listed)
+}
+fn resolve_shell_from(requested: &str, host_shell: Option<&str>, listed: &str) -> Result<String> {
     #[cfg(windows)]
     let defaults = ["powershell.exe", "pwsh.exe", "cmd.exe"].as_slice();
     #[cfg(not(windows))]
@@ -96,24 +105,21 @@ pub fn resolve_shell(requested: &str) -> Result<String> {
         "/usr/bin/fish",
     ]
     .as_slice();
-    let default = std::env::var("SHELL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| defaults[0].into());
+    let default = host_shell.filter(|s| !s.is_empty()).unwrap_or(defaults[0]);
     if requested.trim().is_empty() {
-        return Ok(default);
+        return Ok(default.into());
     }
-    let mut allowed: BTreeSet<String> = defaults.iter().map(|s| s.to_string()).collect();
-    allowed.insert(default);
-    if let Ok(text) = std::fs::read_to_string("/etc/shells") {
-        for line in text
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        {
-            allowed.insert(line.into());
-        }
-    }
+    // The default retains its host spelling, but every allowlist entry follows
+    // the same trimming/comment rules. Caller-supplied argv stays exact.
+    let allowed: BTreeSet<String> = defaults
+        .iter()
+        .copied()
+        .chain(host_shell)
+        .chain(listed.split('\n'))
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        .map(str::to_owned)
+        .collect();
     if allowed.contains(requested) {
         return Ok(requested.into());
     }
@@ -238,6 +244,9 @@ impl Terminals {
         if self.closing.load(Ordering::Acquire) {
             bail!("terminal service is closing");
         }
+        if !params.is_object() && !params.is_null() {
+            bail!("terminal parameters must be an object or null");
+        }
         match method {
             "terminals.open" => {
                 let cwd = normalize_cwd(typed(&params, "cwd")?, &self.home);
@@ -319,11 +328,12 @@ impl Terminals {
             "sessions.terminalInput" => {
                 let id = id(&params)?;
                 let bytes = typed(&params, "bytesB64")?;
+                let data = typed(&params, "data")?;
                 let payload = if !bytes.is_empty() {
                     base64::engine::general_purpose::STANDARD.decode(bytes)?;
                     json!({"bytes_b64":bytes,"newline":false})
                 } else {
-                    json!({"text":typed(&params,"data")?,"newline":false})
+                    json!({"text":data,"newline":false})
                 };
                 self.engine
                     .request(Command::Request {
@@ -527,6 +537,54 @@ mod tests {
             stopped.load(Ordering::Acquire),
             "last expired viewer must join the owned stream"
         );
+    }
+    #[test]
+    fn shell_entries_are_normalized_but_default_and_requested_argv_are_preserved() {
+        let listed = "# comment\n /host/custom-login \n\n";
+        for shell in ["/host/env-login", "/host/custom-login"] {
+            assert_eq!(
+                resolve_shell_from(shell, Some(" /host/env-login "), listed).unwrap(),
+                shell
+            );
+        }
+        assert_eq!(
+            resolve_shell_from("", Some(" /host/env-login "), listed).unwrap(),
+            " /host/env-login "
+        );
+        assert_eq!(
+            resolve_shell_from(" \t", Some("/host/env-login"), listed).unwrap(),
+            "/host/env-login"
+        );
+        for requested in [
+            " /host/env-login ",
+            "# comment",
+            "/host/unknown-program",
+            "/bin/sh -c id",
+            "../../bin/sh",
+            "sh",
+        ] {
+            let error = resolve_shell_from(requested, Some("# comment"), listed).unwrap_err();
+            assert!(
+                error.to_string().contains("login shells"),
+                "{requested}: {error}"
+            );
+        }
+        #[cfg(not(windows))]
+        for absent in [None, Some("")] {
+            assert_eq!(resolve_shell_from("", absent, "").unwrap(), "/bin/sh");
+            assert_eq!(
+                resolve_shell_from("/bin/sh", absent, "").unwrap(),
+                "/bin/sh"
+            );
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(resolve_shell_from("", None, "").unwrap(), "powershell.exe");
+            assert_eq!(
+                resolve_shell_from(r"C:\Host\PWSH.EXE", None, "").unwrap(),
+                r"C:\Host\PWSH.EXE"
+            );
+        }
     }
     #[test]
     fn shell_allowlist_and_cwd_are_host_policy() {
