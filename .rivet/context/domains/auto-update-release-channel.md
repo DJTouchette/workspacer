@@ -151,6 +151,13 @@ drafts, uploads a new draft, deletes the old live release, deletes/polls the tag
 up to six times, then publishes the new draft. A build or pre-deletion upload
 failure leaves the old release in place.
 
+`scripts/finalize-nightly.py` validates the uploaded draft against the local asset
+names/sizes and exact built commit, publishes with an explicit JSON boolean, then
+independently verifies non-draft release state, assets and the actual tag target.
+A successful PATCH exit code or a `published_at` timestamp alone is insufficient:
+an observed release remained draft with public download URLs returning 404. The
+fake-GitHub publication regressions run in primary CI and before release mutation.
+
 This sequence is **not atomic**. After old-release deletion, failed tag cleanup
 or failed draft publication can leave no live nightly. The tag check retries
 propagation delays, but a failed lookup is not independently distinguished from

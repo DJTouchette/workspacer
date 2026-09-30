@@ -30,6 +30,8 @@ jobs:
         run: python3 -B -m unittest discover -s scripts -p 'test_check_doc_drift.py' -v
       - name: Manual migration-preview release policy
         run: python3 -B -m unittest discover -s scripts -p 'test_nightly_preview.py' -v
+      - name: Nightly publication request and readback regressions
+        run: python3 -B -m unittest discover -s scripts -p 'test_finalize_nightly.py' -v
 
   # ---------------------------------------------------------------------------
   # Repo-root guard: unresolved git conflict markers. Every other job in this

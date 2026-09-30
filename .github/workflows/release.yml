@@ -678,6 +678,9 @@ jobs:
       # the release it becomes.
       - uses: actions/checkout@v5
 
+      - name: Publication request and readback regressions (fake gh)
+        run: python3 -B -m unittest discover -s scripts -p 'test_finalize_nightly.py' -v
+
       - name: Recheck testing-nightly CI before changing the live release
         if: needs.gate.outputs.migration_preview == 'true'
         env:
@@ -794,4 +797,6 @@ jobs:
             exit 1
           fi
 
-          gh api -X PATCH "repos/$REPO/releases/$draft_id" -F draft=false
+          python3 "$GITHUB_WORKSPACE/scripts/finalize-nightly.py" \
+            --repo "$REPO" --release-id "$draft_id" --sha "${{ github.sha }}" \
+            "${assets[@]}"
