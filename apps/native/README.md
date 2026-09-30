@@ -125,6 +125,15 @@ Existing-hub mode does not own or stop backend processes on exit. The connected 
 `sessions.conversation`, `agents.sendMessage`, `claude.approve`, `claude.answer`,
 `claude.signal`, and `agents.spawn`.
 
+## Typography
+
+Open **Settings → Typography** to choose searchable interface and code fonts
+from the bundled defaults and fonts installed on your device. Inter and
+JetBrains Mono are embedded, so they work on a fresh installation. Text size,
+font selections and Reset typography apply immediately and persist locally.
+The preview shows both interface text and code; changing palette preserves
+your typography choices.
+
 ## Embedded local backend
 
 The default Cargo build includes `rust-hub`. These repository targets build and

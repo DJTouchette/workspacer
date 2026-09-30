@@ -27,7 +27,7 @@ class XImage(C.Structure):
     )]
 
 
-def screenshot(window, width, height, output):
+def screenshot(window, width, height, output, left=0, top=0):
     x = C.CDLL(ctypes.util.find_library("X11"))
     x.XOpenDisplay.argtypes = [C.c_char_p]
     x.XOpenDisplay.restype = C.c_void_p
@@ -39,7 +39,7 @@ def screenshot(window, width, height, output):
     display = x.XOpenDisplay(None)
     if not display:
         raise RuntimeError("Cannot open DISPLAY")
-    image = x.XGetImage(display, window, 0, 0, width, height, 0xFFFFFFFF, 2)
+    image = x.XGetImage(display, window, left, top, width, height, 0xFFFFFFFF, 2)
     if not image:
         x.XCloseDisplay(display)
         raise RuntimeError("Cannot capture native window")
@@ -91,12 +91,32 @@ def main():
     parser.add_argument("--height", type=int, default=700)
     parser.add_argument("--scroll-pages", type=int, default=0, help="Scroll chat upward by this many half-pages before capture")
     parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
+    parser.add_argument("--animation-region", help="Verify pixels change across four frames in x,y,width,height (for a visible spinner)")
+    parser.add_argument("--click", help="Click a window point x,y before capture (for preview and toggle checks)")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
     args = parser.parse_args()
     if args.width < 720 or args.height < 480:
         parser.error("The native minimum window size is 720 × 480")
     if args.new_session and not args.bus:
         parser.error("--new-session requires a fixture --bus; creation is disabled in demo mode")
+    animation_region = None
+    click = None
+    if args.click:
+        try:
+            x, y = map(int, args.click.split(","))
+            if not (0 <= x < args.width and 0 <= y < args.height):
+                raise ValueError()
+            click = (x, y)
+        except ValueError:
+            parser.error("--click requires x,y inside the window")
+    if args.animation_region:
+        try:
+            left, top, width, height = map(int, args.animation_region.split(","))
+            if min(left, top) < 0 or min(width, height) <= 0 or left + width > args.width or top + height > args.height:
+                raise ValueError()
+            animation_region = (left, top, width, height)
+        except ValueError:
+            parser.error("--animation-region requires x,y,width,height inside the window")
     command = [str(args.binary.resolve())]
     command += ["--bus", args.bus] if args.bus else ["--demo"]
     started = time.monotonic()
@@ -134,12 +154,28 @@ def main():
             drive("key", "Escape")
             drive("key", "--delay", "80", *(["ctrl+u"] * min(50, max(0, args.scroll_pages))))
         time.sleep(1)
+        if click:
+            drive("mousemove", "--window", window, str(click[0]), str(click[1]), "click", "1")
+            time.sleep(1)
         colors = screenshot(int(window), args.width, args.height, args.output)
+        animation_frames = None
+        if animation_region:
+            left, top, width, height = animation_region
+            frames = []
+            for index in range(4):
+                frame = Path(settings.name) / f"animation-{index}.png"
+                screenshot(int(window), width, height, frame, left, top)
+                frames.append(frame.read_bytes())
+                time.sleep(0.13)
+            animation_frames = len(set(frames))
+            if animation_frames < 2:
+                raise RuntimeError("Animation region stayed static across four frames")
         print(json.dumps({"window_appeared_ms": appeared_ms,
                           "idle_cpu_percent_one_core": idle_cpu,
                           "resident_bytes": rss, "rendered_colors": colors,
                           "screenshot": str(args.output), "theme": args.theme, "screen": args.screen,
                           "width": args.width, "height": args.height,
+                          "distinct_animation_frames": animation_frames,
                           "workload": "external bus" if args.bus else "in-process demo",
                           "scope": "window appearance is not first usable frame; host/build/GPU affect all values"}, indent=2))
         if process.poll() is not None:

@@ -731,7 +731,7 @@ impl Workspace {
                 let path = if let Request::Diff { path, staged, .. } = &state.request { format!("{} · {}", path, if *staged { "Staged" } else { "Working tree" }) } else { String::new() };
                 d.child(div().text_size(px(16.)).child(path)).child(self.feature_message("diff"))
                     .when(text.is_empty() && !state.loading && state.error.is_none(), |d| d.child("No text diff available. The file may be binary or have changed since refresh."))
-                    .child(div().id("diff-content").max_h(px(500.)).overflow_y_scroll().track_scroll(&self.extras.diff_scroll).font_family(mono_font()).text_size(px(12.)).bg(rgb(p.surface)).p_3()
+                    .child(div().id("diff-content").max_h(px(500.)).overflow_y_scroll().track_scroll(&self.extras.diff_scroll).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).text_size(px(12.)).bg(rgb(p.surface)).p_3()
                         .children(text.lines().take(3000).map(|line| div().text_color(rgb(if line.starts_with('+') { p.success } else if line.starts_with('-') { p.warning } else if line.starts_with("@@") { p.accent } else { p.text })).child(line.to_owned()))))
                     .when(text.lines().count() > 3000, |d| d.child("Showing the first 3,000 diff lines. Review the full file in your editor."))
             })
@@ -766,26 +766,54 @@ impl Workspace {
         let busy = state.is_some_and(|s| s.loading);
         let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
         let detected = value["installed"].as_array();
-        div().flex().flex_col().gap_3().child("Set up the agent on the machine running your workspace.")
-            .child(self.feature_message("setup"))
+        div().flex().flex_col().gap_4()
+            .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Connect your agents on the machine running this workspace."))
             .children(["claude", "codex"].into_iter().map(|provider| {
                 let found = detected.and_then(|rows| rows.iter().find(|r| r["provider"] == provider)).and_then(|r| r["found"].as_bool());
                 let label = if provider == "claude" { "Claude" } else { "Codex" };
-                div().p_3().rounded_md().bg(rgb(p.surface)).flex().flex_col().gap_2()
-                    .child(format!("{label} · {}", match found { Some(true) => "Installed", Some(false) => "Not found", None => "Not checked" }))
-                    .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(if provider == "claude" { "Install Claude Code, then run claude in a terminal to sign in." } else { "Install Codex CLI, then run codex login in a terminal." }))
-                    .child(self.button(if provider == "claude" { "setup-claude" } else { "setup-codex" }, "Check connection", !busy && self.view.connected)
-                        .when(!busy && self.view.connected, |d| d.on_click(cx.listener(move |this, _, _, cx| this.request(Request::Setup { provider: provider.into(), check: true }, cx)))))
+                let current = state.is_some_and(|s| matches!(&s.request, Request::Setup { provider: checked, .. } if checked == provider));
+                let status = if current && !busy { value["readiness"]["state"].as_str().unwrap_or("unchecked") } else { "unchecked" };
+                let color = match status {
+                    "responding" => p.success,
+                    "unchecked" | "unsupported" => p.muted,
+                    _ => p.warning,
+                };
+                let description = if busy && current { "Checking this agent…" } else { match status {
+                    "responding" => "Ready · the agent responded",
+                    "unauthenticated" => "Sign-in required",
+                    "limited" => "Account limit reached",
+                    "timeout" => "The connection check timed out",
+                    "network-error" => "Network unavailable",
+                    "unchecked" => "Connection not verified",
+                    "unsupported" => "Connection check unavailable on this host",
+                    _ => "Connection check failed",
+                }};
+                div().py_5().border_b_1().border_color(rgb(p.border)).flex().flex_col().gap_4()
+                    .child(div().flex().items_center().gap_3()
+                        .child(div().size(px(40.)).rounded(px(12.)).bg(rgb(p.selected)).flex().items_center().justify_center()
+                            .child(Icon::new(IconName::Bot).size(px(20.)).text_color(rgb(p.accent))))
+                        .child(div().flex_1().min_w_0().flex().flex_col().gap_1()
+                            .child(div().text_size(px(16.)).font_weight(FontWeight::SEMIBOLD).child(label))
+                            .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(if provider == "claude" { "Claude Code" } else { "Codex CLI" })))
+                        .child(div().flex().items_center().gap_2().text_size(px(11.)).text_color(rgb(if found == Some(true) { p.success } else { p.muted }))
+                            .child(status_dot(if found == Some(true) { p.success } else { p.muted }))
+                            .child(match found { Some(true) => "Installed", Some(false) => "Not found", None => "Not checked" })))
+                    .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(if provider == "claude" { "Install Claude Code, then run claude in a terminal to sign in." } else { "Install Codex CLI, then run codex login in a terminal to sign in." }))
+                    .child(div().flex().flex_wrap().items_center().justify_between().gap_3()
+                        .child(div().flex().items_center().gap_2().text_size(px(12.)).text_color(rgb(color))
+                            .child(if busy && current { brand_spinner(12., p, SharedString::from(format!("setup-{provider}-activity"))) } else { status_dot(color) })
+                            .child(description))
+                        .child(self.button(if provider == "claude" { "setup-claude" } else { "setup-codex" }, if busy && current { "Checking…" } else { "Check connection" }, !busy && self.view.connected)
+                            .when(!busy && self.view.connected, |d| d.on_click(cx.listener(move |this, _, _, cx| this.request(Request::Setup { provider: provider.into(), check: true }, cx))))))
+                    .when(current && !busy, |d| d
+                        .when_some(state.and_then(|s| s.error.as_ref()), |d, error| d.child(div().text_size(px(12.)).text_color(rgb(p.warning)).child(error.clone())))
+                        .when_some(value["readinessError"].as_str(), |d, error| d.child(div().text_size(px(12.)).text_color(rgb(p.warning)).child(error.to_owned()))))
             }))
-            .when_some(state, |d, state| {
-                if let Request::Setup { provider, .. } = &state.request {
-                    let status = value["readiness"]["state"].as_str().unwrap_or("unchecked");
-                    let description = match status { "responding" => "Ready — the agent responded", "unauthenticated" => "Sign-in required", "limited" => "Account limit reached", "timeout" => "The connection check timed out", "network-error" => "Network unavailable", "unchecked" => "Connection has not been verified", "unsupported" => "Connection check unavailable on this host", _ => "Connection check failed" };
-                    d.child(format!("{provider}: {description}")).when(value["readinessError"].is_string(), |d| d.child(div().text_color(rgb(p.warning)).child(value["readinessError"].as_str().unwrap_or("").to_owned())))
-                } else { d }
-            })
-            .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Check connection sends a small test request and may use your provider allowance. Git is required for reviewing changes."))
-            .child(self.button("setup-refresh", "Recheck installed agents", !busy).when(!busy, |d| d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Setup { provider: this.provider.into(), check: false }, cx)))))
+            .child(div().flex().items_start().gap_2().text_size(px(12.)).text_color(rgb(p.muted))
+                .child(Icon::new(IconName::Info).size(px(14.)).flex_shrink_0())
+                .child(div().flex_1().min_w_0().whitespace_normal().child("Checking a connection sends a small test request and may use your provider allowance. Git is required for reviewing changes.")))
+            .child(div().flex().child(self.quiet_button("setup-refresh", "Recheck installed agents", IconName::Redo, !busy && self.view.connected)
+                .when(!busy && self.view.connected, |d| d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Setup { provider: this.provider.into(), check: false }, cx))))))
     }
     fn render_model(&self, cx: &mut Context<Self>) -> Div {
         if !self.supported_session() {

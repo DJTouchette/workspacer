@@ -20,6 +20,9 @@ use wks_native::{
 #[derive(Parser)]
 #[command(about = "Experimental native Workspacer client (connects to an existing hub)")]
 struct Args {
+    /// Print the licenses for the fonts embedded in this executable and exit.
+    #[arg(long)]
+    font_licenses: bool,
     #[arg(long, env = "WKS_HUB_BUS", conflicts_with = "local")]
     bus: Option<String>,
     /// Own an embedded local engine and its hub services.
@@ -99,6 +102,14 @@ fn stop_backend_on_quit(owner: Rc<RefCell<BackendLifetime>>, cx: &gpui::App) {
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args = Args::parse();
+    if args.font_licenses {
+        println!(
+            "Inter\n{}\nJetBrains Mono\n{}",
+            include_str!("../assets/fonts/Inter-LICENSE.txt"),
+            include_str!("../assets/fonts/JetBrainsMono-LICENSE.txt")
+        );
+        return Ok(());
+    }
     let bus_url = args
         .bus
         .clone()
@@ -237,7 +248,7 @@ fn main() -> Result<()> {
                     window.set_app_id("workspacer-native");
                     let view = cx.new(|cx| {
                         let mut view = ui::Workspace::new(controller, args.demo, window, cx);
-                        view.configure_settings(settings, settings_path, project_scope);
+                        view.configure_settings(settings, settings_path, project_scope, window, cx);
                         view.configure_local(local_requested, keep_running.clone());
                         view.set_appearance(appearance, window, cx);
                         view.open_session(args.session);

@@ -1,5 +1,77 @@
 # Native client validation — 2026-09-27
 
+## Native visual redesign (2026-09-29)
+
+The user's visual reference informed a flatter native layout. Dark uses near
+black surfaces, neutral selection and restrained blue accents. The chat header
+is a slim breadcrumb row with compact actions; project-first session rows replace
+the old accent bars, and search sits directly in the sidebar. Settings and agent
+setup use sections separated by rules instead of large filled cards.
+
+The composer keeps attachment controls in its footer, displays a focus outline,
+and labels messages sent during work as queued. Tool details start collapsed,
+except failures, and preserve call-ID expansion and scroll anchors. Recorded
+timestamps remain visible; absent timestamps no longer add placeholder labels.
+File previews use quiet inline links, copy actions use tooltip-labelled icons,
+and turn summaries include change totals and a link to the current Changes view.
+Approvals retain expandable request details. The sidebar adapts to narrow
+windows and explains empty filters with a reset.
+
+Typography uses bundled Inter and JetBrains Mono with their OFL licenses.
+Settings includes searchable interface/code font pickers, conversation sizes,
+a live preview and reset. Preferences persist, older settings receive the new
+defaults, and palette changes preserve selected fonts. A GPUI regression checks
+font picker confirmation, draft preservation and typography across themes.
+
+The final chat pass adds calmer Markdown spacing, round bullets, a restrained
+heading scale, smaller icons, hover copy actions, rounded user messages and a
+rounded composer with a circular send action. Successful sends no longer leave
+“Request accepted” at the top; errors and queued setting changes remain visible.
+
+Markdown file links now request a preview from the selected session's host and
+show its contents above the composer. A small, documented GPUI Component patch
+adds an optional link callback and list marker while preserving the upstream
+Markdown parse cache and selection across paragraphs. An interaction regression
+checks that selecting link text does not open it, clicking does request the file,
+and the returned preview renders. A real X11 click also opened the README preview.
+
+Validation of the final source:
+
+- Application and harness build passed with the default Rust backend.
+- Complete native suite: **125 passed** (53 library, 42 GPUI interaction,
+  27 protocol, 3 Rust-host tests).
+- Clippy with warnings denied, rustfmt and diff whitespace checks passed.
+- Real Linux windows checked under isolated Xvfb with software Vulkan, using
+  the rich-transcript fixture: dark, light and Nord; chat, tool details,
+  settings and setup; sizes from 720 × 480 to 1200 × 800. Keyboard compose/send
+  and scrolling were exercised. Captures caught and corrected setup helper
+  text clipping and scrollback showing behind composer shortcut hints.
+- Witness returned no native selection, so the full suite was used.
+- Pulled main to `4fd429ab` before final checks. A fresh desktop window was
+  launched with `--local`; its embedded claudemon and Rust hub expose four owned
+  listeners, the facade reports embedded transport and launch readiness, and
+  the window shows Connected. A read-only probe of that hub also passed. A
+  separate Rust probe checked connection and joined shutdown with all four
+  ports released; it launched no agents.
+- Running tool indicators now rotate continuously using a stable call/session
+  animation key; Done and Failed remain static. The rich fixture retains a
+  running subagent for this check. An actual X11 window passed
+  `--animation-region 326,295,16,16` at 1200 × 800: four distinct captures of
+  only the spinner pixels, 130 ms apart. The full native suite and Clippy
+  passed again after this fix. `scripts/smoke.py --animation-region` accepts
+  x,y,width,height for repeating this visual regression check.
+
+Saved captures: [chat](docs/ui-polish-chat.png),
+[tool details](docs/ui-polish-tools.png), [compact chat](docs/ui-polish-compact.png),
+[settings](docs/ui-polish-settings.png), [agent setup](docs/ui-polish-setup.png),
+[file preview](docs/ui-polish-file-preview.png).
+The standalone vendored component test command could not run offline because
+its optional `rust_decimal` dependency was not cached; the native build and GPUI
+interaction tests exercised the patched renderer.
+
+These are fixture UI checks, not hardware performance measurements or fresh
+Windows/macOS runtime verification.
+
 ## Embedded backend and launch controls
 
 Current change validation:
@@ -113,7 +185,11 @@ ran out of workspace disk space; the Go forwarding and native wire regressions
 passed, but that additional daemon test did not execute.
 
 Real GPUI windows were captured under Xvfb/software Vulkan in dark, light and
-Nord, including 720 × 480. These are fixture UI checks, not live provider/account
+Nord, including 720 × 480. The standalone vendored component test command could not run offline because
+its optional `rust_decimal` dependency was not cached; the native build and GPUI
+interaction tests exercised the patched renderer.
+
+These are fixture UI checks, not live provider/account
 or hardware-performance measurements.
 
 Witness selects no native tests, so the complete native suite was used. Its CLI

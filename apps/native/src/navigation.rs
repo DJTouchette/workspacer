@@ -25,6 +25,10 @@ impl Provider {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Device-local typography; empty families select the platform default.
+    pub interface_font: String,
+    pub code_font: String,
+    pub text_size: u8,
     pub reading: BTreeMap<String, crate::reading::Bookmark>,
     pub vim_navigation: bool,
     pub keep_running: bool,
@@ -39,6 +43,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            interface_font: "Inter".into(),
+            code_font: "JetBrains Mono".into(),
+            text_size: 15,
             reading: BTreeMap::new(),
             vim_navigation: true,
             keep_running: false,
@@ -53,7 +60,11 @@ impl Default for Settings {
 impl Settings {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         match std::fs::read(path) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Ok(bytes) => {
+                let mut settings: Self = serde_json::from_slice(&bytes)?;
+                settings.text_size = settings.text_size.clamp(12, 20);
+                Ok(settings)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(e.into()),
         }
@@ -181,14 +192,30 @@ mod tests {
         assert!(settings.vim_navigation);
         settings.vim_navigation = false;
         settings.default_provider = Provider::Codex;
+        settings.interface_font = "Adwaita Sans".into();
+        settings.code_font = "Adwaita Mono".into();
+        settings.text_size = 17;
         settings.add_project("hub", "/app").unwrap();
         settings.save(&path).unwrap();
         let read = Settings::load(&path).unwrap();
         assert!(!read.vim_navigation);
         assert_eq!(read.default_provider, Provider::Codex);
+        assert_eq!(read.interface_font, "Adwaita Sans");
+        assert_eq!(read.code_font, "Adwaita Mono");
+        assert_eq!(read.text_size, 17);
         assert_eq!(read.bookmarks("hub"), ["/app"]);
         std::fs::write(&path, b"{}").unwrap();
         assert!(Settings::load(&path).unwrap().vim_navigation);
+        assert_eq!(Settings::load(&path).unwrap().interface_font, "Inter");
+        std::fs::write(
+            &path,
+            br#"{"text_size":255,"interface_font":"","code_font":""}"#,
+        )
+        .unwrap();
+        let read = Settings::load(&path).unwrap();
+        assert_eq!(read.text_size, 20);
+        assert!(read.interface_font.is_empty());
+        assert!(read.code_font.is_empty());
         std::fs::write(&path, b"{").unwrap();
         assert!(Settings::load(&path).is_err());
         std::fs::remove_file(path).unwrap();

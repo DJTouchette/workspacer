@@ -42,26 +42,27 @@ impl Appearance {
         }
     }
 
-    /// Semantic colors from desktop themes.ts; translucent bubbles composited on chat.
+    /// Native semantic palettes. Dark keeps chrome close to the conversation
+    /// surface so selection and content, rather than panel fills, lead the eye.
     pub fn palette(self) -> Palette {
         match self {
             Self::Dark => Palette {
-                base: 0x18181b,
-                surface: 0x1e1e21,
-                chat: 0x0d0d10,
-                selected: 0x2d303c,
-                border: 0x2d2d32,
-                text: 0xdcdceb,
-                muted: 0x8c8c9b,
-                disabled: 0x5a5a64,
+                base: 0x101113,
+                surface: 0x17191c,
+                chat: 0x0d0e10,
+                selected: 0x23262b,
+                border: 0x26292e,
+                text: 0xe6e8ec,
+                muted: 0x92979f,
+                disabled: 0x595e66,
                 accent: 0x60a5fa,
-                primary: 0x5078c8,
+                primary: 0x3b82f6,
                 on_primary: 0xffffff,
-                warning: 0xfacc15,
+                warning: 0xe8b86d,
                 error: 0xf87171,
-                success: 0x4ade80,
+                success: 0x43c59e,
                 busy: 0xc084fc,
-                user: 0x141925,
+                user: 0x1b1e23,
             },
             Self::Light => Palette {
                 base: 0xf4f4f5,

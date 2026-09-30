@@ -403,6 +403,7 @@ impl Workspace {
         };
         let session = self.view.selected.clone().unwrap_or_default();
         let mut body = div()
+            .group("message")
             .w_full()
             .px_5()
             .py_2()
@@ -435,18 +436,55 @@ impl Workspace {
                 body = body.child(
                     div()
                         .mt_2()
-                        .p_3()
-                        .bg(rgb(p.surface))
-                        .rounded_md()
-                        .child(format!(
-                            "{} file{} changed{}",
-                            files.len(),
-                            if files.len() == 1 { "" } else { "s" },
+                        .py_3()
+                        .border_t_1()
+                        .border_color(rgb(p.border))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_size(px(12.))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(format!(
+                                            "{} file{} changed",
+                                            files.len(),
+                                            if files.len() == 1 { "" } else { "s" }
+                                        )),
+                                )
+                                .child(div().text_size(px(12.)).text_color(rgb(p.success)).child(
+                                    format!("+{}", files.iter().map(|f| f.added).sum::<usize>()),
+                                ))
+                                .child(div().text_size(px(12.)).text_color(rgb(p.error)).child(
+                                    format!("−{}", files.iter().map(|f| f.removed).sum::<usize>()),
+                                ))
+                                .child(
+                                    self.quiet_button(
+                                        "turn-changes",
+                                        "Changes",
+                                        IconName::ArrowRight,
+                                        self.view.connected,
+                                    )
+                                    .when(
+                                        self.view.connected,
+                                        |d| {
+                                            d.on_click(cx.listener(|this, _, window, cx| {
+                                                this.open_feature(Screen::Changes, window, cx)
+                                            }))
+                                        },
+                                    ),
+                                ),
+                        )
+                        .child(div().text_size(px(10.)).text_color(rgb(p.muted)).child(
                             if estimated {
-                                " · estimated from tools"
+                                "Estimated from tools"
                             } else {
-                                " · captured at turn end"
-                            }
+                                "Captured at turn end"
+                            },
                         ))
                         .children(files.iter().map(|f| {
                             div()
@@ -502,41 +540,64 @@ impl Workspace {
         let copy = row.copy_text();
         let mut body = div()
             .w_full()
-            .p_3()
+            .px_3()
+            .py_2()
             .flex()
             .flex_col()
             .gap_2()
-            .when(row.role == "You", |d| d.bg(rgb(p.user)).rounded_lg())
+            .when(row.role == "You", |d| {
+                d.max_w(gpui::relative(0.85))
+                    .ml_auto()
+                    .bg(rgb(p.user))
+                    .rounded(px(18.))
+                    .px_4()
+                    .py_3()
+            })
             .child(
                 div()
                     .flex()
                     .justify_between()
-                    .text_size(px(12.))
+                    .text_size(px(11.))
                     .text_color(rgb(p.muted))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .when(row.role != "Assistant", |d| d.child(row.role.clone()))
+                            .when(row.role != "Assistant" && row.tool.is_none(), |d| {
+                                d.child(row.role.clone())
+                            })
                             .when_some(
                                 (namespace == "live")
                                     .then(|| self.duration_labels.get(&row.key))
                                     .flatten(),
                                 |d, label| d.child(label.clone()),
                             )
-                            .child(timing::timestamp_label(
+                            .when_some(
                                 row.timestamp_ms.or_else(|| {
                                     row.timestamp.as_deref().and_then(timing::parse_timestamp)
                                 }),
-                                timing::now_ms(),
-                            )),
+                                |d, timestamp| {
+                                    d.child(timing::timestamp_label(
+                                        Some(timestamp),
+                                        timing::now_ms(),
+                                    ))
+                                },
+                            ),
                     )
                     .child(
-                        self.button(SharedString::from(format!("copy-{key}")), "Copy", true)
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
-                            }),
+                        self.icon_button(
+                            SharedString::from(format!("copy-{key}")),
+                            "Copy message",
+                            IconName::Copy,
+                            true,
+                        )
+                        .size(px(24.))
+                        .opacity(0.)
+                        .group_hover("message", |style| style.opacity(1.))
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                        }),
                     ),
             )
             .when(row.truncated, |d| {
@@ -820,17 +881,11 @@ impl Workspace {
         if row.role == "You" {
             return body.child(literal(key, &text, window, cx));
         }
-        for (n, path) in content::file_paths(&text, &cwd).into_iter().enumerate() {
-            body = body.child(self.file_button(&format!("{key}-link-{n}"), path, cx));
-        }
         for (n, block) in content::assistant_blocks(&text).into_iter().enumerate() {
             let block_key = format!("{key}-{n}");
             match block {
                 AssistantBlock::Markdown(markdown) => {
-                    body = body.child(
-                        TextView::markdown(SharedString::from(block_key), markdown, window, cx)
-                            .selectable(true),
-                    )
+                    body = body.child(self.render_markdown(&block_key, &markdown, window, cx))
                 }
                 AssistantBlock::Card(card) => {
                     let mut card_body = div()
@@ -878,22 +933,38 @@ impl Workspace {
     }
     fn file_button(&self, key: &str, path: String, cx: &mut Context<Self>) -> Stateful<Div> {
         let owner = self.view.selected.clone().unwrap_or_default();
-        self.button(
-            SharedString::from(key.to_owned()),
-            format!("Open {path}"),
-            self.view.connected,
-        )
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if this.view.selected.as_ref() == Some(&owner) {
-                this.request(
-                    Request::FilePreview {
-                        session: owner.clone(),
-                        path: path.clone(),
-                    },
-                    cx,
-                );
-            }
-        }))
+        let p = self.appearance.palette();
+        div()
+            .id(SharedString::from(key.to_owned()))
+            .min_w_0()
+            .max_w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .py_1()
+            .text_size(px(11.))
+            .text_color(rgb(if self.view.connected {
+                p.muted
+            } else {
+                p.disabled
+            }))
+            .child(Icon::new(IconName::File).size(px(12.)).flex_shrink_0())
+            .child(div().min_w_0().truncate().child(path.clone()))
+            .when(self.view.connected, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.text_color(rgb(p.accent)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.view.selected.as_ref() == Some(&owner) {
+                            this.request(
+                                Request::FilePreview {
+                                    session: owner.clone(),
+                                    path: path.clone(),
+                                },
+                                cx,
+                            );
+                        }
+                    }))
+            })
     }
     fn render_raw(
         &self,
@@ -968,6 +1039,8 @@ impl Workspace {
                 window,
                 cx,
             ))
+            .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
+            .text_size(gpui_component::Theme::global(cx).mono_font_size)
     }
     fn diff_lines(
         &self,
@@ -983,7 +1056,7 @@ impl Workspace {
         div().child(div().flex().gap_2()
             .child(self.button(SharedString::from(format!("{key}-copy")),"Copy diff",true).on_click(move|_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))
             .child(self.toggle_chat(raw_key.clone(),if expanded {"Hide selectable diff"}else{"Show selectable diff"}.into(),cx)))
-            .child(div().id(SharedString::from(key.to_owned())).max_h(px(320.)).overflow_y_scroll().font_family(mono_font())
+            .child(div().id(SharedString::from(key.to_owned())).max_h(px(320.)).overflow_y_scroll().font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
                 .children(text.lines().take(1000).map(|line|div().text_color(rgb(if line.starts_with('+'){p.success}else if line.starts_with('-'){p.error}else{p.muted})).child(line.to_owned()))))
             .when(text.lines().count()>1000,|d|d.child("Showing the first 1,000 lines. Copy or open the selectable diff for all lines."))
             .when(expanded,|d|d.child(self.render_raw(&raw_key,text,window,cx)))
@@ -1045,9 +1118,10 @@ impl Workspace {
         number: u64,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        self.button(
+        self.icon_button(
             SharedString::from(format!("close-{key}")),
             "Close preview",
+            IconName::Close,
             true,
         )
         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1099,19 +1173,40 @@ impl Workspace {
             && let Request::FilePreview { session, path } = &state.request
             && Some(session) == self.view.selected.as_ref()
         {
-            body = body.child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .child(path.clone())
-                    .child(self.close_preview("file-preview", state.number, cx)),
-            );
+            let mut preview = div()
+                .id("file-preview-panel")
+                .debug_selector(|| "file-preview-panel".into())
+                .occlude()
+                .bg(rgb(p.chat))
+                .rounded(px(16.))
+                .border_1()
+                .border_color(rgb(p.border))
+                .p_3()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.))
+                                .child(path.clone()),
+                        )
+                        .child(self.close_preview("file-preview", state.number, cx)),
+                );
             if let Some(error) = &state.error {
-                body = body.child(div().text_color(rgb(p.warning)).child(error.clone()));
+                preview = preview.child(div().text_color(rgb(p.warning)).child(error.clone()));
             } else if state.loading {
-                body = body.child("Loading file…");
+                preview = preview.child("Loading file…");
             } else {
-                body = body.child(
+                preview = preview.child(
                     div()
                         .id("file-content")
                         .max_h(px(300.))
@@ -1124,6 +1219,7 @@ impl Workspace {
                         )),
                 );
             }
+            body = body.child(preview);
         }
         if let Some(state) = self
             .view

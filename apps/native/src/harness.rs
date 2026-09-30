@@ -159,6 +159,8 @@ pub fn rich_items() -> Vec<Value> {
         json!({"kind":"tool_use","id":"skill-1","name":"Skill","input":{"skill":"review","args":"Check the transcript"}}),
         json!({"kind":"tool_result","tool_use_id":"skill-1","content":"Review completed."}),
         json!({"kind":"assistant_text","text":format!("Implemented the change in [main.rs](src/main.rs:2).\n\n```wks-html-card\n{card}\n```\n")}),
+        json!({"kind":"tool_use","id":"subagent-running","name":"spawn_agent","input":{"description":"Review tool rendering"}}),
+        json!({"kind":"assistant_text","text":"## Ready for review\n\nThe conversation is easier to scan, with quieter controls and a little more room to read.\n\n- **Clear hierarchy** for headings and paragraphs.\n- Round bullets, comfortable spacing, and `inline code`.\n- File links open a preview in this workspace.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs).\n\n```rust\nlet workspace = connect().await?;\nworkspace.restore_session();\n```"}),
     ]
 }
 fn preview_image() -> Value {

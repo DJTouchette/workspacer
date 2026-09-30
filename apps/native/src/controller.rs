@@ -1073,10 +1073,10 @@ impl Worker {
                     pending.queued |= queued;
                 }
                 self.view.notice = error.clone().unwrap_or_else(|| {
-                    if queued {
+                    if queued && !matches!(&action, Action::Send(_)) {
                         "Change queued; the provider will apply it when ready".into()
                     } else {
-                        "Request accepted".into()
+                        String::new()
                     }
                 });
                 self.view.receipt = Some(Receipt {

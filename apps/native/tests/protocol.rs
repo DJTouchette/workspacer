@@ -308,6 +308,10 @@ async fn demo_fixture_completes_a_streaming_send_round_trip() {
             .contains("Streaming native text")
     );
     assert!(!v.busy);
+    assert!(
+        v.notice.is_empty(),
+        "routine send acknowledgements do not add a banner"
+    );
     server.abort();
 }
 
@@ -989,6 +993,10 @@ async fn queued_bubbles_wait_for_a_new_authoritative_user_turn() {
         v.pending_messages.first().is_some_and(|p| p.accepted) && !v.loading
     })
     .await;
+    assert!(
+        accepted.notice.is_empty(),
+        "queued sends already have inline feedback"
+    );
     assert_eq!(
         accepted.pending_messages.len(),
         1,

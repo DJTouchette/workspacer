@@ -29,7 +29,7 @@ pub(super) fn card(
     if matches!(tool.category(), "Skill" | "Subagent" | "Workflow") {
         preview.target = tool.target();
     }
-    let expanded = expansion.unwrap_or(preview.file_edit || tool.is_error);
+    let expanded = expansion.unwrap_or(tool.is_error);
     let key = row.key;
     let stable_identity = identity(row);
     let element_key = format!("{session}-{stable_identity}");
@@ -46,17 +46,31 @@ pub(super) fn card(
     };
     let subtitle = if command_title { "" } else { &preview.target };
     let (status, color, icon) = if tool.is_error {
-        ("Failed", p.warning, IconName::TriangleAlert)
+        ("Failed", p.error, IconName::TriangleAlert)
     } else if tool.complete {
         ("Done", p.success, IconName::Check)
     } else {
-        ("Started", p.muted, IconName::Minus)
+        ("Running", p.busy, IconName::LoaderCircle)
     };
     let status = match (row.timestamp_ms, tool.completed_at_ms) {
         (Some(start), Some(end)) if end >= start => {
             format!("{status} · {}", timing::duration_label(end - start))
         }
         _ => status.into(),
+    };
+    let status_icon = Icon::new(icon).size(px(12.));
+    let status_icon = if !tool.complete && !tool.is_error {
+        status_icon
+            .with_animation(
+                SharedString::from(format!("{element_key}-spinner")),
+                Animation::new(std::time::Duration::from_millis(800)).repeat(),
+                |icon, progress| {
+                    icon.transform(gpui::Transformation::rotate(gpui::percentage(progress)))
+                },
+            )
+            .into_any_element()
+    } else {
+        status_icon.into_any_element()
     };
     let details =
         if expanded {
@@ -154,7 +168,6 @@ pub(super) fn card(
     div()
         .id(SharedString::from(format!("{element_key}-card")))
         .rounded(px(10.))
-        .bg(rgb(p.surface))
         .overflow_hidden()
         .child(
             div()
@@ -196,7 +209,13 @@ pub(super) fn card(
                                         .truncate()
                                         .text_size(px(12.))
                                         .font_weight(FontWeight::MEDIUM)
-                                        .when(command_title, |d| d.font_family(mono_font()))
+                                        .when(command_title, |d| {
+                                            d.font_family(
+                                                gpui_component::Theme::global(cx)
+                                                    .mono_font_family
+                                                    .clone(),
+                                            )
+                                        })
                                         .child(title),
                                 )
                                 .when(preview.added > 0, |d| {
@@ -211,31 +230,33 @@ pub(super) fn card(
                                     d.child(
                                         div()
                                             .text_size(px(11.))
-                                            .text_color(rgb(p.warning))
+                                            .text_color(rgb(p.error))
                                             .child(format!("−{}", preview.removed)),
                                     )
-                                })
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap_3()
+                                .text_size(px(11.))
                                 .child(
                                     div()
-                                        .flex_shrink_0()
-                                        .text_size(px(10.))
-                                        .text_color(rgb(p.muted))
-                                        .child(timing::timestamp_label(
-                                            row.timestamp_ms,
-                                            timing::now_ms(),
-                                        )),
-                                )
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
                                         .flex()
                                         .items_center()
                                         .gap_1()
-                                        .text_size(px(10.))
                                         .text_color(rgb(color))
-                                        .child(Icon::new(icon).size(px(12.)))
+                                        .child(status_icon)
                                         .child(status),
-                                ),
+                                )
+                                .child(div().text_color(rgb(p.muted)).child(tool.category()))
+                                .when_some(row.timestamp_ms, |d, timestamp| {
+                                    d.child(div().text_color(rgb(p.muted)).child(
+                                        timing::timestamp_label(Some(timestamp), timing::now_ms()),
+                                    ))
+                                }),
                         )
                         .when(!subtitle.is_empty(), |d| {
                             d.child(
@@ -243,7 +264,9 @@ pub(super) fn card(
                                     .truncate()
                                     .text_size(px(11.))
                                     .text_color(rgb(p.muted))
-                                    .font_family(mono_font())
+                                    .font_family(
+                                        gpui_component::Theme::global(cx).mono_font_family.clone(),
+                                    )
                                     .child(subtitle.to_owned()),
                             )
                         }),
