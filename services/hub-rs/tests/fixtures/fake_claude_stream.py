@@ -75,6 +75,11 @@ emit({"type": "system", "subtype": "init", "session_id": session, "model": "clau
 
 for line in sys.stdin:
     frame = json.loads(line)
+    if frame.get("type") == "control_response" and frame.get("response", {}).get("request_id") == "numeric-question-fixture":
+        reply = frame["response"]["response"]
+        record({"numericAnswers": reply["updatedInput"]["answers"]})
+        emit({"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 0, "usage": {"input_tokens": 1, "output_tokens": 1}})
+        continue
     if frame.get("type") == "control_request":
         emit({"type": "control_response", "response": {"subtype": "success", "request_id": frame["request_id"], "response": {}}})
         continue
@@ -83,6 +88,14 @@ for line in sys.stdin:
     content = frame.get("message", {}).get("content", [])
     prompt = "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
     record({"message": prompt})
+    if "ask-numeric-fixture" in prompt:
+        emit({"type": "control_request", "request_id": "numeric-question-fixture", "request": {
+            "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+                {"question": "Literal first", "options": [{"label": "One"}, {"label": "Two"}, {"label": "Three"}]},
+                {"question": "Literal second", "options": [{"label": "One"}, {"label": "Two"}, {"label": "Three"}]},
+                {"question": "Option control", "options": [{"label": "Red"}, {"label": "Blue"}]}
+            ]}}})
+        continue
     if "finish-child-fixture" in prompt:
         release = root / ("release-" + session)
         deadline = time.monotonic() + 15

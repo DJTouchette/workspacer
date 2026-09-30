@@ -46,15 +46,27 @@ fn owned_rpc_spawn_uses_scoped_mcp_and_routes_real_finish_wake_without_models() 
         .output()
         .unwrap();
     assert!(python.status.success());
+    let python = String::from_utf8(python.stdout).unwrap();
     let script = format!(
         "#!{}\n{}",
-        String::from_utf8(python.stdout).unwrap().trim(),
+        python.trim(),
         include_str!("fixtures/fake_claude_stream.py")
     );
     let binary = root.path().join("bin/claude");
     std::fs::write(&binary, script).unwrap();
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let codex = root.path().join("bin/codex");
+    std::fs::write(
+        &codex,
+        format!(
+            "#!{}\n{}",
+            python.trim(),
+            include_str!("fixtures/fake_codex_subagent.py")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o700)).unwrap();
     use std::os::unix::process::CommandExt;
     let mut command = Command::new(std::env::current_exe().unwrap());
     command.process_group(0);
@@ -104,7 +116,7 @@ async fn run(root: PathBuf) {
     std::fs::create_dir(&config_dir).unwrap();
     let profile = root.join("profile");
     std::fs::create_dir(&profile).unwrap();
-    Config::open(config_dir.join("config.yaml")).save(json!({"agents":{"binaries":{"claude":root.join("bin/claude")}},"claude":{"transport":"stream","defaultModel":"sonnet"}}),true).unwrap();
+    Config::open(config_dir.join("config.yaml")).save(json!({"agents":{"binaries":{"claude":root.join("bin/claude"),"codex":root.join("bin/codex")}},"claude":{"transport":"stream","defaultModel":"sonnet"}}),true).unwrap();
     std::fs::write(
         config_dir.join("claude-profiles.json"),
         serde_json::to_vec(
@@ -159,6 +171,35 @@ async fn run(root: PathBuf) {
         rows(&root, &parent_id)
             .iter()
             .any(|row| row["scopedMcpCall"] == true)
+    })
+    .await;
+    until(async || {
+        client
+            .call("sessions.snapshot", json!({"sessionId":parent_id}))
+            .await
+            .is_ok_and(|row| row["ambientState"] == "idle")
+    })
+    .await;
+    client
+        .call(
+            "agents.sendMessage",
+            json!({"sessionId":parent_id,"text":"ask-numeric-fixture"}),
+        )
+        .await
+        .unwrap();
+    until(async || {
+        client
+            .call("sessions.snapshot", json!({"sessionId":parent_id}))
+            .await
+            .is_ok_and(|row| row["mode"] == "question")
+    })
+    .await;
+    client.call("claude.answer",json!({"sessionId":parent_id,"answers":["2","3","2"],"answerKinds":["text","text","option"]})).await.unwrap();
+    until(async || {
+        rows(&root, &parent_id).iter().any(|row| {
+            row["numericAnswers"]
+                == json!({"Literal first":"2","Literal second":"3","Option control":"Blue"})
+        })
     })
     .await;
     until(async || {
@@ -464,11 +505,97 @@ async fn run(root: PathBuf) {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let pids = [&parent_id, &child_id, &successor_id, &retry_id]
+    let codex = client.call("agents.spawn",json!({"cwd":project,"provider":"codex","transport":"stream","model":"gpt-5.6-luna","message":"fixture subagent parent","trackTask":false})).await.unwrap();
+    let codex_id = codex["sessionId"].as_str().unwrap();
+    until(async || {
+        client
+            .call("sessions.snapshot", json!({"sessionId":codex_id}))
+            .await
+            .is_ok_and(|row| row["ambientState"] == "idle")
+    })
+    .await;
+    let day = root.join("home/.codex/sessions/2026/09/30");
+    std::fs::create_dir_all(&day).unwrap();
+    for id in ["fixture-codex-child", "hidden-codex-child"] {
+        let messages = [
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"inspect fixture"}]}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"child fixture result"}]}}),
+        ];
+        std::fs::write(
+            day.join(format!("rollout-2026-09-30-{id}.jsonl")),
+            messages
+                .into_iter()
+                .map(|row| row.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+    }
+    assert!(
+        client
+            .call(
+                "sessions.subagentConversation",
+                json!({"sessionId":codex_id,"agentId":"fixture-codex-child"})
+            )
+            .await
+            .is_err(),
+        "rollout must not be readable before parent exposure"
+    );
+    std::fs::write(root.join("expose-codex-child"), "go").unwrap();
+    until(async || {
+        client
+            .call("sessions.snapshot", json!({"sessionId":codex_id}))
+            .await
+            .is_ok_and(|row| {
+                row["subagents"]
+                    .as_array()
+                    .is_some_and(|rows| rows.iter().any(|row| row["id"] == "fixture-codex-child"))
+            })
+    })
+    .await;
+    let conversation = client
+        .call(
+            "sessions.subagentConversation",
+            json!({"sessionId":codex_id,"agentId":"fixture-codex-child"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(conversation["session_id"], codex_id);
+    assert_eq!(conversation["agent_id"], "fixture-codex-child");
+    assert_eq!(conversation["seq"], 2);
+    assert_eq!(conversation["items"][0]["text"], "inspect fixture");
+    assert_eq!(conversation["items"][1]["text"], "child fixture result");
+    for params in [
+        json!({"sessionId":codex_id,"agentId":"hidden-codex-child"}),
+        json!({"sessionId":codex_id}),
+        json!({"sessionId":codex_id,"agentId":"../escape"}),
+    ] {
+        assert!(
+            client
+                .call("sessions.subagentConversation", params)
+                .await
+                .is_err()
+        );
+    }
+    let mut pids = [&parent_id, &child_id, &successor_id, &retry_id]
         .into_iter()
         .flat_map(|id| rows(&root, id))
         .filter_map(|row| row["pid"].as_i64())
         .collect::<Vec<_>>();
+    let codex_processes = std::fs::read_to_string(root.join("codex-processes.jsonl")).unwrap();
+    let codex_pids: Vec<_> = codex_processes
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line).unwrap()["pid"]
+                .as_i64()
+                .unwrap()
+        })
+        .collect();
+    assert!(
+        !codex_pids.is_empty(),
+        "managed Codex fixture did not launch"
+    );
+    pids.extend(codex_pids);
     backend.shutdown().await.unwrap();
     until(async || {
         pids.iter()
