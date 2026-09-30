@@ -21,11 +21,16 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ### Improved
 - Native chat has floating controls, syntax-highlighted tool cards, stable
   reading positions across updates, and persisted turn durations.
+- Native chat typography and file previews use bundled fonts and updated controls.
+- Bounded concurrent backend requests reduce stalls during slower operations.
+- Completed the shared Rust backend cutover and retired the legacy Go implementation,
+  preserving contract fixtures and an explicit historical reference checkout.
 
 ### Fixed
 - MCP tool catalogs include the cache metadata required by modern clients,
   preventing Claude Code from rejecting all Workspacer tools after connecting.
 - Context-window recognition for Claude Opus 5.5's default 1M window.
+- Web clients publish plugin actions and UI events through the broker correctly.
 
 ## [0.169.0] - 2026-09-26
 

@@ -1,94 +1,67 @@
-# Rust backend migration
+# Shared Rust backend and migration record
 
-The target is one Rust service library shared by a standalone executable and the
-native GPUI host, following claudemon's owned-runtime model. The Go hub, brain,
-MCP facade and launcher, and the private Node desktop-services companion, are
-retiring implementations. External provider CLIs and enabled plugins remain
-processes because they are external integrations.
+Workspacer uses one shared Rust service library in the standalone executable and
+native GPUI host. The Go hub, brain, MCP facade and launcher, and the private
+Node desktop-services companion, are retired. Public Electron JavaScript
+services, external provider CLIs and enabled plugin sidecars retain their own
+roles; retiring the private companion does not remove those owners.
 
-## Completion criteria
+## Completed ownership and supported contracts
 
-- Existing clients retain their wire contracts, credential provenance, errors,
-  timeouts, event ordering and subscription/demand behavior.
-- Persisted config, credentials, session projections, layouts, jobs, federation,
-  plugin settings and other state upgrade without losing data or identity.
-- Local native operations use library calls/channels; network transports are
-  adapters around the same services. The standalone executable owns signals;
-  the GUI explicitly owns start/readiness/shutdown. Neither library installs
-  process-wide signal handlers or exits its host.
-- Every legacy source and regression suite has a replacement recorded in
-  `services/hub-rs/migration.json`. This is an inventory, not a claim that a path
-  reference alone proves equivalent behavior. Review and execute the tests.
-- Native, Electron/web, TUI, remote workers, plugins and MCP work against Rust.
-- CI, generators, packaging on all supported OSes, and deployment use Rust.
-- Remove the Go backend only after these gates, retaining portable contract
-  fixtures. No Go runtime fallback or hidden Node companion remains.
+The source review inventory records 505 ported entries and 29 explicit
+architectural retirements. [migration.json](migration.json) and
+[the source reviews](reviews) retain original source hashes, behavior mappings,
+intentional differences and scoped test evidence. Completion covers the reviewed
+supported contracts, not every undocumented legacy input or a promise that all
+old implementations were byte-identical.
 
-## Sequence and current state
+Standalone `workspacer serve` owns the session engine, bus, services and MCP
+facade in one process. Native local mode embeds that backend and uses library
+calls/channels; network transports adapt the same services for external clients.
+Electron keeps its public desktop services and owns or adopts the Rust control
+plane. TUI startup can bootstrap a missing local Rust backend while preserving
+pre-existing process ownership. No Go runtime fallback or private Node backend
+is part of these compositions.
 
-The shared service graph and standalone launcher are implemented. The source-by-source review is complete:505 entries ported and29 explicitly
-retired. Current work is final client/build cutover evidence, platform/package
-validation and removal preparation. The14 cutover gates remain separate from
-source-review completion.
-Desktop, native local mode and TUI startup now select Rust. The historical testing-nightly checkpoint `0.169.0-nightly.202609291804`
-was published on 2026-09-29 from `9f786d734f996f487aa0894b8b5fae08aeba4ce3`.
-It includes the modern MCP cache metadata fix. Later native UI changes and
-reviewed parity fixes on main require a subsequent artifact.
-This is explicitly an incomplete-migration preview. Native launches without
-`--local` still attach to an existing service.
+The shared owners implement configuration/profiles, saved sessions/layouts,
+jobs/history, filesystem and Git operations, library/briefs, routing/usage,
+workflow/task admission, durable replacement and remote-dispatch ownership.
+MCP serves the reviewed builtin catalog plus enabled plugin tools through its
+HTTP/SSE adapters. Federation preserves peer provenance and both local and
+destination admission. Explicitly retired surfaces remain documented rather
+than being reintroduced as placeholder handlers.
 
-The original Go code remains a reference until the completion gates pass. The
-manifest is deliberately conservative: implementation/test path mappings and
-platform cutover checks must be reviewed before legacy removal. A retained
-`migrationComplete:false` health field prevents interpreting this branch as a
-completed migration.
+Persistence keeps supported stored representations and identity-loss behavior,
+with the family-specific limits in [PERSISTED_STATE_REVIEW.md](PERSISTED_STATE_REVIEW.md).
+The standard standalone selection retains the historical `workspacer-hub` state
+directory for layout, jobs/history, pacing and push identity. Explicit
+`--data-dir` selects shared hub state; custom configuration remains isolated.
+A failed or uncertain operation does not become authorization to replay it.
 
-The native Windows artifact uses the isolated Rust Preview identity/data folder.
-Release packaging now selects that artifact and a standalone Rust server bundle.
-[Release run 36609384642](https://github.com/DJTouchette/workspacer/actions/runs/36609384642)
-successfully built Electron Windows/macOS/Linux packages, all three standalone
-bundles and the Native Rust Preview Windows installer, including its install,
-backend and uninstall smoke. The live nightly tag and assets were verified against
-the candidate SHA. Native macOS/Linux installers are not part of that workflow.
-The three default Docker image builds/fresh-volume boots passed earlier CI
-checkpoints; final integrated revision checks remain required. See
-[CUTOVER_STATUS.md](CUTOVER_STATUS.md) for all 14 gates and evidence boundaries.
+`migrationComplete` is a build milestone. It is distinct from current runtime
+readiness, provider availability and `launchReady`; a completed build can still
+report an unavailable engine, disconnected provider or refused operation.
+The library does not install process-wide signal handlers or exit its host;
+the standalone launcher and embedding GUI own their respective lifetimes.
 
-Implemented migration slices include config and profile persistence, saved
-sessions/layouts, usage preferences, filesystem access, Git review, search,
-model catalogs, session projections/controls and an in-memory native client.
-Scheduled jobs now have persistence, context guards, scheduling and execution
-tests; MCP exposes a growing compatible subset through the Rust SDK's streamable
-HTTP transport. Federation has owned outbound links, qualified calls with both
-local and destination authorization, curated one-hop events, reconnection and
-peer-file loading and owner-only configuration replacement. Native Rust mode
-keeps GUI calls in memory and opens loopback adapters for external plugins and
-provider MCP clients, with a persistent host credential.
+## Release and platform evidence
 
-Further integrated slices include plugin settings/installation/supervision and
-HTTP routes, dynamic MCP plugin catalogs, worktree creation/removal, library
-assets, session credential lifecycle, and routing/usage policy. Shared Go/Rust
-routing and pacing fixtures guard policy semantics. These are substantial
-migration slices, not evidence that the corresponding entire legacy packages
-can yet be deleted. Local workflow/task admission and manager handoff coordination are now wired into
-the owned runtime. Local agent spawning opens only after its coordinator, wake
-scheduler, embedded engine and authenticated MCP facade are ready. A child-isolated
-end-to-end test exercises launch through the real WebSocket adapter, a fake
-provider process, authenticated MCP, first-message acknowledgement, progress and
-completion wakes, and process cleanup. Paired remote dispatch now has durable receiver leases and restart tests. The
-outbound execution-provider relay and its separate upstream MCP caller are
-implemented; remaining source review and final integration evidence are part
-of the pending federation and remote-worker gate.
-Tests exercise the corresponding shared fixtures plus live temporary stores,
-repositories, child processes and an embedded claudemon. This list does not
-claim full parity for any unreviewed legacy file in the inventory.
+[CUTOVER_STATUS.md](CUTOVER_STATUS.md) is the index of reviewed gate receipts and
+artifact/revision boundaries. Use those exact CI/package receipts rather than
+inferring a published version from source completion or this document. Source
+hash inventories and a successful completion checker do not execute tests.
 
-Native integration uses the default `rust-hub` Cargo feature. A GUI build can
-use `--rust-local-dir <isolated-directory>` to run the Rust services with no Go
-children. Local launching is supported when the complete Rust service graph is ready;
-unreviewed source inventory must not be interpreted as complete service parity.
-`make test-native-rust` exercises the non-GUI controller/protocol suites and the
-in-process native adapter. It is not a visual or cross-platform UI test.
+The native Windows artifact retains its isolated Rust Preview identity and data
+folder. Its installer/backend/upgrade/shutdown/uninstall scope is separate from
+interactive GUI checks. Native macOS/Linux installers are not implied by the
+existing Windows preview workflow. A fresh-volume container boot does not claim
+a cloud rollout or upgrade of every pre-existing volume.
+
+Native local integration uses the default `rust-hub` feature. The GUI defaults
+to attaching to an existing service; `--local` selects local ownership, and
+`--rust-local-dir <isolated-directory>` selects explicitly isolated ownership. `make test-native-rust` exercises the
+controller/protocol and in-process adapter contracts, not a visual UI test on
+every operating system.
 
 ## Repeatable commands
 
@@ -96,10 +69,10 @@ in-process native adapter. It is not a visual or cross-platform UI test.
 make test-hub-rust       # Rust runtime, transports, lifecycle and contract tests
 make test-hub-parity     # explicit pinned-checkout Go oracle; setup below
 make hub-migration      # inventory status and source-drift checks
-python3 scripts/hub-migration.py backlog  # pending review groups, not missing implementation counts
+python3 scripts/hub-migration.py backlog  # source-review inventory summary
 python3 scripts/hub-migration.py backlog --json --prefix services/hub/cmd/brain/
 make test-native-rust   # native protocol/controller + in-memory hub adapter
-python3 scripts/hub-migration.py ready  # completion gate, currently fails
+python3 scripts/hub-migration.py ready  # validate recorded completion evidence
 ```
 
 Historical Go commands require a separate clean checkout at the exact captured
@@ -122,7 +95,10 @@ uses an existing credential and prints its assigned address. Add `--database`,
 local services. No legacy process is launched. `Hub::start(Options::default())`
 starts without sockets. `backend::Backend` owns both Rust engines.
 
-## Earlier integration checkpoint (2026-09-28)
+## Historical integration checkpoint (2026-09-28)
+
+The following records an earlier, incomplete checkpoint. Its pending-review and
+platform limitations describe that revision, not the current ownership above.
 
 The combined crate passes `cargo check --all-targets` after wiring provider caller
 proofs, the upstream MCP bridge, and the embedded conversation/statusline producer.
@@ -136,7 +112,8 @@ leases, quiescence and machine-power policy, persistent push subscriptions and
 HTTP/PWA assets. Native controller/protocol/embedding tests and a full GUI
 feature compile have passed at earlier checkpoints; Windows process ownership
 had compile-only coverage locally at that checkpoint. Subsequent Windows CI
-and installer smoke passed; the testing nightly publication is described above.
+and installer smoke passed at later checkpoints; see the receipt index in
+[CUTOVER_STATUS.md](CUTOVER_STATUS.md) for their exact revisions.
 
 The inventory remains deliberately conservative: unreviewed source rows and
 cutover gates are pending even when a Rust module implements some behavior.
@@ -158,17 +135,19 @@ for layout, scheduled jobs/history, pacing preferences and push identity. Explic
 The native preview continues to use its separate data directory.
 
 
-## Retained assets and future source removal
+## Retained assets and provenance
 
 Shipped trusted plugin examples now live under `plugins/examples`; installed
-bundle paths remain unchanged. The original Go-tree copies are reference bytes,
-not the packaging source. `make check-retained-plugin-assets` checks exact hashes
+bundle paths remain unchanged. Original Go paths in provenance identify historical
+bytes, not packaging inputs or required current-checkout files.
+`make check-retained-plugin-assets` checks exact hashes
 and the documented test-import/README relocation exceptions. Public Electron
 JavaScript services and optional Node plugin sidecars remain live product owners.
 
 The TS-only routing-preferences sample lives under
-`apps/desktop/tests/fixtures/routing-preferences-view.json`; its original fixture
-is retained for provenance. See [the deletion preparation map](LEGACY_DELETION_PREPARATION.md)
-and [persisted-state evidence](PERSISTED_STATE_REVIEW.md). Neither source review,
-portable capture validation nor a successful historical oracle authorizes source
-deletion or certifies the remaining cutover gates.
+`apps/desktop/tests/fixtures/routing-preferences-view.json`; its original source
+path/hash remain recorded as provenance. See [the deletion preparation map](LEGACY_DELETION_PREPARATION.md)
+and [persisted-state evidence](PERSISTED_STATE_REVIEW.md). The preparation map
+preserves the reviewed removal sequence. Portable capture
+validation and optional historical oracle execution have narrower scopes than
+the completed runtime/platform receipts.

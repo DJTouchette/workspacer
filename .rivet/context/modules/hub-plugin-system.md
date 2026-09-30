@@ -1,15 +1,32 @@
 ---
 title: Hub Plugin System
-tags: [hub, go, plugins, manifest, trusted-code, sidecar]
+tags: [hub, rust, plugins, manifest, trusted-code, sidecar]
 related_paths:
-  - "services/hub/internal/plugin/*.go"
-  - "services/hub/internal/bus/*.go"
-  - "services/hub/cmd/mcp/plugins.go"
+  - "services/hub-rs/src/plugins/mod.rs"
+  - "services/hub-rs/src/plugins/manifest.rs"
+  - "services/hub-rs/src/plugins/install.rs"
+  - "services/hub-rs/src/plugins/settings.rs"
+  - "services/hub-rs/src/plugins/supervisor.rs"
+  - "services/hub-rs/src/mcp.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
 # Hub Plugin System
+
+## Current Rust ownership
+
+Current plugin loading/identity lives in `services/hub-rs/src/plugins/mod.rs`;
+`manifest.rs`, `install.rs`, `settings.rs` and `supervisor.rs` own the named
+subsystems. Dynamic MCP exposure is in `services/hub-rs/src/mcp.rs`. Retained
+examples live in `plugins/examples`, and public docs in `docs/plugins`.
+The trust model below remains current; the `.go` module crosswalk under Key
+modules describes the retained reference. Optional Node/Go plugin sidecars
+remain supported external programs, not private backend companions.
+
+Historical execution, when deliberately requested, uses the separate pinned
+checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
+This crosswalk does not certify platform or release gates.
 
 Plugins are trusted local extensions. Enabling one trusts its sidecar/install
 code with the Workspacer user's machine access. Workspacer does not apply an OS

@@ -1,14 +1,31 @@
 ---
 title: Hub Web Push (VAPID + agent-needs-you PWA alerts)
-tags: [hub, go, web-push, vapid, mobile-pwa, notifications]
+tags: [hub, rust, web-push, vapid, mobile-pwa, notifications]
 related_paths:
-  - "services/hub/internal/push/*.go"
-  - "services/hub/cmd/hub/sw.js"
+  - "services/hub-rs/src/services/push/mod.rs"
+  - "services/hub-rs/src/services/push/crypto.rs"
+  - "services/hub-rs/src/services/push/watch.rs"
+  - "services/hub-rs/src/services/push/tests.rs"
+  - "services/hub-rs/assets/web/sw.js"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
 # Hub Web Push
+
+## Current Rust ownership
+
+Current identity/subscription ownership and RPCs are in
+`services/hub-rs/src/services/push/mod.rs`; `crypto.rs` and `watch.rs` own
+validation/encryption and observed transition handling. The shipping service
+worker is `services/hub-rs/assets/web/sw.js`. Run Rust library tests filtered
+by `services::push` for local contract coverage; they do not establish delivery
+through a real phone service. The Go paths and test command below are retained
+historical pointers, not current source ownership or build requirements.
+
+Historical execution, when deliberately requested, uses the separate pinned
+checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
+This crosswalk does not certify platform or release gates.
 
 ## Ownership and delivery
 

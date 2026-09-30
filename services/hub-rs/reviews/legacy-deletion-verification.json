@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "kind": "verified-tracked-legacy-deletion",
+  "recordedAtUTC": "2026-09-30T06:25:51.938792+00:00",
+  "verifiedRevision": "96e2568a6f3227f41072e995dcee743d0c4c0363",
+  "removalCommit": "e9d4f61ca1110cc61c674fe4613b57ad7be28f0e",
+  "remainingTrackedLegacyFiles": 0,
+  "removedTrackedFiles": 572,
+  "preservedSourceRecords": 534,
+  "ported": 505,
+  "retired": 29,
+  "pendingSourceReviews": 0,
+  "historicalReferenceCommit": "0c077b82e62965ce51f85b2d2a4c0f1aec872fea",
+  "receipts": [
+    {
+      "run": 36676871773,
+      "sha": "96e2568a6f3227f41072e995dcee743d0c4c0363",
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "desktop",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886158",
+          "conclusion": "success"
+        },
+        {
+          "name": "hub-latency",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886322",
+          "conclusion": "success"
+        },
+        {
+          "name": "claudemon",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886378",
+          "conclusion": "success"
+        },
+        {
+          "name": "capability-parameters",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886380",
+          "conclusion": "success"
+        },
+        {
+          "name": "tui",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886413",
+          "conclusion": "success"
+        },
+        {
+          "name": "containment-windows",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886428",
+          "conclusion": "success"
+        },
+        {
+          "name": "hub",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886444",
+          "conclusion": "success"
+        },
+        {
+          "name": "conflict-markers",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886453",
+          "conclusion": "success"
+        },
+        {
+          "name": "release-check-runner",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871773/job/109763886469",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "run": 36676871786,
+      "sha": "96e2568a6f3227f41072e995dcee743d0c4c0363",
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871786",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "native (macos-latest)",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871786/job/109763727188",
+          "conclusion": "success"
+        },
+        {
+          "name": "native (ubuntu-latest)",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871786/job/109763727223",
+          "conclusion": "success"
+        },
+        {
+          "name": "native (windows-latest)",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871786/job/109763727311",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "run": 36676871772,
+      "sha": "96e2568a6f3227f41072e995dcee743d0c4c0363",
+      "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871772",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "images-and-owned-boot",
+          "url": "https://github.com/DJTouchette/workspacer/actions/runs/36676871772/job/109763633808",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "scope": [
+    "Actual post-removal Linux/backend/desktop/browser/TUI/scanner and Windows backend CI passed.",
+    "All three native clients and actual container images/owned boots passed without the retired source tree.",
+    "The first post-removal run exposed two test-reference assumptions;96e2568a fixes them with explicit sealed provenance and preserved active loaders/case floors.",
+    "Original hashes and captures remain;32 active non-Go assets have retained owners and6 historical-only inputs remain in the pinned checkout.",
+    "Ignored local build outputs were not deleted; they are untracked and are not shipped runtime inputs.",
+    "Publication of the final completion-indicator revision is separate from these deletion receipts."
+  ],
+  "sourceEvidence": [
+    "services/hub-rs/reviews/cutover-verification.json",
+    "services/hub-rs/reviews/legacy-asset-disposition.json",
+    "contracts/retired/block-loader-provenance.json",
+    "tools/capability-source-check/go-reference-provenance.json"
+  ]
+}

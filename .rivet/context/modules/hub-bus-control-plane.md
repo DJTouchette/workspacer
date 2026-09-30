@@ -2,16 +2,30 @@
 title: Hub event bus and control plane
 tags: [hub, bus, rpc, authentication, provenance, plugins, federation]
 related_paths:
-  - "services/hub/internal/bus/bus.go"
-  - "services/hub/internal/bus/rpc.go"
-  - "services/hub/internal/authtoken/authtoken.go"
-  - "services/hub/internal/capspec/capspec.go"
+  - "services/hub-rs/src/runtime.rs"
+  - "services/hub-rs/src/auth.rs"
+  - "services/hub-rs/src/protocol.rs"
+  - "services/hub-rs/src/server/policy.rs"
   - "apps/desktop/src/main/services/hubCapabilities.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
 # Hub event bus and control plane
+
+## Current Rust ownership
+
+`services/hub-rs/src/runtime.rs` owns the bus actor and provider routing;
+`auth.rs` owns persisted identities and authorization, `protocol.rs` owns wire
+frames/topic matching, and `server/policy.rs` owns HTTP/WebSocket admission.
+The retained policy below still applies. Go package/symbol spellings are
+historical cross-references, not current runtime dependencies. Actual owner
+coverage lives in `services/hub-rs/tests/auth.rs`, `bus_remaining.rs` and the
+runtime tests; declaration metadata alone does not prove registration.
+
+Historical execution, when deliberately requested, uses the separate pinned
+checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
+This crosswalk does not certify platform or release gates.
 
 ## Current trust model
 

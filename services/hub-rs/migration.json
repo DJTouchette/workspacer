@@ -43,8 +43,13 @@
       "status": "verified"
     },
     "legacy-deletion": {
-      "evidence": [],
-      "status": "pending"
+      "evidence": [
+        "services/hub-rs/reviews/legacy-deletion-verification.json",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36676871773",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36676871786",
+        "https://github.com/DJTouchette/workspacer/actions/runs/36676871772"
+      ],
+      "status": "verified"
     },
     "linux-package": {
       "evidence": [

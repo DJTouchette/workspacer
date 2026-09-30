@@ -1,22 +1,36 @@
 ---
 title: "Hub Jobs: recurring/one-off tasks (spawn an agent, call a capability, run shell)"
-tags: [hub, go, jobs, scheduler, automation, security-invariant, desktop]
+tags: [hub, rust, jobs, scheduler, automation, security-invariant, desktop]
 related_paths:
-  - "services/hub/internal/jobs/jobs.go"
-  - "services/hub/internal/jobs/scheduler.go"
-  - "services/hub/internal/jobs/jobs_test.go"
-  - "services/hub/cmd/hub/main.go"
+  - "services/hub-rs/src/services/jobs.rs"
+  - "services/hub-rs/src/services/jobs/reference_tests.rs"
+  - "services/hub-rs/src/services/jobs/docs_tests.rs"
+  - "services/hub-rs/src/cli/admin.rs"
+  - "services/hub-rs/src/mcp.rs"
+  - "services/hub-rs/tests/jobs.rs"
   - "apps/desktop/src/renderer/src/components/settings/JobsSection.tsx"
   - "apps/desktop/src/main/shared/ipcTypes.ts"
   - "apps/desktop/src/renderer/src/backend/webBackend.ts"
   - "landing/docs.html"
-  - "services/hub/cmd/workspacer/jobscmd.go"
-  - "services/hub/cmd/mcp/main.go"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
 # Hub Jobs: scheduled agent, capability, and shell actions
+
+## Current Rust ownership
+
+The current scheduler/spec/history/execution owner is
+`services/hub-rs/src/services/jobs.rs` and its submodules. CLI jobs use
+`src/cli/admin.rs`; MCP is in `src/mcp.rs`. Run the Rust `--test jobs` target
+and the owning library tests. `services/hub-rs/JOBS_MIGRATION.md` records intentional differences
+and real restart/failure evidence. The policy descriptions below are retained;
+Go files, helper names and Go test/harness commands are historical reference
+only, not a dependency of scheduled work or current validation.
+
+Historical execution, when deliberately requested, uses the separate pinned
+checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
+This crosswalk does not certify platform or release gates.
 
 ## Ownership and entry points
 
@@ -147,7 +161,7 @@ identity or a permission field.
 constraint, not an OS boundary preventing an agent with host shell access from
 editing the spec or invoking the owner CLI.
 
-## CLI and validation
+## Retained CLI semantics and historical Go validation
 
 `services/hub/cmd/workspacer/jobscmd.go` implements list, add, show, history,
 run, approve, enable, disable, and remove. `add -f <file>|-` validates a JSON

@@ -3,13 +3,24 @@
 ## Current checkpoint — 2026-09-30
 
 The source ledger contains **505 ported, 29 retired and zero pending** entries.
-The13 non-deletion cutover gates are verified against the scoped execution
-receipts in [cutover-verification.json](reviews/cutover-verification.json).
-The tracked Go reference tree has been removed. **The legacy-deletion gate
-remains pending until post-removal CI is reviewed.** Runtime completion remains
-false until that final gate is closed.
+**All 14 cutover gates are verified.** The tracked Go backend has been removed;
+original source hashes, captured fixtures and scoped evidence remain.
 
-The published nightly is **0.169.0-nightly.202609300525**, from
+[Non-deletion receipts](reviews/cutover-verification.json) cover the consumer,
+platform and package contracts. [Deletion receipts](reviews/legacy-deletion-verification.json)
+record successful post-removal primary CI, all three native clients and container
+validation at `96e2568a`. The scanner and corpus guards preserve sealed historical
+identities while continuing to require every active Rust/TypeScript loader.
+
+`python3 scripts/hub-migration.py ready` passes. The shared build milestone now
+reports `migrationComplete:true`; live readiness and provider availability remain
+separate. Completion-indicator changes still go through normal CI before release.
+A published artifact's source revision is identified by its release tag and notes,
+not inferred from the current source tree.
+
+## Verified artifact and integration checkpoints
+
+The earlier verified published nightly checkpoint is **0.169.0-nightly.202609300525**, from
 `de2687fc2db35d1d3ea25fff3f89d18bfb4806a8`.
 [Release36673333608](https://github.com/DJTouchette/workspacer/actions/runs/36673333608)
 passed all three package legs, modern/legacy MCP catalogs, real packaged Electron
@@ -26,7 +37,7 @@ reopen/recovery and broker publication/refusal now have executing Rust/browser
 evidence. Native tests, TUI reconnect/owned shutdown and the published package
 receipts retain their exact source revisions and claim limits.
 
-Original source hashes and all534 review records remain. The optional historical
+Original source hashes and all 534 review records remain. The optional historical
 oracle requires the sealed pinned checkout; it does not fall back to current
 Go files. [Non-Go disposition](reviews/legacy-asset-disposition.json) records
 32 retained active files and six historical-only inputs. Tracked removal leaves

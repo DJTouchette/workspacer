@@ -824,5 +824,5 @@
       ]
     }
   },
-  "legacyDeletion": "pending; no deletion certified by this receipt"
+  "legacyDeletion": "Verified separately in services/hub-rs/reviews/legacy-deletion-verification.json after actual source removal; this file preserves the earlier non-deletion receipts."
 }

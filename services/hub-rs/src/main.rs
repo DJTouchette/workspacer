@@ -3,7 +3,9 @@ use std::{net::SocketAddr, path::PathBuf};
 use workspacer_hub::{Hub, Options};
 
 #[derive(Parser)]
-#[command(about = "Experimental Rust hub core; not yet a replacement for workspacer serve")]
+#[command(
+    about = "Low-level Rust hub control plane; use workspacer serve for the full standalone launcher"
+)]
 struct Args {
     #[arg(long, default_value = "127.0.0.1:7895")]
     listen: SocketAddr,
@@ -154,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
     let address = owner.handle().ready().await?.expect("listener requested");
     println!(
         "{}",
-        serde_json::json!({"service":"rust-hub-core", "address": address.to_string(), "migrationComplete":false})
+        serde_json::json!({"service":"rust-hub-core", "address": address.to_string(), "migrationComplete":workspacer_hub::MIGRATION_COMPLETE})
     );
     let mut status = owner.handle().status();
     let ended = async {

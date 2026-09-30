@@ -1,14 +1,31 @@
 ---
 title: Hub Shared Capability and Event Vocabulary
-tags: [hub, go, capabilities, event-bus, compatibility]
+tags: [hub, rust, capabilities, event-bus, compatibility]
 related_paths:
-  - "services/hub/internal/capspec/*.go"
-  - "services/hub/internal/event/*.go"
+  - "services/hub-rs/src/auth.rs"
+  - "services/hub-rs/src/protocol.rs"
+  - "services/hub-rs/assets/hub-vocabulary.json"
+  - "contracts/backend-capabilities.json"
+  - "tools/capability-source-check/src/lib.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
 # Hub Shared Capability and Event Vocabulary
+
+## Current Rust ownership
+
+`services/hub-rs/src/auth.rs` consumes the retained vocabulary and enforces
+identity/provenance; `protocol.rs::matches` supplies topic matching. Portable
+registries live in `services/hub-rs/assets/hub-vocabulary.json` and
+`contracts/backend-capabilities.json`. The Rust capability source checker
+compares current bindings with sealed reference provenance. The policy below
+remains the contract; `capspec`, `event.Matches` and `EventGrants` spellings name
+the historical Go implementation. They do not require Go files at runtime.
+
+Historical execution, when deliberately requested, uses the separate pinned
+checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
+This crosswalk does not certify platform or release gates.
 
 `capspec` and `event` remain dependency-free shared vocabularies between the bus
 and plugin loader. Legacy caller capability/path scopes and emit/consume declarations are

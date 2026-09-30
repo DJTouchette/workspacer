@@ -1,17 +1,36 @@
 ---
 title: Hub Process Supervision & Death-Coupling (supervisor, parentwatch, jobobject)
-tags: [hub, go, process-lifecycle, supervisor, shutdown, cross-platform]
+tags: [hub, rust, process-lifecycle, supervisor, shutdown, cross-platform]
 related_paths:
-  - "services/hub/internal/supervisor/*.go"
-  - "services/hub/internal/parentwatch/*.go"
-  - "services/hub/internal/jobobject/*.go"
+  - "services/hub-rs/src/plugins/supervisor.rs"
+  - "services/hub-rs/src/plugins/windows_job.rs"
+  - "services/hub-rs/src/services/owned_process.rs"
+  - "services/hub-rs/src/cli/parent.rs"
+  - "services/hub-rs/src/backend.rs"
+  - "apps/desktop/src/main/lib/daemonUtils.ts"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
 # Hub process supervision and parent death
 
-## Ownership
+## Current Rust ownership
+
+Plugin sidecars use `services/hub-rs/src/plugins/supervisor.rs` and
+`windows_job.rs`; bounded command execution uses `services/owned_process.rs`.
+`cli/parent.rs` owns declared-parent/stdin monitoring, and `backend.rs` owns
+embedded shutdown. Standalone services no longer run a sibling Go brain child.
+Electron's `daemonUtils.ts` remains a separate real process owner. Current
+checks include Rust `--test plugin_manager`, `--test backend_owner` and CLI
+ownership tests. Use `make build-cli` from the repo root to rebuild the current
+executable. The Go packages, restart-loop details and commands below are the
+historical implementation; consult the Rust owners for exact current limits.
+
+Historical execution, when deliberately requested, uses the separate pinned
+checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
+This crosswalk does not certify platform or release gates.
+
+## Historical Go ownership
 
 `services/hub/internal/supervisor` manages a direct child process for the
 hub: plugin sidecars and, in appropriate launch modes, a brain provider.
@@ -82,7 +101,7 @@ cleanup early, not harmlessly disable the mechanism. Creation/configuration/
 assignment can fail and return an error; callers log and continue. Keep that
 limitation visible rather than claiming the job is always installed.
 
-## Development restarts and embedded assets
+## Historical rebuild notes and retained asset lifecycle
 
 `mobile.html`, `remote.html`, service-worker and PWA assets are embedded in the
 hub binary. Rebuilding source without replacing/restarting the actual listener
@@ -96,7 +115,7 @@ is reconstructed from current configuration, so it need not be byte-identical
 to the old launch. Check health and served content afterwards, rather than
 relying on a historical three-second measurement.
 
-## Verification
+## Historical Go verification
 
 Run `go test ./internal/supervisor` and the launcher child tests from
 `services/hub`. The parentwatch/jobobject packages have platform-specific source

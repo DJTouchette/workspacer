@@ -1,7 +1,6 @@
 //! Pure Rust control plane shared by standalone and embedded hosts.
 //!
-//! This migration crate is not yet a replacement for the production Go stack.
-//! See MIGRATION.md for the compatibility and deletion gates.
+//! See MIGRATION.md for retained compatibility and cutover evidence.
 mod admission;
 pub mod auth;
 pub mod backend;
@@ -26,3 +25,6 @@ pub mod provider_relay;
 pub mod test_support;
 
 pub(crate) mod state_loss;
+
+/// Build-level cutover milestone; live readiness is reported separately.
+pub const MIGRATION_COMPLETE: bool = true;

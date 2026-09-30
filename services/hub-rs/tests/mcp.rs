@@ -921,6 +921,15 @@ async fn mcp_calls_the_in_memory_hub_and_revalidates_each_http_request() {
     )
     .await;
     assert_eq!(denied["result"]["isError"], true);
+    let health = client
+        .get(format!("http://{address}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+    let health: Value = health.json().await.unwrap();
+    assert_eq!(health["migrationComplete"], true);
+    assert_eq!(health["implementation"], "rust");
     auth::revoke(&tokens, &view.token).unwrap();
     assert_eq!(
         rpc(&client, &address, &view.token, "tools/list", json!({}))

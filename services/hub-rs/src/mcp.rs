@@ -774,7 +774,7 @@ pub(crate) async fn serve(
     let health=Router::new().route("/health",axum::routing::get(move ||{let hub=hub.clone();let upstream=upstream.clone();let plugins=health_catalog.clone();async move{
         let launch_ready=hub.health().await.ok().is_some_and(|health|health["launchReady"]==true);
         let hub_bus_url=if let Some(upstream)=&upstream{Some(upstream.url().to_owned())}else{match *hub.status().borrow(){crate::Status::Ready{address:Some(address),..}=>{let address=crate::net_address::dial_addr(address);Some(format!("ws://{address}/bus"))},_=>None}};
-        axum::Json(json!({"status":"ok","service":"workspacer-mcp-facade","implementation":"rust","hubConnected":upstream.as_ref().map(|upstream|upstream.connected()).unwrap_or_else(||matches!(*hub.status().borrow(),crate::Status::Ready {..})),"pluginCatalogReady":plugins.ready(),"launchReady":launch_ready,"listenAddr":address.to_string(),"hubBusUrl":hub_bus_url,"hubTransport":if upstream.is_some(){"websocket"}else{"embedded"},"hubUrl":hub_bus_url.as_deref().unwrap_or("in-process"),"migrationComplete":false})).into_response()
+        axum::Json(json!({"status":"ok","service":"workspacer-mcp-facade","implementation":"rust","hubConnected":upstream.as_ref().map(|upstream|upstream.connected()).unwrap_or_else(||matches!(*hub.status().borrow(),crate::Status::Ready {..})),"pluginCatalogReady":plugins.ready(),"launchReady":launch_ready,"listenAddr":address.to_string(),"hubBusUrl":hub_bus_url,"hubTransport":if upstream.is_some(){"websocket"}else{"embedded"},"hubUrl":hub_bus_url.as_deref().unwrap_or("in-process"),"migrationComplete":crate::MIGRATION_COMPLETE})).into_response()
     }}));
     let router = router.merge(health).layer(middleware::from_fn_with_state(
         policy,

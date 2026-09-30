@@ -1,13 +1,13 @@
 ---
 title: Hub Federation (hub-of-hubs): peer links, stamped events, qualified calls
-tags: [hub, go, federation, event-bus, remote, multi-machine, security]
+tags: [hub, rust, federation, event-bus, remote, multi-machine, security]
 related_paths:
-  - "services/hub/internal/federation/federation.go"
-  - "services/hub/internal/federation/federation_test.go"
-  - "services/hub/internal/busclient/client.go"
-  - "services/hub/internal/busclient/subscribe_test.go"
-  - "services/hub/internal/bus/rpc.go"
-  - "services/hub/cmd/hub/main.go"
+  - "services/hub-rs/src/federation.rs"
+  - "services/hub-rs/src/federation/config.rs"
+  - "services/hub-rs/src/client.rs"
+  - "services/hub-rs/src/runtime/federation_routing_tests.rs"
+  - "services/hub-rs/tests/federation.rs"
+  - "services/hub-rs/assets/web/mobile.html"
   - "apps/desktop/src/main/services/federationBridge.ts"
   - "apps/desktop/src/main/ipcFederationRouting.test.ts"
   - "apps/desktop/src/main/lib/snapshotLiveness.ts"
@@ -15,14 +15,26 @@ related_paths:
   - "apps/desktop/src/renderer/src/components/HubChip.tsx"
   - "apps/desktop/src/renderer/src/backend/webBackend.ts"
   - "apps/tui/src/federation.rs"
-  - "services/hub/cmd/hub/mobile.html"
-  - "services/hub/scripts/federation-harness.sh"
   - "docs/hub-federation.md"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-09-30
 ---
 
 # Hub federation: peer events and qualified calls
+
+## Current Rust ownership
+
+Peer links/configuration now live in `services/hub-rs/src/federation.rs` and
+`src/federation/config.rs`; `src/client.rs` supplies transport and the runtime
+owns qualified-call admission. Shipping mobile assets live in
+`services/hub-rs/assets/web`. Desktop/TUI owners listed above remain active.
+Run the Rust `--test federation` target for current isolated peer behavior.
+Go source names and the old federation harness below describe the historical
+implementation, not a current launch recipe.
+
+Historical execution, when deliberately requested, uses the separate pinned
+checkout described in [scripts/reference/README.md](../../../scripts/reference/README.md).
+This crosswalk does not certify platform or release gates.
 
 ## One local connection, peer provenance
 
