@@ -33,7 +33,7 @@ async fn shipped_editor_pane_reads_ambient_paths_but_cannot_claim_host_authority
     let outside = tempfile::tempdir().unwrap();
     let plugin_dir = tempfile::tempdir().unwrap();
     // This is the shipped non-Go editor asset, not a synthetic permissive manifest.
-    let manifest_bytes = include_bytes!("../../hub/examples/editor/plugin.json");
+    let manifest_bytes = include_bytes!("../../../plugins/examples/editor/plugin.json");
     std::fs::write(plugin_dir.path().join("plugin.json"), manifest_bytes).unwrap();
     let manifest = Manifest::load(&plugin_dir.path().join("plugin.json")).unwrap();
     let mut options = Options::default();

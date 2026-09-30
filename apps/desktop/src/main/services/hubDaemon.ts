@@ -429,7 +429,7 @@ export function hubBinaryPath(): string {
 /** Bundled example plugins, copied into the user dir on first run. */
 function bundledExamplesDir(): string {
   if (process.env.ELECTRON_DEV || !app.isPackaged) {
-    return path.join(app.getAppPath(), '..', '..', 'services', 'hub', 'examples');
+    return path.join(app.getAppPath(), '..', '..', 'plugins', 'examples');
   }
   return path.join(process.resourcesPath, 'hub', 'examples');
 }

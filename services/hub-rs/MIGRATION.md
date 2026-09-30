@@ -26,9 +26,10 @@ processes because they are external integrations.
 
 ## Sequence and current state
 
-The shared service graph and standalone launcher are implemented. The current
-work is client/build cutover, running preserved end-to-end assertions against
-Rust, reviewing source-by-source replacement evidence, and platform validation.
+The shared service graph and standalone launcher are implemented. The source-by-source review is complete:505 entries ported and29 explicitly
+retired. Current work is final client/build cutover evidence, platform/package
+validation and removal preparation. The14 cutover gates remain separate from
+source-review completion.
 Desktop, native local mode and TUI startup now select Rust. The current testing nightly, `0.169.0-nightly.202609291804`,
 was published on 2026-09-29 from `9f786d734f996f487aa0894b8b5fae08aeba4ce3`.
 It includes the native UI changes and modern MCP cache metadata fix. Later

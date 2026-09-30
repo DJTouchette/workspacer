@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Editor</title>
+  <style>
+    /* Colors are workspacer theme tokens (--wks-*), injected into plugin webviews
+       by the host's theme bridge so the editor matches the app theme live. The
+       fallbacks are a dark default so it still looks right served standalone. */
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex; flex-direction: column;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: var(--wks-bg-base, #1e1e1e); color: var(--wks-text-primary, #d4d4d4);
+    }
+    .main { flex: 1; display: flex; min-height: 0; }
+    /* The body is mono because the body is mostly an editor. The sidebar is
+       chrome, not code, so it takes the app's sans the way every other tree in
+       the app does — the file bar and status bar stay mono, they are status. */
+    .side { width: 280px; flex-shrink: 0; display: flex; flex-direction: column;
+            background: var(--wks-bg-surface, #1b1b1b);
+            font-family: var(--wks-font-sans, ui-sans-serif, system-ui, sans-serif); }
+    .side.collapsed { display: none; }
+    /* Drag handle between the sidebar and the editor. */
+    .resizer { flex: none; width: 4px; cursor: col-resize; background: var(--wks-border, #333); }
+    .resizer:hover, .resizer.dragging { background: var(--wks-accent, #0e639c); }
+    .side.collapsed + .resizer { display: none; }
+    .iconbtn { background: transparent; border: 0; color: var(--wks-text-muted, #888); padding: 2px; display: inline-flex; align-items: center; cursor: pointer; }
+    .iconbtn:hover { color: var(--wks-text-primary, #fff); }
+    .tabs { display: flex; border-bottom: 1px solid var(--wks-border, #333); }
+    .tabs button { flex: 1; border-radius: 0; border: 0; background: var(--wks-bg-surface, #1b1b1b); color: var(--wks-text-muted, #888); padding: 6px; cursor: pointer; }
+    .tabs button.active { color: var(--wks-text-primary, #fff); background: var(--wks-bg-header, #252526); box-shadow: inset 0 -2px 0 var(--wks-accent, #0e639c); }
+    .toolbar { display: flex; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); }
+    .toolbar button { background: var(--wks-bg-raised, #2d2d2d); border-color: var(--wks-border, #3c3c3c); color: var(--wks-text-primary, #d4d4d4); padding: 1px 8px; }
+    .pane { flex: 1; overflow: auto; }
+    #tree, #searchResults { padding: 6px 0; user-select: none; }
+    /* Row shape mirrors the review pane's tree: inset rounded rows, a tinted
+       accent selection rather than a solid fill, and 80ms hovers. Fallback
+       literals stay in this file — a plugin webview is not the renderer, the
+       host injects --wks-* AFTER first paint, and an unstyled flash without
+       them is worse than a value that drifts. */
+    .row { display: flex; align-items: center; gap: 7px; height: 26px; margin: 0 4px;
+           border-radius: var(--wks-radius-sm, 5px); padding: 0 8px; cursor: pointer;
+           white-space: nowrap; overflow: hidden; font-size: 0.72rem;
+           transition: background 80ms ease, color 80ms ease; }
+    .row.dir { height: 24px; }
+    .row.dir .lbl { font-weight: 600; }
+    .row:hover { background: var(--wks-bg-hover, #2a2d2e); }
+    .row.active { background: color-mix(in srgb, var(--wks-accent-text, #4a9eff) 12%, transparent);
+                  color: var(--wks-accent-text, #4a9eff); }
+    .row .twist { flex: none; width: 11px; height: 11px; display: inline-flex;
+                  color: var(--wks-text-faint, #666); transition: transform 120ms ease; }
+    .row .twist.open { transform: rotate(90deg); }
+    .row .ficon { flex: none; display: inline-flex; opacity: 0.85; }
+    /* svg() emits a fixed 14px icon; the tree wants the review pane's 11/13. */
+    .row .twist .icon { width: 11px; height: 11px; }
+    .row .ficon .icon { width: 13px; height: 13px; }
+    .row .lbl { overflow: hidden; text-overflow: ellipsis; }
+    .icon { display: block; }
+    /* Themed scrollbars (Chromium/Electron). */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--wks-scrollbar-thumb, #424242); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--wks-scrollbar-hover, #4f4f4f); border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-corner { background: transparent; }
+    #search { padding: 6px; border-bottom: 1px solid var(--wks-border-subtle, #2a2a2a); }
+    #search input { width: 100%; font: inherit; background: var(--wks-bg-input, #3c3c3c); color: var(--wks-text-primary, #fff); border: 1px solid var(--wks-border-input, #555); border-radius: var(--wks-radius-sm, 5px); padding: 4px 6px;
+                    transition: border-color 100ms ease, box-shadow 100ms ease; }
+    /* The browser's default focus ring is a hard white outline; the app's is an
+       accent border with a soft ring (cf. .wks-review-commit-input). */
+    #search input:focus { outline: none; border-color: var(--wks-accent-text, #4a9eff);
+                          box-shadow: 0 0 0 2px color-mix(in srgb, var(--wks-accent-text, #4a9eff) 22%, transparent); }
+    /* Search hits are the same row vocabulary, so they get the same shape. */
+    .sfile { display: flex; align-items: center; gap: 7px; height: 24px; margin: 6px 4px 0;
+             border-radius: var(--wks-radius-sm, 5px); padding: 0 8px; cursor: pointer;
+             font-size: 0.72rem; font-weight: 600; color: var(--wks-text-secondary, #bbb);
+             white-space: nowrap; overflow: hidden; transition: background 80ms ease; }
+    .sfile .icon { width: 13px; height: 13px; flex: none; }
+    .sfile .lbl { overflow: hidden; text-overflow: ellipsis; }
+    .toolbar button { display: inline-flex; align-items: center; gap: 4px; }
+    .sfile:hover { background: var(--wks-bg-hover, #2a2d2e); }
+    .smatch { height: 22px; display: flex; align-items: center; gap: 8px; margin: 0 4px;
+              border-radius: var(--wks-radius-sm, 5px); padding: 0 8px 0 26px; cursor: pointer;
+              color: var(--wks-text-tertiary, #999); font-size: 0.72rem;
+              white-space: nowrap; overflow: hidden; transition: background 80ms ease; }
+    .smatch:hover { background: var(--wks-bg-hover, #2a2d2e); }
+    .smatch .ln { flex: none; color: var(--wks-text-faint, #666);
+                  font-family: var(--wks-font-mono, monospace); font-variant-numeric: tabular-nums; }
+    /* text-overflow does not apply to a flex container's own text, so the line
+       needs its own block to ellipsize in — without this it clips mid-word. */
+    .smatch .mtxt { overflow: hidden; text-overflow: ellipsis; }
+    .editor { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .filebar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--wks-border, #333); background: var(--wks-bg-header, #252526); font-size: 12px; }
+    .filebar .name { color: var(--wks-text-primary, #d4d4d4); }
+    .filebar .dirty { color: var(--wks-warning, #e2c08d); }
+    .filebar .spacer { flex: 1; }
+    button { font: inherit; font-size: 12px; padding: 2px 10px; border-radius: var(--wks-radius-sm, 4px); border: 1px solid var(--wks-border, #3c3c3c); background: var(--wks-accent-bg, #0e639c); color: var(--wks-accent-text, #fff); cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .banner { padding: 4px 10px; background: var(--wks-bg-raised, #4a3a1a); color: var(--wks-warning, #e2c08d); border-left: 2px solid var(--wks-warning, #e2c08d); font-size: 12px; display: none; }
+    .banner.show { display: flex; gap: 8px; align-items: center; }
+    .banner button { padding: 0 8px; }
+    .editArea { flex: 1; min-height: 0; overflow: hidden; }
+    .cm-editor { height: 100%; }
+    .cm-editor.cm-focused { outline: none; }
+    .cm-scroller { overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .empty { margin: 16px; color: var(--wks-text-muted, #777); }
+    footer { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-top: 1px solid var(--wks-border, #333); background: var(--wks-bg-header, #252526); font-size: 11px; color: var(--wks-text-muted, #888); }
+    footer .spacer { flex: 1; }
+    footer #status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    footer #status.bad { color: var(--wks-error, #cf6f6f); }
+    footer #status.ok { color: var(--wks-success, #6fcf7f); }
+    footer #conn { flex: none; color: var(--wks-text-faint, #666); }
+  </style>
+</head>
+<body>
+  <div class="main">
+    <div class="side" id="side">
+      <div class="tabs">
+        <button id="tabFiles" class="active">Files</button>
+        <button id="tabSearch">Search</button>
+      </div>
+      <div id="filesView" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div class="toolbar">
+          <button id="newFile" title="New file">New</button>
+          <button id="refresh" title="Refresh"></button>
+        </div>
+        <div class="pane"><div id="tree"></div></div>
+      </div>
+      <div id="searchView" style="display:none;flex-direction:column;flex:1;min-height:0;">
+        <div id="search"><input id="searchInput" placeholder="Find in project… (Enter)" /></div>
+        <div class="pane"><div id="searchResults"></div></div>
+      </div>
+    </div>
+    <div class="resizer" id="resizer" title="Drag to resize"></div>
+    <div class="editor">
+      <div class="filebar">
+        <button id="toggleSide" class="iconbtn" title="Toggle sidebar (⌘/Ctrl+B)"></button>
+        <span class="name" id="filename">No file open</span>
+        <span class="dirty" id="dirty"></span>
+        <span class="spacer"></span>
+        <button id="save" disabled>Save (⌘/Ctrl+S)</button>
+      </div>
+      <div class="banner" id="banner">
+        <span>This file changed on disk.</span>
+        <button id="reload">Reload</button>
+        <button id="dismiss">Keep mine</button>
+      </div>
+      <div class="editArea" id="cmHost"></div>
+    </div>
+  </div>
+  <footer>
+    <span id="status"></span>
+    <span class="spacer"></span>
+    <span id="conn">connecting…</span>
+  </footer>
+
+  <script src="cm.bundle.js"></script>
+  <script>
+    // ── bus client (calls + events) ─────────────────────────────────────────────
+    const params = new URLSearchParams(location.search);
+    const token = params.get('busToken') || '';
+    const cwd = params.get('cwd') || '';
+    const fileParam = params.get('file') || ''; // open this file on connect, if given
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/bus?token=${encodeURIComponent(token)}`);
+
+    let seq = 1;
+    const pending = new Map();
+    const eventHandlers = new Set();
+    function call(method, p = {}) {
+      return new Promise((resolve, reject) => {
+        const id = 'c' + seq++;
+        pending.set(id, { resolve, reject });
+        ws.send(JSON.stringify({ op: 'call', id, method, params: p }));
+      });
+    }
+    function subscribe(topic) { ws.send(JSON.stringify({ op: 'subscribe', topics: [topic] })); }
+    ws.onmessage = (ev) => {
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      if (f.op === 'event' && f.event) { for (const h of eventHandlers) h(f.event); return; }
+      const c = f.id && pending.get(f.id);
+      if (!c) return;
+      pending.delete(f.id);
+      if (f.op === 'result') c.resolve(f.result);
+      else if (f.op === 'error') c.reject(new Error(f.error || 'error'));
+    };
+
+    // ── elements / state ────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const treeEl = $('tree'),
+          nameEl = $('filename'), dirtyEl = $('dirty'), saveEl = $('save'),
+          statusEl = $('status'), connEl = $('conn'),
+          bannerEl = $('banner');
+
+    let current = null;   // { path, name }
+    let saved = '';       // last-saved contents
+    let watching = null;  // path currently watched
+    const expanded = new Set();
+
+    const setStatus = (msg, kind) => { statusEl.textContent = msg; statusEl.className = kind || ''; };
+    function markDirty() {
+      const dirty = current && view.state.doc.toString() !== saved;
+      dirtyEl.textContent = dirty ? '●' : '';
+      saveEl.disabled = !dirty;
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // ── paths ───────────────────────────────────────────────────────────────────
+    // cwd and file arrive from the host as NATIVE paths, so on Windows they are
+    // backslash-separated. Splitting on '/' alone makes baseOf return the whole
+    // path as the "name" there, so every separator decision goes through these.
+    // None of this is a security boundary — the bus token's scope is. These only
+    // decide what the tree shows.
+    const isSep = (ch) => ch === '/' || ch === '\\';
+    const baseOf = (p) => { const parts = String(p).split(/[\\/]/); return parts[parts.length - 1] || String(p); };
+    const dirOf = (p) => String(p).replace(/[\\/][^\\/]*$/, '');
+    /** Is `p` the root itself or something under it? Compares on a separator
+        boundary, so `/repo-old/x` is not read as living under `/repo`. */
+    function isWithin(root, p) {
+      const raw = String(root), s = String(p);
+      const r = raw.replace(/[\\/]+$/, '');
+      // Stripping the trailing separator empties a filesystem root ('/'), and
+      // treating that as "no root" silently disables every reveal under it.
+      if (!r) return isSep(raw[0] || '') && isSep(s[0] || '');
+      return s === r || (s.length > r.length && s.startsWith(r) && isSep(s[r.length]));
+    }
+    /** Every directory between `root` and `filePath`, shallowest first. */
+    function ancestorDirs(root, filePath) {
+      const dirs = [];
+      let d = dirOf(filePath);
+      // Bounded as well as conditioned: a path shape that stops shrinking would
+      // otherwise spin here, and this runs on the UI thread.
+      for (let i = 0; i < 64 && d && isWithin(root, d) && !isWithin(d, root); i++) {
+        dirs.unshift(d);
+        const parent = dirOf(d);
+        if (parent === d) break;
+        d = parent;
+      }
+      return dirs;
+    }
+
+    // ── icons (Lucide, matching the built-in editor pane) ───────────────────────
+    const ICON = {
+      "folder": "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\" />",
+      "folder-open": "<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\" />",
+      "chevron-right": "<path d=\"m9 18 6-6-6-6\" />",
+      "rotate-cw": "<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\" /><path d=\"M21 3v5h-5\" />",
+      "file": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" />",
+      "file-code": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M10 12.5 8 15l2 2.5\" /><path d=\"m14 12.5 2 2.5-2 2.5\" />",
+      "file-cog": "<path d=\"M15 8a1 1 0 0 1-1-1V2a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8z\" /><path d=\"M20 8v12a2 2 0 0 1-2 2h-4.182\" /><path d=\"m3.305 19.53.923-.382\" /><path d=\"M4 10.592V4a2 2 0 0 1 2-2h8\" /><path d=\"m4.228 16.852-.924-.383\" /><path d=\"m5.852 15.228-.383-.923\" /><path d=\"m5.852 20.772-.383.924\" /><path d=\"m8.148 15.228.383-.923\" /><path d=\"m8.53 21.696-.382-.924\" /><path d=\"m9.773 16.852.922-.383\" /><path d=\"m9.773 19.148.922.383\" /><circle cx=\"7\" cy=\"18\" r=\"3\" />",
+      "braces": "<path d=\"M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1\" /><path d=\"M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1\" />",
+      "file-type": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M11 18h2\" /><path d=\"M12 12v6\" /><path d=\"M9 13v-.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v.5\" />",
+      "file-text": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M10 9H8\" /><path d=\"M16 13H8\" /><path d=\"M16 17H8\" />",
+      "file-terminal": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"m8 16 2-2-2-2\" /><path d=\"M12 18h4\" />",
+      "file-image": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><circle cx=\"10\" cy=\"12\" r=\"2\" /><path d=\"m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22\" />",
+      "file-audio": "<path d=\"M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0\" />",
+      "file-video": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M15.033 13.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56v-4.704a.645.645 0 0 1 .967-.56z\" />",
+      "file-archive": "<path d=\"M13.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v11.5\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M8 12v-1\" /><path d=\"M8 18v-2\" /><path d=\"M8 7V6\" /><circle cx=\"8\" cy=\"20\" r=\"2\" />",
+      "file-spreadsheet": "<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\" /><path d=\"M14 2v5a1 1 0 0 0 1 1h5\" /><path d=\"M8 13h2\" /><path d=\"M14 13h2\" /><path d=\"M8 17h2\" /><path d=\"M14 17h2\" />",
+      "database": "<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\" /><path d=\"M3 5V19A9 3 0 0 0 21 19V5\" /><path d=\"M3 12A9 3 0 0 0 21 12\" />",
+      "plus": "<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />",
+      "search": "<path d=\"m21 21-4.34-4.34\" /><circle cx=\"11\" cy=\"11\" r=\"8\" />",
+      "panel-left": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" /><path d=\"M9 3v18\" />",
+    };
+    function svg(name, color) {
+      const style = color ? ` style="color:${color}"` : '';
+      return `<svg class="icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"${style}>${ICON[name] || ICON.file}</svg>`;
+    }
+    // Pick an icon + tint by file name/extension — ported from the built-in editor.
+    function iconForFile(name) {
+      const lower = name.toLowerCase();
+      if (lower === 'dockerfile') return ['file-code', '#4aa3df'];
+      if (lower.endsWith('.lock') || lower === 'package-lock.json' || lower === 'yarn.lock' || lower === 'pnpm-lock.yaml') return ['file-cog', '#9aa0a6'];
+      if (lower.startsWith('.env')) return ['file-cog', '#caa15a'];
+      const ext = lower.includes('.') ? lower.split('.').pop() : '';
+      switch (ext) {
+        case 'ts': case 'tsx': case 'mts': case 'cts': return ['file-code', '#4aa3df'];
+        case 'js': case 'jsx': case 'mjs': case 'cjs': return ['file-code', '#e6c94a'];
+        case 'json': case 'jsonc': return ['braces', '#e6c94a'];
+        case 'rs': return ['file-code', '#dd8855'];
+        case 'go': return ['file-code', '#4ad0e0'];
+        case 'py': return ['file-code', '#5b9bd5'];
+        case 'rb': return ['file-code', '#d65b5b'];
+        case 'java': case 'kt': case 'kts': return ['file-code', '#d68a5b'];
+        case 'c': case 'h': case 'cpp': case 'cc': case 'hpp': case 'cs': return ['file-code', '#7aa6d6'];
+        case 'php': return ['file-code', '#8a7fd6'];
+        case 'css': case 'scss': case 'sass': case 'less': return ['file-type', '#c77dbb'];
+        case 'html': case 'htm': case 'xml': case 'svg': return ['file-code', '#dd8855'];
+        case 'vue': case 'svelte': return ['file-code', '#5fbf7f'];
+        case 'md': case 'mdx': case 'markdown': case 'rst': return ['file-text', '#9aa0a6'];
+        case 'txt': case 'log': return ['file-text', '#9aa0a6'];
+        case 'sh': case 'bash': case 'zsh': case 'fish': return ['file-terminal', '#8bc34a'];
+        case 'yml': case 'yaml': case 'toml': case 'ini': case 'conf': case 'cfg': return ['file-cog', '#9aa0a6'];
+        case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'ico': case 'bmp': case 'avif': return ['file-image', '#b083e0'];
+        case 'mp3': case 'wav': case 'flac': case 'ogg': case 'm4a': return ['file-audio', '#b083e0'];
+        case 'mp4': case 'mov': case 'mkv': case 'webm': case 'avi': return ['file-video', '#b083e0'];
+        case 'zip': case 'tar': case 'gz': case 'tgz': case 'rar': case '7z': case 'bz2': return ['file-archive', '#caa15a'];
+        case 'csv': case 'tsv': case 'xlsx': case 'xls': return ['file-spreadsheet', '#8bc34a'];
+        case 'sql': case 'db': case 'sqlite': return ['database', '#4ad0e0'];
+        default: return ['file', 'var(--wks-text-muted, #9aa0a6)'];
+      }
+    }
+    // Icon-ify the toolbar buttons.
+    $('newFile').innerHTML = svg('plus') + ' New';
+    $('refresh').innerHTML = svg('rotate-cw');
+
+    // ── sidebar: collapse + resize (persisted in localStorage) ──────────────────
+    const sideEl = $('side'), resizerEl = $('resizer'), toggleEl = $('toggleSide');
+    toggleEl.innerHTML = svg('panel-left');
+    const LS_WIDTH = 'editor.sideWidth', LS_COLLAPSED = 'editor.sideCollapsed';
+    const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+    const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+    const savedW = parseInt(lsGet(LS_WIDTH) || '', 10);
+    if (savedW >= 150 && savedW <= 700) sideEl.style.width = savedW + 'px';
+    if (lsGet(LS_COLLAPSED) === '1') sideEl.classList.add('collapsed');
+
+    function toggleSidebar() {
+      const collapsed = sideEl.classList.toggle('collapsed');
+      lsSet(LS_COLLAPSED, collapsed ? '1' : '0');
+    }
+    toggleEl.onclick = toggleSidebar;
+
+    resizerEl.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      resizerEl.classList.add('dragging');
+      const startX = e.clientX, startW = sideEl.getBoundingClientRect().width;
+      const onMove = (ev) => {
+        const w = Math.max(150, Math.min(700, startW + (ev.clientX - startX)));
+        sideEl.style.width = w + 'px';
+      };
+      const onUp = () => {
+        resizerEl.classList.remove('dragging');
+        lsSet(LS_WIDTH, String(Math.round(sideEl.getBoundingClientRect().width)));
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
+    // ── CodeMirror editor ───────────────────────────────────────────────────────
+    const CM = window.CM;
+    const langComp = new CM.Compartment();   // language by file extension
+    const vimComp = new CM.Compartment();    // vim mode (setting)
+    const tabComp = new CM.Compartment();    // tab size (setting)
+    const wrapComp = new CM.Compartment();   // soft wrap (setting)
+
+    // A dark syntax palette; colors read fine on the default themes.
+    const t = CM.tags;
+    const highlight = CM.HighlightStyle.define([
+      { tag: t.keyword, color: '#c586c0' },
+      { tag: [t.name, t.deleted, t.character, t.propertyName, t.macroName], color: '#9cdcfe' },
+      { tag: [t.function(t.variableName), t.labelName], color: '#dcdcaa' },
+      { tag: [t.color, t.constant(t.name), t.standard(t.name)], color: '#4fc1ff' },
+      { tag: [t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace], color: '#4ec9b0' },
+      { tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp, t.link, t.special(t.string)], color: '#d4d4d4' },
+      { tag: [t.meta, t.comment], color: '#6a9955', fontStyle: 'italic' },
+      { tag: t.strong, fontWeight: 'bold' },
+      { tag: t.emphasis, fontStyle: 'italic' },
+      { tag: [t.string, t.inserted], color: '#ce9178' },
+      { tag: t.invalid, color: '#f44747' },
+    ]);
+    // Theme tied to the host's --wks-* tokens, so the editor matches the app.
+    const cmTheme = CM.EditorView.theme({
+      '&': { height: '100%', fontSize: '13px', color: 'var(--wks-text-primary, #d4d4d4)', backgroundColor: 'var(--wks-bg-base, #1e1e1e)' },
+      '.cm-content': { caretColor: 'var(--wks-text-primary, #fff)' },
+      '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--wks-text-primary, #fff)' },
+      '.cm-gutters': { backgroundColor: 'var(--wks-bg-base, #1e1e1e)', color: 'var(--wks-text-faint, #555)', border: 'none' },
+      '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--wks-text-muted, #888)' },
+      '.cm-activeLine': { backgroundColor: 'var(--wks-bg-hover, #2a2d2e)' },
+      '.cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--wks-bg-selected, #094771)' },
+      '&.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--wks-bg-selected, #094771)' },
+      '.cm-matchingBracket': { backgroundColor: 'var(--wks-bg-hover, #2a2d2e)', outline: '1px solid var(--wks-border-active, #888)' },
+    }, { dark: true });
+
+    const view = new CM.EditorView({
+      parent: $('cmHost'),
+      state: CM.EditorState.create({
+        doc: '',
+        extensions: [
+          vimComp.of([]), // must precede the keymaps to capture keys when on
+          CM.lineNumbers(),
+          CM.highlightActiveLineGutter(),
+          CM.highlightActiveLine(),
+          CM.highlightSpecialChars(),
+          CM.history(),
+          CM.drawSelection(),
+          CM.dropCursor(),
+          CM.indentOnInput(),
+          CM.bracketMatching(),
+          CM.closeBrackets(),
+          CM.highlightSelectionMatches(),
+          CM.syntaxHighlighting(highlight, { fallback: true }),
+          CM.keymap.of([
+            { key: 'Mod-s', preventDefault: true, run: () => { save(); return true; } },
+            { key: 'Mod-p', preventDefault: true, run: () => { showView('search'); return true; } },
+            { key: 'Mod-b', preventDefault: true, run: () => { toggleSidebar(); return true; } },
+            CM.indentWithTab,
+            ...CM.closeBracketsKeymap, ...CM.defaultKeymap, ...CM.historyKeymap,
+            ...CM.searchKeymap, ...CM.completionKeymap, ...CM.lintKeymap,
+          ]),
+          langComp.of([]),
+          tabComp.of([CM.indentUnit.of('  '), CM.EditorState.tabSize.of(2)]),
+          wrapComp.of([]),
+          cmTheme,
+          CM.EditorView.updateListener.of((u) => { if (u.docChanged) markDirty(); }),
+        ],
+      }),
+    });
+
+    function setDoc(content) {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content } });
+    }
+    // Map a file name to a CodeMirror language extension.
+    function langForFile(name) {
+      const lower = name.toLowerCase();
+      const ext = lower.includes('.') ? lower.split('.').pop() : lower;
+      const L = CM.langs;
+      switch (ext) {
+        case 'js': case 'jsx': case 'mjs': case 'cjs': return L.javascript({ jsx: true });
+        case 'ts': return L.javascript({ typescript: true });
+        case 'tsx': return L.javascript({ typescript: true, jsx: true });
+        case 'py': return L.python();
+        case 'rs': return L.rust();
+        case 'go': return L.go();
+        case 'json': case 'jsonc': return L.json();
+        case 'css': case 'scss': case 'less': return L.css();
+        case 'html': case 'htm': case 'vue': case 'svelte': return L.html();
+        case 'md': case 'markdown': case 'mdx': return L.markdown();
+        case 'c': case 'h': case 'cpp': case 'cc': case 'hpp': case 'cxx': return L.cpp();
+        case 'java': return L.java();
+        case 'php': return L.php();
+        case 'xml': case 'svg': return L.xml();
+        case 'yml': case 'yaml': return L.yaml();
+        case 'sql': return L.sql();
+        default: return [];
+      }
+    }
+
+    // ── settings (vim / tab size / soft wrap), live via the host bridge ──────────
+    function applySettings(s) {
+      s = s || {};
+      const vimOn = !!s.vimMode;
+      const tab = Number(s.tabSize) > 0 ? Math.min(8, Math.round(Number(s.tabSize))) : 2;
+      const wrap = !!s.lineWrap;
+      view.dispatch({ effects: [
+        vimComp.reconfigure(vimOn ? CM.vim() : []),
+        tabComp.reconfigure([CM.indentUnit.of(' '.repeat(tab)), CM.EditorState.tabSize.of(tab)]),
+        wrapComp.reconfigure(wrap ? CM.EditorView.lineWrapping : []),
+      ] });
+    }
+    applySettings(window.__WKS_SETTINGS__);
+    window.addEventListener('wks-settings', (e) => applySettings(e.detail));
+
+    // ── file tree (lazy) ────────────────────────────────────────────────────────
+    async function listDir(path, cache) {
+      if (cache && cache.has(path)) return cache.get(path);
+      const res = await call('fs.listEntries', { path });
+      const entries = (res && res.entries) || [];
+      entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+      if (cache) cache.set(path, entries);
+      return entries;
+    }
+    async function renderTree() {
+      treeEl.innerHTML = '';
+      if (!cwd) { treeEl.innerHTML = '<div class="empty">No project directory.</div>'; return; }
+      try { await renderLevel(cwd, 0, treeEl); }
+      catch (e) { treeEl.innerHTML = `<div class="empty">${escapeHtml(e.message)}</div>`; }
+      // A render destroys every row element, and the open file's highlight with
+      // it. Re-applying here rather than at each call site means Refresh and an
+      // fs.changed redraw cannot silently lose track of what is open.
+      if (current) markActiveRow(current.path);
+    }
+
+    /** Highlight the row for `path` (if it is currently rendered) and scroll to it. */
+    function markActiveRow(path) {
+      let found = null;
+      for (const row of treeEl.querySelectorAll('.row')) {
+        // Compared as data, not built into a selector: a path may contain
+        // quotes or backslashes, and CSS.escape is the wrong tool here anyway.
+        if (row.dataset.path === path) found = row;
+        else row.classList.remove('active');
+      }
+      if (found && !found.classList.contains('active')) {
+        found.classList.add('active');
+        found.scrollIntoView({ block: 'nearest' });
+      }
+      return found;
+    }
+
+    /**
+     * Expand the tree down to `path` and highlight it.
+     *
+     * Opening a file does not necessarily go through the tree — the `?file=`
+     * param (right-click → Open in editor), a search result, and a freshly
+     * created file all arrive with no row to mark. Without this the file loads
+     * into the editor while the sidebar still shows wherever it was, which
+     * reads as the tree being broken.
+     */
+    async function revealInTree(path) {
+      if (!cwd || !path || !isWithin(cwd, path)) return;
+      let opened = false;
+      for (const d of ancestorDirs(cwd, path)) {
+        if (!expanded.has(d)) { expanded.add(d); opened = true; }
+      }
+      // Already-expanded ancestors mean the row exists; skip the rebuild.
+      if (opened) await renderTree();
+      else markActiveRow(path);
+    }
+    const FOLDER_TINT = 'var(--wks-accent, #9cdcfe)';
+    function fileIconHTML(name) { const [ic, col] = iconForFile(name); return svg(ic, col); }
+    /** Per-row indent, matching the review pane's tree. */
+    const INDENT = 13;
+
+    /**
+     * Collapse a single-child directory chain into one row, GitHub-style and
+     * the same rule the review pane's tree uses: `src` holding only `renderer`
+     * holding only `src` renders as one `src/renderer/src` row.
+     *
+     * This costs a listing for every directory shown, including collapsed ones
+     * — the chain cannot be seen without looking inside it. The `cache` makes
+     * that one listing per directory per render rather than two (probe, then
+     * render), and it is per-render on purpose: a cache that outlived the pass
+     * would make Refresh stop refreshing.
+     */
+    async function compressChain(entry, cache) {
+      let path = entry.path, label = entry.name;
+      let entries = await listDir(path, cache);
+      // Bounded as well as conditioned — a symlink loop is a directory chain
+      // that never ends, and this runs on the UI thread.
+      for (let i = 0; i < 32; i++) {
+        if (entries.length !== 1 || !entries[0].isDir) break;
+        const only = entries[0];
+        path = only.path;
+        label += '/' + only.name;
+        entries = await listDir(path, cache);
+      }
+      return { path, label, entries };
+    }
+
+    async function renderLevel(dirPath, depth, container, cache = new Map()) {
+      const entries = await listDir(dirPath, cache);
+      for (const e of entries) {
+        // Dotfiles stay visible — fs.listEntries already hides .git and
+        // anything gitignored, which covers the actual noise.
+        const row = document.createElement('div');
+        row.className = e.isDir ? 'row dir' : 'row';
+        // Files are inset by exactly the chevron a directory row carries (11px
+        // + the 7px row gap), so both icons land in one column. The review pane
+        // uses 14 here and is 4px out; matching its LOOK does not mean copying
+        // that.
+        row.style.paddingLeft = (8 + depth * INDENT + (e.isDir ? 0 : 18)) + 'px';
+
+        if (e.isDir) {
+          // A compressed chain is addressed by its DEEPEST directory: that is
+          // the one whose children the row expands to, and the one revealInTree
+          // will have put in `expanded` on its way down to a file.
+          let chain;
+          try { chain = await compressChain(e, cache); }
+          catch { chain = { path: e.path, label: e.name, entries: null }; }
+          row.dataset.path = chain.path;
+          const isOpen = expanded.has(chain.path);
+          row.innerHTML = `<span class="twist${isOpen ? ' open' : ''}">${svg('chevron-right')}</span>`
+            + `<span class="ficon">${svg(isOpen ? 'folder-open' : 'folder', FOLDER_TINT)}</span>`
+            + `<span class="lbl">${escapeHtml(chain.label)}</span>`;
+          container.appendChild(row);
+
+          const child = document.createElement('div');
+          container.appendChild(child);
+          // Awaited, not fire-and-forget: renderTree's callers (and revealInTree
+          // in particular) need the whole subtree to exist when it resolves, or
+          // the row they are about to look for has not been created yet.
+          if (isOpen) await renderLevel(chain.path, depth + 1, child, cache).catch(() => {});
+          row.onclick = async () => {
+            const twistEl = row.querySelector('.twist'), ficonEl = row.querySelector('.ficon');
+            if (expanded.has(chain.path)) {
+              expanded.delete(chain.path); child.innerHTML = '';
+              twistEl.classList.remove('open'); ficonEl.innerHTML = svg('folder', FOLDER_TINT);
+            } else {
+              expanded.add(chain.path); child.innerHTML = '';
+              twistEl.classList.add('open'); ficonEl.innerHTML = svg('folder-open', FOLDER_TINT);
+              // A fresh cache: expanding is the one moment the user is asking
+              // to see what is there NOW.
+              try { await renderLevel(chain.path, depth + 1, child, new Map()); }
+              catch (err) { setStatus(err.message, 'bad'); }
+            }
+          };
+        } else {
+          row.dataset.path = e.path;
+          row.innerHTML = `<span class="ficon">${fileIconHTML(e.name)}</span>`
+            + `<span class="lbl">${escapeHtml(e.name)}</span>`;
+          container.appendChild(row);
+          row.onclick = () => openFile(e.path, e.name, row);
+        }
+      }
+    }
+
+    // ── open / save / watch ─────────────────────────────────────────────────────
+    async function watch(path) {
+      if (watching && watching !== path) { call('fs.unwatch', { path: watching }).catch(() => {}); }
+      watching = path;
+      call('fs.watch', { path }).catch(() => {}); // fs.changed events arrive on the bus
+    }
+    async function openFile(path, name, row, line) {
+      try {
+        const res = await call('fs.read', { path });
+        current = { path, name: name || baseOf(path) };
+        saved = (res && res.contents) || '';
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: saved },
+          effects: langComp.reconfigure(langForFile(current.name)),
+        });
+        nameEl.textContent = current.name;
+        bannerEl.classList.remove('show');
+        if (row) {
+          // Clicked in the tree: the row is already visible, so skip the rebuild.
+          document.querySelectorAll('.row.active').forEach((r) => r.classList.remove('active'));
+          row.classList.add('active');
+        } else {
+          // Opened from somewhere else (?file=, a search hit, a new file) — move
+          // the tree to it rather than leaving the sidebar where it was.
+          void revealInTree(path);
+        }
+        markDirty();
+        if (line) gotoLine(line); else view.focus();
+        setStatus(`Opened ${path} (${(res && res.size) || 0} bytes)`, 'ok');
+        watch(path);
+      } catch (e) {
+        setStatus('Read denied: ' + e.message, 'bad'); // out-of-scope reads land here
+      }
+    }
+    function gotoLine(line) {
+      try {
+        const l = Math.max(1, Math.min(line, view.state.doc.lines));
+        const pos = view.state.doc.line(l).from;
+        view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+        view.focus();
+      } catch { /* out-of-range line */ }
+    }
+    async function save() {
+      if (!current) return;
+      try {
+        const contents = view.state.doc.toString();
+        await call('fs.write', { path: current.path, contents });
+        saved = contents; markDirty();
+        setStatus('Saved ' + current.path, 'ok');
+      } catch (e) {
+        setStatus('Write denied: ' + e.message, 'bad');
+      }
+    }
+
+    // External change: reload if clean, else offer a choice.
+    eventHandlers.add((ev) => {
+      if (ev.type !== 'fs.changed' || !current) return;
+      const info = ev.data || {};
+      if (info.path !== current.path) return;
+      if (view.state.doc.toString() === saved) { reloadCurrent(); }
+      else { bannerEl.classList.add('show'); }
+    });
+    async function reloadCurrent() {
+      if (!current) return;
+      try {
+        const res = await call('fs.read', { path: current.path });
+        saved = (res && res.contents) || '';
+        setDoc(saved); markDirty();
+        bannerEl.classList.remove('show');
+        setStatus('Reloaded ' + current.path, 'ok');
+      } catch (e) { setStatus('Reload failed: ' + e.message, 'bad'); }
+    }
+    $('reload').onclick = reloadCurrent;
+    $('dismiss').onclick = () => bannerEl.classList.remove('show');
+
+    // ── new file ────────────────────────────────────────────────────────────────
+    $('newFile').onclick = async () => {
+      if (!cwd) return;
+      const name = window.prompt('New file name (relative to the project):', 'untitled.txt');
+      if (!name) return;
+      const path = cwd.replace(/\/$/, '') + '/' + name.replace(/^\/+/, '');
+      try {
+        await call('fs.write', { path, contents: '' });
+        setStatus('Created ' + path, 'ok');
+        expanded.clear(); await renderTree();
+        openFile(path, baseOf(name));
+      } catch (e) { setStatus('Create denied: ' + e.message, 'bad'); }
+    };
+    $('refresh').onclick = () => renderTree();
+
+    // ── find in project (search.project) ────────────────────────────────────────
+    const searchInput = $('searchInput'), resultsEl = $('searchResults');
+    function showView(which) {
+      const files = which === 'files';
+      $('filesView').style.display = files ? 'flex' : 'none';
+      $('searchView').style.display = files ? 'none' : 'flex';
+      $('tabFiles').classList.toggle('active', files);
+      $('tabSearch').classList.toggle('active', !files);
+      if (!files) searchInput.focus();
+    }
+    $('tabFiles').onclick = () => showView('files');
+    $('tabSearch').onclick = () => showView('search');
+    searchInput.addEventListener('keydown', async (e) => {
+      if (e.key !== 'Enter') return;
+      const query = searchInput.value.trim();
+      if (!query) { resultsEl.innerHTML = ''; return; }
+      resultsEl.innerHTML = '<div class="empty">Searching…</div>';
+      try {
+        const res = await call('search.project', { query, cwd });
+        renderResults(res);
+      } catch (err) {
+        resultsEl.innerHTML = `<div class="empty">Search denied: ${escapeHtml(err.message)}</div>`;
+      }
+    });
+    function renderResults(res) {
+      const results = (res && res.results) || [];
+      resultsEl.innerHTML = '';
+      if (!results.length) { resultsEl.innerHTML = '<div class="empty">No matches.</div>'; return; }
+      for (const r of results) {
+        const fileEl = document.createElement('div');
+        fileEl.className = 'sfile';
+        const rel = isWithin(cwd, r.file)
+          ? r.file.slice(cwd.replace(/[\\/]+$/, '').length + 1)
+          : r.file;
+        fileEl.innerHTML = fileIconHTML(baseOf(r.file)) + `<span class="lbl">${escapeHtml(rel)}</span>`;
+        fileEl.onclick = () => openFile(r.file, baseOf(r.file));
+        resultsEl.appendChild(fileEl);
+        for (const m of (r.matches || []).slice(0, 50)) {
+          const mEl = document.createElement('div');
+          mEl.className = 'smatch';
+          mEl.innerHTML = `<span class="ln">${m.line}</span><span class="mtxt">${escapeHtml((m.text || '').trim()).slice(0, 200)}</span>`;
+          mEl.onclick = () => openFile(r.file, baseOf(r.file), null, m.line);
+          resultsEl.appendChild(mEl);
+        }
+      }
+      if (res.truncated) resultsEl.insertAdjacentHTML('beforeend', '<div class="empty">Results truncated.</div>');
+    }
+
+    // ── editing keys ────────────────────────────────────────────────────────────
+    // CodeMirror owns in-editor keys (incl. Mod-s save, Mod-p project search via
+    // its keymap). This window-level fallback covers focus outside the editor
+    // (e.g. the file tree); the calls are idempotent so a double-fire is harmless.
+    saveEl.addEventListener('click', save);
+    window.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save(); }
+      else if ((e.metaKey || e.ctrlKey) && e.key === 'p') { e.preventDefault(); showView('search'); }
+      else if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
+    });
+
+    // ── lifecycle ─────────────────────────────────────────────────────────────
+    ws.onopen = async () => {
+      connEl.textContent = 'connected';
+      subscribe('fs.changed');
+      // Awaited before opening the file: openFile reveals by re-rendering the
+      // tree, and letting that race the initial render interleaves two builds
+      // into the same container.
+      await renderTree();
+      // Opened on a specific file (e.g. from a "reveal in editor" link).
+      if (fileParam) openFile(fileParam, baseOf(fileParam));
+    };
+    ws.onclose = () => { connEl.textContent = 'disconnected'; };
+  </script>
+</body>
+</html>

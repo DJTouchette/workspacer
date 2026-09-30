@@ -153,6 +153,7 @@ check-store-yaml-parity:
 
 .PHONY: check-hub-rust-assets
 check-hub-rust-assets:
+	node scripts/check-retained-plugin-assets.mjs
 	python3 scripts/mcp-catalog.py --check
 	python3 scripts/generate-rust-launch-assets.py --check
 	python3 scripts/test-generate-rust-launch-assets.py
@@ -256,3 +257,7 @@ test-tui-rust-backend:
 test-electron-ownership:
 	@test -n "$(WKS_ELECTRON_EXECUTABLE)" -a -n "$(WKS_ELECTRON_SMOKE_REPORT)" || (echo "Set absolute WKS_ELECTRON_EXECUTABLE and WKS_ELECTRON_SMOKE_REPORT paths" >&2; exit 1)
 	node apps/desktop/scripts/smoke-electron-ownership.mjs "$(WKS_ELECTRON_EXECUTABLE)" "$(WKS_ELECTRON_SMOKE_REPORT)"
+
+.PHONY: check-retained-plugin-assets
+check-retained-plugin-assets:
+	node scripts/check-retained-plugin-assets.mjs

@@ -19,7 +19,7 @@ function fixture(t) {
     'apps/desktop/dist/headless/desktop-host.cjs', 'node/node.exe', 'node/LICENSE',
     'LICENSE', 'apps/native/packaging/windows/README.txt',
     'crt/vcruntime140.dll', 'crt/msvcp140.dll', 'crt/vcruntime140_1.dll',
-    'services/hub/examples/sample/manifest.json',
+    'plugins/examples/sample/manifest.json',
   ];
   for (const file of files) {
     const target = path.join(root, file);

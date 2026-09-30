@@ -1,7 +1,7 @@
 /**
  * The editor plugin's file tree — reveal behaviour.
  *
- * The plugin (services/hub/examples/editor) is a single HTML file with inline
+ * The plugin (plugins/examples/editor) is a single HTML file with inline
  * JS and no build step, so it had no test of any kind. It is also the app's
  * DEFAULT editor, reached from three places that do not go through its tree:
  * the `?file=` param (right-click → Open in editor), a search hit, and a
@@ -22,7 +22,7 @@ import path from 'path';
 
 const HTML = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../../../../../services/hub/examples/editor/ui/index.html',
+  '../../../../../plugins/examples/editor/ui/index.html',
 );
 
 /**

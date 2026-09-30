@@ -104,7 +104,7 @@ FROM common AS runtime-hub
 ENV WKS_RUST_IMAGE_ROLE=hub
 LABEL dev.workspacer.node.role="rust-hub" org.opencontainers.image.title="workspacer-rust-hub"
 COPY --from=webfiles /out/web /usr/local/share/workspacer/web/
-COPY services/hub/examples/ /usr/local/share/workspacer/examples/
+COPY plugins/examples/ /usr/local/share/workspacer/examples/
 COPY deploy/fly/hub/entrypoint.sh deploy/fly/hub/bootstrap.sh deploy/fly/hub/test-bootstrap.sh /usr/local/lib/wks-hub/
 RUN chmod 0755 /usr/local/lib/wks-hub/*.sh
 RUN /usr/local/lib/wks-rust/verify-image.sh hub
@@ -117,7 +117,7 @@ FROM runtime-node AS runtime-combined
 ENV WKS_RUST_IMAGE_ROLE=combined
 LABEL dev.workspacer.node.role="rust-combined" org.opencontainers.image.title="workspacer-rust-combined"
 COPY --from=webfiles /out/web /usr/local/share/workspacer/web/
-COPY services/hub/examples/ /usr/local/share/workspacer/examples/
+COPY plugins/examples/ /usr/local/share/workspacer/examples/
 COPY deploy/fly/combined/entrypoint.sh /usr/local/lib/wks-combined/entrypoint.sh
 RUN chmod 0755 /usr/local/lib/wks-combined/entrypoint.sh
 RUN /usr/local/lib/wks-rust/verify-image.sh combined

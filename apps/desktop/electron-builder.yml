@@ -55,7 +55,7 @@ linux:
       to: claudemon/claudemon
     - from: ../../services/hub-rs/target/release/workspacer-rust
       to: hub/workspacer-rust
-    - from: ../../services/hub/examples
+    - from: ../../plugins/examples
       to: hub/examples
     - from: dist/web
       to: web
@@ -70,7 +70,7 @@ win:
       to: claudemon/claudemon.exe
     - from: ../../services/hub-rs/target/release/workspacer-rust.exe
       to: hub/workspacer-rust.exe
-    - from: ../../services/hub/examples
+    - from: ../../plugins/examples
       to: hub/examples
     - from: dist/web
       to: web
@@ -85,7 +85,7 @@ mac:
       to: claudemon/claudemon
     - from: ../../services/hub-rs/target/release/workspacer-rust
       to: hub/workspacer-rust
-    - from: ../../services/hub/examples
+    - from: ../../plugins/examples
       to: hub/examples
     - from: dist/web
       to: web

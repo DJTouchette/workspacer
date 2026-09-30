@@ -4,9 +4,9 @@
 !services/hub-rs/**
 !services/claudemon
 !services/claudemon/**
-!services/hub
-!services/hub/examples
-!services/hub/examples/**
+!plugins
+!plugins/examples
+!plugins/examples/**
 !vendor
 !vendor/portable-pty
 !vendor/portable-pty/**

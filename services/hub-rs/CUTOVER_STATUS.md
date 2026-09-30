@@ -2,8 +2,8 @@
 
 ## Current checkpoint — 2026-09-30
 
-The source review ledger at `632ead3a` contains **497 ported, 29 retired and
-8 pending** entries. All 14 final cutover gates remain pending. Run
+The source review ledger at `7140a680` contains **505 ported, 29 retired and
+zero pending** entries. All 14 final cutover gates remain pending. Run
 `python3 scripts/hub-migration.py backlog` for the live count; it measures
 unclosed source reviews, not missing implementations.
 
@@ -19,6 +19,16 @@ registration, canonical spawn-field spelling, progress validation and other
 source-mapped contracts. The review JSON files preserve exact original source
 hashes, behavior mappings, intentional changes and scoped execution receipts.
 Aggregate test totals do not replace those individual reviews.
+
+The real TUI-to-Rust connection/reconnect/owned-shutdown smoke now runs in CI.
+Exact runtime commit `915960b9` passed primary CI36659897298, including the
+bounded embedded command dispatcher and its representative hub integration
+targets. The source support guard independently checks50 reviewed spawn fields.
+
+Live plugin examples now have a retained owner at `plugins/examples`; the old
+reference copies remain byte-preserved. A provenance guard checks13 copied
+assets and the relocated routing UI fixture. New package paths and the packaged
+Electron ownership smoke still need their final release execution receipt.
 
 The final consumer/platform gates below still require integrated-revision
 receipts. Do not remove the remaining Go reference tree based on the source

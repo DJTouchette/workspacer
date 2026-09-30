@@ -5,7 +5,7 @@ import ReactDOM from 'react-dom/client';
 import '../App.css';
 import RoutingSection from '../components/settings/RoutingSection';
 import { applyTheme, resolveTheme } from '../themes';
-import raw from '../../../../../../services/hub/internal/routing/testdata/preferences-view.json?raw';
+import raw from '../../../../tests/fixtures/routing-preferences-view.json?raw';
 import type {
   RoutingAPI,
   RoutingPreferencesView,

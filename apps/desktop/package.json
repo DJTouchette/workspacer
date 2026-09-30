@@ -52,7 +52,7 @@
     "check:response-card-assets": "node scripts/check-response-card-assets.mjs",
     "check:agent-collaboration-skills": "node scripts/check-agent-collaboration-skills.mjs",
     "check:response-card-discovery": "python3 scripts/check-response-card-discovery.py",
-    "test:headroom": "node --test ../../services/hub/examples/headroom/adapter.test.mjs",
+    "test:headroom": "node --test ../../plugins/examples/headroom/adapter.test.mjs",
     "cleanup:agents": "node scripts/cleanup-agent-artifacts.mjs",
     "test:cleanup-agents": "node --test scripts/cleanup-agent-artifacts.test.mjs",
     "test:hub-reference": "cd ../../services/hub && go test -race ./...",

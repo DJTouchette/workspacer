@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import raw from '../../../../../../services/hub/internal/routing/testdata/preferences-view.json?raw';
+import raw from '../../../../tests/fixtures/routing-preferences-view.json?raw';
 import RoutingSection from '../../src/components/settings/RoutingSection';
 import type { RoutingPreferencesView } from '../../../main/shared/routingPreferences';
 const fixture = (): RoutingPreferencesView => JSON.parse(raw);

@@ -1,0 +1,1044 @@
+{
+  "schemaVersion": 1,
+  "revision": "fixture-revision",
+  "configurable": true,
+  "defaults": {
+    "activeProfile": "mixed",
+    "roles": {
+      "complex_fixer": "frontier",
+      "deep_reviewer": "deep_reviewer",
+      "diagnostician": "frontier",
+      "fixer": "balanced",
+      "implementer": "frontier",
+      "judge": "frontier_plus",
+      "mechanical": "cheap",
+      "reviewer": "reviewer",
+      "scout": "balanced",
+      "supervisor": "frontier",
+      "validator": "balanced"
+    },
+    "profiles": {
+      "anthropic_only": {
+        "balanced": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high"
+        },
+        "cheap": {
+          "provider": "claude",
+          "model": "sonnet"
+        },
+        "deep_reviewer": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true
+        },
+        "frontier": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        "frontier_max": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "max"
+        },
+        "frontier_plus": {
+          "provider": "claude",
+          "model": "fable",
+          "minEffort": "high",
+          "fresh": true
+        },
+        "reviewer": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true
+        }
+      },
+      "codex_only": {
+        "balanced": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high"
+        },
+        "cheap": {
+          "provider": "codex",
+          "model": "gpt-5.6-luna"
+        },
+        "deep_reviewer": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "fresh": true
+        },
+        "frontier": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "frontier_max": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        },
+        "frontier_plus": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh",
+          "fresh": true
+        },
+        "reviewer": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "fresh": true
+        }
+      },
+      "mixed": {
+        "balanced": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "sonnet",
+              "effort": "high"
+            }
+          ]
+        },
+        "cheap": {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "sonnet"
+            }
+          ]
+        },
+        "deep_reviewer": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": "high",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        },
+        "frontier": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "opus",
+              "effort": "high"
+            }
+          ]
+        },
+        "frontier_max": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "opus",
+              "effort": "max"
+            }
+          ]
+        },
+        "frontier_plus": {
+          "provider": "claude",
+          "model": "fable",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": "xhigh",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        },
+        "reviewer": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-terra",
+              "effort": "high",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        }
+      }
+    },
+    "providers": {
+      "claude": {},
+      "codex": {},
+      "copilot": {},
+      "opencode": {},
+      "pi": {}
+    },
+    "modes": {
+      "global": "auto",
+      "providers": {
+        "claude": "auto",
+        "codex": "auto"
+      }
+    },
+    "modeShifts": {
+      "conserve": {
+        "roles": {
+          "judge": "deep_reviewer",
+          "scout": "cheap",
+          "validator": "cheap"
+        },
+        "effortStep": -1,
+        "effortStepCapabilities": [
+          "frontier",
+          "frontier_max",
+          "deep_reviewer",
+          "frontier_plus"
+        ]
+      },
+      "spend_down": {
+        "roles": {
+          "complex_fixer": "frontier_max",
+          "diagnostician": "frontier_max",
+          "fixer": "frontier",
+          "implementer": "frontier_max",
+          "reviewer": "deep_reviewer",
+          "scout": "frontier"
+        },
+        "effortStep": 1,
+        "effortStepCapabilities": [
+          "frontier",
+          "frontier_max",
+          "deep_reviewer",
+          "frontier_plus"
+        ]
+      }
+    },
+    "thresholds": {
+      "spendDown": {
+        "timeToResetMinutes": 90,
+        "minRemainingPct": 50,
+        "maxForecastPctOfRemaining": 30
+      },
+      "health": {
+        "yellowAtUsedPct": 70,
+        "redAtUsedPct": 90
+      },
+      "pacing": {
+        "enabled": true,
+        "conserveAtRatio": 1.25,
+        "blockSpendDownAtRatio": 1,
+        "bootstrap": {
+          "minElapsedPct": 5,
+          "expectedOffsetPct": 2
+        },
+        "sevenDay": {
+          "curve": "calendar",
+          "timezone": "local",
+          "weekendWeight": 0.5,
+          "weekend": "spend_tail",
+          "weekendReservePct": 0
+        }
+      }
+    },
+    "forecastWeights": {
+      "fixing": 2,
+      "implementation": 4,
+      "review": 2,
+      "scouting": 1,
+      "validation": 1
+    }
+  },
+  "inherited": {
+    "activeProfile": "mixed",
+    "roles": {
+      "complex_fixer": "frontier",
+      "deep_reviewer": "deep_reviewer",
+      "diagnostician": "frontier",
+      "fixer": "balanced",
+      "implementer": "frontier",
+      "judge": "frontier_plus",
+      "mechanical": "cheap",
+      "reviewer": "reviewer",
+      "scout": "balanced",
+      "supervisor": "frontier",
+      "validator": "balanced"
+    },
+    "profiles": {
+      "anthropic_only": {
+        "balanced": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high"
+        },
+        "cheap": {
+          "provider": "claude",
+          "model": "sonnet"
+        },
+        "deep_reviewer": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true
+        },
+        "frontier": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        "frontier_max": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "max"
+        },
+        "frontier_plus": {
+          "provider": "claude",
+          "model": "fable",
+          "minEffort": "high",
+          "fresh": true
+        },
+        "reviewer": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true
+        }
+      },
+      "codex_only": {
+        "balanced": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high"
+        },
+        "cheap": {
+          "provider": "codex",
+          "model": "gpt-5.6-luna"
+        },
+        "deep_reviewer": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "fresh": true
+        },
+        "frontier": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "frontier_max": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        },
+        "frontier_plus": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh",
+          "fresh": true
+        },
+        "reviewer": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "fresh": true
+        }
+      },
+      "mixed": {
+        "balanced": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "sonnet",
+              "effort": "high"
+            }
+          ]
+        },
+        "cheap": {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "sonnet"
+            }
+          ]
+        },
+        "deep_reviewer": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": "high",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        },
+        "frontier": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "opus",
+              "effort": "high"
+            }
+          ]
+        },
+        "frontier_max": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "opus",
+              "effort": "max"
+            }
+          ]
+        },
+        "frontier_plus": {
+          "provider": "claude",
+          "model": "fable",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": "xhigh",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        },
+        "reviewer": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-terra",
+              "effort": "high",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        }
+      }
+    },
+    "providers": {
+      "claude": {},
+      "codex": {},
+      "copilot": {},
+      "opencode": {},
+      "pi": {}
+    },
+    "modes": {
+      "global": "auto",
+      "providers": {
+        "claude": "auto",
+        "codex": "auto"
+      }
+    },
+    "modeShifts": {
+      "conserve": {
+        "roles": {
+          "judge": "deep_reviewer",
+          "scout": "cheap",
+          "validator": "cheap"
+        },
+        "effortStep": -1,
+        "effortStepCapabilities": [
+          "frontier",
+          "frontier_max",
+          "deep_reviewer",
+          "frontier_plus"
+        ]
+      },
+      "spend_down": {
+        "roles": {
+          "complex_fixer": "frontier_max",
+          "diagnostician": "frontier_max",
+          "fixer": "frontier",
+          "implementer": "frontier_max",
+          "reviewer": "deep_reviewer",
+          "scout": "frontier"
+        },
+        "effortStep": 1,
+        "effortStepCapabilities": [
+          "frontier",
+          "frontier_max",
+          "deep_reviewer",
+          "frontier_plus"
+        ]
+      }
+    },
+    "thresholds": {
+      "spendDown": {
+        "timeToResetMinutes": 90,
+        "minRemainingPct": 50,
+        "maxForecastPctOfRemaining": 30
+      },
+      "health": {
+        "yellowAtUsedPct": 70,
+        "redAtUsedPct": 90
+      },
+      "pacing": {
+        "enabled": true,
+        "conserveAtRatio": 1.25,
+        "blockSpendDownAtRatio": 1,
+        "bootstrap": {
+          "minElapsedPct": 5,
+          "expectedOffsetPct": 2
+        },
+        "sevenDay": {
+          "curve": "calendar",
+          "timezone": "local",
+          "weekendWeight": 0.5,
+          "weekend": "spend_tail",
+          "weekendReservePct": 0
+        }
+      }
+    },
+    "forecastWeights": {
+      "fixing": 2,
+      "implementation": 4,
+      "review": 2,
+      "scouting": 1,
+      "validation": 1
+    }
+  },
+  "overrides": {},
+  "effective": {
+    "activeProfile": "mixed",
+    "roles": {
+      "complex_fixer": "frontier",
+      "deep_reviewer": "deep_reviewer",
+      "diagnostician": "frontier",
+      "fixer": "balanced",
+      "implementer": "frontier",
+      "judge": "frontier_plus",
+      "mechanical": "cheap",
+      "reviewer": "reviewer",
+      "scout": "balanced",
+      "supervisor": "frontier",
+      "validator": "balanced"
+    },
+    "profiles": {
+      "anthropic_only": {
+        "balanced": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high"
+        },
+        "cheap": {
+          "provider": "claude",
+          "model": "sonnet"
+        },
+        "deep_reviewer": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true
+        },
+        "frontier": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        "frontier_max": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "max"
+        },
+        "frontier_plus": {
+          "provider": "claude",
+          "model": "fable",
+          "minEffort": "high",
+          "fresh": true
+        },
+        "reviewer": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true
+        }
+      },
+      "codex_only": {
+        "balanced": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high"
+        },
+        "cheap": {
+          "provider": "codex",
+          "model": "gpt-5.6-luna"
+        },
+        "deep_reviewer": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "fresh": true
+        },
+        "frontier": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "frontier_max": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        },
+        "frontier_plus": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh",
+          "fresh": true
+        },
+        "reviewer": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "fresh": true
+        }
+      },
+      "mixed": {
+        "balanced": {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "sonnet",
+              "effort": "high"
+            }
+          ]
+        },
+        "cheap": {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "sonnet"
+            }
+          ]
+        },
+        "deep_reviewer": {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": "high",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        },
+        "frontier": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "opus",
+              "effort": "high"
+            }
+          ]
+        },
+        "frontier_max": {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh",
+          "alternatives": [
+            {
+              "provider": "claude",
+              "model": "opus",
+              "effort": "max"
+            }
+          ]
+        },
+        "frontier_plus": {
+          "provider": "claude",
+          "model": "fable",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": "xhigh",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        },
+        "reviewer": {
+          "provider": "claude",
+          "model": "sonnet",
+          "effort": "high",
+          "minEffort": "high",
+          "fresh": true,
+          "alternatives": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-terra",
+              "effort": "high",
+              "minEffort": "high",
+              "fresh": true
+            }
+          ]
+        }
+      }
+    },
+    "providers": {
+      "claude": {},
+      "codex": {},
+      "copilot": {},
+      "opencode": {},
+      "pi": {}
+    },
+    "modes": {
+      "global": "auto",
+      "providers": {
+        "claude": "auto",
+        "codex": "auto"
+      }
+    },
+    "modeShifts": {
+      "conserve": {
+        "roles": {
+          "judge": "deep_reviewer",
+          "scout": "cheap",
+          "validator": "cheap"
+        },
+        "effortStep": -1,
+        "effortStepCapabilities": [
+          "frontier",
+          "frontier_max",
+          "deep_reviewer",
+          "frontier_plus"
+        ]
+      },
+      "spend_down": {
+        "roles": {
+          "complex_fixer": "frontier_max",
+          "diagnostician": "frontier_max",
+          "fixer": "frontier",
+          "implementer": "frontier_max",
+          "reviewer": "deep_reviewer",
+          "scout": "frontier"
+        },
+        "effortStep": 1,
+        "effortStepCapabilities": [
+          "frontier",
+          "frontier_max",
+          "deep_reviewer",
+          "frontier_plus"
+        ]
+      }
+    },
+    "thresholds": {
+      "spendDown": {
+        "timeToResetMinutes": 90,
+        "minRemainingPct": 50,
+        "maxForecastPctOfRemaining": 30
+      },
+      "health": {
+        "yellowAtUsedPct": 70,
+        "redAtUsedPct": 90
+      },
+      "pacing": {
+        "enabled": true,
+        "conserveAtRatio": 1.25,
+        "blockSpendDownAtRatio": 1,
+        "bootstrap": {
+          "minElapsedPct": 5,
+          "expectedOffsetPct": 2
+        },
+        "sevenDay": {
+          "curve": "calendar",
+          "timezone": "local",
+          "weekendWeight": 0.5,
+          "weekend": "spend_tail",
+          "weekendReservePct": 0
+        }
+      }
+    },
+    "forecastWeights": {
+      "fixing": 2,
+      "implementation": 4,
+      "review": 2,
+      "scouting": 1,
+      "validation": 1
+    }
+  },
+  "sourceByPath": {
+    "activeProfile": "shipped",
+    "forecastWeights.fixing": "shipped",
+    "forecastWeights.implementation": "shipped",
+    "forecastWeights.review": "shipped",
+    "forecastWeights.scouting": "shipped",
+    "forecastWeights.validation": "shipped",
+    "modeShifts.conserve.effortStep": "shipped",
+    "modeShifts.conserve.effortStepCapabilities": "shipped",
+    "modeShifts.conserve.roles.judge": "shipped",
+    "modeShifts.conserve.roles.scout": "shipped",
+    "modeShifts.conserve.roles.validator": "shipped",
+    "modeShifts.spend_down.effortStep": "shipped",
+    "modeShifts.spend_down.effortStepCapabilities": "shipped",
+    "modeShifts.spend_down.roles.complex_fixer": "shipped",
+    "modeShifts.spend_down.roles.diagnostician": "shipped",
+    "modeShifts.spend_down.roles.fixer": "shipped",
+    "modeShifts.spend_down.roles.implementer": "shipped",
+    "modeShifts.spend_down.roles.reviewer": "shipped",
+    "modeShifts.spend_down.roles.scout": "shipped",
+    "modes.global": "shipped",
+    "modes.providers.claude": "shipped",
+    "modes.providers.codex": "shipped",
+    "profiles.anthropic_only.balanced.effort": "shipped",
+    "profiles.anthropic_only.balanced.model": "shipped",
+    "profiles.anthropic_only.balanced.provider": "shipped",
+    "profiles.anthropic_only.cheap.model": "shipped",
+    "profiles.anthropic_only.cheap.provider": "shipped",
+    "profiles.anthropic_only.deep_reviewer.effort": "shipped",
+    "profiles.anthropic_only.deep_reviewer.fresh": "shipped",
+    "profiles.anthropic_only.deep_reviewer.minEffort": "shipped",
+    "profiles.anthropic_only.deep_reviewer.model": "shipped",
+    "profiles.anthropic_only.deep_reviewer.provider": "shipped",
+    "profiles.anthropic_only.frontier.effort": "shipped",
+    "profiles.anthropic_only.frontier.model": "shipped",
+    "profiles.anthropic_only.frontier.provider": "shipped",
+    "profiles.anthropic_only.frontier_max.effort": "shipped",
+    "profiles.anthropic_only.frontier_max.model": "shipped",
+    "profiles.anthropic_only.frontier_max.provider": "shipped",
+    "profiles.anthropic_only.frontier_plus.fresh": "shipped",
+    "profiles.anthropic_only.frontier_plus.minEffort": "shipped",
+    "profiles.anthropic_only.frontier_plus.model": "shipped",
+    "profiles.anthropic_only.frontier_plus.provider": "shipped",
+    "profiles.anthropic_only.reviewer.effort": "shipped",
+    "profiles.anthropic_only.reviewer.fresh": "shipped",
+    "profiles.anthropic_only.reviewer.minEffort": "shipped",
+    "profiles.anthropic_only.reviewer.model": "shipped",
+    "profiles.anthropic_only.reviewer.provider": "shipped",
+    "profiles.codex_only.balanced.effort": "shipped",
+    "profiles.codex_only.balanced.model": "shipped",
+    "profiles.codex_only.balanced.provider": "shipped",
+    "profiles.codex_only.cheap.model": "shipped",
+    "profiles.codex_only.cheap.provider": "shipped",
+    "profiles.codex_only.deep_reviewer.effort": "shipped",
+    "profiles.codex_only.deep_reviewer.fresh": "shipped",
+    "profiles.codex_only.deep_reviewer.model": "shipped",
+    "profiles.codex_only.deep_reviewer.provider": "shipped",
+    "profiles.codex_only.frontier.effort": "shipped",
+    "profiles.codex_only.frontier.model": "shipped",
+    "profiles.codex_only.frontier.provider": "shipped",
+    "profiles.codex_only.frontier_max.effort": "shipped",
+    "profiles.codex_only.frontier_max.model": "shipped",
+    "profiles.codex_only.frontier_max.provider": "shipped",
+    "profiles.codex_only.frontier_plus.effort": "shipped",
+    "profiles.codex_only.frontier_plus.fresh": "shipped",
+    "profiles.codex_only.frontier_plus.model": "shipped",
+    "profiles.codex_only.frontier_plus.provider": "shipped",
+    "profiles.codex_only.reviewer.effort": "shipped",
+    "profiles.codex_only.reviewer.fresh": "shipped",
+    "profiles.codex_only.reviewer.model": "shipped",
+    "profiles.codex_only.reviewer.provider": "shipped",
+    "profiles.mixed.balanced.alternatives": "shipped",
+    "profiles.mixed.balanced.effort": "shipped",
+    "profiles.mixed.balanced.model": "shipped",
+    "profiles.mixed.balanced.provider": "shipped",
+    "profiles.mixed.cheap.alternatives": "shipped",
+    "profiles.mixed.cheap.model": "shipped",
+    "profiles.mixed.cheap.provider": "shipped",
+    "profiles.mixed.deep_reviewer.alternatives": "shipped",
+    "profiles.mixed.deep_reviewer.effort": "shipped",
+    "profiles.mixed.deep_reviewer.fresh": "shipped",
+    "profiles.mixed.deep_reviewer.minEffort": "shipped",
+    "profiles.mixed.deep_reviewer.model": "shipped",
+    "profiles.mixed.deep_reviewer.provider": "shipped",
+    "profiles.mixed.frontier.alternatives": "shipped",
+    "profiles.mixed.frontier.effort": "shipped",
+    "profiles.mixed.frontier.model": "shipped",
+    "profiles.mixed.frontier.provider": "shipped",
+    "profiles.mixed.frontier_max.alternatives": "shipped",
+    "profiles.mixed.frontier_max.effort": "shipped",
+    "profiles.mixed.frontier_max.model": "shipped",
+    "profiles.mixed.frontier_max.provider": "shipped",
+    "profiles.mixed.frontier_plus.alternatives": "shipped",
+    "profiles.mixed.frontier_plus.fresh": "shipped",
+    "profiles.mixed.frontier_plus.minEffort": "shipped",
+    "profiles.mixed.frontier_plus.model": "shipped",
+    "profiles.mixed.frontier_plus.provider": "shipped",
+    "profiles.mixed.reviewer.alternatives": "shipped",
+    "profiles.mixed.reviewer.effort": "shipped",
+    "profiles.mixed.reviewer.fresh": "shipped",
+    "profiles.mixed.reviewer.minEffort": "shipped",
+    "profiles.mixed.reviewer.model": "shipped",
+    "profiles.mixed.reviewer.provider": "shipped",
+    "roles.complex_fixer": "shipped",
+    "roles.deep_reviewer": "shipped",
+    "roles.diagnostician": "shipped",
+    "roles.fixer": "shipped",
+    "roles.implementer": "shipped",
+    "roles.judge": "shipped",
+    "roles.mechanical": "shipped",
+    "roles.reviewer": "shipped",
+    "roles.scout": "shipped",
+    "roles.supervisor": "shipped",
+    "roles.validator": "shipped",
+    "thresholds.health.redAtUsedPct": "shipped",
+    "thresholds.health.yellowAtUsedPct": "shipped",
+    "thresholds.pacing.blockSpendDownAtRatio": "shipped",
+    "thresholds.pacing.bootstrap.expectedOffsetPct": "shipped",
+    "thresholds.pacing.bootstrap.minElapsedPct": "shipped",
+    "thresholds.pacing.conserveAtRatio": "shipped",
+    "thresholds.pacing.enabled": "shipped",
+    "thresholds.pacing.sevenDay.curve": "shipped",
+    "thresholds.pacing.sevenDay.timezone": "shipped",
+    "thresholds.pacing.sevenDay.weekend": "shipped",
+    "thresholds.pacing.sevenDay.weekendReservePct": "shipped",
+    "thresholds.pacing.sevenDay.weekendWeight": "shipped",
+    "thresholds.spendDown.maxForecastPctOfRemaining": "shipped",
+    "thresholds.spendDown.minRemainingPct": "shipped",
+    "thresholds.spendDown.timeToResetMinutes": "shipped"
+  },
+  "managedFields": [],
+  "catalog": {
+    "claude": {
+      "state": "available",
+      "models": [
+        {
+          "id": "sonnet",
+          "effortLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "id": "opus",
+          "effortLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        {
+          "id": "fable",
+          "effortLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ]
+    },
+    "codex": {
+      "state": "available",
+      "models": [
+        {
+          "id": "gpt-5.6-terra",
+          "effortLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "effortLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        {
+          "id": "gpt-5.6-sol",
+          "effortLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        }
+      ]
+    },
+    "copilot": {
+      "state": "unknown"
+    },
+    "opencode": {
+      "state": "unknown"
+    },
+    "pi": {
+      "state": "unknown"
+    }
+  },
+  "validation": {
+    "catalogChecked": false,
+    "valid": true,
+    "catalogPending": true,
+    "issues": [],
+    "changedPaths": []
+  }
+}

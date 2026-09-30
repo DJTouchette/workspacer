@@ -38,7 +38,7 @@ engine_target=$(cargo metadata --no-deps --format-version 1 --manifest-path "$ro
 cp "$hub_target/release/workspacer-rust" "$engine_target/release/claudemon" "$stage/bin/"
 npm --prefix "$root/apps/desktop" run build:renderer:web
 cp -a "$root/apps/desktop/dist/web" "$stage/web"
-git -C "$root" archive HEAD services/hub/examples | tar -x -C "$stage/examples" --strip-components=3
+git -C "$root" archive HEAD plugins/examples | tar -x -C "$stage/examples" --strip-components=2
 cp "$root/deploy/fly/rust/launch.sh" "$root/deploy/fly/rust/provision-worker-caller.sh" "$root/deploy/fly/rust/verify-image.sh" "$stage/entrypoints/"
 cp "$root/deploy/fly/node/entrypoint.sh" "$stage/node-entrypoint.sh"
 cp "$root/deploy/fly/hub/entrypoint.sh" "$stage/hub-entrypoint.sh"

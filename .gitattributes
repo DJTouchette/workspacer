@@ -13,3 +13,9 @@
 /apps/desktop/src/main/shared/managerDoctrine.ts text eol=lf
 /apps/desktop/src/main/shared/fleetWorkflow.ts text eol=lf
 /services/hub-rs/assets/launch-instructions.json text eol=lf
+# Retained non-Go assets keep captured byte provenance across platform checkouts.
+/services/hub/examples/** text eol=lf
+/plugins/examples/** text eol=lf
+/plugins/examples.provenance.json text eol=lf
+/services/hub/internal/routing/testdata/preferences-view.json text eol=lf
+/apps/desktop/tests/fixtures/routing-preferences-view.json text eol=lf

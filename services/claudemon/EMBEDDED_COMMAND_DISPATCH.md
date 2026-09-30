@@ -50,3 +50,14 @@ not red-test evidence. This manifest does not inherit the hub's stripped dev
 profile. Local owning checks used `CARGO_PROFILE_DEV_DEBUG=0` and
 `CARGO_PROFILE_TEST_DEBUG=0`, preserving dependency versions and the source
 test behavior. Hub integration and final platform CI receipts are separate.
+
+The exact runtime commit `915960b9e5ae35a25d0b19d3694b110c4d997d90`
+subsequently passed [primary CI](https://github.com/DJTouchette/workspacer/actions/runs/36659897298).
+Its [hub job](https://github.com/DJTouchette/workspacer/actions/runs/36659897298/job/109712115244)
+records `backend_owner` 3, `shutdown` 1, `local_spawn` 1 and
+`integration_spine` 2, all passed with zero failures or ignored tests.
+The attempted local representative build hit a disk-exhaustion linker failure
+before tests; it is not counted as validation. No runtime sources or backend
+lockfiles changed after that CI commit. The later integration-spine include
+path selects byte-identical editor-manifest content and awaits its own final
+commit's CI rather than being described as already executed by this receipt.

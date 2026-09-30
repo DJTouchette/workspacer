@@ -1,0 +1,79 @@
+{
+  "referenceCommit": "8b67da62b811d35baf02a39b6ac75382340829c4",
+  "files": [
+    {
+      "source": "services/hub/examples/clock-plugin/index.html",
+      "destination": "plugins/examples/clock-plugin/index.html",
+      "sha256": "d597e1ca8e7dca2564eb2f105cb60a2005e867e26a76652e6a053b405d560b56"
+    },
+    {
+      "source": "services/hub/examples/clock-plugin/plugin.json",
+      "destination": "plugins/examples/clock-plugin/plugin.json",
+      "sha256": "c74e510cb0d2d84a35379d2a4a3aaa67522bf822312ae83d74db49a9304ae470"
+    },
+    {
+      "source": "services/hub/examples/editor/plugin.json",
+      "destination": "plugins/examples/editor/plugin.json",
+      "sha256": "df8e11cc7981286dde1e5239f999ff1735fb7718bd2c4f61ccb302b210fd27a2"
+    },
+    {
+      "source": "services/hub/examples/editor/ui/cm.bundle.js",
+      "destination": "plugins/examples/editor/ui/cm.bundle.js",
+      "sha256": "ef80253abaa615c38f240c2503ae277d6f417a312e26b2c957de5a1bbdb3b7b9"
+    },
+    {
+      "source": "services/hub/examples/editor/ui/index.html",
+      "destination": "plugins/examples/editor/ui/index.html",
+      "sha256": "2a7ea21d9788230a4385d4c6987e277f3b236bf70101da3339a01b92997ac2b3"
+    },
+    {
+      "source": "services/hub/examples/headroom/README.md",
+      "destination": "plugins/examples/headroom/README.md",
+      "sha256": "4ddd195d0783b6560fbbdaa66d522cd5cd960cdbd64d904b6c21e745364d5861",
+      "destinationSha256": "18d0e260d29486b38f98e077e2ed1908c9c44dedfaddb218f1cabf068ccb534e",
+      "relocationReason": "Documentation-only test command paths now name retained examples and current Rust plugin manager."
+    },
+    {
+      "source": "services/hub/examples/headroom/adapter.mjs",
+      "destination": "plugins/examples/headroom/adapter.mjs",
+      "sha256": "1e801fa4b84858ea09f08e33bafb8d2923fc4c8889920d7ccb111935c83186e2"
+    },
+    {
+      "source": "services/hub/examples/headroom/adapter.test.mjs",
+      "destination": "plugins/examples/headroom/adapter.test.mjs",
+      "sha256": "ef8a2a5ae69cf2d8d78339c567ecea4c1dca1babf9b9a99355931298bb28409d",
+      "destinationSha256": "28d2dc373071980db5213ba19e89271706632a413c5a441d203364155ef5fcd9",
+      "relocationReason": "Test-only ws import climbs three parents from the new location instead of four; production and vendored bytes unchanged."
+    },
+    {
+      "source": "services/hub/examples/headroom/plugin.json",
+      "destination": "plugins/examples/headroom/plugin.json",
+      "sha256": "0e3d6c8f063b9ff29119f15ad8bf8c6e5add08d3fc5118ae112c00f010452c3f"
+    },
+    {
+      "source": "services/hub/examples/headroom/server.mjs",
+      "destination": "plugins/examples/headroom/server.mjs",
+      "sha256": "0dac61def93effad1dc02c002e49df9a1867f00a3a25b9a504d91074aed054d5"
+    },
+    {
+      "source": "services/hub/examples/transcript-timeline/README.md",
+      "destination": "plugins/examples/transcript-timeline/README.md",
+      "sha256": "335bf6a17ac5a8fde8e512aa6192531035f52c5071e9ff259268ba3633e6f489"
+    },
+    {
+      "source": "services/hub/examples/transcript-timeline/plugin.json",
+      "destination": "plugins/examples/transcript-timeline/plugin.json",
+      "sha256": "a9382e7d12aaf5c4a677095825a6b36a6318b76ff92c854e86f189a848b15576"
+    },
+    {
+      "source": "services/hub/examples/transcript-timeline/ui/index.html",
+      "destination": "plugins/examples/transcript-timeline/ui/index.html",
+      "sha256": "49f53e28798692673b2d34183bfd4600e927fff5a3958ac73b7e10b0a2b82092"
+    }
+  ],
+  "routingFixture": {
+    "source": "services/hub/internal/routing/testdata/preferences-view.json",
+    "destination": "apps/desktop/tests/fixtures/routing-preferences-view.json",
+    "sha256": "d1778af25adbabfb50f067e15ffcf29ab48d23742f04dadca29ce12affec8858"
+  }
+}

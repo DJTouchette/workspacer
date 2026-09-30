@@ -20,7 +20,7 @@ export function stagePayload({ root, stage, crt, version, commit = null, backend
     if (!fs.statSync(path.join(crt, name)).isFile()) throw new Error(`Missing CRT: ${name}`);
   }
   for (const name of fs.readdirSync(crt).filter(name => name.endsWith('.dll'))) copy(path.join(crt, name));
-  fs.cpSync(path.join(root, 'services/hub/examples'), path.join(stage, 'examples'), { recursive: true });
+  fs.cpSync(path.join(root, 'plugins/examples'), path.join(stage, 'examples'), { recursive: true });
   fs.writeFileSync(path.join(stage, 'build-stamp.json'), JSON.stringify({
     component: 'native', version, commit,
     platform: 'windows-x64', backend,

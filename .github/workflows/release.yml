@@ -286,7 +286,7 @@ jobs:
           # The built web app: `workspacer serve` auto-serves a sibling web/
           # at /app (the full renderer), no flag needed.
           cp -r "apps/desktop/dist/web" "$dir/web"
-          cp -r "services/hub/examples" "$dir/examples"
+          cp -r "plugins/examples" "$dir/examples"
           # Shared stamp writer gives artifact consumers the exact source revision.
           stamp_tag=""
           if [ "${{ needs.gate.outputs.nightly }}" = "true" ]; then
