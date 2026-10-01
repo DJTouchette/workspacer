@@ -1,4 +1,5 @@
 mod bus_commands;
+mod children;
 mod chrome;
 mod features;
 mod launch;
@@ -310,6 +311,7 @@ pub struct Workspace {
     ui_bus: bus_commands::UiState,
     extras: features::Extras,
     chat: transcript::ChatUi,
+    child_ui: children::ChildUi,
     screen: Screen,
     settings: Settings,
     fonts: typography::FontControls,
@@ -473,6 +475,7 @@ impl Workspace {
         Self {
             extras: features::Extras::new(window, cx),
             chat: transcript::ChatUi::default(),
+            child_ui: children::ChildUi::default(),
             ui_bus: Default::default(),
             screen: Screen::Conversation,
             settings: Settings::default(),
@@ -568,6 +571,7 @@ impl Workspace {
     fn update_view(&mut self, view: Arc<View>, window: &mut Window, cx: &mut Context<Self>) {
         self.has_connected |= view.connected;
         self.capture_reading(window, cx);
+        let children_changed = self.sync_children(&view, cx);
         self.receive_chat_requests(&view, cx);
         self.sync_features(&view, window, cx);
         if let Some(receipt) = &view.spawn_receipt
@@ -660,8 +664,9 @@ impl Workspace {
             // Revisions restart after a reconnect/reselection. Row identities
             // and count remain authoritative even if two revisions collide.
             let changed = first < old.len() || first < new.len();
-            if changed {
+            if changed || children_changed {
                 let restored = anchor.map(|anchor| scroll::remap_anchor(anchor, old, new));
+                let first = if children_changed { 0 } else { first };
                 self.list.splice(first..old.len(), new.len() - first);
                 if let Some(anchor) = restored {
                     self.list.scroll_to(anchor);
@@ -1218,7 +1223,8 @@ impl Render for Workspace {
         self.shell(window, cx)
             .child(sidebar)
             .child(div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
-                .when(self.view.transcript.rows.is_empty(), |d| d.child(self.render_empty_state(compact, window, cx)))
+                .when(self.view.transcript.rows.is_empty() && self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_empty_state(compact, window, cx)))
+                .when(self.view.transcript.rows.is_empty() && !self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_child_only(window, cx)))
                 .when(!self.view.transcript.rows.is_empty(), |d| d.child(transcript))
                 .child(header)
                 .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).shadow(chrome::floating_shadow(p)).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, window, cx| {
@@ -2658,6 +2664,115 @@ mod tests {
         let open = visual.debug_bounds("open-spawned-session").unwrap();
         visual.simulate_click(open.center(), gpui::Modifiers::default());
         assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn inline_children_update_and_open_parent_scoped_transcripts_without_losing_drafts(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        Arc::make_mut(&mut view.sessions)[0].merge(&serde_json::json!({"provider":"codex","subagents":[
+            {"id":"native-one","toolUseId":"dispatch","type":"Explore","description":"Inspect parsing","status":"running","model":"runtime-model","tokens":0,"costUSD":0,"toolCalls":2,"startedAt":1000,"lastToolName":"Read"},
+            {"id":"native-two","toolUseId":"dispatch","type":"Test","description":"Check aliases","status":"complete","startedAt":1000,"completedAt":4000}
+        ]}));
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![Item {
+                kind: "tool_use".into(),
+                id: "dispatch".into(),
+                name: "Agent".into(),
+                input: serde_json::json!({"prompt":"Inspect parsing"}),
+                ..Default::default()
+            }],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(view), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("Parent draft", window, cx));
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("child-agent-native-one").is_some());
+        assert!(visual.debug_bounds("child-agent-native-two").is_some());
+        assert!(visual.debug_bounds("native-spawn-icon").is_some());
+        assert!(visual.debug_bounds("provider-child-icon").is_some());
+        workspace.read_with(&visual, |this, _| {
+            let child = &this.child_ui.agents.by_tool["dispatch"][0];
+            assert_eq!(child.model, "runtime-model");
+            assert_eq!(child.telemetry.tokens, Some(0));
+            assert_eq!(child.telemetry.cost_usd, Some(0.));
+            assert_eq!(
+                this.child_ui.agents.by_tool["dispatch"][1].duration_ms(9000),
+                Some(3000)
+            );
+        });
+        let bounds = visual.debug_bounds("child-agent-native-one").unwrap();
+        visual.simulate_click(bounds.center(), gpui::Modifiers::default());
+        assert!(
+            matches!(commands.try_recv().unwrap(),Command::Request(wks_native::features::Request::SubagentHistory{session,agent}) if session=="a" && agent=="native-one")
+        );
+        assert!(commands.try_recv().is_err());
+        visual.update(|window,cx|workspace.update(cx,|this,cx|{
+            let mut view=(*this.view).clone();
+            Arc::make_mut(&mut view.sessions)[0].merge(&serde_json::json!({"subagents":[
+                {"id":"native-one","status":"complete","completedAt":5000,"tokens":2000},
+                {"id":"native-two"}
+            ]}));
+            view.requests.insert("subagent-history",wks_native::features::RequestState{
+                request:wks_native::features::Request::SubagentHistory{session:"a".into(),agent:"native-one".into()},number:1,loading:false,error:None,
+                value:Arc::new(serde_json::json!({"rows":[{"key":1,"role":"Assistant","text":"The parser handles these aliases."}]}))
+            });
+            this.update_view(Arc::new(view),window,cx);
+        }));
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("child-transcript-panel").is_some());
+        workspace.read_with(&visual, |this, cx| {
+            let child = &this.child_ui.agents.by_tool["dispatch"][0];
+            assert!(!child.running());
+            assert_eq!(child.telemetry.tokens, Some(2000));
+            assert_eq!(child.duration_ms(9000), Some(4000));
+            assert_eq!(this.composer.read(cx).value().as_ref(), "Parent draft");
+        });
+        let close = visual.debug_bounds("close-child-transcript").unwrap();
+        visual.simulate_click(close.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(
+                this.child_ui.closed,
+                Some(1),
+                "close={close:?}, header={:?}, dock={:?}",
+                this.header_bounds,
+                this.composer_dock_bounds
+            )
+        });
+        // GPUI Frame::clear retains historical debug_bounds. A newly painted
+        // closed marker proves the transition; absence of the old selector does not.
+        assert!(visual.debug_bounds("closed-child-transcript").is_some());
+        assert!(commands.try_recv().is_err());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut other = state("b");
+                Arc::make_mut(&mut other.sessions)[1].merge(
+                    &serde_json::json!({"subagents":[{"id":"native-one","status":"running"}]}),
+                );
+                other.requests = this.view.requests.clone();
+                this.update_view(Arc::new(other), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(
+            visual.debug_bounds("child-agent-native-one").is_some(),
+            "unanchored children remain visible even before transcript arrives"
+        );
+        assert!(visual.debug_bounds("child-only-list").is_some());
+        workspace.read_with(&visual, |this,_| {
+            assert_eq!(this.view.selected.as_deref(),Some("b"));
+            assert!(matches!(&this.view.requests["subagent-history"].request,wks_native::features::Request::SubagentHistory{session,..} if session!="b"));
+            assert!(this.child_ui.agents.by_tool.is_empty());
+        });
     }
 
     #[gpui::test]

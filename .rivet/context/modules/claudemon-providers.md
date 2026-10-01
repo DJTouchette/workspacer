@@ -97,6 +97,29 @@ background counts together.
 Inventory enrichment is disk-backed after the init frame; translation remains
 pure. See [Claude asset roots](claude-asset-roots.md) for path/origin resolution.
 
+## Native child cards and Claude artifact replay
+
+The native client joins provider child IDs to dispatch tool IDs separately from
+Workspacer `spawn_agent` session receipts. Both use compact child cards, with
+different source icons. Reported cumulative usage and runtime model metadata stay
+separate from requested model/context selection. Missing measurements and the
+Claude artifact reader's unknown-start sentinel remain unknown.
+
+`session/claude_subagents.rs` discovers only the exact Claude session transcript
+under spawn-authorized roots and reads known children within that parent's
+`subagents` directory. This supplies standalone native metadata without relying
+on Electron's hook setup. Hooks enrich child rows without claiming the managed
+parent's mode, pending decisions or background-task counts. Async artifact scans
+are fenced against newer hooks and changed session generations. Parent Input is
+not completion evidence for a detached child.
+
+The parent-scoped `sessions.subagentConversation` route now serves Claude and
+Codex. Claude replay rejects redirected paths and files over 4 MiB, retains
+normalized tool/result blocks and preserves sequence offsets when its 2,000-event
+window clips older events. Native previews are bounded, read-only snapshots with
+explicit refresh; they do not create independent Workspacer sessions for native
+provider children.
+
 ## Codex ownership, controls, and resume
 
 Hybrid mode lets the native TUI own the thread; the RPC client discovers and

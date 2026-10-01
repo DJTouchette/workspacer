@@ -635,11 +635,26 @@ responsibility; the native library does not infer OS shutdown or restart authori
 ## Chat polish
 
 Ordinary native sessions receive the shared Workspacer `spawn-agent` skill
-instructions through the Rust launcher. Successful Workspacer spawn tool receipts
-offer **Open child session** while the child is available in the session list.
-Provider-native subagent IDs remain separate from Workspacer session IDs. Child
-first messages, tool receipts and completion wakes use the same retained chat
-parsing as History.
+instructions through the Rust launcher. Workspacer children and provider-native
+Claude/Codex subagents share compact cards beneath their dispatch, with a bot icon
+for Workspacer and a terminal icon for provider-native work. Cards show reported
+status, model, tools, tokens, estimated cost, activity and elapsed time; missing
+measurements remain blank. Dispatch acknowledgement stays separate from child
+completion. Children without a reliable dispatch anchor remain in a small
+**Child agents** section rather than being attached to an unrelated call.
+
+Select a Workspacer child to open its session. Select a provider-native child to
+open a bounded, read-only transcript beneath its card; **Refresh** reads its latest
+retained messages. Provider IDs never become Workspacer session IDs. Parent
+selection and request generations fence late reads, and navigation preserves the
+parent draft and reading position.
+
+Standalone Claude child metadata comes from child hooks and exact-session
+artifacts under the registered Claude roots, including local mode without global
+hook setup. Reads require a known child and remain inside its parent's artifact
+directory. Detached children do not finish merely because the parent becomes
+idle. Native child transcripts retain at most 2,000 events, with the existing
+text budgets, and Claude artifact reads support files up to 4 MiB.
 
 `--session` pins automatic selection until you explicitly choose **New session**
 (`Ctrl/Cmd+N`). That opens the creation form and leaves the pin; a successful

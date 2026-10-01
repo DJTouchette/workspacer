@@ -878,6 +878,97 @@ async fn secondary_reads_are_superseded_and_never_cross_sessions() {
 }
 
 #[tokio::test]
+async fn provider_child_history_uses_parent_route_and_fences_old_child_reads() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots")).await
+        .result(json!([{"sessionId":"a","mode":"input","transport":"stream","cwd":"/test",
+            "subagents":[{"id":"old-child"},{"id":"native-child"},{"id":"unavailable"},{"id":"pending-child"}]}, session("b")])).await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "parent"))
+        .await;
+    view(&controller, |v| {
+        v.selected.as_deref() == Some("a") && !v.loading
+    })
+    .await;
+    let request = |agent: &str| {
+        Command::Request(Request::SubagentHistory {
+            session: "a".into(),
+            agent: agent.into(),
+        })
+    };
+    controller.command(request("old-child")).unwrap();
+    let old = hub
+        .frame("call", Some("sessions.subagentConversation"))
+        .await;
+    controller.command(request("native-child")).unwrap();
+    let child = hub
+        .frame("call", Some("sessions.subagentConversation"))
+        .await;
+    assert_eq!(
+        child.value["params"],
+        json!({"sessionId":"a","agentId":"native-child"})
+    );
+    child
+        .result(
+            json!({"session_id":"a","agent_id":"native-child","seq":4,"items":[
+                {"kind":"user_message","text":"inspect"},
+                {"kind":"tool_use","id":"t1","name":"exec_command","input":{"cmd":"pwd"}},
+                {"kind":"tool_result","tool_use_id":"t1","content":"/test"},
+                {"kind":"assistant_text","text":"child done"}
+            ]}),
+        )
+        .await;
+    old.result(snapshot(1, "stale child")).await;
+    let loaded = view(&controller, |v| {
+        v.requests
+            .get("subagent-history")
+            .is_some_and(|state| !state.loading && state.value["agent_id"] == "native-child")
+    })
+    .await;
+    assert_eq!(loaded.selected.as_deref(), Some("a"));
+    assert_eq!(loaded.transcript.rows[0].text, "parent");
+    let rows = loaded.requests["subagent-history"].value["rows"]
+        .as_array()
+        .unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[1]["tool"]["output"], "/test");
+    assert_eq!(rows[2]["text"], "child done");
+
+    controller.command(request("unavailable")).unwrap();
+    hub.frame("call", Some("sessions.subagentConversation"))
+        .await
+        .result(Value::Null)
+        .await;
+    view(&controller, |v| {
+        v.requests.get("subagent-history").is_some_and(|state| {
+            state.error.as_deref() == Some("Child transcript is not available yet")
+        })
+    })
+    .await;
+    controller.command(request("pending-child")).unwrap();
+    let pending = hub
+        .frame("call", Some("sessions.subagentConversation"))
+        .await;
+    controller.command(Command::Select("b".into())).unwrap();
+    let selected = view(&controller, |v| v.selected.as_deref() == Some("b")).await;
+    assert!(!selected.requests.contains_key("subagent-history"));
+    pending.result(snapshot(1, "stale after switch")).await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "other parent"))
+        .await;
+    let switched = view(&controller, |v| {
+        v.selected.as_deref() == Some("b") && !v.loading
+    })
+    .await;
+    assert!(!switched.requests.contains_key("subagent-history"));
+    assert_eq!(switched.transcript.rows[0].text, "other parent");
+}
+
+#[tokio::test]
 async fn recent_session_can_be_read_without_launching_and_resume_is_explicit() {
     let mut hub = Hub::new().await;
     let controller = Controller::start(hub.config.clone());

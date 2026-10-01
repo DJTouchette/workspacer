@@ -2,6 +2,7 @@
 pub mod appearance;
 pub mod backend;
 pub mod bus;
+pub mod child_agents;
 pub mod controller;
 pub mod features;
 pub mod harness;

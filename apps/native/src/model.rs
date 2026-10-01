@@ -23,6 +23,7 @@ pub struct Session {
     pub workflows: Value,
     pub model: String,
     pub context_window: Option<u64>,
+    pub telemetry: crate::child_agents::Telemetry,
     pub approval: Option<Value>,
     pub questions: Option<Value>,
 }
@@ -37,6 +38,7 @@ impl Session {
     }
 
     pub fn merge(&mut self, value: &Value) {
+        self.telemetry.merge(value);
         for (target, names) in [
             (&mut self.id, &["sessionId", "session_id"][..]),
             (
@@ -85,7 +87,7 @@ impl Session {
             self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
         }
         if let Some(items) = value.get("subagents") {
-            self.subagents = bounded_inventory(
+            let mut projected = bounded_inventory(
                 items,
                 &[
                     "id",
@@ -95,8 +97,45 @@ impl Session {
                     "status",
                     "model",
                     "lastToolName",
+                    "lastToolSummary",
+                    "tokens",
+                    "costUSD",
+                    "toolCalls",
+                    "startedAt",
+                    "completedAt",
+                    "sessionId",
+                    "lastActivity",
+                    "tokenCount",
+                    "totalCostUsd",
+                    "durationMs",
                 ],
             );
+            // A supplied array owns membership; sparse entries preserve their
+            // previously reported measurements without keeping removed agents.
+            if let Some(rows) = projected.as_array_mut() {
+                for row in rows {
+                    if let Some(previous) = self
+                        .subagents
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|previous| previous["id"] == row["id"] && row["id"].is_string())
+                        .and_then(Value::as_object)
+                    {
+                        for (key, value) in previous {
+                            row.as_object_mut()
+                                .unwrap()
+                                .entry(key.clone())
+                                .or_insert_with(|| value.clone());
+                        }
+                    }
+                    if row["status"] == "running" {
+                        row["completedAt"] = Value::Null;
+                        row["durationMs"] = Value::Null;
+                    }
+                }
+            }
+            self.subagents = projected;
         }
         if let Some(items) = value.get("workflows") {
             self.workflows = bounded_inventory(
@@ -169,6 +208,12 @@ fn bounded_inventory(value: &Value, fields: &[&str]) -> Value {
                             (*field).into(),
                             Value::String(crate::transcript::head(text, 512)),
                         );
+                    }
+                    if item[*field].is_number() {
+                        projected.insert((*field).into(), item[*field].clone());
+                    }
+                    if item.get(*field).is_some_and(Value::is_null) {
+                        projected.insert((*field).into(), Value::Null);
                     }
                 }
                 Value::Object(projected)

@@ -476,3 +476,44 @@ the earlier parsing batch; they were not regenerated for the merged UI.
 The 13 selected shared-hub checks also passed on the merged source. Reviewed the
 new `providers.listModels.useHomeDirectory` selector in the parameter-policy
 fixture; the source scanner and all 34 capability-checker tests passed.
+
+## Inline Workspacer and provider-native child cards (2026-10-01)
+
+Children share compact dispatch cards with distinct bot/terminal source icons.
+Reported status, activity, runtime model, cumulative usage and elapsed time update
+without changing the parent's draft or reading position. Exact dispatch anchors
+support several children; ambiguous children stay in a separate section. Native
+provider IDs never become Workspacer session IDs. Child transcript previews are
+bounded, read-only and parent-scoped, with explicit refresh and request fencing.
+
+Standalone Claude discovers exact-session sidecars under registered roots without
+requiring global hooks. Child hooks/artifacts enrich metadata without taking the
+parent's mode, pending decisions or busy counters. Detached children survive
+parent idle; completion requires child evidence. Artifact/meta reads reject
+redirected paths and oversized payloads. Reported zero usage remains distinct
+from absence, unknown starts omit duration, and trimming retains sequence offsets.
+
+- Full serialized native suite against the extended backend: **164 passed**
+  (72 library, 60 UI/lifetime, 29 protocol, 3 Rust-host).
+- Full claudemon library suite: **908 passed, 4 ignored**. Subsequent focused
+  checks covered scan/hook races and canonical path identity; the final exact
+  metadata-anchor/subsecond update passed **3 child tests plus 2 Claude/Codex API
+  tests**, using native-lock dependency versions in a temporary test crate.
+  Tracked lock files were preserved. No real provider or model call was made.
+- Formatting, diff whitespace and smoke-script syntax checks passed. Witness
+  leaves native/new backend files unmapped, so the suites above were selected
+  explicitly rather than reporting empty selection as a pass.
+- Actual Linux X11/software-Vulkan windows were inspected at 1200 × 800 and
+  720 × 480, including multiple children, distinct source icons and an opened
+  native transcript with paired tool output. The smoke CLI supports repeated
+  `--click` for capture sequences. GPUI's debug-bound map retains removed
+  selectors; interaction tests use newly painted transition markers alongside
+  actual request/ownership checks.
+
+These are fixture/recorded-artifact checks, not live-account, GPU-performance or
+Windows/macOS rendering verification. The final metadata-only backend refinement
+was checked with focused daemon tests after the complete native run.
+
+Captures: [child cards](docs/ui-inline-child-cards.png),
+[native child transcript](docs/ui-native-child-transcript.png),
+[compact](docs/ui-inline-child-cards-compact.png).

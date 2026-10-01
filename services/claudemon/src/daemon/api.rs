@@ -358,7 +358,7 @@ async fn get_usage(State(store): State<SessionStore>) -> Response {
                         StatusCode::SERVICE_UNAVAILABLE,
                         format!("account usage unavailable: {err:#}"),
                     )
-                        .into_response()
+                        .into_response();
                 }
             }
         }
@@ -1430,9 +1430,9 @@ async fn get_conversation(
         .into_response()
 }
 
-/// Parsed conversation for one provider-owned child agent. Codex app-server
-/// reports child thread ids directly, and those threads are durable as rollout
-/// files under `$CODEX_HOME/sessions`. This read path is intentionally scoped
+/// Parsed conversation for one provider-owned child agent. Codex children use
+/// rollout files; Claude children use the owning parent transcript's subagents
+/// directory. This read path is intentionally scoped
 /// through the parent session's current subagent list: a caller may only ask for
 /// a child id the daemon already exposed on that parent snapshot.
 async fn get_subagent_conversation(
@@ -1449,12 +1449,12 @@ async fn get_subagent_conversation(
         )
             .into_response();
     };
-    if state.provider != "codex" {
+    if !matches!(state.provider.as_str(), "codex" | "claude") {
         return (
             StatusCode::NOT_FOUND,
             Json(json!({
                 "ok": false,
-                "error": "subagent conversation is only available for codex sessions"
+                "error": "subagent conversation is unavailable for this provider"
             })),
         )
             .into_response();
@@ -1465,6 +1465,12 @@ async fn get_subagent_conversation(
             Json(json!({ "ok": false, "error": "subagent not found for that session" })),
         )
             .into_response();
+    }
+    if state.provider == "claude" {
+        match crate::session::claude_subagents::replay(&state, &agent_id).await {
+            Ok(replay) => return Json(json!({"session_id":id,"agent_id":agent_id,"seq":replay.seq,"first_seq":replay.first_seq,"items":replay.items})).into_response(),
+            Err(error) => return (StatusCode::NOT_FOUND, Json(json!({"ok":false,"error":error.to_string()}))).into_response(),
+        }
     }
     let items = crate::providers::codex_rollout::rollout_for_thread(&agent_id)
         .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
@@ -1969,11 +1975,13 @@ mod tests {
             std::fs::read_to_string(out).unwrap(),
             "app-server\n--listen\nws://fixture\n"
         );
-        assert!(std::fs::read_dir(dir).unwrap().all(|entry| !entry
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .ends_with(".part")));
+        assert!(std::fs::read_dir(dir).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".part")
+        }));
     }
 
     #[cfg(unix)]
@@ -2808,6 +2816,62 @@ mod tests {
             None => std::env::remove_var("CODEX_HOME"),
         }
         let _ = std::fs::remove_dir_all(&codex_home);
+    }
+
+    #[tokio::test]
+    async fn get_subagent_conversation_replays_claude_child_only_for_known_parent() {
+        use crate::session::{state::HookEvent, transcript};
+        let root = std::env::temp_dir().join(format!("claude-api-child-{}", uuid::Uuid::new_v4()));
+        let projects = root.join("projects");
+        let project = projects.join("-project");
+        let directory = project.join("parent-claude/subagents");
+        std::fs::create_dir_all(&directory).unwrap();
+        transcript::allow_root(projects);
+        let main = project.join("parent-claude.jsonl");
+        std::fs::write(&main, "").unwrap();
+        std::fs::write(directory.join("agent-child.jsonl"),json!({"type":"assistant","isSidechain":true,"message":{"content":[{"type":"text","text":"Claude child result"}]}}).to_string()).unwrap();
+        let state = test_state();
+        state
+            .store
+            .register_managed("parent-claude", "/project", "claude");
+        state
+            .store
+            .set_transport("parent-claude", crate::session::Transport::Stream);
+        let url = "/sessions/parent-claude/subagents/child/conversation";
+        assert_eq!(
+            request(state.clone(), get(url)).await.0,
+            StatusCode::NOT_FOUND
+        );
+        state.store.ingest(serde_json::from_value::<HookEvent>(json!({"session_id":"parent-claude","hook_event_name":"SubagentStart","cwd":"/project","agent_id":"child","agent_type":"Explore","transcript_path":main})).unwrap());
+        let (status, body) = request(state.clone(), get(url)).await;
+        assert_eq!(status, StatusCode::OK);
+        let replay: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(replay["agent_id"], "child");
+        assert_eq!(replay["items"][0]["text"], "Claude child result");
+        state
+            .store
+            .register_managed("other-parent", "/project", "claude");
+        assert_eq!(
+            request(
+                state.clone(),
+                get("/sessions/other-parent/subagents/child/conversation")
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        // Even a known hook child cannot choose an arbitrary artifact path.
+        state.store.ingest(serde_json::from_value::<HookEvent>(json!({"session_id":"parent-claude","hook_event_name":"SubagentStart","cwd":"/project","agent_id":"escape","agent_transcript_path":main})).unwrap());
+        assert_eq!(
+            request(
+                state,
+                get("/sessions/parent-claude/subagents/escape/conversation")
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // --- /input -------------------------------------------------------------

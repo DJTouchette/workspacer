@@ -43,6 +43,10 @@ pub enum Request {
     History {
         session: String,
     },
+    SubagentHistory {
+        session: String,
+        agent: String,
+    },
     Upload {
         session: String,
         source: AttachmentSource,
@@ -73,6 +77,7 @@ impl Request {
             Self::Diff { .. } => "diff",
             Self::Setup { .. } => "setup",
             Self::History { .. } => "history",
+            Self::SubagentHistory { .. } => "subagent-history",
             Self::Upload { .. } => "upload",
             Self::Updates => "updates",
         }
@@ -138,6 +143,27 @@ impl Request {
                     .await
             }
             Self::History { session } => history_document(backend.conversation(session).await?),
+            Self::SubagentHistory { session, agent } => {
+                let value = backend
+                    .call(
+                        "sessions.subagentConversation",
+                        json!({"sessionId":session,"agentId":agent}),
+                    )
+                    .await?;
+                ensure!(!value.is_null(), "Child transcript is not available yet");
+                ensure!(
+                    value["session_id"].as_str().is_none_or(|id| id == session)
+                        && value["agent_id"].as_str().is_none_or(|id| id == agent),
+                    "Child transcript belongs to another session"
+                );
+                let snapshot: crate::model::ConversationSnapshot = serde_json::from_value(value)?;
+                let first_seq = snapshot.first_seq;
+                let mut transcript = crate::model::Transcript::default();
+                transcript.snapshot(snapshot);
+                let rows: Vec<_> = transcript.rows.iter().map(AsRef::as_ref).collect();
+                Ok(json!({"rows":rows,"first_seq":first_seq,
+                    "omitted":transcript.omitted,"session_id":session,"agent_id":agent}))
+            }
             Self::Setup { provider, check } => {
                 let installed = backend.call("providers.checkAll", json!({})).await?;
                 let readiness = backend

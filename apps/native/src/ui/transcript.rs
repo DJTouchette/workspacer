@@ -515,6 +515,17 @@ impl Workspace {
             .left_0()
             .size_full()
         });
+        if ix + 1 == rows.len() && !self.child_ui.agents.unanchored.is_empty() {
+            let children = self.child_ui.agents.unanchored.clone();
+            body = body
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(self.appearance.palette().muted))
+                        .child("Child agents"),
+                )
+                .child(self.render_children(&session, "unanchored", &children, window, cx));
+        }
         // Virtual list items are placed directly at the viewport origin. Center
         // the column inside a full-width item rather than on the item itself.
         div()
@@ -657,7 +668,9 @@ impl Workspace {
                     .or_else(|| input["task"].as_str())
                     .or_else(|| input["description"].as_str())
                     .unwrap_or("");
-                body = body.child(literal(format!("{key}-task"), description, window, cx));
+                if !description.is_empty() && description != tool.target() {
+                    body = body.child(literal(format!("{key}-task"), description, window, cx));
+                }
             }
             if namespace != "live" {
                 let changes = tool.changes();
@@ -710,35 +723,10 @@ impl Workspace {
                     cx,
                 ));
             }
-            let linked = self
-                .selected_session()
-                .and_then(|s| s.subagents.as_array())
-                .into_iter()
-                .flatten()
-                .find(|a| a["toolUseId"] == tool.id);
-            if let Some(agent) = linked {
-                body = body.child(format!(
-                    "{} · {} · {}",
-                    agent["description"].as_str().unwrap_or("Subagent"),
-                    agent["status"].as_str().unwrap_or(""),
-                    agent["lastToolName"].as_str().unwrap_or("")
-                ));
-            }
-            if let Some(child) = tool.spawned_session_id() {
-                let available = self.view.sessions.iter().any(|s| s.id == child);
-                body = body.child(
-                    self.button(
-                        SharedString::from(format!("{key}-spawned-session")),
-                        "Open child session",
-                        available,
-                    )
-                    .debug_selector(|| "open-spawned-session".into())
-                    .when(available, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            this.command(Command::Select(child.clone()), cx)
-                        }))
-                    }),
-                );
+            if namespace == "live"
+                && let Some(children) = self.child_ui.agents.by_tool.get(&tool.id).cloned()
+            {
+                body = body.child(self.render_children(&session, &key, &children, window, cx));
             }
             if tool.category() == "Workflow" {
                 let result =
@@ -929,7 +917,8 @@ impl Workspace {
                     }
                     for (i, action) in card.actions.into_iter().enumerate() {
                         let owner = session.clone();
-                        let enabled = self.selected_session().is_some_and(|s| !s.stopped())
+                        let enabled = namespace != "child-history"
+                            && self.selected_session().is_some_and(|s| !s.stopped())
                             && self.view.connected;
                         card_body = card_body.child(
                             self.button(

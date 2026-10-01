@@ -1,5 +1,6 @@
 use super::*;
 use gpui::{AnyElement, WeakEntity};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{Icon, IconName};
 use wks_native::{model::Row, tool_preview};
 
@@ -21,6 +22,7 @@ pub(super) fn card(
     cx: &mut App,
 ) -> AnyElement {
     let tool = row.tool.as_ref().expect("tool row");
+    let origin = wks_native::child_agents::tool_kind(tool);
     let mut preview = tool_preview::parse(
         &tool.name,
         &tool.input,
@@ -28,6 +30,9 @@ pub(super) fn card(
     );
     if matches!(tool.category(), "Skill" | "Subagent" | "Workflow") {
         preview.target = tool.target();
+    }
+    if tool.category() == "Subagent" && preview.description.is_empty() {
+        preview.title = "Spawn agent".into();
     }
     let expanded = expansion.unwrap_or(tool.is_error);
     let key = row.key;
@@ -44,9 +49,15 @@ pub(super) fn card(
     } else {
         preview.title.clone()
     };
-    let subtitle = if command_title { "" } else { &preview.target };
+    let subtitle = if command_title || preview.target == title {
+        ""
+    } else {
+        &preview.target
+    };
     let (status, color, icon) = if tool.is_error {
         ("Failed", p.error, IconName::TriangleAlert)
+    } else if tool.complete && tool.category() == "Subagent" {
+        ("Dispatched", p.success, IconName::Check)
     } else if tool.complete {
         ("Done", p.success, IconName::Check)
     } else {
@@ -207,6 +218,38 @@ pub(super) fn card(
                             .flex()
                             .items_center()
                             .gap_3()
+                            .when_some(origin, |d, origin| {
+                                let managed =
+                                    origin == wks_native::child_agents::ChildKind::Workspacer;
+                                d.child(
+                                    div()
+                                        .id(SharedString::from(format!("{element_key}-origin")))
+                                        .debug_selector(move || {
+                                            if managed {
+                                                "workspacer-spawn-icon".into()
+                                            } else {
+                                                "native-spawn-icon".into()
+                                            }
+                                        })
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::new(if managed {
+                                                "Workspacer spawn"
+                                            } else {
+                                                "Provider-native subagent"
+                                            })
+                                            .build(window, cx)
+                                        })
+                                        .child(
+                                            Icon::new(if managed {
+                                                IconName::Bot
+                                            } else {
+                                                IconName::SquareTerminal
+                                            })
+                                            .size(px(14.))
+                                            .text_color(rgb(p.accent)),
+                                        ),
+                                )
+                            })
                             .child(
                                 div()
                                     .flex_1()

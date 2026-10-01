@@ -409,9 +409,7 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                 let sessions = &sessions;
                 let conv = &conv;
                 async move {
-                let Some(path) = state.transcript_path.clone() else {
-                    return;
-                };
+                let Some(path) = (if state.transcript_path.is_some() { state.transcript_path.clone() } else { super::claude_subagents::discover_parent(&state).await }) else { return; };
                 if state.mode == SessionMode::Stopped {
                     let age = time::OffsetDateTime::now_utc() - state.updated_at;
                     if age.whole_seconds() > STOPPED_DRAIN_SECS {
@@ -430,8 +428,19 @@ pub fn spawn_tailer(sessions: SessionStore, conv: ConversationStore) {
                         }
                     }
                 }
-                if let Err(err) = tail_one(sessions, conv, &state.session_id, &path).await {
-                    tracing::debug!(?err, session = %state.session_id, "transcript tail failed");
+                // Stream driver owns the parent conversation. Artifact discovery
+                // must not replay it over the live driver log.
+                if state.transport != Transport::Stream {
+                    if let Err(err) = tail_one(sessions, conv, &state.session_id, &path).await {
+                        tracing::debug!(?err, session = %state.session_id, "transcript tail failed");
+                    }
+                }
+                let scan_children = conv.logs.get(&state.session_id).is_none_or(|log| log.side_scanned_at.is_none_or(|at| at.elapsed() >= SIDE_SCAN_INTERVAL));
+                if scan_children && state.provider == "claude" {
+                    let mut parent = state.clone();
+                    parent.transcript_path = Some(path.clone());
+                    let children = super::claude_subagents::artifacts(&parent).await.unwrap_or_default();
+                    sessions.enrich_claude_artifacts(&state, &path, children);
                 }
                 if let Err(err) = tail_subagents(conv, &state.session_id, &path).await {
                     tracing::debug!(?err, session = %state.session_id, "subagent tail failed");

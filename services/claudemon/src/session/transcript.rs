@@ -67,7 +67,7 @@ pub fn allow_root(root: impl Into<PathBuf>) {
 
 /// Every directory a transcript may legitimately be read from: the default
 /// projects dir plus any profile config dir a spawn declared.
-fn allowed_roots() -> Vec<PathBuf> {
+pub(crate) fn allowed_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = EXTRA_ROOTS.lock().map(|r| r.clone()).unwrap_or_default();
     if let Some(dir) = projects_dir() {
         roots.push(dir);

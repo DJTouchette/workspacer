@@ -437,6 +437,18 @@ impl Worker {
     }
 
     fn request(&mut self, request: crate::features::Request) {
+        if let crate::features::Request::SubagentHistory { session, agent } = &request
+            && (self.view.selected.as_ref() != Some(session)
+                || !self.sessions.get(session).is_some_and(|parent| {
+                    parent.subagents.as_array().is_some_and(|children| {
+                        children
+                            .iter()
+                            .any(|child| child["id"].as_str() == Some(agent.as_str()))
+                    })
+                }))
+        {
+            return;
+        }
         let key = request.key();
         if key == "upload" && self.view.requests.get(key).is_some_and(|s| s.loading) {
             return;
@@ -561,7 +573,14 @@ impl Worker {
     async fn select(&mut self, id: Option<String>) {
         self.selection += 1;
         self.view.selected = id;
-        for key in ["history", "changes", "diff", "card-diff", "file-preview"] {
+        for key in [
+            "history",
+            "subagent-history",
+            "changes",
+            "diff",
+            "card-diff",
+            "file-preview",
+        ] {
             self.view.requests.remove(key);
             if let Some(abort) = self.request_aborts.remove(key) {
                 abort.abort();

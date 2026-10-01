@@ -37,6 +37,7 @@ export const CHANGELOG: readonly ChangelogRelease[] = [
       {
         title: 'Improved',
         items: [
+          'Native chat keeps compact child-agent cards beneath their dispatch, with distinct icons for Workspacer children and Claude/Codex native subagents, reported activity and usage, elapsed time, and parent-scoped transcript previews.',
           'Native new-session flow uses live Codex model labels and default metadata, retains exact launch IDs, and exposes model discovery failures.',
           'Native Workspacer spawn-agent receipts offer direct child-session navigation; ordinary Claude and Codex launches retain the shared collaboration skill.',
           'Native chat has floating controls, syntax-highlighted tool cards, stable reading positions across updates, and persisted turn durations.',
@@ -48,6 +49,7 @@ export const CHANGELOG: readonly ChangelogRelease[] = [
       {
         title: 'Fixed',
         items: [
+          "Standalone native Claude sessions discover their own subagent artifacts and retain child metadata without changing the parent's approvals or busy state. Detached children remain active after the parent's turn ends; transcript reads stay confined to known children and their parent's artifact directory.",
           'Native live chat and History preserve raw Codex patches, deleted-file diffs, namespaced edit/write tools, command errors and empty failed results.',
           'MCP tool catalogs include the cache metadata required by modern clients, preventing Claude Code from rejecting all Workspacer tools after connecting.',
           "Context-window recognition for Claude Opus 5.5's default 1M window.",

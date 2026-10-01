@@ -1139,11 +1139,29 @@ impl SessionStore {
                 .is_some_and(|s| s.transport == Transport::Stream);
         if managed {
             if let Some(mut entry) = self.states.get_mut(&event.session_id) {
-                if let Some(tp) = event.payload.get("transcript_path").and_then(Value::as_str) {
+                if let Some(tp) = event
+                    .payload
+                    .get("transcript_path")
+                    .and_then(Value::as_str)
+                    .filter(|_| {
+                        event.payload.get("agent_id").is_none()
+                            || matches!(event.event.as_str(), "SubagentStart" | "SubagentStop")
+                    })
+                {
                     entry.transcript_path = Some(tp.to_string());
                 }
                 entry.updated_at = OffsetDateTime::now_utc();
-                return entry.clone();
+                let changed = super::claude_subagents::hook(&mut entry, &event);
+                let state = entry.clone();
+                drop(entry);
+                if changed {
+                    let _ = self.update_tx.send(SessionUpdate {
+                        session_id: event.session_id.clone(),
+                        event: event.event.clone(),
+                        state: state.clone(),
+                    });
+                }
+                return state;
             }
             // Managed input registered but no state row (teardown race) —
             // fall through to the normal path, which creates one.
@@ -2140,8 +2158,8 @@ impl SessionStore {
 
     /// Upsert one managed-provider subagent row and mirror its live count into
     /// `background_tasks`, the field existing clients already use for ambient
-    /// work. Claude hook/transcript rows are still desktop-owned; this is for
-    /// providers like Codex whose native protocol reports subagent identities.
+    /// work. Claude hook/artifact enrichment uses a separate path that preserves
+    /// its hook/stream background counters.
     pub fn apply_subagent_update(
         &self,
         session_id: &str,
@@ -2191,6 +2209,9 @@ impl SessionStore {
                     model: update.model,
                     last_tool_name: update.last_tool_name,
                     last_tool_summary: update.last_tool_summary,
+                    tokens: None,
+                    cost_usd: None,
+                    tool_calls: None,
                 });
             }
             entry.background_tasks = entry
@@ -2207,6 +2228,61 @@ impl SessionStore {
             state: state.clone(),
         });
         Some(state)
+    }
+
+    /// Artifact observation is enrichment, never an owner of mode/pending/counts.
+    pub fn enrich_claude_artifacts(
+        &self,
+        observed: &SessionState,
+        path: &str,
+        children: Vec<super::state::SubagentInfo>,
+    ) {
+        let session_id = &observed.session_id;
+        let Some(mut state) = self.states.get_mut(session_id) else {
+            return;
+        };
+        if state.provider != "claude"
+            || state.context_telemetry_epoch != observed.context_telemetry_epoch
+        {
+            return;
+        }
+        let previous = state.subagents.clone();
+        state.transcript_path.get_or_insert_with(|| path.to_owned());
+        for mut child in children {
+            if let Some(existing) = state.subagents.iter_mut().find(|s| s.id == child.id) {
+                if observed.subagents.iter().find(|s| s.id == child.id) != Some(&*existing) {
+                    // Direct metadata changed while IO was in flight. Retain
+                    // that newer status/activity/identity, merging usage only.
+                    existing.tokens = child.tokens.or(existing.tokens);
+                    existing.cost_usd = child.cost_usd.or(existing.cost_usd);
+                    existing.tool_calls = child.tool_calls.or(existing.tool_calls);
+                    continue;
+                }
+                // A stop/anchor hook may have arrived while the artifact reader
+                // awaited IO. Its direct evidence must survive this older scan.
+                if existing.status == super::state::SubagentStatus::Complete {
+                    child.status = existing.status;
+                    child.completed_at = existing.completed_at.or(child.completed_at);
+                }
+                child.tool_use_id = existing.tool_use_id.clone().or(child.tool_use_id);
+                child.model = existing.model.clone().or(child.model);
+                if existing.agent_type != "Agent" {
+                    child.agent_type = existing.agent_type.clone();
+                }
+                *existing = child;
+            } else if state.subagents.len() < 128 {
+                state.subagents.push(child);
+            }
+        }
+        if previous != state.subagents {
+            let snapshot = state.clone();
+            drop(state);
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.clone(),
+                event: "ClaudeSubagents".into(),
+                state: snapshot,
+            });
+        }
     }
 
     /// Flip sessions whose process can no longer exist to `Stopped`.

@@ -334,10 +334,9 @@ impl PlanStatus {
     }
 }
 
-/// Provider-neutral subagent row surfaced on session snapshots. Claude's richer
-/// rows are still built in the desktop from hook/transcript artifacts; managed
-/// providers use this daemon-owned shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Provider-neutral subagent row surfaced on session snapshots. Claude hooks
+/// and confined transcript artifacts enrich this same daemon-owned shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentInfo {
     pub id: String,
@@ -357,6 +356,12 @@ pub struct SubagentInfo {
     pub last_tool_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_tool_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+    #[serde(default, rename = "costUSD", skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1139,12 +1144,11 @@ impl SessionState {
     /// clears `completed_at`. A wrong busy never self-corrects; a wrong idle
     /// does, on the next frame.
     ///
-    /// No-op for providers that publish no subagent rows — Claude's live
-    /// bookkeeping is `live_subagents`/`background_tasks` and its rows are
-    /// built in the desktop, so `background_tasks` (which for a stream session
-    /// counts background *shells* too) must not be re-derived here.
+    /// Claude rows are enrichment and detached children may outlive Input.
+    /// Their own stop hook/artifact closes them, and their hook/stream counters
+    /// also include background shells; neither is derived from parent Input.
     pub fn close_stale_subagents(&mut self) -> bool {
-        if self.subagents.is_empty() {
+        if self.subagents.is_empty() || self.provider == "claude" {
             return false;
         }
         let completed_at = OffsetDateTime::now_utc().unix_timestamp() * 1000;
@@ -1156,7 +1160,7 @@ impl SessionState {
                 changed = true;
             }
         }
-        if changed {
+        if changed && self.provider != "claude" {
             // Same derivation `apply_subagent_update` uses, so the wire count
             // and the rows can never disagree: nothing is running now.
             self.background_tasks = self
@@ -1268,6 +1272,14 @@ impl SessionState {
     }
 
     pub fn apply(&mut self, event: &HookEvent) {
+        super::claude_subagents::hook(self, event);
+        // A child's tool hooks are metadata, not the parent's pending feed or
+        // transcript identity. Subagent lifecycle hooks themselves name parent.
+        if event.payload.get("agent_id").is_some()
+            && !matches!(event.event.as_str(), "SubagentStart" | "SubagentStop")
+        {
+            return;
+        }
         self.updated_at = OffsetDateTime::now_utc();
         self.last_event = Some(event.event.clone());
         if self.cwd.is_none() {

@@ -98,11 +98,15 @@ pub async fn serve_with_transcript(
                                     "providers.checkAll" => json!([{"provider":"claude","found":true},{"provider":"codex","found":false}]),
                                     "desktop.providerReadiness" => json!({"state":"unchecked"}),
                                     "claude.setModel" => json!({"ok":true,"disposition":"queued"}),
-                                    "sessions.snapshots" => Value::Array((0..sessions).map(|i| json!({
+                                    "sessions.snapshots" => Value::Array((0..sessions).map(|i| {
+                                        let snapshot = json!({
                                         "sessionId":format!("demo-{i:04}"), "label":if i == 0 {"Native client experiment".into()} else {format!("Worker {i}")},
                                         "cwd":format!("/workspaces/project-{}", i % 8), "parentSessionId":if i==1 {"demo-0000"}else{""}, "provider":"claude", "model":"sonnet", "transport":"stream", "mode":if streaming && active_id == format!("demo-{i:04}") {"responding"} else {"input"},
                                         "pendingApproval":if i == 0 && pending {json!({"toolName":"Bash", "toolInput":{"command":"cargo test"}})} else {Value::Null}
-                                    })).collect()),
+                                        });
+                                        if rich { rich_snapshot(i, snapshot) } else { snapshot }
+                                    }).collect()),
+                                    "sessions.subagentConversation" if rich => rich_subagent_conversation(id, frame["params"]["agentId"].as_str().unwrap_or_default()),
                                     "sessions.conversation" => {
                                         if id == active_id { json!({"seq":seq, "first_seq":1, "items":items}) }
                                         else if let Some((items, seq)) = history.get(id) { json!({"seq":seq,"first_seq":1,"items":items}) }
@@ -159,9 +163,86 @@ pub fn rich_items() -> Vec<Value> {
         json!({"kind":"tool_use","id":"skill-1","name":"Skill","input":{"skill":"review","args":"Check the transcript"}}),
         json!({"kind":"tool_result","tool_use_id":"skill-1","content":"Review completed."}),
         json!({"kind":"assistant_text","text":format!("Implemented the change in [main.rs](src/main.rs:2).\n\n```wks-html-card\n{card}\n```\n")}),
-        json!({"kind":"tool_use","id":"subagent-running","name":"spawn_agent","input":{"description":"Review tool rendering"}}),
+        json!({"kind":"tool_use","id":"workspacer-spawn","name":"mcp__workspacer__spawn_agent","input":{"message":"Review session creation and model selection","label":"Session creation review","trackTask":false}}),
+        json!({"kind":"tool_result","tool_use_id":"workspacer-spawn","content":"{\"sessionId\":\"demo-0001\",\"messageQueued\":true,\"taskTracking\":false}"}),
+        json!({"kind":"tool_use","id":"subagent-running","name":"Agent","input":{"description":"Review chat rendering and regression coverage"}}),
         json!({"kind":"assistant_text","text":"## Ready for review\n\nThe conversation is easier to scan, with quieter controls and a little more room to read.\n\n- **Clear hierarchy** for headings and paragraphs.\n- Round bullets, comfortable spacing, and `inline code`.\n- File links open a preview in this workspace.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs).\n\n```rust\nlet workspace = connect().await?;\nworkspace.restore_session();\n```"}),
     ]
+}
+
+/// Rich-only child metadata. Keep load/benchmark fixtures unchanged.
+fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
+    match index {
+        0 => {
+            snapshot["subagents"] = json!([
+                {"id":"fixture-native-review","toolUseId":"subagent-running","type":"Explore","description":"Inspect transcript parsing","status":"running","model":"gpt-5.6-luna","startedAt":1790852400000i64,"toolCalls":4,"tokens":12400,"costUSD":0.018,"lastToolName":"Read","lastToolSummary":"apps/native/src/model.rs"},
+                {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":7,"tokens":28300,"costUSD":0.084}
+            ]);
+        }
+        1 => {
+            snapshot["label"] = json!("Session creation review");
+            snapshot["provider"] = json!("codex");
+            snapshot["model"] = json!("gpt-5.6-sol");
+            snapshot["mode"] = json!("responding");
+            snapshot["ambientState"] = json!("streaming");
+            snapshot["startedAt"] = json!(1790852400000i64);
+            snapshot["lastToolName"] = json!("Read");
+            snapshot["lastToolSummary"] = json!("apps/native/src/launch.rs");
+            snapshot["usage"] = json!({"inputTokens":15800,"outputTokens":2400,"costUSD":0.046});
+        }
+        _ => (),
+    }
+    snapshot
+}
+
+fn rich_subagent_conversation(session: &str, agent: &str) -> Value {
+    if session != "demo-0000" || !matches!(agent, "fixture-native-review" | "fixture-native-tests")
+    {
+        return json!({"ok":false,"error":"Subagent does not belong to this fixture session"});
+    }
+    let complete = agent == "fixture-native-tests";
+    let items = vec![
+        json!({"kind":"user_message","text":if complete {"Check the native regression tests."} else {"Inspect the native transcript parser."}}),
+        json!({"kind":"assistant_text","text":"I’m checking the relevant source and focused regression coverage."}),
+        json!({"kind":"tool_use","id":"child-read","name":"Read","input":{"file_path":"apps/native/src/model.rs"}}),
+        json!({"kind":"tool_result","tool_use_id":"child-read","content":"The transcript keeps tool results paired with their tool IDs."}),
+        json!({"kind":"assistant_text","text":if complete {"Regression checks passed. Tool output stays literal and child rows attach to their dispatch tool."} else {"The tool/result boundary looks correct. I’m checking replay handling next."}}),
+    ];
+    json!({"session_id":session,"agent_id":agent,"seq":items.len(),"first_seq":1,"items":items})
+}
+
+#[cfg(test)]
+mod child_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn rich_children_have_dispatch_anchors_and_parent_scoped_replay() {
+        let items = rich_items();
+        let parent = rich_snapshot(0, json!({"sessionId":"demo-0000"}));
+        for child in parent["subagents"].as_array().unwrap() {
+            assert!(
+                items
+                    .iter()
+                    .any(|item| { item["kind"] == "tool_use" && item["id"] == child["toolUseId"] })
+            );
+            let agent = child["id"].as_str().unwrap();
+            let replay = rich_subagent_conversation("demo-0000", agent);
+            let replay_items = replay["items"].as_array().unwrap();
+            assert_eq!(replay["seq"].as_u64().unwrap(), replay_items.len() as u64);
+            assert!(replay_items.len() < 20);
+            assert_eq!(rich_subagent_conversation("demo-0001", agent)["ok"], false);
+        }
+        let result = items
+            .iter()
+            .find(|item| item["tool_use_id"] == "workspacer-spawn")
+            .unwrap();
+        let receipt: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+        assert_eq!(receipt["sessionId"], "demo-0001");
+        assert_eq!(
+            rich_snapshot(1, json!({"parentSessionId":"demo-0000"}))["parentSessionId"],
+            "demo-0000"
+        );
+    }
 }
 fn preview_image() -> Value {
     use base64::Engine;

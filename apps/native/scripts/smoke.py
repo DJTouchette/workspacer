@@ -92,7 +92,7 @@ def main():
     parser.add_argument("--scroll-pages", type=int, default=0, help="Scroll chat upward by this many half-pages before capture")
     parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
     parser.add_argument("--animation-region", help="Verify pixels change across four frames in x,y,width,height (for a visible spinner)")
-    parser.add_argument("--click", help="Click a window point x,y before capture (for preview and toggle checks)")
+    parser.add_argument("--click", action="append", help="Click x,y before capture; repeat for a sequence of preview and toggle checks")
     parser.add_argument("--hover", help="Hover a window point x,y before capture (for control styling checks)")
     parser.add_argument("--keys", nargs="+", help="Additional X11 keys before capture, for example Escape Tab")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
@@ -102,13 +102,13 @@ def main():
     if args.new_session and not args.bus:
         parser.error("--new-session requires a fixture --bus; creation is disabled in demo mode")
     animation_region = None
-    click = None
-    if args.click:
+    clicks = []
+    for click in args.click or []:
         try:
-            x, y = map(int, args.click.split(","))
+            x, y = map(int, click.split(","))
             if not (0 <= x < args.width and 0 <= y < args.height):
                 raise ValueError()
-            click = (x, y)
+            clicks.append((x, y))
         except ValueError:
             parser.error("--click requires x,y inside the window")
     hover = None
@@ -165,7 +165,7 @@ def main():
             drive("key", "Escape")
             drive("key", "--delay", "80", *(["ctrl+u"] * min(50, max(0, args.scroll_pages))))
         time.sleep(1)
-        if click:
+        for click in clicks:
             drive("mousemove", "--window", window, str(click[0]), str(click[1]), "click", "1")
             # Capture the resulting layout, without a tooltip left behind by
             # the button that moved or disappeared after the click.
