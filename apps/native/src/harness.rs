@@ -211,39 +211,6 @@ fn rich_subagent_conversation(session: &str, agent: &str) -> Value {
     json!({"session_id":session,"agent_id":agent,"seq":items.len(),"first_seq":1,"items":items})
 }
 
-#[cfg(test)]
-mod child_fixture_tests {
-    use super::*;
-
-    #[test]
-    fn rich_children_have_dispatch_anchors_and_parent_scoped_replay() {
-        let items = rich_items();
-        let parent = rich_snapshot(0, json!({"sessionId":"demo-0000"}));
-        for child in parent["subagents"].as_array().unwrap() {
-            assert!(
-                items
-                    .iter()
-                    .any(|item| { item["kind"] == "tool_use" && item["id"] == child["toolUseId"] })
-            );
-            let agent = child["id"].as_str().unwrap();
-            let replay = rich_subagent_conversation("demo-0000", agent);
-            let replay_items = replay["items"].as_array().unwrap();
-            assert_eq!(replay["seq"].as_u64().unwrap(), replay_items.len() as u64);
-            assert!(replay_items.len() < 20);
-            assert_eq!(rich_subagent_conversation("demo-0001", agent)["ok"], false);
-        }
-        let result = items
-            .iter()
-            .find(|item| item["tool_use_id"] == "workspacer-spawn")
-            .unwrap();
-        let receipt: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
-        assert_eq!(receipt["sessionId"], "demo-0001");
-        assert_eq!(
-            rich_snapshot(1, json!({"parentSessionId":"demo-0000"}))["parentSessionId"],
-            "demo-0000"
-        );
-    }
-}
 fn preview_image() -> Value {
     use base64::Engine;
     let image = image::RgbImage::from_fn(320, 160, |x, y| {
@@ -314,4 +281,38 @@ pub async fn ui_intent_probe() -> Result<Value> {
     drop(views);
     anyhow::ensure!(published, "UI topics were not subscribed");
     probe
+}
+
+#[cfg(test)]
+mod child_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn rich_children_have_dispatch_anchors_and_parent_scoped_replay() {
+        let items = rich_items();
+        let parent = rich_snapshot(0, json!({"sessionId":"demo-0000"}));
+        for child in parent["subagents"].as_array().unwrap() {
+            assert!(
+                items
+                    .iter()
+                    .any(|item| { item["kind"] == "tool_use" && item["id"] == child["toolUseId"] })
+            );
+            let agent = child["id"].as_str().unwrap();
+            let replay = rich_subagent_conversation("demo-0000", agent);
+            let replay_items = replay["items"].as_array().unwrap();
+            assert_eq!(replay["seq"].as_u64().unwrap(), replay_items.len() as u64);
+            assert!(replay_items.len() < 20);
+            assert_eq!(rich_subagent_conversation("demo-0001", agent)["ok"], false);
+        }
+        let result = items
+            .iter()
+            .find(|item| item["tool_use_id"] == "workspacer-spawn")
+            .unwrap();
+        let receipt: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+        assert_eq!(receipt["sessionId"], "demo-0001");
+        assert_eq!(
+            rich_snapshot(1, json!({"parentSessionId":"demo-0000"}))["parentSessionId"],
+            "demo-0000"
+        );
+    }
 }

@@ -154,24 +154,23 @@ impl Workspace {
                         .is_some_and(|items| items.iter().any(|s| s["id"] == child.id))
                 });
             let enabled = self.view.connected && known;
-            let color = if !self.view.connected {
-                p.muted
-            } else if matches!(child.status.as_str(), "stopped" | "ended") {
-                p.muted
-            } else if child.failed() {
-                p.error
-            } else if matches!(
-                child.status.as_str(),
-                "waiting_approval" | "approval" | "waiting_input" | "question"
-            ) {
-                p.warning
-            } else if child.running() {
-                p.busy
-            } else if child.complete() {
-                p.success
-            } else {
-                p.muted
-            };
+            let color =
+                if !self.view.connected || matches!(child.status.as_str(), "stopped" | "ended") {
+                    p.muted
+                } else if child.failed() {
+                    p.error
+                } else if matches!(
+                    child.status.as_str(),
+                    "waiting_approval" | "approval" | "waiting_input" | "question"
+                ) {
+                    p.warning
+                } else if child.running() {
+                    p.busy
+                } else if child.complete() {
+                    p.success
+                } else {
+                    p.muted
+                };
             let label = if child.description.is_empty() || child.description == child.label {
                 child.label.clone()
             } else {

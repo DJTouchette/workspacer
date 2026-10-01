@@ -517,3 +517,9 @@ was checked with focused daemon tests after the complete native run.
 Captures: [child cards](docs/ui-inline-child-cards.png),
 [native child transcript](docs/ui-native-child-transcript.png),
 [compact](docs/ui-inline-child-cards-compact.png).
+
+Publication lint follow-up: native platform tests passed, then CI's strict Clippy
+gate identified identical color branches and a redundant fixture-init closure.
+Combined the equivalent branches, used the direct init function, and moved the
+fixture test module below production items. Full local native Clippy passed with
+`--locked --all-targets --features ui-tests -- -D warnings` on Rust 1.98.1.

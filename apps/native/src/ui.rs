@@ -1350,7 +1350,7 @@ mod tests {
 
     #[gpui::test]
     fn button_hover_and_press_preserve_geometry(cx: &mut TestAppContext) {
-        cx.update(|cx| gpui_component::init(cx));
+        cx.update(gpui_component::init);
         let (controller, _commands, _updates) = Controller::test_channels();
         let window = cx.add_window(|window, cx| {
             let workspace = cx.new(|cx| Workspace::new(controller, true, window, cx));
