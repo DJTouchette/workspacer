@@ -324,6 +324,8 @@ pub struct Workspace {
     search: Entity<InputState>,
     navigation_selected: Option<String>,
     sidebar_collapsed: bool,
+    sidebar_drag: Option<(gpui::Pixels, f32)>,
+    pending_sidebar_child: Option<(String, String)>,
     has_connected: bool,
     sidebar_scroll: gpui::UniformListScrollHandle,
     projects_scroll: gpui::UniformListScrollHandle,
@@ -489,6 +491,8 @@ impl Workspace {
             search,
             navigation_selected: None,
             sidebar_collapsed: false,
+            sidebar_drag: None,
+            pending_sidebar_child: None,
             has_connected: false,
             sidebar_scroll: gpui::UniformListScrollHandle::new(),
             projects_scroll: gpui::UniformListScrollHandle::new(),
@@ -782,6 +786,23 @@ impl Workspace {
             .map(|clock| clock.message_labels(&view.transcript))
             .unwrap_or_default();
         self.view = view;
+        if self
+            .pending_sidebar_child
+            .as_ref()
+            .is_some_and(|(parent, _)| {
+                self.view.connected
+                    && self.view.selected.as_ref() == Some(parent)
+                    && !self.view.loading
+            })
+            && let Some((session, agent)) = self.pending_sidebar_child.take()
+        {
+            self.child_ui.page = 0;
+            self.child_ui.closed = None;
+            self.request(
+                wks_native::features::Request::SubagentHistory { session, agent },
+                cx,
+            );
+        }
         self.restore_reading(window, cx);
         if self.new_session || self.screen == Screen::Model {
             self.sync_models(window, cx);
@@ -794,6 +815,14 @@ impl Workspace {
     }
 
     fn command(&mut self, command: Command, cx: &mut Context<Self>) {
+        if let Command::Select(id) = &command
+            && self
+                .pending_sidebar_child
+                .as_ref()
+                .is_some_and(|(parent, _)| parent != id)
+        {
+            self.pending_sidebar_child = None;
+        }
         let command = if matches!(command, Command::Refresh) && self.view.power_paused {
             Command::ResumePowerPause(self.view.power_pause_generation)
         } else {
@@ -993,8 +1022,10 @@ impl Workspace {
         let index = current
             .map(|ix| (ix as isize + step).rem_euclid(rows.len() as isize) as usize)
             .unwrap_or(if step < 0 { rows.len() - 1 } else { 0 });
-        self.sidebar_scroll
-            .scroll_to_item(index, gpui::ScrollStrategy::Center);
+        self.sidebar_scroll.scroll_to_item(
+            self.sidebar_session_position(index, cx),
+            gpui::ScrollStrategy::Center,
+        );
         self.command(
             Command::Select(self.view.sessions[rows[index]].id.clone()),
             cx,
@@ -1442,6 +1473,109 @@ mod tests {
     }
 
     #[gpui::test]
+    fn sidebar_nests_sessions_and_opens_native_child_from_another_parent(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _) = fixture(cx);
+        visual.update(|window, cx| workspace.update(cx, |this, cx| {
+            let mut next = state("b");
+            let sessions = Arc::make_mut(&mut next.sessions);
+            sessions[0].subagents = serde_json::json!([{
+                "id": "codex-child", "description": "Native research", "status": "running", "model": "gpt-5"
+            }]);
+            sessions.insert(0, Session { id: "grandchild".into(), parent_session_id: "child".into(), ..Default::default() });
+            sessions.insert(0, Session { id: "child".into(), parent_session_id: "a".into(), ..Default::default() });
+            this.update_view(Arc::new(next), window, cx);
+            assert_eq!(this.visible_sessions(cx), vec![2, 0, 1, 3]);
+        }));
+        visual.run_until_parked();
+        let parent = visual.debug_bounds("sidebar-session-0").unwrap();
+        let native = visual.debug_bounds("sidebar-provider-1").unwrap();
+        let child = visual.debug_bounds("sidebar-session-2").unwrap();
+        let grandchild = visual.debug_bounds("sidebar-session-3").unwrap();
+        assert!(native.left() > parent.left());
+        assert!(child.left() > parent.left());
+        assert!(grandchild.left() > child.left());
+        assert!(
+            parent.top() < native.top()
+                && native.top() < child.top()
+                && child.top() < grandchild.top()
+        );
+        visual.simulate_click(native.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "a"));
+        assert!(commands.try_recv().is_err());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = (*this.view).clone();
+                next.selected = Some("a".into());
+                this.update_view(Arc::new(next), window, cx);
+            })
+        });
+        assert!(matches!(commands.try_recv().unwrap(),
+            Command::Request(wks_native::features::Request::SubagentHistory { session, agent })
+            if session == "a" && agent == "codex-child"));
+
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.sidebar_collapsed = true;
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let rail_child = visual.debug_bounds("sidebar-provider-1").unwrap();
+        assert!(rail_child.right() <= px(56.));
+        visual.simulate_click(rail_child.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(matches!(commands.try_recv().unwrap(),
+            Command::Request(wks_native::features::Request::SubagentHistory { session, agent })
+            if session == "a" && agent == "codex-child"));
+    }
+
+    #[gpui::test]
+    fn sidebar_resize_tracks_drag_and_persists_width(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        let path = std::env::temp_dir().join(format!("native-sidebar-{}.json", std::process::id()));
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, _| this.settings_path = Some(path.clone()))
+        });
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("session-sidebar").unwrap().size.width,
+            px(304.)
+        );
+        let start = visual.debug_bounds("sidebar-resize").unwrap().center();
+        let end = start + gpui::point(px(70.), px(0.));
+        visual.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+        visual.run_until_parked();
+        visual.simulate_mouse_move(
+            end,
+            Some(gpui::MouseButton::Left),
+            gpui::Modifiers::default(),
+        );
+        visual.run_until_parked();
+        visual.simulate_mouse_up(end, gpui::MouseButton::Left, gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("session-sidebar").unwrap().size.width,
+            px(374.)
+        );
+        assert_eq!(Settings::load(&path).unwrap().sidebar_width, 374.);
+        workspace.read_with(&visual, |this, _| assert!(this.sidebar_drag.is_none()));
+        visual.simulate_resize(size(px(720.), px(480.)));
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("session-sidebar").unwrap().size.width,
+            px(288.)
+        );
+        visual.simulate_resize(size(px(1000.), px(700.)));
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("session-sidebar").unwrap().size.width,
+            px(374.)
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[gpui::test]
     fn sidebar_model_metadata_stays_inside_clickable_session_rows(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
@@ -1622,7 +1756,8 @@ mod tests {
             assert!(this.visible_sessions(cx).is_empty())
         });
         let reset = visual.debug_bounds("clear-session-filters").unwrap();
-        assert!(reset.left() >= px(0.) && reset.right() <= px(232.));
+        let sidebar = visual.debug_bounds("session-sidebar").unwrap();
+        assert!(reset.left() >= sidebar.left() && reset.right() <= sidebar.right());
         assert!(reset.top() >= px(0.) && reset.bottom() <= px(480.));
         visual.simulate_click(reset.center(), gpui::Modifiers::default());
         workspace.read_with(&visual, |this, cx| {

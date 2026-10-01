@@ -6,6 +6,12 @@ GPUI Component are pinned together; the optional component webview feature is
 disabled. Local mode embeds both claudemon and the shared Rust hub/backend library.
 The same backend runs independently through `workspacer-rust serve`.
 
+The sidebar groups spawned sessions beneath their parent, including grandchildren,
+and shows provider-native Codex/Claude agents under their owning session. Clicking a
+native agent opens its conversation preview. Drag the sidebar's right edge to resize
+it, or double-click the edge to reset to the 304-pixel default. Width is saved in
+device-local preferences and capped in smaller windows to leave room for chat.
+
 ## Windows installer
 
 The release workflow now builds

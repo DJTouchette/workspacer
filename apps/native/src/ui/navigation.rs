@@ -57,7 +57,8 @@ impl Workspace {
 
     pub(super) fn visible_sessions(&self, cx: &App) -> Vec<usize> {
         let query = self.search.read(cx).value().to_lowercase();
-        self.view
+        let visible: Vec<_> = self
+            .view
             .sessions
             .iter()
             .enumerate()
@@ -70,6 +71,10 @@ impl Workspace {
                     && (self.session_title(s).to_lowercase().contains(&query)
                         || s.cwd.to_lowercase().contains(&query))
             })
+            .map(|(ix, _)| ix)
+            .collect();
+        wks_native::navigation::session_tree(&self.view.sessions, &visible)
+            .into_iter()
             .map(|(ix, _)| ix)
             .collect()
     }
@@ -197,8 +202,10 @@ impl Workspace {
                 0
             };
             if let Some(&ix) = rows.get(index) {
-                self.sidebar_scroll
-                    .scroll_to_item(index, gpui::ScrollStrategy::Center);
+                self.sidebar_scroll.scroll_to_item(
+                    self.sidebar_session_position(index, cx),
+                    gpui::ScrollStrategy::Center,
+                );
                 self.command(Command::Select(self.view.sessions[ix].id.clone()), cx);
             }
         }

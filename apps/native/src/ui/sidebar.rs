@@ -2,7 +2,224 @@
 use super::*;
 use gpui_component::tooltip::Tooltip;
 
+#[derive(Clone)]
+enum SidebarRow {
+    Session {
+        index: usize,
+        depth: usize,
+    },
+    Provider {
+        parent: String,
+        child: Box<wks_native::child_agents::ChildAgent>,
+        depth: usize,
+    },
+}
+
 impl Workspace {
+    fn sidebar_rows(&self, cx: &App) -> Vec<SidebarRow> {
+        let visible = self.visible_sessions(cx);
+        let mut rows = Vec::new();
+        for (index, depth) in wks_native::navigation::session_tree(&self.view.sessions, &visible) {
+            rows.push(SidebarRow::Session { index, depth });
+            let parent = &self.view.sessions[index];
+            let native = wks_native::child_agents::project(parent, &[], std::iter::empty());
+            for child in native.unanchored {
+                rows.push(SidebarRow::Provider {
+                    parent: parent.id.clone(),
+                    child: Box::new(child),
+                    depth: depth + 1,
+                });
+            }
+        }
+        rows
+    }
+
+    pub(super) fn sidebar_session_position(&self, index: usize, cx: &App) -> usize {
+        let sessions = self.visible_sessions(cx);
+        self.sidebar_rows(cx)
+            .iter()
+            .position(|row| {
+                matches!(row,
+            SidebarRow::Session { index: ix, .. } if Some(ix) == sessions.get(index))
+            })
+            .unwrap_or(index)
+    }
+
+    fn render_sidebar_provider(
+        &self,
+        parent: &str,
+        child: &wks_native::child_agents::ChildAgent,
+        depth: usize,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let parent = parent.to_owned();
+        let agent = child.id.clone();
+        let title = if child.description.is_empty() {
+            child.label.clone()
+        } else {
+            child.description.clone()
+        };
+        let title = if title.is_empty() {
+            "Native agent".into()
+        } else {
+            title
+        };
+        let state = if !self.view.connected {
+            "Offline"
+        } else {
+            super::children::status(child, true)
+        };
+        if self.sidebar_collapsed {
+            let details = format!("{title}\nNative agent · {state}");
+            return div().h(px(48.)).px_2().pb_1().child(
+                chrome::interactive_control(
+                    div().id(SharedString::from(format!(
+                        "sidebar-native-{parent}-{agent}"
+                    ))),
+                    p,
+                    self.view.connected,
+                )
+                .debug_selector(move || format!("sidebar-provider-{ix}"))
+                .h_full()
+                .w_full()
+                .rounded(px(p.control_radius))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    Icon::new(IconName::SquareTerminal)
+                        .size(px(16.))
+                        .text_color(rgb(p.accent)),
+                )
+                .tooltip(move |window, cx| Tooltip::new(details.clone()).build(window, cx))
+                .when(self.view.connected, |d| {
+                    d.cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_sidebar_child(&parent, &agent, cx);
+                        }))
+                }),
+            );
+        }
+        div()
+            .h(px(84.))
+            .px_2()
+            .pl(px(8. + depth.min(6) as f32 * 16.))
+            .pb_1()
+            .child(
+                chrome::interactive_control(
+                    div().id(SharedString::from(format!(
+                        "sidebar-native-{parent}-{agent}"
+                    ))),
+                    p,
+                    self.view.connected,
+                )
+                .debug_selector(move || format!("sidebar-provider-{ix}"))
+                .h_full()
+                .w_full()
+                .px_3()
+                .py_2()
+                .rounded(px(p.control_radius))
+                .flex()
+                .flex_col()
+                .justify_center()
+                .gap_1()
+                .overflow_hidden()
+                .tooltip(|window, cx| {
+                    Tooltip::new("Provider-native agent · open conversation preview")
+                        .build(window, cx)
+                })
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::SquareTerminal)
+                                .size(px(12.))
+                                .text_color(rgb(p.accent)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(13.))
+                                .child(title),
+                        )
+                        .when(child.running() && self.view.connected, |d| {
+                            d.child(brand_spinner(
+                                10.,
+                                p,
+                                SharedString::from(format!("sidebar-native-working-{}", child.id)),
+                            ))
+                        }),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(if child.model.is_empty() {
+                            "Native agent".to_owned()
+                        } else {
+                            child.model.clone()
+                        }),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(if child.failed() { p.error } else { p.muted }))
+                        .child(state),
+                )
+                .when(self.view.connected, |d| {
+                    d.cursor_pointer()
+                        .hover(move |s| s.bg(rgb(p.surface)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_sidebar_child(&parent, &agent, cx);
+                        }))
+                }),
+            )
+    }
+
+    fn open_sidebar_child(&mut self, parent: &str, agent: &str, cx: &mut Context<Self>) {
+        if !self.view.connected {
+            return;
+        }
+        if self
+            .requested_session
+            .as_ref()
+            .is_some_and(|id| id != parent)
+        {
+            self.command(Command::Select(parent.to_owned()), cx);
+            return;
+        }
+        self.new_session = false;
+        self.screen = Screen::Conversation;
+        self.pending_sidebar_child = None;
+        if self.view.selected.as_deref() == Some(parent)
+            && self
+                .navigation_selected
+                .as_deref()
+                .is_none_or(|id| id == parent)
+            && !self.view.loading
+        {
+            self.child_ui.page = 0;
+            self.child_ui.closed = None;
+            self.request(
+                wks_native::features::Request::SubagentHistory {
+                    session: parent.to_owned(),
+                    agent: agent.to_owned(),
+                },
+                cx,
+            );
+        } else {
+            self.pending_sidebar_child = Some((parent.to_owned(), agent.to_owned()));
+            self.command(Command::Select(parent.to_owned()), cx);
+        }
+    }
+
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         self.icon_button(
             "toggle-sidebar",
@@ -31,7 +248,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let p = self.appearance.palette();
-        let rows = self.visible_sessions(cx);
+        let rows = self.sidebar_rows(cx);
         div()
             .debug_selector(|| "session-sidebar".into())
             .w(px(56.))
@@ -107,7 +324,19 @@ impl Workspace {
                     cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                         range
                             .map(|ix| {
-                                let session = &this.view.sessions[rows[ix]];
+                                let index = match &rows[ix] {
+                                    SidebarRow::Session { index, .. } => *index,
+                                    SidebarRow::Provider {
+                                        parent,
+                                        child,
+                                        depth,
+                                    } => {
+                                        return this.render_sidebar_provider(
+                                            parent, child, *depth, ix, cx,
+                                        );
+                                    }
+                                };
+                                let session = &this.view.sessions[index];
                                 let id = session.id.clone();
                                 let active = this
                                     .navigation_selected
@@ -223,8 +452,8 @@ impl Workspace {
 
     pub(super) fn render_sidebar(
         &mut self,
-        narrow: bool,
-        compact: bool,
+        _narrow: bool,
+        _compact: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -246,17 +475,15 @@ impl Workspace {
         .chain(self.extras.answers.iter())
         .any(|input| input.read(cx).focus_handle(cx).is_focused(window));
         let control_focused = !self.focus.is_focused(window) && !editing;
-        let visible_sessions = self.visible_sessions(cx);
+        let visible_sessions = self.sidebar_rows(cx);
         let filtered = !self.search.read(cx).value().is_empty() || self.project_filter.is_some();
         let no_visible_sessions = visible_sessions.is_empty();
         div()
-            .w(px(if narrow && compact {
-                200.
-            } else if narrow {
-                232.
-            } else {
-                264.
-            }))
+            .relative()
+            .w(px(wks_native::navigation::sidebar_width(
+                self.settings.sidebar_width,
+                f32::from(window.viewport_size().width),
+            )))
             .h_full()
             .flex_shrink_0()
             .bg(rgb(p.base))
@@ -362,7 +589,7 @@ impl Workspace {
                             .iter()
                             .filter(|s| !self.archived(&s.id))
                             .count();
-                        format!("{} / {total}", visible_sessions.len())
+                        format!("{} / {total}", self.visible_sessions(cx).len())
                     } else {
                         visible_sessions.len().to_string()
                     }),
@@ -444,7 +671,19 @@ impl Workspace {
                     cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                         range
                             .map(|ix| {
-                                let session = &this.view.sessions[visible_sessions[ix]];
+                                let (index, depth) = match &visible_sessions[ix] {
+                                    SidebarRow::Session { index, depth } => (*index, *depth),
+                                    SidebarRow::Provider {
+                                        parent,
+                                        child,
+                                        depth,
+                                    } => {
+                                        return this.render_sidebar_provider(
+                                            parent, child, *depth, ix, cx,
+                                        );
+                                    }
+                                };
+                                let session = &this.view.sessions[index];
                                 let id = session.id.clone();
                                 let active = this
                                     .navigation_selected
@@ -477,102 +716,116 @@ impl Workspace {
                                     "{title}\n{}\n{model_info}{context} · {status}",
                                     session.cwd
                                 );
-                                div().h(px(84.)).px_2().pb_1().child(
-                                    chrome::interactive_control(
-                                        div().id(SharedString::from(format!(
-                                            "session-{}",
-                                            session.id
-                                        ))),
-                                        p,
-                                        true,
-                                    )
-                                    .debug_selector(move || format!("sidebar-session-{ix}"))
-                                    .h_full()
-                                    .px_3()
-                                    .py_2()
-                                    .rounded(px(p.control_radius))
-                                    .cursor_pointer()
-                                    .overflow_hidden()
-                                    .flex()
-                                    .flex_col()
-                                    .justify_center()
-                                    .gap_1()
-                                    .when(active, |d| d.bg(rgb(p.selected)))
-                                    .hover(move |style| {
-                                        style.bg(rgb(if active { p.selected } else { p.surface }))
-                                    })
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::new(details.clone()).build(window, cx)
-                                    })
+                                div()
+                                    .h(px(84.))
+                                    .px_2()
+                                    .pl(px(8. + depth.min(6) as f32 * 16.))
+                                    .pb_1()
                                     .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .text_size(px(14.))
-                                                    .font_weight(if active {
-                                                        FontWeight::SEMIBOLD
-                                                    } else {
-                                                        FontWeight::MEDIUM
-                                                    })
-                                                    .child(title),
-                                            )
-                                            .when(session.working() && this.view.connected, |d| {
-                                                d.child(brand_spinner(
-                                                    12.,
-                                                    p,
-                                                    SharedString::from(format!(
-                                                        "sidebar-working-{}",
-                                                        session.id
-                                                    )),
+                                        chrome::interactive_control(
+                                            div().id(SharedString::from(format!(
+                                                "session-{}",
+                                                session.id
+                                            ))),
+                                            p,
+                                            true,
+                                        )
+                                        .debug_selector(move || format!("sidebar-session-{ix}"))
+                                        .h_full()
+                                        .px_3()
+                                        .py_2()
+                                        .rounded(px(p.control_radius))
+                                        .cursor_pointer()
+                                        .overflow_hidden()
+                                        .flex()
+                                        .flex_col()
+                                        .justify_center()
+                                        .gap_1()
+                                        .when(active, |d| d.bg(rgb(p.selected)))
+                                        .hover(move |style| {
+                                            style.bg(rgb(if active {
+                                                p.selected
+                                            } else {
+                                                p.surface
+                                            }))
+                                        })
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::new(details.clone()).build(window, cx)
+                                        })
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .text_size(px(14.))
+                                                        .font_weight(if active {
+                                                            FontWeight::SEMIBOLD
+                                                        } else {
+                                                            FontWeight::MEDIUM
+                                                        })
+                                                        .child(title),
+                                                )
+                                                .when(
+                                                    session.working() && this.view.connected,
+                                                    |d| {
+                                                        d.child(brand_spinner(
+                                                            12.,
+                                                            p,
+                                                            SharedString::from(format!(
+                                                                "sidebar-working-{}",
+                                                                session.id
+                                                            )),
+                                                        ))
+                                                    },
+                                                )
+                                                .when(
+                                                    session.approval.is_some()
+                                                        || session.questions.is_some(),
+                                                    |d| d.child(status_dot(p.warning)),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .debug_selector(move || {
+                                                    format!("sidebar-model-{ix}")
+                                                })
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_size(px(11.))
+                                                .text_color(rgb(p.accent))
+                                                .child(model_info),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .text_size(px(11.))
+                                                .text_color(rgb(p.muted))
+                                                .child(Icon::new(IconName::Folder).size(px(11.)))
+                                                .child(div().flex_1().min_w_0().truncate().child(
+                                                    chrome::project_label(&session.cwd).to_owned(),
                                                 ))
-                                            })
-                                            .when(
-                                                session.approval.is_some()
-                                                    || session.questions.is_some(),
-                                                |d| d.child(status_dot(p.warning)),
-                                            ),
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .text_color(rgb(color))
+                                                        .child(status.to_owned()),
+                                                ),
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.new_session = false;
+                                                this.screen = Screen::Conversation;
+                                                this.command(Command::Select(id.clone()), cx)
+                                            }),
+                                        ),
                                     )
-                                    .child(
-                                        div()
-                                            .debug_selector(move || format!("sidebar-model-{ix}"))
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(p.accent))
-                                            .child(model_info),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(p.muted))
-                                            .child(Icon::new(IconName::Folder).size(px(11.)))
-                                            .child(div().flex_1().min_w_0().truncate().child(
-                                                chrome::project_label(&session.cwd).to_owned(),
-                                            ))
-                                            .child(
-                                                div()
-                                                    .flex_shrink_0()
-                                                    .text_color(rgb(color))
-                                                    .child(status.to_owned()),
-                                            ),
-                                    )
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.new_session = false;
-                                            this.screen = Screen::Conversation;
-                                            this.command(Command::Select(id.clone()), cx)
-                                        },
-                                    )),
-                                )
                             })
                             .collect::<Vec<_>>()
                     }),
@@ -647,6 +900,82 @@ impl Workspace {
                         p.warning
                     })),
             )
+            .child(
+                div()
+                    .id("sidebar-resize")
+                    .debug_selector(|| "sidebar-resize".into())
+                    .absolute()
+                    .right_0()
+                    .top_0()
+                    .bottom_0()
+                    .w(px(6.))
+                    .cursor(gpui::CursorStyle::ResizeLeftRight)
+                    .hover(move |s| s.bg(rgb(p.border)))
+                    .tooltip(|window, cx| {
+                        Tooltip::new("Drag to resize · double-click to reset").build(window, cx)
+                    })
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                            if event.click_count == 2 {
+                                this.settings.sidebar_width = 304.;
+                                this.sidebar_drag = None;
+                                this.save_settings(cx);
+                            } else {
+                                let width = wks_native::navigation::sidebar_width(
+                                    this.settings.sidebar_width,
+                                    f32::from(window.viewport_size().width),
+                                );
+                                this.sidebar_drag = Some((event.position.x, width));
+                                cx.notify();
+                            }
+                            cx.stop_propagation();
+                        }),
+                    ),
+            )
+            .child({
+                let entity = cx.entity().downgrade();
+                let dragging = self.sidebar_drag.is_some();
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, _| {
+                        if !dragging {
+                            return;
+                        }
+                        let moving = entity.clone();
+                        window.on_mouse_event(
+                            move |event: &gpui::MouseMoveEvent, phase, window, cx| {
+                                if phase.capture() {
+                                    let _ = moving.update(cx, |this, cx| {
+                                        if let Some((start, width)) = this.sidebar_drag {
+                                            this.settings.sidebar_width =
+                                                wks_native::navigation::sidebar_width(
+                                                    width + f32::from(event.position.x - start),
+                                                    f32::from(window.viewport_size().width),
+                                                );
+                                            cx.stop_propagation();
+                                            cx.notify();
+                                        }
+                                    });
+                                }
+                            },
+                        );
+                        let releasing = entity.clone();
+                        window.on_mouse_event(move |_: &gpui::MouseUpEvent, phase, _, cx| {
+                            if phase.capture() {
+                                let _ = releasing.update(cx, |this, cx| {
+                                    if this.sidebar_drag.take().is_some() {
+                                        this.save_settings(cx);
+                                        cx.stop_propagation();
+                                    }
+                                });
+                            }
+                        });
+                    },
+                )
+                .absolute()
+                .size(px(0.))
+            })
             .into_any_element()
     }
 }

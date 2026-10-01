@@ -62,3 +62,8 @@ strip = true
 [patch.crates-io]
 gpui-component = { path = "../../vendor/gpui-component" }
 portable-pty = { path = "../../vendor/portable-pty" }
+
+[[test]]
+name = "background_process"
+path = "tests/background_process.rs"
+required-features = ["rust-hub"]

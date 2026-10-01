@@ -11,11 +11,11 @@ use wks_native::{
 pub(super) struct ChildUi {
     pub agents: ChildAgents,
     clock: Option<Task<()>>,
-    page: usize,
+    pub(super) page: usize,
     pub(super) closed: Option<u64>,
 }
 
-fn status(child: &ChildAgent, connected: bool) -> &'static str {
+pub(super) fn status(child: &ChildAgent, connected: bool) -> &'static str {
     if !connected {
         return "Offline";
     }

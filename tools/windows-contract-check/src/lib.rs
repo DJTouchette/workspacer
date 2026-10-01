@@ -50,6 +50,8 @@ mod pty_output;
 mod node_exposure;
 
 extern crate self as claudemon;
+#[path = "../../../services/claudemon/src/background_process.rs"]
+pub mod background_process;
 #[path = "../../../services/claudemon/src/child_env.rs"]
 pub mod child_env;
 #[path = "../../../services/claudemon/src/wrapper/pty_windows_job.rs"]
@@ -66,3 +68,39 @@ mod task_project;
 
 #[path = "../../../services/hub-rs/src/cli/install.rs"]
 mod cli_install;
+
+#[cfg(test)]
+#[path = "../../../apps/native/tests/background_process.rs"]
+mod background_process_tests;
+
+#[cfg(test)]
+mod background_capture_tests {
+    #[tokio::test]
+    async fn owned_capture_does_not_create_console_and_preserves_pipes() {
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "background_process_tests::console_fixture",
+                "--nocapture",
+            ])
+            .env("WKS_BACKGROUND_CONSOLE_FIXTURE", "1");
+        let output = super::owned_process::capture_input(
+            &mut command,
+            b"pipe-input",
+            4096,
+            4096,
+            std::time::Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("BACKGROUND_PIPE_REPLY=pipe-input")
+        );
+    }
+}

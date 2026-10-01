@@ -86,6 +86,7 @@
 //! `model.turn_started` reports Copilot's own
 //! `max_context_window_tokens` for the model — better than the window table.
 
+use crate::background_process::BackgroundCommand;
 use crate::child_env::SanitizeChildEnvironment;
 use std::collections::VecDeque;
 use std::process::Stdio;
@@ -160,6 +161,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .scrub_host_authority()
+        .no_console_window()
         .spawn()
         .with_context(|| format!("running `{bin} --version`"))?;
     let out = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
@@ -1300,6 +1302,7 @@ async fn run_turn(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .scrub_host_authority()
+        .no_console_window()
         .spawn()
         .with_context(|| format!("spawning `{} -p`", config.bin))?;
 

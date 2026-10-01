@@ -3,6 +3,7 @@
 //! before replacing their directory.
 use super::manifest::Manifest;
 use anyhow::{Result, bail};
+use claudemon::background_process::BackgroundCommand;
 use claudemon::child_env::SanitizeChildEnvironment;
 use std::{
     path::{Path, PathBuf},
@@ -61,6 +62,7 @@ pub fn install_local(source: &Path, root: &Path) -> Result<Manifest> {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .no_console_window()
             .status()?;
         if !status.success() {
             bail!("plugin install command failed: {status}")
@@ -441,7 +443,10 @@ fn prepare_staged(
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         #[cfg(windows)]
-        let (child, job) = super::supervisor::windows_job::Job::spawn(&mut command, 0)?;
+        let (child, job) = super::supervisor::windows_job::Job::spawn(
+            &mut command,
+            claudemon::background_process::CREATION_FLAGS,
+        )?;
         #[cfg(not(windows))]
         let child = command.spawn()?;
         let mut child = InstallChild {

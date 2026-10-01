@@ -136,7 +136,8 @@ impl Factory for NativeFactory {
                 Stdio::null()
             });
         #[cfg(windows)]
-        let (child, job) = windows_job::Job::spawn(&mut command, 0)?;
+        let (child, job) =
+            windows_job::Job::spawn(&mut command, claudemon::background_process::CREATION_FLAGS)?;
         #[cfg(not(windows))]
         let child = command.spawn()?;
         let mut owned = NativeChild {

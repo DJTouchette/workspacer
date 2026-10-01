@@ -5,6 +5,7 @@
 //! tests (`tests/*.rs`) and visual previews without redundantly duplicating
 //! file references.
 
+pub mod background_process;
 pub mod child_env;
 #[cfg(unix)]
 pub mod child_group;

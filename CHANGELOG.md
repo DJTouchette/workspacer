@@ -19,6 +19,9 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   live session creation for Claude and Codex against local or existing hubs.
 
 ### Improved
+- Native sidebar nests spawned agents and grandchildren beneath their parent,
+  includes Codex/Claude native agents with conversation previews, and supports
+  resizing with a wider default and saved width.
 - Native chat keeps compact child-agent cards beneath their dispatch, with
   distinct icons for Workspacer children and Claude/Codex native subagents,
   reported activity and usage, elapsed time, and parent-scoped transcript previews.
@@ -34,6 +37,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   preserving contract fixtures and an explicit historical reference checkout.
 
 ### Fixed
+- Windows native background provider, model-query, Git and plugin commands no
+  longer create extra console windows.
 - Standalone native Claude sessions discover their own subagent artifacts and
   retain child metadata without changing the parent's approvals or busy state.
   Detached children remain active after the parent's turn ends; transcript reads

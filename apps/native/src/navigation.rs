@@ -29,6 +29,7 @@ pub struct Settings {
     pub interface_font: String,
     pub code_font: String,
     pub text_size: u8,
+    pub sidebar_width: f32,
     pub reading: BTreeMap<String, crate::reading::Bookmark>,
     pub vim_navigation: bool,
     pub keep_running: bool,
@@ -48,6 +49,7 @@ impl Default for Settings {
             interface_font: "Inter".into(),
             code_font: "JetBrains Mono".into(),
             text_size: 15,
+            sidebar_width: 304.,
             reading: BTreeMap::new(),
             vim_navigation: true,
             keep_running: false,
@@ -80,6 +82,7 @@ impl Settings {
             Ok(bytes) => {
                 let mut settings: Self = serde_json::from_slice(&bytes)?;
                 settings.text_size = settings.text_size.clamp(12, 20);
+                settings.sidebar_width = sidebar_width(settings.sidebar_width, 2000.);
                 Ok(settings)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
@@ -260,5 +263,100 @@ mod tests {
         std::fs::write(&path, b"{").unwrap();
         assert!(Settings::load(&path).is_err());
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+// Keep enough room for the conversation at small window sizes.
+pub fn sidebar_width(preferred: f32, viewport: f32) -> f32 {
+    let preferred = if preferred.is_finite() {
+        preferred
+    } else {
+        304.
+    };
+    preferred.clamp(200., (viewport * 0.4).clamp(200., 520.))
+}
+
+/// Stable parent-first order; missing/filtered parents become roots. A visited
+/// set also keeps malformed cycles visible without recursing indefinitely.
+pub fn session_tree(sessions: &[Session], visible: &[usize]) -> Vec<(usize, usize)> {
+    let ids: BTreeMap<_, _> = visible
+        .iter()
+        .map(|&ix| (sessions[ix].id.as_str(), ix))
+        .collect();
+    let mut children: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut roots = Vec::new();
+    for &ix in visible {
+        match ids.get(sessions[ix].parent_session_id.as_str()).copied() {
+            Some(parent) if parent != ix => children.entry(parent).or_default().push(ix),
+            _ => roots.push(ix),
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut result = Vec::new();
+    for root in roots.into_iter().chain(visible.iter().copied()) {
+        let mut stack = vec![(root, 0)];
+        while let Some((ix, depth)) = stack.pop() {
+            if !seen.insert(ix) {
+                continue;
+            }
+            result.push((ix, depth));
+            if let Some(children) = children.get(&ix) {
+                stack.extend(children.iter().rev().map(|&child| (child, depth + 1)));
+            }
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod sidebar_tests {
+    use super::*;
+    fn session(id: &str, parent: &str) -> Session {
+        Session {
+            id: id.into(),
+            parent_session_id: parent.into(),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn children_and_grandchildren_follow_parent_even_when_newest_first() {
+        let sessions = vec![
+            session("grandchild", "child"),
+            session("child", "root"),
+            session("other", ""),
+            session("root", ""),
+        ];
+        assert_eq!(
+            session_tree(&sessions, &[0, 1, 2, 3]),
+            vec![(2, 0), (3, 0), (1, 1), (0, 2)]
+        );
+        assert_eq!(
+            session_tree(&sessions, &[0, 1, 2]),
+            vec![(1, 0), (0, 1), (2, 0)]
+        );
+    }
+    #[test]
+    fn orphans_self_links_and_cycles_remain_visible_once() {
+        let sessions = vec![
+            session("a", "b"),
+            session("b", "a"),
+            session("self", "self"),
+            session("orphan", "missing"),
+        ];
+        let rows = session_tree(&sessions, &[0, 1, 2, 3]);
+        assert_eq!(rows, vec![(2, 0), (3, 0), (0, 0), (1, 1)]);
+    }
+    #[test]
+    fn width_defaults_and_limits_leave_room_for_content() {
+        assert_eq!(Settings::default().sidebar_width, 304.);
+        assert_eq!(sidebar_width(f32::NAN, 1200.), 304.);
+        assert_eq!(sidebar_width(520., 720.), 288.);
+        assert_eq!(sidebar_width(10., 1200.), 200.);
+        assert_eq!(
+            serde_json::from_str::<Settings>("{}")
+                .unwrap()
+                .sidebar_width,
+            304.
+        );
     }
 }

@@ -294,7 +294,10 @@ async fn capture_inner(
     command.process_group(0);
     command.scrub_host_authority();
     #[cfg(windows)]
-    let (mut child, job) = claudemon::child_job::Job::spawn_tokio(command, 0)?;
+    let (mut child, job) = claudemon::child_job::Job::spawn_tokio(
+        command,
+        claudemon::background_process::CREATION_FLAGS,
+    )?;
     #[cfg(not(windows))]
     let mut child = command.spawn()?;
     if combined {
@@ -398,7 +401,10 @@ pub(crate) async fn json_exchange(
     command.process_group(0);
     command.scrub_host_authority();
     #[cfg(windows)]
-    let (mut child, job) = claudemon::child_job::Job::spawn_tokio(command, 0)?;
+    let (mut child, job) = claudemon::child_job::Job::spawn_tokio(
+        command,
+        claudemon::background_process::CREATION_FLAGS,
+    )?;
     #[cfg(not(windows))]
     let mut child = command.spawn()?;
     let mut owner = match Owner::new(

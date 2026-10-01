@@ -23,6 +23,7 @@
 //! The pure `translate` (event → [`AgentUpdate`]s) is unit-tested; the live
 //! driver needs a real `claude` binary.
 
+use crate::background_process::BackgroundCommand;
 use crate::child_env::SanitizeChildEnvironment;
 use std::collections::{HashMap, VecDeque};
 use std::process::Stdio;
@@ -1261,6 +1262,7 @@ async fn run_session(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .scrub_host_authority()
+        .no_console_window()
         .spawn()
         .with_context(|| format!("spawning `{} {}`", cfg.bin, argv.join(" ")))?;
 

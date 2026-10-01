@@ -31,6 +31,7 @@
 //! hooks wholesale. (Codex warms use a throwaway `app-server` that fires no
 //! Claude Code hooks, so they need no such id.)
 
+use crate::background_process::BackgroundCommand;
 use std::process::Stdio;
 
 use axum::{
@@ -205,6 +206,7 @@ async fn run_ping_claude(
         // parsed thrown away. Same choice as the codex ping below.
         .stderr(Stdio::null())
         .kill_on_drop(true)
+        .no_console_window()
         .spawn()
         .context("spawning claude for heartbeat")?;
 
@@ -265,6 +267,7 @@ async fn run_ping_codex(argv: &[String], model: &str) -> anyhow::Result<Option<i
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true)
+        .no_console_window()
         .spawn()
         .with_context(|| format!("spawning `{bin} app-server` for heartbeat"))?;
 

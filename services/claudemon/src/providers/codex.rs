@@ -26,6 +26,7 @@
 //! The pure `translate(method, params)` is unit-tested; the live ws client
 //! needs a real `codex` binary to validate end-to-end.
 
+use crate::background_process::BackgroundCommand;
 use crate::child_env::SanitizeChildEnvironment;
 use std::collections::VecDeque;
 use std::process::Stdio;
@@ -864,6 +865,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
         .stderr(Stdio::null())
         .kill_on_drop(true)
         .scrub_host_authority()
+        .no_console_window()
         .spawn()
         .with_context(|| format!("spawning `{bin} app-server`"))?;
 
@@ -925,6 +927,7 @@ async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
             .current_dir(cwd)
             .kill_on_drop(true)
             .scrub_host_authority()
+            .no_console_window()
             .output(),
     )
     .await
@@ -1077,7 +1080,11 @@ impl OwnedAppServer {
     fn spawn(cmd: &mut Command, evidence: &DriverEvidence) -> std::io::Result<Self> {
         #[cfg(unix)]
         cmd.process_group(0);
-        let child = cmd.kill_on_drop(true).scrub_host_authority().spawn()?;
+        let child = cmd
+            .kill_on_drop(true)
+            .scrub_host_authority()
+            .no_console_window()
+            .spawn()?;
         let pid = child.id().expect("newly spawned app-server has a PID");
         Ok(Self {
             child,
@@ -2837,7 +2844,9 @@ while True: time.sleep(60)
                 assert_eq!(owner.cleanup().await, CleanupOutcome::GroupGone);
                 reaper.await.unwrap();
             }
-            eprintln!("{mode}: owned child and descendant reaped; successor and idle survived; repeated cleanup harmless");
+            eprintln!(
+                "{mode}: owned child and descendant reaped; successor and idle survived; repeated cleanup harmless"
+            );
             return;
         }
         child.child.start_kill().unwrap();
@@ -2858,7 +2867,9 @@ while True: time.sleep(60)
             survived,
             "direct-child kill must demonstrate the existing descendant gap"
         );
-        eprintln!("baseline: direct child reaped; owned descendant survived; fixture descendant then killed and reaped");
+        eprintln!(
+            "baseline: direct child reaped; owned descendant survived; fixture descendant then killed and reaped"
+        );
     }
 
     #[cfg(unix)]
