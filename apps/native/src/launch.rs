@@ -72,6 +72,22 @@ pub struct ModelChoice {
     pub id: String,
     pub label: String,
     pub windows: Vec<u64>,
+    pub is_default: bool,
+}
+
+impl ModelChoice {
+    pub fn picker_label(&self) -> String {
+        let label = if self.label.eq_ignore_ascii_case(&self.id) {
+            self.label.clone()
+        } else {
+            format!("{} · {}", self.label, self.id)
+        };
+        if self.is_default {
+            format!("{label} (default)")
+        } else {
+            label
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -146,6 +162,7 @@ pub fn parse_models(provider: &str, value: Value) -> Result<Vec<ModelChoice>> {
             id: id.into(),
             label,
             windows: window.into_iter().collect(),
+            is_default: row["default"].as_bool().unwrap_or(false),
         });
     }
     for model in &mut models {
@@ -178,7 +195,8 @@ mod tests {
             ModelChoice {
                 id: "opus".into(),
                 label: "Opus".into(),
-                windows: vec![200000, 1000000]
+                windows: vec![200000, 1000000],
+                is_default: false,
             }
         );
         assert_eq!(models[1].id, "sonnet");
@@ -199,8 +217,31 @@ mod tests {
         .unwrap();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].label, "Model A");
+        assert_eq!(models[0].picker_label(), "Model A · model-a (default)");
         assert_eq!(models[1].id, "model-b[1m]");
         assert!(parse_models("codex", json!({"error":"no catalog"})).is_err());
+    }
+
+    #[test]
+    fn codex_catalog_uses_live_display_labels_without_rewriting_launch_ids() {
+        let models = parse_models(
+            "codex",
+            json!([
+                {"id":"gpt-6.1-sol","label":"GPT-6.1-Sol","default":true},
+                {"id":"account-special","label":"GPT-6-Astra","default":false}
+            ]),
+        )
+        .unwrap();
+        assert_eq!(models[0].picker_label(), "GPT-6.1-Sol (default)");
+        assert_eq!(models[1].picker_label(), "GPT-6-Astra · account-special");
+        assert!(models[0].is_default);
+        let request = crate::controller::NewSession {
+            provider: "codex".into(),
+            cwd: "/project".into(),
+            model: models[1].id.clone(),
+            ..Default::default()
+        };
+        assert_eq!(request.params().unwrap()["model"], "account-special");
     }
 
     #[test]

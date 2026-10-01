@@ -223,7 +223,14 @@ impl Item {
                 "Command",
                 format!("/{} {}", self.name, self.args.unwrap_or_default()),
             ),
-            "command_output" => ("Command output", self.output),
+            "command_output" => (
+                if self.is_error {
+                    "Command error"
+                } else {
+                    "Command output"
+                },
+                self.output,
+            ),
             "plan" => (
                 "Plan",
                 serde_json::to_string_pretty(&self.steps).unwrap_or_default(),
@@ -463,6 +470,11 @@ impl Transcript {
             }
             tool
         });
+        // An empty failed result still communicates a failure, including when
+        // the matching call was outside the retained conversation window.
+        let empty_error = item.is_error
+            && ((item.kind == "tool_result" && item.content.is_empty())
+                || (item.kind == "command_output" && item.output.is_empty()));
         let Some((role, text)) = item.display() else {
             return;
         };
@@ -492,6 +504,11 @@ impl Transcript {
             self.enforce_bounds();
             return;
         }
+        let text = if empty_error {
+            "Failed without output".into()
+        } else {
+            text
+        };
         if text.is_empty() && tool.is_none() {
             return;
         }
@@ -788,6 +805,40 @@ mod tests {
         );
         assert_eq!(t.rows.back().unwrap().text, "Still visible");
     }
+    #[test]
+    fn failed_results_outside_the_window_and_command_stderr_stay_visible() {
+        let mut transcript = Transcript::default();
+        transcript.snapshot(ConversationSnapshot {
+            seq: 3,
+            first_seq: 10,
+            items: vec![
+                Item {
+                    kind: "tool_result".into(),
+                    tool_use_id: "missing".into(),
+                    is_error: true,
+                    ..Default::default()
+                },
+                Item {
+                    kind: "command_output".into(),
+                    output: "permission denied".into(),
+                    is_error: true,
+                    ..Default::default()
+                },
+                Item {
+                    kind: "command_output".into(),
+                    is_error: true,
+                    ..Default::default()
+                },
+            ],
+        });
+        assert_eq!(transcript.rows.len(), 3);
+        assert_eq!(transcript.rows[0].role, "Tool error");
+        assert_eq!(transcript.rows[0].text, "Failed without output");
+        assert_eq!(transcript.rows[1].role, "Command error");
+        assert_eq!(transcript.rows[1].text, "permission denied");
+        assert_eq!(transcript.rows[2].text, "Failed without output");
+    }
+
     #[test]
     fn structured_payloads_obey_the_transcript_budget() {
         let mut t = Transcript::default();

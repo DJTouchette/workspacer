@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+fn tool_name(name: &str) -> &str {
+    let name = name.rsplit("__").next().unwrap_or(name);
+    name.rsplit('.').next().unwrap_or(name)
+}
+
 pub fn head(text: &str, limit: usize) -> String {
     let mut end = text.len().min(limit);
     while !text.is_char_boundary(end) {
@@ -48,15 +53,15 @@ impl Tool {
     }
     pub fn category(&self) -> &'static str {
         let normalized = self.name.to_ascii_lowercase();
-        let name = normalized.rsplit("__").next().unwrap_or(&normalized);
-        let name = name.rsplit('.').next().unwrap_or(name);
+        let name = tool_name(&normalized);
         match name {
             "skill" => "Skill",
             "agent" | "task" | "spawn_agent" | "spawn-agent" => "Subagent",
             "workflow" | "run_workflow" | "workflow_run" => "Workflow",
-            "edit" | "multiedit" | "write" | "notebookedit" | "apply_patch" | "patch" => "Edit",
+            "edit" | "multiedit" | "str_replace_editor" | "write" | "write_file"
+            | "create_file" | "notebookedit" | "apply_patch" | "patch" => "Edit",
             "read" | "read_file" => "Read",
-            "bash" | "shell" | "exec_command" | "terminal" => "Command",
+            "bash" | "shell" | "exec_command" | "run_command" | "terminal" => "Command",
             "grep" | "glob" | "search" => "Search",
             _ => "Tool",
         }
@@ -65,15 +70,57 @@ impl Tool {
         let v = self.value();
         let keys: &[&str] = match self.category() {
             "Skill" => &["skill", "name"],
-            "Subagent" | "Workflow" => &["description", "name", "task", "prompt"],
+            "Subagent" | "Workflow" => {
+                &["description", "label", "name", "task", "prompt", "message"]
+            }
             "Command" => &["command", "cmd"],
-            _ => &["file_path", "path", "pattern", "query"],
+            _ => &[
+                "file_path",
+                "filePath",
+                "path",
+                "filename",
+                "pattern",
+                "query",
+            ],
         };
         keys.iter()
             .find_map(|k| v[*k].as_str())
             .map(|s| head(s.lines().next().unwrap_or(s), 180))
             .unwrap_or_else(|| self.name.clone())
     }
+    /// Workspacer receipts contain session IDs; provider-native Agent/Task IDs
+    /// belong to a separate namespace and must never become fleet links.
+    pub fn spawned_session_id(&self) -> Option<String> {
+        if !self.complete
+            || self.is_error
+            || !matches!(
+                tool_name(&self.name.to_ascii_lowercase()),
+                "spawn_agent" | "spawn-agent"
+            )
+        {
+            return None;
+        }
+        fn session_id(value: &Value) -> Option<String> {
+            let id = value.get("sessionId").and_then(Value::as_str)?;
+            (!id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+                .then(|| id.to_owned())
+        }
+        let value: Value = serde_json::from_str(&self.output).ok()?;
+        if value["isError"].as_bool() == Some(true) {
+            return None;
+        }
+        session_id(&value)
+            .or_else(|| session_id(&value["structuredContent"]))
+            .or_else(|| {
+                value["content"].as_array()?.iter().find_map(|block| {
+                    if block["type"].as_str() != Some("text") {
+                        return None;
+                    }
+                    session_id(&serde_json::from_str::<Value>(block["text"].as_str()?).ok()?)
+                })
+            })
+    }
+
     pub fn changes(&self) -> Vec<FileChange> {
         self.changes_with_diff(true)
     }
@@ -90,7 +137,11 @@ impl Tool {
         } else if v["edits"].is_array() {
             for edit in v["edits"].as_array().unwrap().iter().take(100) {
                 let mut edit = edit.clone();
-                edit["file_path"] = v["file_path"].clone();
+                edit["file_path"] = ["file_path", "filePath", "path", "filename"]
+                    .iter()
+                    .find_map(|key| v.get(*key))
+                    .cloned()
+                    .unwrap_or(Value::Null);
                 add_change(&mut changes, &edit, &self.name, include_diff);
             }
         } else {
@@ -110,10 +161,20 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str, include_diff: bo
     let path = v["file_path"]
         .as_str()
         .or_else(|| v["path"].as_str())
+        .or_else(|| v["filePath"].as_str())
+        .or_else(|| v["filename"].as_str())
         .unwrap_or("");
     let patch = v["diff"]
         .as_str()
         .or_else(|| v["patch"].as_str())
+        .or_else(|| {
+            matches!(
+                tool_name(&name.to_ascii_lowercase()),
+                "apply_patch" | "patch"
+            )
+            .then(|| v.as_str().or_else(|| v["input"].as_str()))
+            .flatten()
+        })
         .unwrap_or("");
     if !patch.is_empty() {
         // Multi-file unified and apply_patch payloads can carry paths in headers.
@@ -122,14 +183,45 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str, include_diff: bo
             ..Default::default()
         };
         let mut has_lines = false;
-        for line in patch.lines() {
+        let lines: Vec<_> = patch.lines().collect();
+        for (index, line) in lines.iter().copied().enumerate() {
+            if line.starts_with("diff --git ") {
+                if has_lines && !current.path.is_empty() {
+                    out.push(current);
+                }
+                current = FileChange::default();
+                has_lines = false;
+            }
+            // Unified patches begin each file with an old/new header pair.
+            // Start the boundary at --- so it belongs to the new file, and
+            // retain the old path when +++ is /dev/null (a deleted file).
+            let old_header = line.strip_prefix("--- ").filter(|_| {
+                lines
+                    .get(index + 1)
+                    .is_some_and(|next| next.starts_with("+++ "))
+            });
+            if old_header.is_some() && has_lines && !current.path.is_empty() {
+                out.push(current);
+                current = FileChange::default();
+                has_lines = false;
+            }
+            let paired_new_header =
+                line.starts_with("+++ ") && index > 0 && lines[index - 1].starts_with("--- ");
             let header = line
                 .strip_prefix("*** Update File: ")
                 .or_else(|| line.strip_prefix("*** Add File: "))
                 .or_else(|| line.strip_prefix("*** Delete File: "))
-                .or_else(|| line.strip_prefix("+++ b/"));
+                .or_else(|| line.strip_prefix("+++ b/"))
+                .or_else(|| {
+                    old_header
+                        .filter(|file| *file != "/dev/null")
+                        .map(|file| file.strip_prefix("a/").unwrap_or(file))
+                });
             if let Some(file) = header {
-                if !current.path.is_empty() && current.path != file && has_lines {
+                if !current.path.is_empty()
+                    && has_lines
+                    && (current.path != file && !paired_new_header)
+                {
                     out.push(current);
                     current = FileChange::default();
                 }
@@ -154,13 +246,23 @@ fn add_change(out: &mut Vec<FileChange>, v: &Value, name: &str, include_diff: bo
         let old = v["old_string"]
             .as_str()
             .or_else(|| v["oldString"].as_str())
+            .or_else(|| v["old_str"].as_str())
+            .or_else(|| v["oldText"].as_str())
             .unwrap_or("");
         let new = v["new_string"]
             .as_str()
             .or_else(|| v["newString"].as_str())
+            .or_else(|| v["new_str"].as_str())
+            .or_else(|| v["newText"].as_str())
             .or_else(|| {
-                if name.eq_ignore_ascii_case("write") {
-                    v["content"].as_str()
+                if matches!(
+                    tool_name(&name.to_ascii_lowercase()),
+                    "write" | "write_file" | "create_file"
+                ) {
+                    v["content"]
+                        .as_str()
+                        .or_else(|| v["text"].as_str())
+                        .or_else(|| v["file_text"].as_str())
                 } else {
                     None
                 }
@@ -658,6 +760,145 @@ pub fn fleet(text: &str) -> Option<Fleet> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn workspacer_spawn_receipts_link_only_successful_workspacer_sessions() {
+        let mut tool = Tool {
+            name: "mcp__workspacer__spawn_agent".into(),
+            input: json!({"message":"Review parsing\nKeep scope bounded"}).to_string(),
+            complete: true,
+            ..Default::default()
+        };
+        assert_eq!(tool.target(), "Review parsing");
+        for output in [
+            json!({"sessionId":"child-1"}),
+            json!({"structuredContent":{"sessionId":"child-1"}}),
+            json!({"content":[{"type":"text","text":"{\"sessionId\":\"child-1\"}"}]}),
+        ] {
+            tool.output = output.to_string();
+            assert_eq!(tool.spawned_session_id().as_deref(), Some("child-1"));
+        }
+        tool.output =
+            json!({"isError":true, "structuredContent":{"sessionId":"child-1"}}).to_string();
+        assert!(tool.spawned_session_id().is_none());
+        tool.output = json!({"sessionId":"child-1"}).to_string();
+        tool.is_error = true;
+        assert!(tool.spawned_session_id().is_none());
+        tool.is_error = false;
+        tool.complete = false;
+        assert!(tool.spawned_session_id().is_none());
+        tool.complete = true;
+        tool.name = "Agent".into();
+        assert!(tool.spawned_session_id().is_none());
+        tool.name = "spawn_agent".into();
+        tool.output = json!({"agent_id":"provider-thread"}).to_string();
+        assert!(tool.spawned_session_id().is_none());
+    }
+
+    #[test]
+    fn raw_codex_patch_inputs_match_structured_patch_file_summaries() {
+        let patch = "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n+extra\n*** Add File: src/helper.rs\n+helper\n*** End Patch";
+        let expected = Tool::from_item(&Item {
+            name: "apply_patch".into(),
+            input: json!({"patch":patch}),
+            ..Default::default()
+        })
+        .changes();
+        assert_eq!(expected.len(), 2);
+        assert_eq!((expected[0].added, expected[0].removed), (2, 1));
+        assert_eq!((expected[1].added, expected[1].removed), (1, 0));
+        for input in [json!(patch), json!({"input":patch})] {
+            let tool = Tool::from_item(&Item {
+                name: "functions.apply_patch".into(),
+                input,
+                ..Default::default()
+            });
+            assert_eq!(tool.changes(), expected);
+            assert_eq!(
+                tool.changes_with_diff(false),
+                expected
+                    .iter()
+                    .map(|change| FileChange {
+                        diff: String::new(),
+                        ..change.clone()
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn unified_patch_boundaries_keep_deletions_and_headers_with_their_files() {
+        let tool = Tool::from_item(&Item {
+            name: "functions.apply_patch".into(),
+            input: json!({"diff":"diff --git a/old.rs b/old.rs\n--- a/old.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\ndiff --git a/new.rs b/new.rs\n--- /dev/null\n+++ b/new.rs\n@@ -0,0 +1 @@\n+added\ndiff --git a/before.rs b/after.rs\n--- a/before.rs\n+++ b/after.rs\n@@ -1 +1 @@\n-old\n+new"}),
+            ..Default::default()
+        });
+        let changes = tool.changes();
+        assert_eq!(changes.len(), 3);
+        assert_eq!(
+            (&*changes[0].path, changes[0].added, changes[0].removed),
+            ("old.rs", 0, 1)
+        );
+        assert_eq!(
+            (&*changes[1].path, changes[1].added, changes[1].removed),
+            ("new.rs", 1, 0)
+        );
+        assert_eq!(
+            (&*changes[2].path, changes[2].added, changes[2].removed),
+            ("after.rs", 1, 1)
+        );
+        assert!(
+            changes[0]
+                .diff
+                .starts_with("diff --git a/old.rs b/old.rs\n--- a/old.rs\n")
+        );
+        assert!(!changes[0].diff.contains("--- /dev/null"));
+        assert!(
+            changes[1]
+                .diff
+                .starts_with("diff --git a/new.rs b/new.rs\n--- /dev/null\n")
+        );
+        assert!(
+            changes[2]
+                .diff
+                .starts_with("diff --git a/before.rs b/after.rs\n--- a/before.rs\n")
+        );
+    }
+
+    #[test]
+    fn namespaced_writes_and_multiedit_path_alias_keep_content() {
+        let write = Tool::from_item(&Item {
+            name: "mcp__files__Write".into(),
+            input: json!({"path":"a.rs", "content":"one\ntwo"}),
+            ..Default::default()
+        });
+        assert_eq!(write.changes()[0].added, 2);
+        let edit = Tool::from_item(&Item {
+            name: "MultiEdit".into(),
+            input: json!({"path":"b.rs", "edits":[{"old_string":"old", "new_string":"new"}]}),
+            ..Default::default()
+        });
+        assert_eq!(edit.changes()[0].path, "b.rs");
+        assert_eq!(edit.changes()[0].removed, 1);
+        let alias = Tool::from_item(&Item {
+            name: "str_replace_editor".into(),
+            input: json!({"filePath":"c.rs", "old_str":"old", "new_str":"one\ntwo"}),
+            ..Default::default()
+        });
+        assert_eq!(alias.category(), "Edit");
+        assert_eq!(alias.target(), "c.rs");
+        assert_eq!(
+            (alias.changes()[0].added, alias.changes()[0].removed),
+            (2, 1)
+        );
+        let write_alias = Tool::from_item(&Item {
+            name: "write_file".into(),
+            input: json!({"filename":"d.rs", "file_text":"one\ntwo"}),
+            ..Default::default()
+        });
+        assert_eq!(write_alias.changes()[0].added, 2);
+    }
+
     #[test]
     fn consecutive_patch_headers_preserve_header_only_files_without_carrying_counts() {
         // A header is itself a retained diff line. The established full-diff

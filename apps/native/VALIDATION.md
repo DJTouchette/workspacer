@@ -429,3 +429,50 @@ suite was not run; native tests/builds exercised the patched component.
 Captures: [Dark focus](docs/ui-rounded-focus-dark.png),
 [compact Light](docs/ui-rounded-compact-light.png),
 [Nord settings](docs/ui-rounded-settings-nord.png).
+
+## Codex model display, chat parsing and ordinary child spawning (2026-10-01)
+
+The new-session picker preserves live Codex labels and exact launch IDs, identifies
+the reported default, and exposes discovery failures and empty catalogs. A read-only
+query to the installed Codex app-server returned eight visible models; this checks
+the installed CLI's catalog shape, not every account or future model availability.
+
+Live chat and History now retain raw Codex patches, deleted-file unified patches,
+per-file patch headers, namespaced write/edit aliases, command stderr and empty
+failed results. Tool previews share patch boundaries with changed-file summaries.
+Workspacer spawn calls show the child's first message and offer an explicit child
+session action only when the successful receipt names an available fleet session.
+
+- Complete serialized native suite (`cargo test --locked --features ui-tests --
+  --test-threads=1`): **142 passed** (60 library, 51 UI/lifetime, 28 protocol,
+  3 Rust-host). Coverage includes raw/MCP spawn receipts, failure guards, file
+  summary parity, exact model selection and child navigation without draft loss.
+- Shared hub `launch_instructions`, `local_spawn` and `models` targets:
+  **13 passed**. Inert Claude/Codex fixtures exercise the parent's authenticated
+  MCP `spawn_agent`, host-derived lineage, queued first message, recorded tool
+  receipt, progress/completion wakes and Codex first-turn skill pointers.
+- Rust formatting, diff whitespace and Python fixture syntax checks passed.
+  Witness left changed sources/fixtures unmapped; the full native suite and
+  explicitly selected backend integration targets were run. This is not a claim
+  that the complete shared hub suite was run.
+- Actual X11/software-Vulkan rich-fixture windows were inspected for Markdown,
+  code highlighting, file-change estimates, approval controls and response-card
+  tables. Linux build libraries were extracted into a temporary sysroot because
+  this environment lacked system development packages.
+
+No real provider session or model call was made. Windows/macOS runtime and
+hardware-performance checks remain outside this validation. Existing serialized
+suite and retained-content budget limits still apply.
+
+Captures: [chat](docs/ui-chat-parsing-review.png),
+[response card](docs/ui-chat-response-card-review.png).
+
+Publication integration check: rebased onto `b06a333a` to retain its new-session
+flow, home-directory model discovery and provider-echo reconciliation. Updated
+three model test fixtures and the explicit-project model-request expectation.
+The complete serialized native suite on the merged source passed **152 tests**
+(62 library, 59 UI/lifetime, 28 protocol, 3 Rust-host). The captures above record
+the earlier parsing batch; they were not regenerated for the merged UI.
+The 13 selected shared-hub checks also passed on the merged source. Reviewed the
+new `providers.listModels.useHomeDirectory` selector in the parameter-policy
+fixture; the source scanner and all 34 capability-checker tests passed.

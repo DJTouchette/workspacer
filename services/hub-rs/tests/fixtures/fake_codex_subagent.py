@@ -96,6 +96,9 @@ class Server(http.server.BaseHTTPRequestHandler):
                     continue
                 request = json.loads(payload)
                 method = request.get("method")
+                if method == "turn/start":
+                    with (root / "codex-turns.jsonl").open("a") as output:
+                        output.write(json.dumps(request["params"]) + "\n")
                 if "id" not in request:
                     continue
                 result = {"thread": {"id": parent}} if method in ("thread/start", "thread/resume") else {}

@@ -978,6 +978,12 @@
     }
   },
   "sourceParameterDecisions": {
+    "providers.listModels": {
+      "useHomeDirectory": {
+        "kind": "path",
+        "reason": "Boolean selector for initial Codex model discovery only. models::provider_request requires provider codex, empty cwd and the literal boolean true, then canonicalizes the hub-owned home directory. It accepts no caller-supplied home path, does not override an explicit project cwd, and is not used for spawning or provider permissions."
+      }
+    },
     "agents.spawn": {
       "projectCwd": {
         "kind": "inert",

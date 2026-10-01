@@ -298,20 +298,26 @@ pub(crate) fn install(mut options: Options, config: Arc<Config>) -> Options {
                 if let Some(routing) = routing {
                     routing.update_catalog(&provider, None);
                 }
-                return Ok(json!([]));
+                anyhow::bail!(
+                    "Provider model discovery is unavailable: no execution engine is connected"
+                );
             };
-            let response = engine.request(request).await.ok();
-            let rows = response.as_ref().cloned().and_then(provider_rows);
+            let response = engine.request(request).await;
+            let rows = response.as_ref().ok().cloned().and_then(provider_rows);
             if let Some(routing) = routing {
                 // Keep upstream metadata used by routing, but never cache a
                 // response that failed the public typed-model contract.
                 routing.update_catalog(
                     &provider,
                     rows.as_ref()
-                        .and_then(|_| response.as_ref()?.get("models")?.as_array().cloned()),
+                        .and_then(|_| response.as_ref().ok()?.get("models")?.as_array().cloned()),
                 );
             }
-            Ok(Value::Array(rows.unwrap_or_default()))
+            response
+                .map_err(|error| anyhow::anyhow!("Could not load {provider} models: {error}"))?;
+            let rows = rows
+                .ok_or_else(|| anyhow::anyhow!("{provider} returned an invalid model catalog"))?;
+            Ok(Value::Array(rows))
         }
     });
     options.handler("providers.checkAll", move |_, _| {

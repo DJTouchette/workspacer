@@ -90,7 +90,10 @@ Claude choices come from the hub's family-alias catalog, grouped into one row pe
 family with separate context-window choices. Labels do not infer version numbers
 from old transcripts, and historical model IDs are not presented as available
 models. Codex choices come from the hub's live provider catalog, initially using
-the hub's home directory and refreshing when a project is entered.
+the hub's home directory and refreshing when a project is entered. The picker
+identifies the reported default and shows the exact launch ID when it differs
+from the display label. Catalog discovery errors remain visible instead of
+appearing as an empty successful result.
 Refresh models retries the query (the hub may serve its cache).
 Loading failures leave Provider default and Custom model available; switching
 providers clears incompatible model/context choices and applies that provider's
@@ -630,6 +633,13 @@ viewer paused. Restarting that connection remains the embedding host's explicit
 responsibility; the native library does not infer OS shutdown or restart authority.
 
 ## Chat polish
+
+Ordinary native sessions receive the shared Workspacer `spawn-agent` skill
+instructions through the Rust launcher. Successful Workspacer spawn tool receipts
+offer **Open child session** while the child is available in the session list.
+Provider-native subagent IDs remain separate from Workspacer session IDs. Child
+first messages, tool receipts and completion wakes use the same retained chat
+parsing as History.
 
 `--session` pins automatic selection until you explicitly choose **New session**
 (`Ctrl/Cmd+N`). That opens the creation form and leaves the pin; a successful

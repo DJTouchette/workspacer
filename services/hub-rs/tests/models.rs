@@ -83,7 +83,7 @@ fn provider_detection_and_spawn_override_are_isolated_from_parent_environment() 
 }
 
 #[tokio::test]
-async fn provider_rpc_refuses_bad_admission_and_soft_fails_without_an_engine() {
+async fn provider_rpc_refuses_bad_admission_and_reports_missing_engine() {
     let root = tempfile::tempdir().unwrap();
     let mut options = workspacer_hub::Options::default();
     options.home_dir = Some(root.path().into());
@@ -94,16 +94,14 @@ async fn provider_rpc_refuses_bad_admission_and_soft_fails_without_an_engine() {
         .await
         .unwrap();
     for provider in ["codex", "copilot", "opencode", "pi"] {
-        assert_eq!(
-            client
-                .call(
-                    "providers.listModels",
-                    json!({"provider":provider,"cwd":root.path()})
-                )
-                .await
-                .unwrap(),
-            json!([])
-        );
+        let error = client
+            .call(
+                "providers.listModels",
+                json!({"provider":provider,"cwd":root.path()}),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no execution engine"), "{error}");
     }
     for params in [
         json!({"provider":"claude","cwd":root.path()}),

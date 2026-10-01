@@ -2610,6 +2610,57 @@ mod tests {
     }
 
     #[gpui::test]
+    fn workspacer_spawn_receipt_opens_only_an_available_child(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 2,
+            first_seq: 1,
+            items: vec![
+                Item {
+                    kind: "tool_use".into(),
+                    id: "spawn-child".into(),
+                    name: "mcp__workspacer__spawn_agent".into(),
+                    input: serde_json::json!({"message":"Review parsing"}),
+                    ..Default::default()
+                },
+                Item {
+                    kind: "tool_result".into(),
+                    tool_use_id: "spawn-child".into(),
+                    content: serde_json::json!({"sessionId":"b"}).to_string(),
+                    ..Default::default()
+                },
+            ],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(view), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("Parent draft", window, cx));
+            })
+        });
+        visual.run_until_parked();
+        let open = visual.debug_bounds("open-spawned-session").unwrap();
+        visual.simulate_click(open.center(), gpui::Modifiers::default());
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
+        assert!(commands.try_recv().is_err());
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "Parent draft")
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                Arc::make_mut(&mut view.sessions).retain(|s| s.id != "b");
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let open = visual.debug_bounds("open-spawned-session").unwrap();
+        visual.simulate_click(open.center(), gpui::Modifiers::default());
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
     fn reading_history_stays_anchored_through_updates_and_scroll_stop(cx: &mut TestAppContext) {
         let (workspace, mut visual, _commands, _updates) = fixture(cx);
         let mut items: Vec<Item> = (0..40)
@@ -3080,6 +3131,7 @@ mod tests {
                             id: id.into(),
                             label: id.into(),
                             windows: vec![],
+                            is_default: false,
                         })
                         .collect(),
                     ..Default::default()
@@ -3158,6 +3210,7 @@ mod tests {
                         id: "opus".into(),
                         label: "Opus".into(),
                         windows: vec![200000],
+                        is_default: false,
                     }],
                     ..Default::default()
                 };
@@ -3201,6 +3254,7 @@ mod tests {
                         id: "opus".into(),
                         label: "Opus".into(),
                         windows: vec![200000],
+                        is_default: false,
                     }],
                     ..Default::default()
                 };
@@ -3240,6 +3294,7 @@ mod tests {
                         id: "opus".into(),
                         label: "Opus".into(),
                         windows: vec![200000, 1000000],
+                        is_default: false,
                     }],
                     ..Default::default()
                 };

@@ -71,6 +71,8 @@ rpc("notifications/initialized", notification=True)
 config = rpc("tools/call", {"name": "get_config", "arguments": {}})
 assert not config.get("isError", False)
 record({"ready": True, "pid": os.getpid(), "session": session, "scopedMcpCall": True, "hostCredentialsAbsent": True})
+instructions = args[args.index("--append-system-prompt") + 1]
+record({"launchInstructions": instructions})
 emit({"type": "system", "subtype": "init", "session_id": session, "model": "claude-sonnet-4-6", "tools": [], "mcp_servers": [{"name": "workspacer", "status": "connected"}]})
 
 for line in sys.stdin:
@@ -88,6 +90,22 @@ for line in sys.stdin:
     content = frame.get("message", {}).get("content", [])
     prompt = "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
     record({"message": prompt})
+    if "spawn-ordinary-child-fixture" in prompt:
+        spawned = rpc("tools/call", {"name": "spawn_agent", "arguments": {
+            "cwd": str(root / "project"), "provider": "claude", "transport": "stream",
+            "profileId": "isolated", "trackTask": False,
+            "message": "finish-child-fixture", "label": "Fixture child"
+        }})
+        assert not spawned.get("isError", False), spawned
+        receipt = json.loads(spawned["content"][0]["text"])
+        record({"spawnedChild": receipt})
+        # Expose the same namespaced tool pair that a provider would publish.
+        emit({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "ordinary-child-spawn", "name": "mcp__workspacer__spawn_agent", "input": {"trackTask": False, "label": "Fixture child"}}
+        ]}})
+        emit({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "ordinary-child-spawn", "content": json.dumps(receipt)}
+        ]}})
     if "ask-numeric-fixture" in prompt:
         emit({"type": "control_request", "request_id": "numeric-question-fixture", "request": {
             "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [

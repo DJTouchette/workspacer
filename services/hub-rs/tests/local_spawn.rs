@@ -209,9 +209,50 @@ async fn run(root: PathBuf) {
             .is_ok_and(|row| row["ambientState"] == "idle")
     })
     .await;
-    let child=client.call("agents.spawn",json!({"cwd":project,"provider":"claude","transport":"stream","profileId":"isolated","message":"finish-child-fixture","label":"Fixture child","parentSessionId":parent_id,"trackTask":false})).await.unwrap();
+    let pointer = rows(&root, &parent_id)
+        .into_iter()
+        .find_map(|row| row["launchInstructions"].as_str().map(str::to_owned))
+        .unwrap();
+    let skill_root = project
+        .join(".workspacer/skills")
+        .join(workspacer_hub::services::launch_instructions::skill_version());
+    assert!(pointer.contains(&format!("{:?}", skill_root.join("spawn-agent/SKILL.md"))));
+    assert_eq!(
+        std::fs::read_to_string(skill_root.join("spawn-agent/SKILL.md")).unwrap(),
+        include_str!("../../../apps/desktop/assets/skills/spawn-agent/SKILL.md")
+    );
+    client
+        .call(
+            "agents.sendMessage",
+            json!({"sessionId":parent_id,"text":"spawn-ordinary-child-fixture"}),
+        )
+        .await
+        .unwrap();
+    until("parent-authenticated-child-spawn", async || {
+        rows(&root, &parent_id)
+            .iter()
+            .any(|row| row["spawnedChild"].is_object())
+    })
+    .await;
+    let child = rows(&root, &parent_id)
+        .into_iter()
+        .find_map(|row| row.get("spawnedChild").cloned())
+        .unwrap();
     assert_eq!(child["messageQueued"], true);
+    assert_eq!(child["taskTracking"], false);
     let child_id = child["sessionId"].as_str().unwrap().to_owned();
+    until("parent-spawn-tool-transcript", async || {
+        client
+            .call("sessions.conversation", json!({"sessionId":parent_id}))
+            .await
+            .is_ok_and(|conversation| {
+                let text = conversation.to_string();
+                text.contains("mcp__workspacer__spawn_agent")
+                    && text.contains("ordinary-child-spawn")
+                    && text.contains(&child_id)
+            })
+    })
+    .await;
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let event = events.recv().await.unwrap();
@@ -523,6 +564,14 @@ async fn run(root: PathBuf) {
             })
     })
     .await;
+    until("codex-skill-first-turn", async || {
+        std::fs::read_to_string(root.join("codex-turns.jsonl"))
+            .is_ok_and(|turns| turns.contains("fixture subagent parent"))
+    })
+    .await;
+    let codex_turns = std::fs::read_to_string(root.join("codex-turns.jsonl")).unwrap();
+    assert!(codex_turns.contains("spawn-agent/SKILL.md"));
+    assert!(codex_turns.contains("fixture subagent parent"));
     let day = root.join("home/.codex/sessions/2026/09/30");
     std::fs::create_dir_all(&day).unwrap();
     for id in ["fixture-codex-child", "hidden-codex-child"] {

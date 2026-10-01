@@ -29,11 +29,15 @@ impl SelectItem for PickerItem {
 pub(super) fn model_items(models: &[ModelChoice]) -> Vec<PickerItem> {
     std::iter::once(PickerItem {
         id: String::new(),
-        label: "Provider default".into(),
+        label: models
+            .iter()
+            .find(|m| m.is_default)
+            .map(|m| format!("Provider default · {}", m.label))
+            .unwrap_or_else(|| "Provider default".into()),
     })
     .chain(models.iter().map(|m| PickerItem {
         id: m.id.clone(),
-        label: m.label.clone(),
+        label: m.picker_label(),
     }))
     .chain(std::iter::once(PickerItem {
         id: "__custom".into(),
@@ -619,6 +623,8 @@ impl Workspace {
             } else { "Models are queried from Codex on the connected hub." }))
             .when(current && catalog.error.is_some(), |d| d.child(div().text_size(px(12.)).text_color(rgb(p.warning))
                 .child(catalog.error.clone().unwrap_or_default())))
+            .when(current && !loading && catalog.error.is_none() && catalog.models.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(rgb(p.warning))
+                .child("No models were returned. Refresh models, use Provider default, or enter a custom model ID.")))
             .when(!current && self.provider != "claude", |d| d.child(div().text_size(px(12.)).text_color(rgb(p.muted))
                 .child("Models will load for the entered project directory.")))
             .when(!windows.is_empty(), |d| d.child(div().flex().flex_wrap().items_center().gap_2()

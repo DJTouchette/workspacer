@@ -653,6 +653,8 @@ impl Workspace {
                 let input = tool.value();
                 let description = input["prompt"]
                     .as_str()
+                    .or_else(|| input["message"].as_str())
+                    .or_else(|| input["task"].as_str())
                     .or_else(|| input["description"].as_str())
                     .unwrap_or("");
                 body = body.child(literal(format!("{key}-task"), description, window, cx));
@@ -721,6 +723,22 @@ impl Workspace {
                     agent["status"].as_str().unwrap_or(""),
                     agent["lastToolName"].as_str().unwrap_or("")
                 ));
+            }
+            if let Some(child) = tool.spawned_session_id() {
+                let available = self.view.sessions.iter().any(|s| s.id == child);
+                body = body.child(
+                    self.button(
+                        SharedString::from(format!("{key}-spawned-session")),
+                        "Open child session",
+                        available,
+                    )
+                    .debug_selector(|| "open-spawned-session".into())
+                    .when(available, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.command(Command::Select(child.clone()), cx)
+                        }))
+                    }),
+                );
             }
             if tool.category() == "Workflow" {
                 let result =

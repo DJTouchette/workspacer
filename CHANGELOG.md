@@ -19,6 +19,10 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   live session creation for Claude and Codex against local or existing hubs.
 
 ### Improved
+- Native new-session flow uses live Codex model labels and default metadata,
+  retains exact launch IDs, and exposes model discovery failures.
+- Native Workspacer spawn-agent receipts offer direct child-session navigation;
+  ordinary Claude and Codex launches retain the shared collaboration skill.
 - Native chat has floating controls, syntax-highlighted tool cards, stable
   reading positions across updates, and persisted turn durations.
 - Native chat typography and file previews use bundled fonts and updated controls.
@@ -27,6 +31,8 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   preserving contract fixtures and an explicit historical reference checkout.
 
 ### Fixed
+- Native live chat and History preserve raw Codex patches, deleted-file diffs,
+  namespaced edit/write tools, command errors and empty failed results.
 - MCP tool catalogs include the cache metadata required by modern clients,
   preventing Claude Code from rejecting all Workspacer tools after connecting.
 - Context-window recognition for Claude Opus 5.5's default 1M window.

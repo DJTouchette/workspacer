@@ -171,30 +171,24 @@ impl ToolPreview {
     }
 
     fn patch(&mut self, fallback_path: &str, patch: &str) {
-        let mut path = fallback_path.to_owned();
-        let mut lines = String::new();
-        for line in patch.lines() {
-            if matches!(line, "*** Begin Patch" | "*** End Patch") {
-                continue;
-            }
-            let next = ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
-                .iter()
-                .find_map(|prefix| line.strip_prefix(prefix));
-            if let Some(next) = next {
-                self.diff(&path, &lines);
-                path = next.into();
-                if self.target.is_empty() {
-                    self.target = path.clone();
-                }
-                lines.clear();
-                lines.push_str(line);
-                lines.push('\n');
-            } else {
-                lines.push_str(line);
-                lines.push('\n');
-            }
+        // Use the same file boundaries as History and the changed-files footer,
+        // including unified deletions whose new path is /dev/null.
+        let tool = crate::transcript::Tool {
+            name: "apply_patch".into(),
+            input: serde_json::json!({"file_path":fallback_path,"diff":patch}).to_string(),
+            ..Default::default()
+        };
+        let changes = tool.changes();
+        if changes.is_empty() {
+            self.diff(fallback_path, patch);
+            return;
         }
-        self.diff(&path, &lines);
+        for change in changes {
+            if self.target.is_empty() {
+                self.target = change.path.clone();
+            }
+            self.diff(&change.path, &change.diff);
+        }
     }
 }
 
@@ -374,6 +368,24 @@ mod tests {
         assert_eq!(p.blocks.len(), 2);
         assert_eq!((p.added, p.removed), (2, 1));
         assert_eq!(p.blocks[1].label, "b.rs");
+    }
+
+    #[test]
+    fn unified_patch_previews_keep_deleted_files_and_separate_file_sections() {
+        let patch = "--- a/old.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-gone\n--- a/next.rs\n+++ b/next.rs\n@@ -1 +1 @@\n-before\n+after\n";
+        let preview = parse(
+            "functions.apply_patch",
+            &serde_json::json!({"diff":patch}).to_string(),
+            None,
+        );
+        assert_eq!(preview.target, "old.rs");
+        assert_eq!((preview.added, preview.removed), (1, 2));
+        assert_eq!(preview.blocks.len(), 2);
+        assert_eq!(preview.blocks[0].label, "old.rs");
+        assert!(preview.blocks[0].text.contains("+++ /dev/null"));
+        assert!(!preview.blocks[0].text.contains("next.rs"));
+        assert_eq!(preview.blocks[1].label, "next.rs");
+        assert!(preview.blocks[1].text.starts_with("--- a/next.rs"));
     }
 
     #[test]

@@ -728,7 +728,7 @@ async fn catalogs_are_scoped_and_late_provider_results_do_not_replace_selection(
     let current = hub.frame("call", Some("providers.listModels")).await;
     assert_eq!(
         current.value["params"],
-        json!({"provider":"codex","cwd":"/remote/project"})
+        json!({"provider":"codex","cwd":"/remote/project","useHomeDirectory":false})
     );
     current
         .result(json!([{"id":"exact-codex","label":"Codex model"}]))
