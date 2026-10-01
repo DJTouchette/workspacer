@@ -550,7 +550,7 @@ impl Workspace {
                 d.max_w(gpui::relative(0.85))
                     .ml_auto()
                     .bg(rgb(p.user))
-                    .rounded(px(18.))
+                    .rounded(px(p.composer_radius))
                     .px_4()
                     .py_3()
             })
@@ -935,37 +935,41 @@ impl Workspace {
     fn file_button(&self, key: &str, path: String, cx: &mut Context<Self>) -> Stateful<Div> {
         let owner = self.view.selected.clone().unwrap_or_default();
         let p = self.appearance.palette();
-        div()
-            .id(SharedString::from(key.to_owned()))
-            .min_w_0()
-            .max_w_full()
-            .flex()
-            .items_center()
-            .gap_2()
-            .py_1()
-            .text_size(px(11.))
-            .text_color(rgb(if self.view.connected {
-                p.muted
-            } else {
-                p.disabled
-            }))
-            .child(Icon::new(IconName::File).size(px(12.)).flex_shrink_0())
-            .child(div().min_w_0().truncate().child(path.clone()))
-            .when(self.view.connected, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.text_color(rgb(p.accent)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.view.selected.as_ref() == Some(&owner) {
-                            this.request(
-                                Request::FilePreview {
-                                    session: owner.clone(),
-                                    path: path.clone(),
-                                },
-                                cx,
-                            );
-                        }
-                    }))
-            })
+        chrome::interactive_control(
+            div().id(SharedString::from(key.to_owned())),
+            p,
+            self.view.connected,
+        )
+        .rounded(px(p.control_radius))
+        .min_w_0()
+        .max_w_full()
+        .flex()
+        .items_center()
+        .gap_2()
+        .py_1()
+        .text_size(px(11.))
+        .text_color(rgb(if self.view.connected {
+            p.muted
+        } else {
+            p.disabled
+        }))
+        .child(Icon::new(IconName::File).size(px(12.)).flex_shrink_0())
+        .child(div().min_w_0().truncate().child(path.clone()))
+        .when(self.view.connected, |d| {
+            d.cursor_pointer()
+                .hover(|s| s.text_color(rgb(p.accent)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.view.selected.as_ref() == Some(&owner) {
+                        this.request(
+                            Request::FilePreview {
+                                session: owner.clone(),
+                                path: path.clone(),
+                            },
+                            cx,
+                        );
+                    }
+                }))
+        })
     }
     fn render_raw(
         &self,
@@ -1179,9 +1183,8 @@ impl Workspace {
                 .debug_selector(|| "file-preview-panel".into())
                 .occlude()
                 .bg(rgb(p.chat))
-                .rounded(px(16.))
-                .border_1()
-                .border_color(rgb(p.border))
+                .rounded(px(p.panel_radius))
+                .shadow(chrome::floating_shadow(p))
                 .p_3()
                 .flex()
                 .flex_col()

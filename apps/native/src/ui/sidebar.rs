@@ -131,52 +131,55 @@ impl Workspace {
                                     session.cwd, session.provider
                                 );
                                 div().h(px(48.)).px_2().pb_1().child(
-                                    div()
-                                        .id(ix)
-                                        .debug_selector(move || format!("sidebar-session-{ix}"))
-                                        .h_full()
-                                        .w_full()
-                                        .rounded(px(8.))
-                                        .cursor_pointer()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .gap_1()
-                                        .text_size(px(13.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(rgb(if active { p.text } else { p.muted }))
-                                        .when(active, |d| d.bg(rgb(p.selected)))
-                                        .hover(move |style| {
-                                            style.bg(rgb(if active {
-                                                p.selected
-                                            } else {
-                                                p.surface
-                                            }))
-                                        })
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::new(details.clone()).build(window, cx)
-                                        })
-                                        .child(initial)
-                                        .when(session.working() && this.view.connected, |d| {
-                                            d.child(brand_spinner(
-                                                8.,
-                                                p,
-                                                SharedString::from(format!(
-                                                    "rail-working-{}",
-                                                    session.id
-                                                )),
-                                            ))
-                                        })
-                                        .when(
-                                            session.approval.is_some()
-                                                || session.questions.is_some(),
-                                            |d| d.child(status_dot(p.warning)),
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                    chrome::interactive_control(
+                                        div().id(SharedString::from(format!(
+                                            "session-{}",
+                                            session.id
+                                        ))),
+                                        p,
+                                        true,
+                                    )
+                                    .debug_selector(move || format!("sidebar-session-{ix}"))
+                                    .h_full()
+                                    .w_full()
+                                    .rounded(px(p.control_radius))
+                                    .cursor_pointer()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_1()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(if active { p.text } else { p.muted }))
+                                    .when(active, |d| d.bg(rgb(p.selected)))
+                                    .hover(move |style| {
+                                        style.bg(rgb(if active { p.selected } else { p.surface }))
+                                    })
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(details.clone()).build(window, cx)
+                                    })
+                                    .child(initial)
+                                    .when(session.working() && this.view.connected, |d| {
+                                        d.child(brand_spinner(
+                                            8.,
+                                            p,
+                                            SharedString::from(format!(
+                                                "rail-working-{}",
+                                                session.id
+                                            )),
+                                        ))
+                                    })
+                                    .when(
+                                        session.approval.is_some() || session.questions.is_some(),
+                                        |d| d.child(status_dot(p.warning)),
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
                                             this.new_session = false;
                                             this.screen = Screen::Conversation;
                                             this.command(Command::Select(id.clone()), cx);
-                                        })),
+                                        },
+                                    )),
                                 )
                             })
                             .collect::<Vec<_>>()
@@ -229,6 +232,20 @@ impl Workspace {
         if self.sidebar_collapsed {
             return self.render_sidebar_rail(window, cx);
         }
+        let editing = [
+            &self.composer,
+            &self.search,
+            &self.project_path,
+            &self.project,
+            &self.label,
+            &self.model,
+            &self.prompt,
+            &self.extras.name,
+        ]
+        .into_iter()
+        .chain(self.extras.answers.iter())
+        .any(|input| input.read(cx).focus_handle(cx).is_focused(window));
+        let control_focused = !self.focus.is_focused(window) && !editing;
         let visible_sessions = self.visible_sessions(cx);
         let filtered = !self.search.read(cx).value().is_empty() || self.project_filter.is_some();
         let no_visible_sessions = visible_sessions.is_empty();
@@ -458,93 +475,94 @@ impl Workspace {
                                     "{title}\n{}\n{} · {status}",
                                     session.cwd, session.provider
                                 );
-                                div().h(px(64.)).px_2().pb_1().child(
-                                    div()
-                                        .id(ix)
-                                        .debug_selector(move || format!("sidebar-session-{ix}"))
-                                        .h_full()
-                                        .px_3()
-                                        .py_2()
-                                        .rounded(px(8.))
-                                        .cursor_pointer()
-                                        .overflow_hidden()
-                                        .flex()
-                                        .flex_col()
-                                        .justify_center()
-                                        .gap_1()
-                                        .when(active, |d| d.bg(rgb(p.selected)))
-                                        .hover(move |style| {
-                                            style.bg(rgb(if active {
-                                                p.selected
-                                            } else {
-                                                p.surface
-                                            }))
-                                        })
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::new(details.clone()).build(window, cx)
-                                        })
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    div()
-                                                        .flex_1()
-                                                        .min_w_0()
-                                                        .truncate()
-                                                        .text_size(px(14.))
-                                                        .font_weight(if active {
-                                                            FontWeight::SEMIBOLD
-                                                        } else {
-                                                            FontWeight::MEDIUM
-                                                        })
-                                                        .child(title),
-                                                )
-                                                .when(
-                                                    session.working() && this.view.connected,
-                                                    |d| {
-                                                        d.child(brand_spinner(
-                                                            12.,
-                                                            p,
-                                                            SharedString::from(format!(
-                                                                "sidebar-working-{}",
-                                                                session.id
-                                                            )),
-                                                        ))
-                                                    },
-                                                )
-                                                .when(
-                                                    session.approval.is_some()
-                                                        || session.questions.is_some(),
-                                                    |d| d.child(status_dot(p.warning)),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .text_size(px(11.))
-                                                .text_color(rgb(p.muted))
-                                                .child(Icon::new(IconName::Folder).size(px(11.)))
-                                                .child(div().flex_1().min_w_0().truncate().child(
-                                                    chrome::project_label(&session.cwd).to_owned(),
+                                div().h(px(68.)).px_2().pb_1().child(
+                                    chrome::interactive_control(
+                                        div().id(SharedString::from(format!(
+                                            "session-{}",
+                                            session.id
+                                        ))),
+                                        p,
+                                        true,
+                                    )
+                                    .debug_selector(move || format!("sidebar-session-{ix}"))
+                                    .h_full()
+                                    .px_3()
+                                    .py_2()
+                                    .rounded(px(p.control_radius))
+                                    .cursor_pointer()
+                                    .overflow_hidden()
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
+                                    .gap_1()
+                                    .when(active, |d| d.bg(rgb(p.selected)))
+                                    .hover(move |style| {
+                                        style.bg(rgb(if active { p.selected } else { p.surface }))
+                                    })
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(details.clone()).build(window, cx)
+                                    })
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .text_size(px(14.))
+                                                    .font_weight(if active {
+                                                        FontWeight::SEMIBOLD
+                                                    } else {
+                                                        FontWeight::MEDIUM
+                                                    })
+                                                    .child(title),
+                                            )
+                                            .when(session.working() && this.view.connected, |d| {
+                                                d.child(brand_spinner(
+                                                    12.,
+                                                    p,
+                                                    SharedString::from(format!(
+                                                        "sidebar-working-{}",
+                                                        session.id
+                                                    )),
                                                 ))
-                                                .when(status != "Ready", |d| {
-                                                    d.child(
-                                                        div()
-                                                            .flex_shrink_0()
-                                                            .text_color(rgb(color))
-                                                            .child(status.to_owned()),
-                                                    )
-                                                }),
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            })
+                                            .when(
+                                                session.approval.is_some()
+                                                    || session.questions.is_some(),
+                                                |d| d.child(status_dot(p.warning)),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(p.muted))
+                                            .child(Icon::new(IconName::Folder).size(px(11.)))
+                                            .child(div().flex_1().min_w_0().truncate().child(
+                                                chrome::project_label(&session.cwd).to_owned(),
+                                            ))
+                                            .when(status != "Ready", |d| {
+                                                d.child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .text_color(rgb(color))
+                                                        .child(status.to_owned()),
+                                                )
+                                            }),
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
                                             this.new_session = false;
                                             this.screen = Screen::Conversation;
                                             this.command(Command::Select(id.clone()), cx)
-                                        })),
+                                        },
+                                    )),
                                 )
                             })
                             .collect::<Vec<_>>()
@@ -562,7 +580,9 @@ impl Workspace {
                     .items_center()
                     .justify_between()
                     .child(keycap(
-                        if !self.settings.vim_navigation {
+                        if control_focused {
+                            "CONTROLS"
+                        } else if !self.settings.vim_navigation {
                             "SHORTCUTS"
                         } else if self.focus.is_focused(window) {
                             "NORMAL"
@@ -572,7 +592,9 @@ impl Workspace {
                         p,
                     ))
                     .child(div().text_size(px(10.)).text_color(rgb(p.muted)).child(
-                        if !self.settings.vim_navigation {
+                        if control_focused {
+                            "Tab next · Enter act"
+                        } else if !self.settings.vim_navigation {
                             "Ctrl P · Ctrl ,"
                         } else if self.focus.is_focused(window) {
                             "i edit · g p projects"

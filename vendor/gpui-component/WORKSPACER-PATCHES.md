@@ -15,5 +15,14 @@ tables and code, and its asynchronous parse cache:
 - `unordered_list_marker`: an optional visual bullet override. The default
   preserves upstream behavior; the native transcript chooses a round bullet.
 
-Changes are confined to `src/text/{style,inline,node}.rs`. Reapply them explicitly
+Text changes are confined to `src/text/{style,inline,node}.rs`. Reapply them explicitly
 when upgrading GPUI Component. Do not modify the user's Cargo registry cache.
+
+Native interaction polish also patches:
+
+- `src/button/button.rs`: hovered buttons use their variant/theme foreground,
+  replacing an accidental hardcoded red foreground.
+- `src/styled.rs`: focus rings use 80 percent of the theme ring color so keyboard
+  focus remains visible. The native client supplies its palette accent as ring.
+
+Reapply these interaction changes explicitly when upgrading the component.

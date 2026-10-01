@@ -69,10 +69,8 @@ impl Workspace {
     }
 
     fn wake_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        self.button("wake-workspace", "Reconnect and wake", true)
+        self.primary_button("wake-workspace", "Reconnect and wake", true)
             .debug_selector(|| "wake-workspace".into())
-            .bg(rgb(self.appearance.palette().primary))
-            .text_color(rgb(self.appearance.palette().on_primary))
             .on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
     }
 
@@ -82,7 +80,7 @@ impl Workspace {
         div()
             .debug_selector(|| "connection-banner".into())
             .occlude()
-            .rounded(px(8.))
+            .rounded(px(p.panel_radius))
             .bg(rgb(p.surface))
             .p_2()
             .flex()
@@ -268,10 +266,8 @@ impl Workspace {
                         conversation_error || workspace_error || requested_unavailable,
                         |d| {
                             d.child(
-                                self.button("retry-empty", "Try again", true)
+                                self.primary_button("retry-empty", "Try again", true)
                                     .debug_selector(|| "retry-empty".into())
-                                    .bg(rgb(p.primary))
-                                    .text_color(rgb(p.on_primary))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.command(Command::Refresh, cx)
                                     })),
@@ -320,14 +316,12 @@ impl Workspace {
                             && !conversation_error,
                         |d| {
                             d.child(
-                                self.button(
+                                self.primary_button(
                                     "focus-first-message",
                                     "Write your first message",
                                     true,
                                 )
                                 .debug_selector(|| "focus-first-message".into())
-                                .bg(rgb(p.primary))
-                                .text_color(rgb(p.on_primary))
                                 .on_click(cx.listener(
                                     |this, _, window, cx| {
                                         this.composer

@@ -51,8 +51,11 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
     theme.colors.background = rgb(p.base).into();
     theme.colors.foreground = rgb(p.text).into();
     theme.colors.border = rgb(p.border).into();
-    theme.colors.input = rgb(p.muted).into();
+    theme.colors.input = rgb(p.border).into();
     theme.colors.primary = rgb(p.primary).into();
+    theme.colors.primary_hover = rgb(p.primary_hover).into();
+    theme.colors.secondary_hover = rgb(p.selected).into();
+    theme.colors.ring = rgb(p.accent).into();
     theme.colors.primary_foreground = rgb(p.on_primary).into();
     theme.colors.caret = rgb(p.accent).into();
     theme.colors.link = rgb(p.accent).into();
@@ -72,7 +75,7 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
     theme.font_family = "Inter".into();
     theme.mono_font_family = "JetBrains Mono".into();
     theme.mono_font_size = px(13.);
-    theme.radius = px(8.);
+    theme.radius = px(p.control_radius);
 }
 
 fn mono_font() -> &'static str {
@@ -1005,39 +1008,53 @@ impl Workspace {
         label: impl Into<SharedString>,
         enabled: bool,
     ) -> Stateful<Div> {
-        let p = self.appearance.palette();
         let id = id.into();
-        let label = label.into();
         let primary = matches!(
             id.as_ref(),
             "send" | "create-session" | "new-session" | "welcome-new"
         );
-        div()
-            .id(id.clone())
+        self.button_style(id, label, enabled, primary)
+    }
+
+    fn primary_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        self.button_style(id, label, enabled, true)
+    }
+
+    fn button_style(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+        primary: bool,
+    ) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        chrome::interactive_control(div().id(id.into()), p, enabled)
             .px_3()
             .py_2()
             .font_weight(FontWeight::MEDIUM)
-            .rounded(px(10.))
+            .rounded(px(p.control_radius))
             .text_color(rgb(if enabled { p.text } else { p.disabled }))
             .text_size(px(12.))
+            .when(primary, |d| {
+                d.bg(rgb(if enabled { p.primary } else { p.selected }))
+                    .text_color(rgb(if enabled { p.on_primary } else { p.disabled }))
+            })
             .when(enabled, |d| {
-                d.cursor_pointer().hover(|s| {
-                    s.bg(if primary {
-                        gpui::Hsla::from(rgb(p.primary)).opacity(0.85)
-                    } else {
-                        rgb(p.selected).into()
-                    })
+                d.hover(|s| {
+                    s.bg(rgb(if primary { p.primary_hover } else { p.selected }))
+                        .text_color(rgb(if primary { p.on_primary } else { p.text }))
+                })
+                .active(|s| {
+                    s.bg(rgb(if primary { p.primary_pressed } else { p.border }))
+                        .text_color(rgb(if primary { p.on_primary } else { p.text }))
                 })
             })
-            .when(
-                enabled
-                    && matches!(
-                        id.as_ref(),
-                        "send" | "create-session" | "new-session" | "welcome-new"
-                    ),
-                |d| d.bg(rgb(p.primary)).text_color(rgb(p.on_primary)),
-            )
-            .child(label)
+            .child(label.into())
     }
 }
 
@@ -1328,7 +1345,7 @@ impl Render for Workspace {
                     this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); this.chat.unread = None; this.capture_reading(window, cx); cx.notify();
                 })))))
                 .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center()
-                    .child(chrome::chat_column().id("conversation-dock").relative().pt_3().pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * if compact { 0.45 } else { 0.55 }).overflow_y_scroll().flex().flex_col().gap_2()
+                    .child(chrome::chat_column().id("conversation-dock").relative().pt(px(if compact { 8. } else { 12. })).pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * if compact { 0.45 } else { 0.55 }).overflow_y_scroll().flex().flex_col().gap(px(if compact { 4. } else { 8. }))
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
                         let _ = dock_view.update(cx, |this, cx| {
@@ -1348,20 +1365,20 @@ impl Render for Workspace {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
                     let summary = approval.pointer("/toolInput/command").or_else(|| approval.pointer("/toolInput/file_path")).and_then(serde_json::Value::as_str).unwrap_or("").lines().next().unwrap_or("").to_owned();
                     let details = serde_json::to_string_pretty(approval.get("toolInput").or_else(|| approval.get("raw")).unwrap_or(approval)).unwrap_or_default();
-                    d.child(div().occlude().w_full().p(px(if compact { 8. } else { 12. })).rounded(px(10.)).shadow(chrome::floating_shadow(p)).bg(rgb(p.surface)).flex_shrink_0().flex().flex_col().gap_2().text_size(px(12.))
+                    d.child(div().occlude().w_full().p(px(if compact { 8. } else { 12. })).rounded(px(p.panel_radius)).shadow(chrome::floating_shadow(p)).bg(rgb(p.surface)).flex_shrink_0().flex().flex_col().gap_2().text_size(px(12.))
                         .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}"))
                             .when(compact, |d| d.child(div().flex_1().min_w_0().truncate().text_color(rgb(p.text)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(summary.clone())).child(self.button("approval-toggle-compact", if self.extras.approval_details { "Hide" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
                         .when(!compact, |d| d.child(div().flex().items_center().gap_2().child(div().flex_1().min_w_0().truncate().font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(if summary.is_empty() { "Review request details".to_owned() } else { summary })).child(self.button("approval-toggle", if self.extras.approval_details { "Hide details" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
                         .when(self.extras.approval_details, |d| d.child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded_md().bg(rgb(p.surface)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).text_color(rgb(p.muted)).child(details)))
                         .child(div().flex().gap_2()
-                            .child(self.button("approve", "Allow once", enabled).bg(rgb(if enabled { p.primary } else { p.selected })).text_color(rgb(if enabled { p.on_primary } else { p.disabled })).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
+                            .child(self.primary_button("approve", "Allow once", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
                 .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, cx)))
                 .when(selected.is_some(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
                     .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).occlude().bg(rgb(p.surface)).border_1()
-                        .border_color(rgb(if self.composer.read(cx).focus_handle(cx).is_focused(window) { p.accent } else { p.border }))
-                        .rounded(px(20.)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
+                        .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) { rgb(p.accent).into() } else { gpui::Hsla::from(rgb(p.border)).opacity(0.55) })
+                        .rounded(px(p.composer_radius)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
                         .when(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).is_some_and(|v| !v.is_empty()), |d| d.child(div().flex().flex_wrap().gap_2()
                             .children(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).into_iter().flatten().enumerate().map(|(ix, (name, _))| {
                                 div().id(("attachment", ix)).pl_2().pr_1().py_1().rounded_md().bg(rgb(p.selected)).max_w_full().flex().items_center().gap_2()
@@ -1378,8 +1395,7 @@ impl Render for Workspace {
                                 .child(self.icon_button("paste-image", "Paste an image from the clipboard", IconName::GalleryVerticalEnd, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, _, cx| { if !this.paste_image(cx) { this.extras.notice = "No supported image on the clipboard.".into(); cx.notify(); } })))))
                             .child(div().flex().items_center().gap_2()
                                 .when(working, |d| d.child(self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx))))))
-                                .child(self.icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).size(px(32.)).rounded_full()
-                                    .bg(rgb(if enabled && !self.uploading() { p.primary } else { p.selected })).text_color(rgb(if enabled && !self.uploading() { p.on_primary } else { p.disabled }))
+                                .child(self.primary_icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).size(px(32.)).rounded_full()
                                     .when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
                     .child(div().when(compact, |d| d.hidden()).occlude().bg(rgb(p.chat)).rounded_md().px_2().py_1().flex().items_center().justify_between().gap_2().text_size(px(10.)).text_color(rgb(p.muted))
                         .child(div().flex_1().min_w_0().flex().items_center().gap_2()
@@ -1992,6 +2008,72 @@ mod tests {
                 "constructed {rendered} of 2000 rows"
             );
         });
+    }
+
+    #[gpui::test]
+    fn keyboard_controls_skip_disabled_actions_and_keep_their_geometry(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer.update(cx, |input, cx| {
+                    input.set_value("Keyboard draft", window, cx)
+                });
+                window.focus(&this.focus);
+            })
+        });
+        visual.run_until_parked();
+        let before = visual.debug_bounds("sidebar-toggle").unwrap();
+        visual.simulate_keystrokes("tab");
+        visual.run_until_parked();
+        assert_eq!(before, visual.debug_bounds("sidebar-toggle").unwrap());
+        visual.simulate_keystrokes("enter");
+        visual.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(this.sidebar_collapsed));
+        // New session is disabled in this demo fixture; Tab should skip it.
+        visual.simulate_keystrokes("tab space");
+        visual.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("space").unwrap(),
+        });
+        visual.run_until_parked();
+        assert!(visual.update(|window, cx| {
+            workspace
+                .read(cx)
+                .search
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        }));
+        workspace.read_with(&visual, |this, cx| {
+            assert!(!this.sidebar_collapsed);
+            assert!(!this.new_session);
+            assert_eq!(this.composer.read(cx).value().as_str(), "Keyboard draft");
+        });
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn keyboard_session_selection_uses_one_explicit_command(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.settings.vim_navigation = false;
+                window.focus(&this.focus);
+            })
+        });
+        visual.run_until_parked();
+        // Toggle, search, projects, history, then the first session.
+        visual.simulate_keystrokes("tab tab tab tab tab enter");
+        visual.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        });
+        visual.run_until_parked();
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "a"));
+        assert!(commands.try_recv().is_err());
     }
 
     #[gpui::test]

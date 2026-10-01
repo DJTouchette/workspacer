@@ -93,6 +93,8 @@ def main():
     parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
     parser.add_argument("--animation-region", help="Verify pixels change across four frames in x,y,width,height (for a visible spinner)")
     parser.add_argument("--click", help="Click a window point x,y before capture (for preview and toggle checks)")
+    parser.add_argument("--hover", help="Hover a window point x,y before capture (for control styling checks)")
+    parser.add_argument("--keys", nargs="+", help="Additional X11 keys before capture, for example Escape Tab")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
     args = parser.parse_args()
     if args.width < 720 or args.height < 480:
@@ -109,6 +111,15 @@ def main():
             click = (x, y)
         except ValueError:
             parser.error("--click requires x,y inside the window")
+    hover = None
+    if args.hover:
+        try:
+            x, y = map(int, args.hover.split(","))
+            if not (0 <= x < args.width and 0 <= y < args.height):
+                raise ValueError()
+            hover = (x, y)
+        except ValueError:
+            parser.error("--hover requires x,y inside the window")
     if args.animation_region:
         try:
             left, top, width, height = map(int, args.animation_region.split(","))
@@ -159,6 +170,12 @@ def main():
             # Capture the resulting layout, without a tooltip left behind by
             # the button that moved or disappeared after the click.
             drive("mousemove", "--window", window, str(args.width - 1), str(args.height - 1))
+            time.sleep(1)
+        if args.keys:
+            drive("key", "--delay", "80", *args.keys)
+            time.sleep(1)
+        if hover:
+            drive("mousemove", "--window", window, str(hover[0]), str(hover[1]))
             time.sleep(1)
         colors = screenshot(int(window), args.width, args.height, args.output)
         animation_frames = None

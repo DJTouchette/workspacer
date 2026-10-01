@@ -616,7 +616,7 @@ impl<T: ParentElement + Styled + Sized> FocusableExt<T> for T {
                 .right(-(inset + border_widths.right))
                 .bottom(-(inset + border_widths.bottom))
                 .border(RING_BORDER_WIDTH)
-                .border_color(cx.theme().ring.alpha(0.2))
+                .border_color(cx.theme().ring.alpha(0.8))
                 .refine_style(&inner_style),
         )
     }

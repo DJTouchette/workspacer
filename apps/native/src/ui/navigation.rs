@@ -346,7 +346,7 @@ impl Workspace {
                     let project = &rows[ix];
                     let path = project.path.clone();
                     let forget = path.clone();
-                    div().h(px(100.)).px_5().pb_2().child(div().id(("project", ix)).h_full().p_3().rounded_lg()
+                    div().h(px(100.)).px_5().pb_2().child(chrome::interactive_control(div().id(("project", ix)), p, true).h_full().p_3().rounded(px(p.panel_radius))
                         .bg(rgb(if ix == this.project_cursor { p.selected } else { p.surface }))
                         .cursor_pointer().hover(|style| style.bg(rgb(p.selected)))
                         .on_click(cx.listener(move |this, _, window, cx| this.open_project_path(path.clone(), window, cx)))
@@ -379,10 +379,10 @@ impl Workspace {
                     .child(div().flex().gap_2().children(Appearance::ALL.into_iter().map(|appearance| {
                         let colors = appearance.palette();
                         let active = self.appearance == appearance;
-                        div().id(appearance.label()).flex_1().min_w_0().rounded_md().overflow_hidden().cursor_pointer()
+                        chrome::interactive_control(div().id(appearance.label()), p, true).flex_1().min_w_0().rounded(px(p.panel_radius)).overflow_hidden().cursor_pointer()
                             .bg(rgb(if active { p.selected } else { p.base }))
                             .hover(|style| style.bg(rgb(p.selected)))
-                            .child(div().m_2().h(px(64.)).rounded_md().bg(rgb(colors.chat)).flex().overflow_hidden()
+                            .child(div().m_2().h(px(64.)).rounded(px(p.control_radius)).bg(rgb(colors.chat)).flex().overflow_hidden()
                                 .child(div().w(px(24.)).h_full().bg(rgb(colors.base)).p_2().child(status_dot(colors.accent)))
                                 .child(div().flex_1().p_2().flex().flex_col().gap_2()
                                     .child(div().h(px(6.)).w(px(36.)).rounded_full().bg(rgb(colors.text)))

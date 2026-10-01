@@ -244,7 +244,7 @@ impl Workspace {
         .child(
             div()
                 .p_3()
-                .rounded_md()
+                .rounded(px(p.panel_radius))
                 .bg(rgb(p.surface))
                 .flex()
                 .flex_col()

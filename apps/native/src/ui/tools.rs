@@ -167,129 +167,134 @@ pub(super) fn card(
         };
     div()
         .id(SharedString::from(format!("{element_key}-card")))
-        .rounded(px(10.))
+        .rounded(px(p.panel_radius))
         .overflow_hidden()
         .child(
-            div()
-                .id(SharedString::from(format!("{element_key}-toggle")))
-                .debug_selector(|| format!("tool-toggle-{key}"))
-                .cursor_pointer()
-                .px_3()
-                .py_2()
-                .flex()
-                .items_start()
-                .gap_2()
-                .hover(|s| s.bg(rgb(p.selected)))
-                .child(
-                    Icon::new(if expanded {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    })
-                    .size(px(14.))
-                    .mt(px(2.))
-                    .text_color(rgb(p.muted)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(12.))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .when(command_title, |d| {
-                                            d.font_family(
-                                                gpui_component::Theme::global(cx)
-                                                    .mono_font_family
-                                                    .clone(),
-                                            )
-                                        })
-                                        .child(title),
-                                )
-                                .when(preview.added > 0, |d| {
-                                    d.child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(p.success))
-                                            .child(format!("+{}", preview.added)),
-                                    )
-                                })
-                                .when(preview.removed > 0, |d| {
-                                    d.child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(rgb(p.error))
-                                            .child(format!("−{}", preview.removed)),
-                                    )
-                                }),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_3()
-                                .text_size(px(11.))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_1()
-                                        .text_color(rgb(color))
-                                        .child(status_icon)
-                                        .child(status),
-                                )
-                                .child(div().text_color(rgb(p.muted)).child(tool.category()))
-                                .when_some(row.timestamp_ms, |d, timestamp| {
-                                    d.child(div().text_color(rgb(p.muted)).child(
-                                        timing::timestamp_label(Some(timestamp), timing::now_ms()),
-                                    ))
-                                }),
-                        )
-                        .when(!subtitle.is_empty(), |d| {
-                            d.child(
+            chrome::interactive_control(
+                div().id(SharedString::from(format!("{element_key}-toggle"))),
+                p,
+                true,
+            )
+            .rounded(px(p.panel_radius))
+            .focus(|s| s.border_color(rgb(p.accent)).bg(rgb(p.selected)))
+            .debug_selector(|| format!("tool-toggle-{key}"))
+            .cursor_pointer()
+            .px_3()
+            .py_2()
+            .flex()
+            .items_start()
+            .gap_2()
+            .hover(|s| s.bg(rgb(p.selected)))
+            .child(
+                Icon::new(if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(14.))
+                .mt(px(2.))
+                .text_color(rgb(p.muted)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
                                 div()
+                                    .flex_1()
+                                    .min_w_0()
                                     .truncate()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(p.muted))
-                                    .font_family(
-                                        gpui_component::Theme::global(cx).mono_font_family.clone(),
-                                    )
-                                    .child(subtitle.to_owned()),
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .when(command_title, |d| {
+                                        d.font_family(
+                                            gpui_component::Theme::global(cx)
+                                                .mono_font_family
+                                                .clone(),
+                                        )
+                                    })
+                                    .child(title),
                             )
-                        }),
-                )
-                .on_click(move |_, _, cx| {
-                    let _ = workspace.update(cx, |this, cx| {
-                        if let Some(ix) = this
-                            .view
-                            .transcript
-                            .rows
-                            .iter()
-                            .position(|r| identity(r) == stable_identity)
-                        {
-                            this.pause_follow();
-                            let anchor = this.scroll_anchor();
-                            this.tool_expansion
-                                .insert(stable_identity.clone(), !expanded);
-                            this.list.splice(ix..ix + 1, 1);
-                            this.list.scroll_to(anchor);
-                        }
-                        cx.notify();
-                    });
-                }),
+                            .when(preview.added > 0, |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.success))
+                                        .child(format!("+{}", preview.added)),
+                                )
+                            })
+                            .when(preview.removed > 0, |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.error))
+                                        .child(format!("−{}", preview.removed)),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_3()
+                            .text_size(px(11.))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .text_color(rgb(color))
+                                    .child(status_icon)
+                                    .child(status),
+                            )
+                            .child(div().text_color(rgb(p.muted)).child(tool.category()))
+                            .when_some(row.timestamp_ms, |d, timestamp| {
+                                d.child(div().text_color(rgb(p.muted)).child(
+                                    timing::timestamp_label(Some(timestamp), timing::now_ms()),
+                                ))
+                            }),
+                    )
+                    .when(!subtitle.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .truncate()
+                                .text_size(px(11.))
+                                .text_color(rgb(p.muted))
+                                .font_family(
+                                    gpui_component::Theme::global(cx).mono_font_family.clone(),
+                                )
+                                .child(subtitle.to_owned()),
+                        )
+                    }),
+            )
+            .on_click(move |_, _, cx| {
+                let _ = workspace.update(cx, |this, cx| {
+                    if let Some(ix) = this
+                        .view
+                        .transcript
+                        .rows
+                        .iter()
+                        .position(|r| identity(r) == stable_identity)
+                    {
+                        this.pause_follow();
+                        let anchor = this.scroll_anchor();
+                        this.tool_expansion
+                            .insert(stable_identity.clone(), !expanded);
+                        this.list.splice(ix..ix + 1, 1);
+                        this.list.scroll_to(anchor);
+                    }
+                    cx.notify();
+                });
+            }),
         )
         .when(row.truncated, |d| {
             d.child(

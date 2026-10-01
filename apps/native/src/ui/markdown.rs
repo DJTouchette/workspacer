@@ -54,7 +54,11 @@ impl Workspace {
             })),
             highlight_theme: cx.theme().highlight_theme.clone(),
             is_dark: self.appearance != Appearance::Light,
-            code_block: div().rounded(px(10.)).p_3().style().clone(),
+            code_block: div()
+                .rounded(px(self.appearance.palette().panel_radius))
+                .p_3()
+                .style()
+                .clone(),
         };
         let key = key.to_owned();
         let debug_key = key.clone();

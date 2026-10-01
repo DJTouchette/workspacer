@@ -2,6 +2,25 @@
 use super::*;
 use gpui_component::tooltip::Tooltip;
 
+/// GPUI owns stable focus handles and Enter/Space activation for focusable divs.
+/// Reserve the ring at rest so focus never changes control geometry.
+pub(super) fn interactive_control(
+    control: Stateful<Div>,
+    p: Palette,
+    enabled: bool,
+) -> Stateful<Div> {
+    control
+        .border_2()
+        .border_color(gpui::rgba(0))
+        .when(enabled, |d| {
+            d.focusable()
+                .tab_stop(true)
+                .key_context("NativeControl")
+                .cursor_pointer()
+                .focus(|s| s.border_color(rgb(p.accent)))
+        })
+}
+
 /// Shared outer measure and gutters for transcript, header and composer.
 pub(super) fn chat_column() -> Div {
     div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5()
@@ -152,11 +171,10 @@ impl Workspace {
         enabled: bool,
     ) -> Stateful<Div> {
         let p = self.appearance.palette();
-        div()
-            .id(id.into())
+        interactive_control(div().id(id.into()), p, enabled)
             .px_2()
             .py_2()
-            .rounded(px(8.))
+            .rounded(px(p.control_radius))
             .flex()
             .items_center()
             .gap_2()
@@ -166,6 +184,7 @@ impl Workspace {
             .when(enabled, |d| {
                 d.cursor_pointer()
                     .hover(|s| s.bg(rgb(p.selected)).text_color(rgb(p.text)))
+                    .active(|s| s.bg(rgb(p.border)).text_color(rgb(p.text)))
             })
             .child(Icon::new(icon).size(px(12.)))
             .child(label)
@@ -178,9 +197,29 @@ impl Workspace {
         icon: IconName,
         enabled: bool,
     ) -> Stateful<Div> {
+        self.icon_button_style(id, label, icon, enabled, false)
+    }
+
+    pub(super) fn primary_icon_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        icon: IconName,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        self.icon_button_style(id, label, icon, enabled, true)
+    }
+
+    fn icon_button_style(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        icon: IconName,
+        enabled: bool,
+        primary: bool,
+    ) -> Stateful<Div> {
         let p = self.appearance.palette();
-        div()
-            .id(id.into())
+        interactive_control(div().id(id.into()), p, enabled)
             .size(px(28.))
             .rounded_full()
             .flex()
@@ -188,10 +227,21 @@ impl Workspace {
             .justify_center()
             .flex_shrink_0()
             .text_color(rgb(if enabled { p.muted } else { p.disabled }))
+            .when(primary, |d| {
+                d.bg(rgb(if enabled { p.primary } else { p.selected }))
+                    .text_color(rgb(if enabled { p.on_primary } else { p.disabled }))
+            })
             .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
             .when(enabled, |d| {
                 d.cursor_pointer()
-                    .hover(|s| s.bg(rgb(p.selected)).text_color(rgb(p.text)))
+                    .hover(|s| {
+                        s.bg(rgb(if primary { p.primary_hover } else { p.selected }))
+                            .text_color(rgb(if primary { p.on_primary } else { p.text }))
+                    })
+                    .active(|s| {
+                        s.bg(rgb(if primary { p.primary_pressed } else { p.border }))
+                            .text_color(rgb(if primary { p.on_primary } else { p.text }))
+                    })
             })
             .child(Icon::new(icon).size(px(13.)))
     }

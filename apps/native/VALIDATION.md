@@ -384,3 +384,48 @@ without clearing unrelated action feedback.
 Captures: [empty workspace](docs/ui-state-empty.png),
 [connecting](docs/ui-state-connecting.png),
 [reconnecting](docs/ui-state-reconnecting.png).
+
+
+## Rounded surfaces and keyboard interaction (2026-10-01)
+
+Native palettes now define shared 12 px control, 16 px panel and 24 px composer
+radii, plus primary hover/pressed colors. Input outlines are quieter, file
+previews use elevation instead of a hard frame, and compact dock spacing keeps
+the full composer visible with the reserved focus stroke. Session rows budget
+68 px for the stroke and two lines of readable metadata.
+
+Shared controls, session/project rows, theme tiles, tool toggles and file actions
+join Tab order when enabled. GPUI owns Enter/Space release activation through
+the existing click callbacks. Focus changes a reserved transparent border to
+an accent stroke without changing geometry. Session control IDs use session
+identity rather than list position. Editing and control focus have distinct
+sidebar hints.
+
+The vendored component button renderer now uses its computed hover foreground,
+replacing an accidental hardcoded red. Component focus rings use the native
+accent at 80 percent opacity. Both changes are recorded in WORKSPACER-PATCHES.md.
+
+- Full serialized native suite: **134 passed** (53 library, 50 UI/lifetime,
+  28 protocol, 3 Rust-host).
+- New interactions cover Tab traversal, disabled-action skipping, Enter/Space
+  key-release activation, unchanged focused bounds, retained drafts and one
+  explicit session-selection command. Existing send, input, popup and scroll
+  regressions remain enabled.
+- Rust formatting, diff whitespace and Python syntax checks passed. Witness
+  left the sources unmapped, so the full native suite was run.
+- Visually inspected actual X11/software-Vulkan captures: Dark keyboard focus,
+  compact Light primary hover, and Nord settings/typography. The smoke CLI now
+  accepts --keys and --hover for repeatable control-state captures.
+- Pixel inspection caught a zero-blur shadow producing no focus ring in Blade;
+  the reserved border avoids that shader path. The first-frame test also caught
+  an unsafe dispatch-context lookup in the footer; it now reads owned focus
+  handles. Both were fixed before publication and the complete suite passed.
+
+These are fixture window checks, not real-provider or hardware-performance
+measurements, and do not add Windows/macOS runtime verification. The serialized
+suite limitation recorded above still applies. The standalone vendored component
+suite was not run; native tests/builds exercised the patched component.
+
+Captures: [Dark focus](docs/ui-rounded-focus-dark.png),
+[compact Light](docs/ui-rounded-compact-light.png),
+[Nord settings](docs/ui-rounded-settings-nord.png).
