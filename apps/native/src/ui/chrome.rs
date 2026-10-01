@@ -2,6 +2,43 @@
 use super::*;
 use gpui_component::tooltip::Tooltip;
 
+/// GPUI 0.2.2 replaces the entire text refinement in interaction styles.
+/// Seed it from the base style so a color change preserves size, weight and font.
+pub(super) trait ControlTextStyle: Sized {
+    fn hover_text_style(
+        self,
+        f: impl FnOnce(gpui::StyleRefinement) -> gpui::StyleRefinement,
+    ) -> Self;
+    fn active_text_style(
+        self,
+        f: impl FnOnce(gpui::StyleRefinement) -> gpui::StyleRefinement,
+    ) -> Self;
+}
+
+impl ControlTextStyle for Stateful<Div> {
+    fn hover_text_style(
+        mut self,
+        f: impl FnOnce(gpui::StyleRefinement) -> gpui::StyleRefinement,
+    ) -> Self {
+        let text = self.style().text.clone();
+        self.hover(|mut style| {
+            style.text = text;
+            f(style)
+        })
+    }
+
+    fn active_text_style(
+        mut self,
+        f: impl FnOnce(gpui::StyleRefinement) -> gpui::StyleRefinement,
+    ) -> Self {
+        let text = self.style().text.clone();
+        self.active(|mut style| {
+            style.text = text;
+            f(style)
+        })
+    }
+}
+
 /// GPUI owns stable focus handles and Enter/Space activation for focusable divs.
 /// Reserve the ring at rest so focus never changes control geometry.
 pub(super) fn interactive_control(
@@ -183,8 +220,8 @@ impl Workspace {
             .text_color(rgb(if enabled { p.muted } else { p.disabled }))
             .when(enabled, |d| {
                 d.cursor_pointer()
-                    .hover(|s| s.bg(rgb(p.selected)).text_color(rgb(p.text)))
-                    .active(|s| s.bg(rgb(p.border)).text_color(rgb(p.text)))
+                    .hover_text_style(|s| s.bg(rgb(p.selected)).text_color(rgb(p.text)))
+                    .active_text_style(|s| s.bg(rgb(p.border)).text_color(rgb(p.text)))
             })
             .child(Icon::new(icon).size(px(12.)))
             .child(label)
@@ -234,11 +271,11 @@ impl Workspace {
             .tooltip(move |window, cx| Tooltip::new(label).build(window, cx))
             .when(enabled, |d| {
                 d.cursor_pointer()
-                    .hover(|s| {
+                    .hover_text_style(|s| {
                         s.bg(rgb(if primary { p.primary_hover } else { p.selected }))
                             .text_color(rgb(if primary { p.on_primary } else { p.text }))
                     })
-                    .active(|s| {
+                    .active_text_style(|s| {
                         s.bg(rgb(if primary { p.primary_pressed } else { p.border }))
                             .text_color(rgb(if primary { p.on_primary } else { p.text }))
                     })

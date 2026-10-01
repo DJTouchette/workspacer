@@ -37,6 +37,8 @@ pub struct Settings {
     pub names: BTreeMap<String, BTreeMap<String, String>>,
     pub archived: BTreeMap<String, Vec<String>>,
     pub default_provider: Provider,
+    pub default_claude_access: crate::launch::Permission,
+    pub default_codex_access: crate::launch::Permission,
     /// Bookmarks are scoped to the hub endpoint so remote paths do not cross hosts.
     pub projects: BTreeMap<String, Vec<String>>,
 }
@@ -53,11 +55,26 @@ impl Default for Settings {
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
             default_provider: Provider::Claude,
+            default_claude_access: crate::launch::Permission::Ask,
+            default_codex_access: crate::launch::Permission::Ask,
             projects: BTreeMap::new(),
         }
     }
 }
 impl Settings {
+    pub fn default_access(&self, provider: &str) -> crate::launch::Permission {
+        use crate::launch::Permission;
+        let access = if provider == "claude" {
+            self.default_claude_access
+        } else {
+            self.default_codex_access
+        };
+        if Permission::choices(provider).contains(&access) {
+            access
+        } else {
+            Permission::Ask
+        }
+    }
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         match std::fs::read(path) {
             Ok(bytes) => {
@@ -192,6 +209,8 @@ mod tests {
         assert!(settings.vim_navigation);
         settings.vim_navigation = false;
         settings.default_provider = Provider::Codex;
+        settings.default_claude_access = crate::launch::Permission::AcceptEdits;
+        settings.default_codex_access = crate::launch::Permission::FullAccess;
         settings.interface_font = "Adwaita Sans".into();
         settings.code_font = "Adwaita Mono".into();
         settings.text_size = 17;
@@ -200,10 +219,32 @@ mod tests {
         let read = Settings::load(&path).unwrap();
         assert!(!read.vim_navigation);
         assert_eq!(read.default_provider, Provider::Codex);
+        assert_eq!(
+            read.default_access("claude"),
+            crate::launch::Permission::AcceptEdits
+        );
+        assert_eq!(
+            read.default_access("codex"),
+            crate::launch::Permission::FullAccess
+        );
         assert_eq!(read.interface_font, "Adwaita Sans");
         assert_eq!(read.code_font, "Adwaita Mono");
         assert_eq!(read.text_size, 17);
         assert_eq!(read.bookmarks("hub"), ["/app"]);
+        std::fs::write(&path, b"{}").unwrap();
+        assert_eq!(
+            Settings::load(&path).unwrap().default_access("claude"),
+            crate::launch::Permission::Ask
+        );
+        assert_eq!(
+            Settings::load(&path).unwrap().default_access("codex"),
+            crate::launch::Permission::Ask
+        );
+        std::fs::write(&path, br#"{"default_codex_access":"plan"}"#).unwrap();
+        assert_eq!(
+            Settings::load(&path).unwrap().default_access("codex"),
+            crate::launch::Permission::Ask
+        );
         std::fs::write(&path, b"{}").unwrap();
         assert!(Settings::load(&path).unwrap().vim_navigation);
         assert_eq!(Settings::load(&path).unwrap().interface_font, "Inter");

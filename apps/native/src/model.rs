@@ -75,6 +75,11 @@ impl Session {
                     .pointer("/settings/contextWindow")
                     .and_then(Value::as_u64)
             };
+        } else if value.get("model").is_none()
+            && let Some(model) = value.pointer("/usage/model").and_then(Value::as_str)
+            && !model.is_empty()
+        {
+            self.model = model.to_owned();
         }
         if let Some(skills) = value.pointer("/statusLine/capabilities/inventory/skills") {
             self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
@@ -461,6 +466,32 @@ impl Transcript {
         let Some((role, text)) = item.display() else {
             return;
         };
+        // Stream sends are echoed without a timestamp, then the provider's
+        // transcript tailer delivers the same turn with its real timestamp.
+        // Merge that acknowledgement in place, including full snapshots.
+        // Fresh timestamp-less sends and distinct timestamps remain separate.
+        if matches!(role, "You" | "Assistant")
+            && timestamp.is_some()
+            && let Some(row) = self
+                .rows
+                .iter_mut()
+                .rev()
+                .take(5)
+                .take_while(|r| role != "Assistant" || r.role != "You")
+                .find(|r| {
+                    r.role == role
+                        && r.text == text
+                        && (r.timestamp.is_none() || r.timestamp == timestamp)
+                })
+        {
+            self.bytes -= row.bytes();
+            let row = Arc::make_mut(row);
+            row.timestamp = timestamp;
+            row.timestamp_ms = timestamp_ms;
+            self.bytes += row.bytes();
+            self.enforce_bounds();
+            return;
+        }
         if text.is_empty() && tool.is_none() {
             return;
         }
@@ -539,6 +570,75 @@ fn truncate(text: &mut String, limit: usize) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn timestamped_provider_echoes_converge_in_snapshots_and_live_deltas() {
+        let user = Item {
+            kind: "user_message".into(),
+            text: "Try spawning an agent".into(),
+            ..Default::default()
+        };
+        let assistant = assistant("Which task should it work on?");
+        let stamp = |mut item: Item| {
+            item.timestamp = Some("2026-09-30T22:03:27Z".into());
+            item
+        };
+        let mut transcript = Transcript::default();
+        transcript.snapshot(ConversationSnapshot {
+            seq: 4,
+            first_seq: 1,
+            items: vec![
+                user.clone(),
+                stamp(user.clone()),
+                assistant.clone(),
+                stamp(assistant.clone()),
+            ],
+        });
+        assert_eq!(transcript.rows.len(), 2);
+        assert!(transcript.rows.iter().all(|r| r.timestamp_ms.is_some()));
+        assert_eq!(
+            transcript.bytes,
+            transcript.rows.iter().map(|r| r.bytes()).sum::<usize>()
+        );
+        // Sequence cursors still count raw events, even when echoes share a row.
+        assert_eq!(
+            transcript.delta(
+                Delta {
+                    seq: 5,
+                    items: vec![stamp(assistant)],
+                    ..Default::default()
+                },
+                true
+            ),
+            Fold::Changed
+        );
+        assert_eq!(transcript.rows.len(), 2);
+        assert_eq!(transcript.seq, Some(5));
+        let mut repeated = stamp(user.clone());
+        repeated.timestamp = Some("2026-09-30T22:04:27Z".into());
+        transcript.delta(
+            Delta {
+                seq: 6,
+                items: vec![repeated],
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(
+            transcript.rows.len(),
+            3,
+            "a genuine repeat with a new timestamp survives"
+        );
+        transcript.delta(
+            Delta {
+                seq: 8,
+                items: vec![user.clone(), user],
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(transcript.rows.len(), 5, "two fresh sends remain distinct");
+    }
 
     fn assistant(text: &str) -> Item {
         Item {
@@ -727,6 +827,17 @@ mod tests {
         assert_eq!(s.title(), "Build");
         s.merge(&json!({"sessionId":"s", "pendingApproval":null, "mode":"input"}));
         assert!(s.approval.is_none());
+    }
+
+    #[test]
+    fn session_model_uses_reported_usage_when_selection_is_absent() {
+        let mut session = Session::default();
+        session.merge(&json!({"usage":{"model":"reported-model"}}));
+        assert_eq!(session.model, "reported-model");
+        session.merge(&json!({"label":"Updated label"}));
+        assert_eq!(session.model, "reported-model");
+        session.merge(&json!({"requestedSelection":{"model":"selected-model"}, "usage":{"model":"old-model"}}));
+        assert_eq!(session.model, "selected-model");
     }
     #[test]
     fn message_times_keep_stream_start_and_join_tool_completion() {

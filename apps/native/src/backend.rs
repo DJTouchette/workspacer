@@ -153,7 +153,8 @@ impl Backend {
         } else {
             (
                 "providers.listModels",
-                json!({"provider":key.provider,"cwd":key.cwd}),
+                json!({"provider":key.provider,"cwd":key.cwd,
+                    "useHomeDirectory": key.provider == "codex" && key.cwd.is_empty()}),
             )
         };
         self.hub

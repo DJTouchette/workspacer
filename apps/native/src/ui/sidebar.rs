@@ -273,30 +273,40 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .child(brand_mark(18., p))
+                    .child(div().flex_1())
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(px(15.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Workspacer"),
+                        self.icon_button("new-session", "New session", IconName::Plus, !self.demo)
+                            .debug_selector(|| "new-session-button".into())
+                            .when(!self.demo, |d| {
+                                d.on_click(cx.listener(|this, _, window, cx| {
+                                    this.show_new_session(window, cx)
+                                }))
+                            }),
+                    )
+                    .child(
+                        self.icon_button("nav-projects", "All projects", IconName::Folder, true)
+                            .when(!self.new_session && self.screen == Screen::Projects, |d| {
+                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_screen(Screen::Projects, window, cx)
+                            })),
+                    )
+                    .child(
+                        self.icon_button(
+                            "nav-history",
+                            "Session history",
+                            IconName::BookOpen,
+                            true,
+                        )
+                        .when(!self.new_session && self.screen == Screen::Recent, |d| {
+                            d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_feature(Screen::Recent, window, cx)
+                        })),
                     )
                     .child(self.sidebar_toggle(cx)),
-            )
-            .child(
-                div().px_3().pb_2().child(
-                    self.quiet_button("new-session", "New session", IconName::Plus, !self.demo)
-                        .debug_selector(|| "new-session-button".into())
-                        .w_full()
-                        .bg(rgb(p.surface))
-                        .when(!self.demo, |d| {
-                            d.on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.show_new_session(window, cx)
-                                }),
-                            )
-                        }),
-                ),
             )
             .child(
                 div().px_3().pb_2().child(
@@ -312,30 +322,6 @@ impl Workspace {
                                 .text_color(rgb(p.muted)),
                         )
                         .child(Input::new(&self.search).appearance(false)),
-                ),
-            )
-            .child(
-                div().px_3().pb_1().child(
-                    self.quiet_button("nav-projects", "All projects", IconName::Folder, true)
-                        .w_full()
-                        .when(!self.new_session && self.screen == Screen::Projects, |d| {
-                            d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_screen(Screen::Projects, window, cx)
-                        })),
-                ),
-            )
-            .child(
-                div().px_3().pb_3().child(
-                    self.quiet_button("nav-history", "Session history", IconName::BookOpen, true)
-                        .w_full()
-                        .when(!self.new_session && self.screen == Screen::Recent, |d| {
-                            d.bg(rgb(p.selected)).text_color(rgb(p.text))
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_feature(Screen::Recent, window, cx)
-                        })),
                 ),
             )
             .when(self.view.power_paused, |d| {
@@ -471,11 +457,27 @@ impl Workspace {
                                 } else {
                                     ("Offline", p.muted)
                                 };
+                                let provider = match session.provider.as_str() {
+                                    "claude" => "Claude",
+                                    "codex" => "Codex",
+                                    "" => "Agent",
+                                    other => other,
+                                };
+                                let model = if session.model.is_empty() {
+                                    "Provider default"
+                                } else {
+                                    &session.model
+                                };
+                                let model_info = format!("{provider} · {model}");
+                                let context = session
+                                    .context_window
+                                    .map(|tokens| format!(" · {}K context", tokens / 1000))
+                                    .unwrap_or_default();
                                 let details = format!(
-                                    "{title}\n{}\n{} · {status}",
-                                    session.cwd, session.provider
+                                    "{title}\n{}\n{model_info}{context} · {status}",
+                                    session.cwd
                                 );
-                                div().h(px(68.)).px_2().pb_1().child(
+                                div().h(px(84.)).px_2().pb_1().child(
                                     chrome::interactive_control(
                                         div().id(SharedString::from(format!(
                                             "session-{}",
@@ -538,6 +540,15 @@ impl Workspace {
                                     )
                                     .child(
                                         div()
+                                            .debug_selector(move || format!("sidebar-model-{ix}"))
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(11.))
+                                            .text_color(rgb(p.accent))
+                                            .child(model_info),
+                                    )
+                                    .child(
+                                        div()
                                             .flex()
                                             .items_center()
                                             .gap_2()
@@ -547,14 +558,12 @@ impl Workspace {
                                             .child(div().flex_1().min_w_0().truncate().child(
                                                 chrome::project_label(&session.cwd).to_owned(),
                                             ))
-                                            .when(status != "Ready", |d| {
-                                                d.child(
-                                                    div()
-                                                        .flex_shrink_0()
-                                                        .text_color(rgb(color))
-                                                        .child(status.to_owned()),
-                                                )
-                                            }),
+                                            .child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_color(rgb(color))
+                                                    .child(status.to_owned()),
+                                            ),
                                     )
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {

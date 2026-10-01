@@ -23,6 +23,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.provider = settings.default_provider.id();
+        self.permission = settings.default_access(self.provider);
         self.settings = settings;
         self.settings_path = path;
         self.project_scope = scope;
@@ -410,6 +411,22 @@ impl Workspace {
                             .when(self.settings.default_provider == provider, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)).child(Icon::new(IconName::Check).size(px(14.))))
                             .on_click(cx.listener(move |this, _, _, cx| { this.settings.default_provider = provider; this.save_settings(cx); }))
                     }))))
+                .child(chrome::section("Default access mode", "Used when starting a new agent or switching providers. You can override it for each session.", p)
+                    .children([("claude", "Claude"), ("codex", "Codex")].into_iter().map(|(provider, label)| {
+                        let selected = self.settings.default_access(provider);
+                        div().flex().flex_col().gap_2()
+                            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(label))
+                            .child(div().flex().flex_wrap().gap_2().children(Permission::choices(provider).iter().copied().map(|access| {
+                                self.button("default-access", access.label(), true).id((provider, access as usize))
+                                    .when(selected == access, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if provider == "claude" { this.settings.default_claude_access = access; }
+                                        else { this.settings.default_codex_access = access; }
+                                        this.save_settings(cx);
+                                    }))
+                            })))
+                            .child(div().text_size(px(12.)).text_color(rgb(if selected == Permission::FullAccess { p.warning } else { p.muted })).child(selected.description()))
+                    })))
                 .child(chrome::section("Keyboard", "Move around your workspace at your own pace.", p)
                     .child(chrome::preference("Vim navigation", "Normal mode for navigation. Insert mode for typing.", p)
                         .child(Switch::new("toggle-vim").checked(self.settings.vim_navigation).tooltip("Vim navigation")

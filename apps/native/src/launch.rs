@@ -2,7 +2,8 @@
 use anyhow::{Result, ensure};
 use serde_json::Value;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Permission {
     #[default]
     Ask,

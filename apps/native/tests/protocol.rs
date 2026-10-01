@@ -771,7 +771,7 @@ async fn catalogs_are_scoped_and_late_provider_results_do_not_replace_selection(
 }
 
 #[tokio::test]
-async fn model_discovery_requires_hub_directory_for_codex() {
+async fn model_discovery_allows_hub_home_before_project_and_rejects_relative_codex_directory() {
     use wks_native::launch::CatalogKey;
     let mut hub = Hub::new().await;
     let controller = Controller::start(hub.config.clone());
@@ -780,6 +780,26 @@ async fn model_discovery_requires_hub_directory_for_codex() {
         .result(json!([]))
         .await;
     view(&controller, |v| v.connected).await;
+    controller
+        .command(Command::LoadModels {
+            key: CatalogKey {
+                provider: "codex".into(),
+                cwd: String::new(),
+            },
+            refresh: false,
+        })
+        .unwrap();
+    let initial = hub.frame("call", Some("providers.listModels")).await;
+    assert_eq!(initial.value["params"]["cwd"], "");
+    assert_eq!(initial.value["params"]["useHomeDirectory"], true);
+    initial
+        .result(json!([{"id":"initial-model", "label":"Initial model"}]))
+        .await;
+    let catalog = view(&controller, |v| {
+        !v.catalog.loading && !v.catalog.models.is_empty()
+    })
+    .await;
+    assert_eq!(catalog.catalog.models[0].id, "initial-model");
     controller
         .command(Command::LoadModels {
             key: CatalogKey {

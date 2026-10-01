@@ -72,11 +72,15 @@ make run-native     # build and launch the release GUI against an existing hub
 make test-native    # native UI/protocol and embedded-engine lifecycle tests
 ```
 
-Use **New session** (`Ctrl/Cmd+N`), choose Claude or Codex, and enter an existing
-absolute project directory on the connected hub. A name and first message are
-optional. Choose a model from the searchable picker or keep Provider default.
-Custom model accepts an exact ID or alias. **Create session** opens the real agent
-conversation; permissions start at Ask to approve. Claude also offers Accept
+Use **New session** (`Ctrl/Cmd+N`), choose the Claude or Codex card, and pick a
+known workspace or enter an existing absolute directory on the connected hub.
+Choose a model from the searchable picker on the main screen, then add an optional
+starting message. **Customize** reveals access mode and an optional session name;
+current choices remain visible in a summary when collapsed. Keep Provider default
+or choose a model.
+Custom model accepts an exact ID or alias. **Start working** opens the real agent
+conversation. **Settings → Default access mode** saves separate defaults for
+Claude and Codex, initially Ask to approve. Claude also offers Accept
 edits, Plan mode, and Full access; Codex offers Ask to approve and Full access.
 The provider CLI must be installed and signed in on the hub. Failed launches retain the form. If the connection drops
 before acknowledgement, refresh the session list before retrying to avoid a
@@ -85,10 +89,12 @@ duplicate. An unconfirmed first message is retained as a composer draft.
 Claude choices come from the hub's family-alias catalog, grouped into one row per
 family with separate context-window choices. Labels do not infer version numbers
 from old transcripts, and historical model IDs are not presented as available
-models. Codex choices come from the hub's live provider catalog for the entered
-project directory. Refresh models retries the query (the hub may serve its cache).
+models. Codex choices come from the hub's live provider catalog, initially using
+the hub's home directory and refreshing when a project is entered.
+Refresh models retries the query (the hub may serve its cache).
 Loading failures leave Provider default and Custom model available; switching
-providers clears incompatible model/context choices and resets permissions to Ask.
+providers clears incompatible model/context choices and applies that provider's
+saved default access mode.
 These are provider-native permissions, separate from Workspacer plugin access.
 
 The launch targets connect to an existing hub by default; use `--local` to own a
@@ -136,7 +142,7 @@ The transcript, conversation header and composer share a centered 900 px content
 column with matching gutters. Short, narrow windows use a slimmer sidebar and
 compact approval controls to retain more conversation space.
 
-Use the sidebar toggle beside **Workspacer** to switch between the session list
+Use the sidebar toggle beside the logo and action icons to switch between the session list
 and a compact icon rail. The rail keeps session selection and navigation available;
 hover a session for its full name, project, provider and status. Search expands the
 sidebar and retains your query. Collapse is local to the window and preserves drafts.
@@ -217,7 +223,7 @@ Captured during a real Codex round trip through an isolated backend:
 
 ![Native client displaying the verified live conversation](docs/live-codex.png)
 
-- Virtualized session sidebar with workspace paths and status.
+- Virtualized session sidebar with provider, model, workspace paths and status.
 - Selected conversation, selectable Markdown/code, per-message copy.
 - Streaming messages, composer drafts per session, approvals, free-text answers,
   and interrupt controls. Failed/unknown-outcome sends preserve their drafts.

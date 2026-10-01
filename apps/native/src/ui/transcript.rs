@@ -932,7 +932,12 @@ impl Workspace {
         }
         body
     }
-    fn file_button(&self, key: &str, path: String, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn file_button(
+        &self,
+        key: &str,
+        path: String,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let owner = self.view.selected.clone().unwrap_or_default();
         let p = self.appearance.palette();
         chrome::interactive_control(
@@ -957,7 +962,7 @@ impl Workspace {
         .child(div().min_w_0().truncate().child(path.clone()))
         .when(self.view.connected, |d| {
             d.cursor_pointer()
-                .hover(|s| s.text_color(rgb(p.accent)))
+                .hover_text_style(|s| s.text_color(rgb(p.accent)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.view.selected.as_ref() == Some(&owner) {
                         this.request(

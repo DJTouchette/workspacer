@@ -10,6 +10,7 @@ mod states;
 mod tools;
 mod transcript;
 mod typography;
+use chrome::ControlTextStyle;
 use gpui::{
     Animation, AnimationExt, App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable,
     FontWeight, KeyBinding, ListAlignment, ListOffset, ListScrollEvent, ListState, Render,
@@ -336,11 +337,13 @@ pub struct Workspace {
     turn_clocks: HashMap<String, TurnClock>,
     duration_labels: HashMap<u64, String>,
     new_session: bool,
+    launch_details_open: bool,
     provider: &'static str,
     project: Entity<InputState>,
     label: Entity<InputState>,
     model: Entity<InputState>,
     model_picker: Entity<SelectState<SearchableVec<PickerItem>>>,
+    model_picker_subscription: gpui::Subscription,
     model_choice: String,
     context_window: Option<u64>,
     permission: Permission,
@@ -413,27 +416,7 @@ impl Workspace {
                 }
             },
         )];
-        focus_watch.push(cx.subscribe_in(
-            &model_picker,
-            window,
-            |this, _, event: &SelectEvent<SearchableVec<PickerItem>>, window, cx| {
-                let SelectEvent::Confirm(value) = event;
-                if this.spawn_pending || this.view.creating {
-                    return;
-                }
-                this.model_choice = value.clone().unwrap_or_default();
-                this.context_window = this
-                    .catalog_models
-                    .iter()
-                    .find(|m| m.id == this.model_choice)
-                    .and_then(|m| m.windows.first())
-                    .copied();
-                if this.model_choice == "__custom" {
-                    this.model.update(cx, |input, cx| input.focus(window, cx));
-                }
-                cx.notify();
-            },
-        ));
+        let model_picker_subscription = cx.subscribe_in(&model_picker, window, Self::on_model_pick);
         focus_watch.push(cx.subscribe_in(
             &project,
             window,
@@ -518,11 +501,13 @@ impl Workspace {
             turn_clocks: HashMap::new(),
             duration_labels: HashMap::new(),
             new_session: false,
+            launch_details_open: false,
             provider: "claude",
             project,
             label,
             model,
             model_picker,
+            model_picker_subscription,
             model_choice: String::new(),
             context_window: None,
             permission: Permission::Ask,
@@ -902,7 +887,14 @@ impl Workspace {
             self.command(Command::Refresh, cx);
         }
         if !self.new_session {
+            self.launch_details_open = false;
             self.choose_provider(self.settings.default_provider.id(), window, cx);
+            self.permission = self.settings.default_access(self.provider);
+            self.model_choice.clear();
+            self.context_window = None;
+            self.model
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.reset_model_picker(window, cx);
         }
         self.new_session = true;
         self.screen = Screen::Conversation;
@@ -922,6 +914,7 @@ impl Workspace {
                 .update(cx, |input, cx| input.set_value(cwd, window, cx));
         }
         self.project.update(cx, |input, cx| input.focus(window, cx));
+        self.sync_models(window, cx);
         self.load_models(false, cx);
         cx.notify();
     }
@@ -951,6 +944,7 @@ impl Workspace {
         };
         self.spawn_error.clear();
         if self.model_choice == "__custom" && request.model.trim().is_empty() {
+            self.launch_details_open = true;
             self.spawn_error = "Enter a custom model or choose Provider default.".into();
             cx.notify();
             return;
@@ -1045,11 +1039,11 @@ impl Workspace {
                     .text_color(rgb(if enabled { p.on_primary } else { p.disabled }))
             })
             .when(enabled, |d| {
-                d.hover(|s| {
+                d.hover_text_style(|s| {
                     s.bg(rgb(if primary { p.primary_hover } else { p.selected }))
                         .text_color(rgb(if primary { p.on_primary } else { p.text }))
                 })
-                .active(|s| {
+                .active_text_style(|s| {
                     s.bg(rgb(if primary { p.primary_pressed } else { p.border }))
                         .text_color(rgb(if primary { p.on_primary } else { p.text }))
                 })
@@ -1144,124 +1138,11 @@ impl Render for Workspace {
         let sidebar = self.render_sidebar(narrow, compact, window, cx);
 
         if self.new_session {
-            let busy = self.spawn_pending || self.view.creating;
-            let can_create = self.view.connected && !busy;
-            return self.shell(window, cx)
+            let content = self.render_new_session(cx);
+            return self
+                .shell(window, cx)
                 .child(sidebar)
-                .child(
-                    div()
-                        .id("new-session-form")
-                        .flex_1()
-                        .min_w_0()
-                        .h_full()
-                        .overflow_y_scroll()
-                        .p_5()
-                        .child(
-                            div()
-                                .max_w(px(560.))
-                                .mx_auto()
-                                .flex()
-                                .flex_col()
-                                .gap_3().py_4()
-                                .child(overline("NEW SESSION", p))
-                                .child(brand_mark(36., p))
-                                .child(
-                                    div()
-                                        .text_size(px(24.))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child("Start something new"),
-                                )
-                                .child(
-                                    div()
-                                        .text_color(rgb(p.muted))
-                                        .text_size(px(12.))
-                                        .child("Choose an agent and a project directory to begin."),
-                                )
-                                .child("Provider")
-                                .child(div().flex().gap_2().children(
-                                    [("claude", "Claude"), ("codex", "Codex")].into_iter().map(
-                                        |(provider, label)| {
-                                            self.button(provider, label, !busy).flex_1().py_3().flex().justify_center()
-                                                .when(self.provider == provider, |d| {
-                                                    d.bg(rgb(p.selected))
-                                                })
-                                                .when(!busy, |d| {
-                                                    d.on_click(cx.listener(
-                                                        move |this, _, window, cx| {
-                                                            this.choose_provider(provider, window, cx);
-                                                            this.load_models(false, cx);
-                                                            cx.notify();
-                                                        },
-                                                    ))
-                                                })
-                                        },
-                                    ),
-                                ))
-                                .child(div().flex().justify_between().child("Project directory")
-                                    .when(self.extras.local_paths, |d| d.child(self.button("browse-project", "Browse…", !busy).when(!busy, |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_folder(false, window, cx)))))))
-                                .when(self.extras.resume.is_some(), |d| d.child(div().text_color(rgb(p.accent)).child("Resume this conversation. Review the model and permissions before continuing.")))
-                                .child(Input::new(&self.project).disabled(busy))
-                                .child(
-                                    div().text_size(px(12.)).text_color(rgb(p.muted)).child(
-                                        "Use an existing absolute path on the hub's machine.",
-                                    ),
-                                )
-                                .child("Session name")
-                                .child(Input::new(&self.label).disabled(busy))
-                                .child(self.button("launch-setup", "Agent setup…", !busy).when(!busy, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx)))))
-                                .child(self.render_launch_options(busy, cx))
-                                .child("First message")
-                                .child(Input::new(&self.prompt).h(px(110.)).disabled(busy))
-                                .when(!self.spawn_error.is_empty(), |d| {
-                                    d.child(
-                                        div()
-                                            .text_color(rgb(p.warning))
-                                            .child(self.spawn_error.clone()),
-                                    )
-                                })
-                                .when(!self.view.connected, |d| {
-                                    d.child(
-                                        div()
-                                            .text_color(rgb(p.warning))
-                                            .child("Waiting for the hub connection…"),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .flex()
-                                        .justify_between()
-                                        .child(self.button("cancel-create", "Back", !busy).when(
-                                            !busy,
-                                            |d| {
-                                                d.on_click(cx.listener(|this, _, window, cx| {
-                                                    this.show_screen(Screen::Conversation, window, cx);
-                                                }))
-                                            },
-                                        ))
-                                        .child(
-                                            self.button(
-                                                "create-session",
-                                                if busy {
-                                                    "Creating session…"
-                                                } else {
-                                                    "Create session"
-                                                },
-                                                can_create,
-                                            )
-                                            .when(
-                                                can_create,
-                                                |d| {
-                                                    d.on_click(
-                                                        cx.listener(|this, _, _, cx| {
-                                                            this.create(cx)
-                                                        }),
-                                                    )
-                                                },
-                                            ),
-                                        ),
-                                ),
-                        ),
-                )
+                .child(content)
                 .into_any_element();
         }
 
@@ -1417,6 +1298,97 @@ mod tests {
         model::{ConversationSnapshot, Item, Session, Transcript},
     };
 
+    struct HoverControls(Entity<Workspace>);
+
+    impl Render for HoverControls {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.0.update(cx, |workspace, cx| {
+                div()
+                    .text_size(px(20.))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap_4()
+                    .child(
+                        workspace
+                            .button("regular", "Regular action", true)
+                            .debug_selector(|| "regular".into())
+                            .on_click(|_, _, _| {}),
+                    )
+                    .child(
+                        workspace
+                            .primary_button("primary", "Primary action", true)
+                            .debug_selector(|| "primary".into())
+                            .on_click(|_, _, _| {}),
+                    )
+                    .child(
+                        workspace
+                            .quiet_button("quiet", "Quiet action", IconName::Info, true)
+                            .debug_selector(|| "quiet".into())
+                            .on_click(|_, _, _| {}),
+                    )
+                    .child(
+                        workspace
+                            .icon_button("icon", "Icon action", IconName::Info, true)
+                            .debug_selector(|| "icon".into())
+                            .on_click(|_, _, _| {}),
+                    )
+                    .child(
+                        workspace
+                            .file_button("file", "src/main.rs".into(), cx)
+                            .debug_selector(|| "file".into()),
+                    )
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn button_hover_and_press_preserve_geometry(cx: &mut TestAppContext) {
+        cx.update(|cx| gpui_component::init(cx));
+        let (controller, _commands, _updates) = Controller::test_channels();
+        let window = cx.add_window(|window, cx| {
+            let workspace = cx.new(|cx| Workspace::new(controller, true, window, cx));
+            workspace.update(cx, |workspace, _| workspace.view = Arc::new(state("a")));
+            let controls = cx.new(|_| HoverControls(workspace));
+            Root::new(controls, window, cx)
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        for selector in ["regular", "primary", "quiet", "icon", "file"] {
+            visual.simulate_mouse_move(
+                gpui::point(px(800.), px(600.)),
+                None,
+                gpui::Modifiers::default(),
+            );
+            visual.run_until_parked();
+            let before = visual.debug_bounds(selector).unwrap();
+            visual.simulate_mouse_move(before.center(), None, gpui::Modifiers::default());
+            visual.run_until_parked();
+            assert_eq!(
+                before,
+                visual.debug_bounds(selector).unwrap(),
+                "{selector} hover changed geometry"
+            );
+            visual.simulate_mouse_down(
+                before.center(),
+                gpui::MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            visual.run_until_parked();
+            assert_eq!(
+                before,
+                visual.debug_bounds(selector).unwrap(),
+                "{selector} press changed geometry"
+            );
+            visual.simulate_mouse_up(
+                gpui::point(px(800.), px(600.)),
+                gpui::MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            visual.run_until_parked();
+        }
+    }
+
     fn fixture(
         cx: &mut TestAppContext,
     ) -> (
@@ -1461,6 +1433,29 @@ mod tests {
             ]),
             ..Default::default()
         }
+    }
+
+    #[gpui::test]
+    fn sidebar_model_metadata_stays_inside_clickable_session_rows(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                let session = &mut Arc::make_mut(&mut view.sessions)[0];
+                session.provider = "codex".into();
+                session.model = "a-model-with-a-long-name-that-needs-to-fit-in-the-sidebar".into();
+                session.cwd = "/work/project".into();
+                this.update_view(Arc::new(view), window, cx);
+            });
+        });
+        visual.run_until_parked();
+        let row = visual.debug_bounds("sidebar-session-0").unwrap();
+        let model = visual.debug_bounds("sidebar-model-0").unwrap();
+        assert!(row.contains(&model.origin));
+        assert!(row.contains(&model.bottom_right()));
+        let second = visual.debug_bounds("sidebar-session-1").unwrap();
+        visual.simulate_click(second.center(), gpui::Modifiers::default());
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
     }
 
     #[gpui::test]
@@ -1856,6 +1851,67 @@ mod tests {
     }
 
     #[gpui::test]
+    fn guided_launch_keeps_options_and_start_action_accessible(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(1000.), px(1100.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/work/alpha".into();
+                Arc::make_mut(&mut view.sessions)[1].cwd = "/work/beta".into();
+                this.update_view(Arc::new(view), window, cx);
+                this.show_new_session(window, cx);
+                this.prompt
+                    .update(cx, |input, cx| input.set_value("Fix the tests", window, cx));
+            });
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("launch-details").is_none());
+        let customize = visual.debug_bounds("launch-customize").unwrap();
+        visual.simulate_click(customize.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("launch-details").is_some());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.label
+                    .update(cx, |input, cx| input.set_value("Test repair", window, cx));
+                this.permission = Permission::Plan;
+            });
+        });
+        visual.simulate_click(customize.center(), gpui::Modifiers::default());
+        let provider = visual.debug_bounds("launch-provider-codex").unwrap();
+        visual.simulate_click(provider.center(), gpui::Modifiers::default());
+        let project = visual.debug_bounds("launch-workspace-1").unwrap();
+        visual.simulate_click(project.center(), gpui::Modifiers::default());
+        workspace.read_with(&visual, |this, cx| {
+            assert!(!this.launch_details_open);
+            assert_eq!(this.permission, Permission::Ask);
+            assert_eq!(this.provider, "codex");
+            assert_eq!(this.project.read(cx).value().as_str(), "/work/beta");
+            assert_eq!(this.label.read(cx).value().as_str(), "Test repair");
+            assert_eq!(this.prompt.read(cx).value().as_str(), "Fix the tests");
+        });
+        while let Ok(command) = commands.try_recv() {
+            assert!(matches!(command, Command::LoadModels { .. }));
+        }
+        visual.simulate_resize(size(px(720.), px(480.)));
+        visual.run_until_parked();
+        let start = visual.debug_bounds("launch-start").unwrap();
+        assert!(start.bottom() <= px(480.) && start.right() <= px(720.));
+        assert!(start.top() >= px(0.));
+        visual.simulate_click(start.center(), gpui::Modifiers::default());
+        let Command::Create(request) = commands.try_recv().unwrap() else {
+            panic!("expected launch")
+        };
+        assert_eq!(request.provider, "codex");
+        assert_eq!(request.cwd, "/work/beta");
+        assert_eq!(request.label, "Test repair");
+        assert_eq!(request.message, "Fix the tests");
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
     fn new_session_form_creates_once_and_keeps_failed_input(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
@@ -2024,7 +2080,7 @@ mod tests {
         });
         visual.run_until_parked();
         let before = visual.debug_bounds("sidebar-toggle").unwrap();
-        visual.simulate_keystrokes("tab");
+        visual.simulate_keystrokes("tab tab tab");
         visual.run_until_parked();
         assert_eq!(before, visual.debug_bounds("sidebar-toggle").unwrap());
         visual.simulate_keystrokes("enter");
@@ -2066,7 +2122,7 @@ mod tests {
             })
         });
         visual.run_until_parked();
-        // Toggle, search, projects, history, then the first session.
+        // Projects, history, toggle, search, then the first session.
         visual.simulate_keystrokes("tab tab tab tab tab enter");
         visual.simulate_event(gpui::KeyUpEvent {
             keystroke: gpui::Keystroke::parse("enter").unwrap(),
@@ -2964,6 +3020,207 @@ mod tests {
         assert!(commands.try_recv().is_err());
     }
     #[gpui::test]
+    fn default_access_applies_on_new_launch_and_provider_switch(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.settings.default_claude_access = Permission::FullAccess;
+                this.settings.default_codex_access = Permission::Ask;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_new_session(window, cx);
+                assert_eq!(this.permission, Permission::FullAccess);
+                this.choose_provider("codex", window, cx);
+                assert_eq!(this.permission, Permission::Ask);
+                this.permission = Permission::FullAccess;
+                this.new_session = false;
+                this.settings.default_provider = Provider::Codex;
+                this.show_new_session(window, cx);
+                assert_eq!(
+                    this.permission,
+                    Permission::Ask,
+                    "a new launch reapplies the saved default even for the same provider"
+                );
+                this.choose_provider("claude", window, cx);
+                assert_eq!(this.permission, Permission::FullAccess);
+                this.project
+                    .update(cx, |input, cx| input.set_value("/work/project", window, cx));
+                this.create(cx);
+            });
+        });
+        let request = loop {
+            match commands.try_recv().unwrap() {
+                Command::Create(request) => break request,
+                Command::LoadModels { .. } => {}
+                _ => panic!("unexpected command"),
+            }
+        };
+        assert_eq!(request.permission, Permission::FullAccess);
+        assert_eq!(
+            request.params().unwrap()["permissionMode"],
+            "bypassPermissions"
+        );
+    }
+
+    #[gpui::test]
+    fn model_menu_shows_catalog_when_custom_is_selected(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut loaded = state("a");
+                loaded.catalog = wks_native::launch::Catalog {
+                    key: CatalogKey {
+                        provider: "claude".into(),
+                        cwd: String::new(),
+                    },
+                    models: ["opus", "sonnet", "haiku"]
+                        .into_iter()
+                        .map(|id| ModelChoice {
+                            id: id.into(),
+                            label: id.into(),
+                            windows: vec![],
+                        })
+                        .collect(),
+                    ..Default::default()
+                };
+                this.update_view(Arc::new(loaded), window, cx);
+                this.show_new_session(window, cx);
+                this.model_choice = "__custom".into();
+                this.model_picker.update(cx, |picker, cx| {
+                    picker.set_selected_value(&String::from("__custom"), window, cx);
+                    picker.focus(window, cx);
+                });
+            });
+        });
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        for selector in [
+            "model-option-opus",
+            "model-option-sonnet",
+            "model-option-haiku",
+        ] {
+            assert!(
+                visual.debug_bounds(selector).is_some(),
+                "selected Custom must not scroll {selector} out of a menu that can fit all entries"
+            );
+        }
+        visual.simulate_input("custom");
+        visual.run_until_parked();
+        visual.simulate_keystrokes("enter");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.model_choice, "__custom"));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.show_screen(Screen::Conversation, window, cx);
+                this.show_new_session(window, cx);
+                this.model_picker
+                    .update(cx, |picker, cx| picker.focus(window, cx));
+            });
+        });
+        visual.simulate_keystrokes("enter down enter");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(
+                this.model_choice, "opus",
+                "a new picker must clear the previous Custom-only search"
+            )
+        });
+    }
+
+    #[gpui::test]
+    fn fresh_agent_does_not_inherit_custom_model_from_session_controls(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.open_feature(Screen::Model, window, cx);
+                assert_eq!(this.model_choice, "__custom");
+                this.show_new_session(window, cx);
+                assert!(this.model_choice.is_empty(), "new agent should start with Provider default, rather than the inspected session's Custom entry");
+                assert_eq!(this.model_picker.read(cx).selected_value().map(String::as_str), Some(""));
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn opening_new_agent_uses_an_already_loaded_catalog(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut loaded = state("a");
+                loaded.catalog = wks_native::launch::Catalog {
+                    key: CatalogKey {
+                        provider: "claude".into(),
+                        cwd: String::new(),
+                    },
+                    models: vec![ModelChoice {
+                        id: "opus".into(),
+                        label: "Opus".into(),
+                        windows: vec![200000],
+                    }],
+                    ..Default::default()
+                };
+                this.update_view(Arc::new(loaded), window, cx);
+                this.show_new_session(window, cx);
+                assert_eq!(
+                    this.catalog_models.len(),
+                    1,
+                    "a cached catalog must populate without waiting for another update"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn open_model_dropdown_renders_arriving_catalog(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(1000.), px(700.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_new_session(window, cx);
+                this.model_picker
+                    .update(cx, |picker, cx| picker.focus(window, cx));
+            });
+        });
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("model-option-").is_some());
+        assert!(visual.debug_bounds("model-option-opus").is_none());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut loaded = state("a");
+                loaded.catalog = wks_native::launch::Catalog {
+                    key: CatalogKey {
+                        provider: "claude".into(),
+                        cwd: String::new(),
+                    },
+                    models: vec![ModelChoice {
+                        id: "opus".into(),
+                        label: "Opus".into(),
+                        windows: vec![200000],
+                    }],
+                    ..Default::default()
+                };
+                this.update_view(Arc::new(loaded), window, cx);
+            });
+        });
+        visual.run_until_parked();
+        let option = visual
+            .debug_bounds("model-option-opus")
+            .expect("catalog arrival should redraw the open dropdown");
+        assert!(option.size.width > px(0.) && option.size.height > px(0.));
+        assert!(
+            option.top() >= px(0.) && option.bottom() <= px(700.),
+            "model option outside viewport: {option:?}"
+        );
+        visual.simulate_click(option.center(), gpui::Modifiers::default());
+        workspace.read_with(&visual, |this, _| assert_eq!(this.model_choice, "opus"));
+    }
+
+    #[gpui::test]
     fn model_picker_keyboard_selection_and_provider_reset(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
@@ -2987,6 +3244,7 @@ mod tests {
                     ..Default::default()
                 };
                 this.update_view(Arc::new(loaded), window, cx);
+                this.launch_details_open = true;
                 this.model_picker
                     .update(cx, |picker, cx| picker.focus(window, cx));
             });

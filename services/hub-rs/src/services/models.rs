@@ -161,14 +161,28 @@ pub fn resolve_spawn_binary(provider: &str, config: &Value) -> String {
     resolve_binary(provider, config)
 }
 
-fn provider_request(params: &Value, config: &Value) -> anyhow::Result<(String, Command)> {
+fn provider_request(
+    params: &Value,
+    config: &Value,
+    home: Option<&Path>,
+) -> anyhow::Result<(String, Command)> {
     let provider = params["provider"].as_str().unwrap_or("");
     if !["codex", "copilot", "opencode", "pi"].contains(&provider) {
         anyhow::bail!(
             "providers.listModels requires {{ provider: 'codex'|'copilot'|'opencode'|'pi' }}"
         );
     }
-    let cwd = paths::canonicalize(Path::new(params["cwd"].as_str().unwrap_or("")))?;
+    let requested = params["cwd"].as_str().unwrap_or("");
+    // The initial Codex picker has no project yet. Resolve this explicit
+    // discovery request on the hub, never against the client's filesystem.
+    let cwd = if provider == "codex"
+        && requested.is_empty()
+        && params["useHomeDirectory"].as_bool() == Some(true)
+    {
+        paths::canonicalize(home.ok_or_else(|| anyhow::anyhow!("Hub home directory unavailable"))?)?
+    } else {
+        paths::canonicalize(Path::new(requested))?
+    };
     let binary = resolve_binary(provider, config);
     let query = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("cwd", &cwd.to_string_lossy())
@@ -269,12 +283,17 @@ pub(crate) fn install(mut options: Options, config: Arc<Config>) -> Options {
     let engine = options.engine.clone();
     let cfg = config.clone();
     let routing = options.routing.clone();
+    let home = options
+        .home_dir
+        .clone()
+        .or_else(|| directories::UserDirs::new().map(|dirs| dirs.home_dir().to_path_buf()));
     options = options.handler("providers.listModels", move |_, params| {
         let engine = engine.clone();
         let cfg = cfg.clone();
         let routing = routing.clone();
+        let home = home.clone();
         async move {
-            let (provider, request) = provider_request(&params, &cfg.get())?;
+            let (provider, request) = provider_request(&params, &cfg.get(), home.as_deref())?;
             let Some(engine) = engine else {
                 if let Some(routing) = routing {
                     routing.update_catalog(&provider, None);
@@ -304,6 +323,47 @@ pub(crate) fn install(mut options: Options, config: Arc<Config>) -> Options {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn initial_codex_catalog_uses_hub_home_only_when_explicitly_requested() {
+        let home = tempfile::tempdir().unwrap();
+        let params = json!({"provider":"codex", "cwd":"", "useHomeDirectory":true});
+        let (_, command) = provider_request(&params, &json!({}), Some(home.path())).unwrap();
+        let Command::Request { path, .. } = command else {
+            panic!("wrong engine command")
+        };
+        let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
+        let query: BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(
+            query["cwd"],
+            paths::canonicalize(home.path()).unwrap().to_string_lossy()
+        );
+        assert!(provider_request(&params, &json!({}), None).is_err());
+        for params in [
+            json!({"provider":"codex", "cwd":""}),
+            json!({"provider":"codex", "cwd":"relative", "useHomeDirectory":true}),
+            json!({"provider":"copilot", "cwd":"", "useHomeDirectory":true}),
+        ] {
+            assert!(provider_request(&params, &json!({}), Some(home.path())).is_err());
+        }
+        let project = home.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let (_, command) = provider_request(
+            &json!({"provider":"codex", "cwd":project, "useHomeDirectory":true}),
+            &json!({}),
+            Some(home.path()),
+        )
+        .unwrap();
+        let Command::Request { path, .. } = command else {
+            panic!("wrong engine command")
+        };
+        let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
+        let query: BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(
+            query["cwd"],
+            paths::canonicalize(&project).unwrap().to_string_lossy()
+        );
+    }
+
     #[test]
     fn binary_search_skips_directories_and_preserves_platform_candidate_order() {
         let root = tempfile::tempdir().unwrap();
@@ -355,7 +415,7 @@ mod tests {
         for provider in ["codex", "copilot", "opencode", "pi"] {
             let config = json!({"agents":{"binaries":{provider:" custom & binary "}}});
             let (_, command) =
-                provider_request(&json!({"provider":provider,"cwd":cwd}), &config).unwrap();
+                provider_request(&json!({"provider":provider,"cwd":cwd}), &config, None).unwrap();
             let Command::Request {
                 method,
                 path,
@@ -381,7 +441,7 @@ mod tests {
             json!({"provider":"codex"}),
             json!({"provider":"codex","cwd":"relative"}),
         ] {
-            assert!(provider_request(&params, &json!({})).is_err());
+            assert!(provider_request(&params, &json!({}), None).is_err());
         }
     }
 }

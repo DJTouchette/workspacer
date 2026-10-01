@@ -493,7 +493,9 @@ impl Worker {
         }
         self.view.catalog.error = None;
         self.dirty = true;
-        if !self.view.connected || (key.provider != "claude" && !absolute_directory(&key.cwd)) {
+        if !self.view.connected
+            || (key.provider != "claude" && !key.cwd.is_empty() && !absolute_directory(&key.cwd))
+        {
             self.view.catalog.loading = false;
             self.view.catalog.error = Some(
                 if !self.view.connected {
