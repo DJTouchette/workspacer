@@ -399,6 +399,11 @@ impl Transcript {
     }
 
     pub fn snapshot(&mut self, snapshot: ConversationSnapshot) {
+        self.snapshot_for_transport(snapshot, false);
+    }
+
+    /// Apply the same fragment folding on initial reads, resyncs and live updates.
+    pub fn snapshot_for_transport(&mut self, snapshot: ConversationSnapshot, streaming: bool) {
         let previous_order = self.rows.clone();
         let mut previous = std::collections::HashMap::<String, VecDeque<Arc<Row>>>::new();
         for row in self.rows.drain(..) {
@@ -407,7 +412,7 @@ impl Transcript {
         self.bytes = 0;
         self.omitted = snapshot.first_seq > 1;
         for item in snapshot.items {
-            self.push(item, false);
+            self.push(item, streaming);
         }
         for (ix, row) in self.rows.iter_mut().enumerate() {
             let old = previous
@@ -447,11 +452,14 @@ impl Transcript {
             return Fold::Unchanged;
         }
         if delta.reset {
-            self.snapshot(ConversationSnapshot {
-                seq: delta.seq,
-                first_seq: 0,
-                items: delta.items,
-            });
+            self.snapshot_for_transport(
+                ConversationSnapshot {
+                    seq: delta.seq,
+                    first_seq: 0,
+                    items: delta.items,
+                },
+                streaming,
+            );
             return Fold::Changed;
         }
         let Some(seq) = self.seq else {
@@ -715,6 +723,46 @@ mod tests {
             items: vec![assistant(text)],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn stream_snapshot_and_reset_preserve_markdown_across_fragments() {
+        let parts = vec![
+            assistant("Both scouts are running:\n- **Workspacer"),
+            assistant(" child:** WS feature scout\n- **Native subagent:** native_scout"),
+        ];
+        let mut t = Transcript::default();
+        t.snapshot_for_transport(
+            ConversationSnapshot {
+                seq: 2,
+                first_seq: 1,
+                items: parts.clone(),
+            },
+            true,
+        );
+        assert_eq!(t.rows.len(), 1);
+        assert_eq!(
+            t.rows[0].text,
+            "Both scouts are running:\n- **Workspacer child:** WS feature scout\n- **Native subagent:** native_scout"
+        );
+        let key = t.rows[0].key;
+        t.delta(
+            Delta {
+                seq: 2,
+                reset: true,
+                items: parts.clone(),
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(t.rows.len(), 1);
+        assert_eq!(t.rows[0].key, key);
+        t.snapshot(ConversationSnapshot {
+            seq: 2,
+            first_seq: 1,
+            items: parts,
+        });
+        assert_eq!(t.rows.len(), 2, "PTY blocks remain separate");
     }
 
     #[test]

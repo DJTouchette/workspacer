@@ -1061,11 +1061,13 @@ impl Worker {
                             self.dirty = true;
                             return;
                         }
-                        self.view.transcript.snapshot(snapshot);
+                        let streaming = self.streaming();
+                        self.view
+                            .transcript
+                            .snapshot_for_transport(snapshot, streaming);
                         if self.view.notice.starts_with("Conversation unavailable:") {
                             self.view.notice.clear();
                         }
-                        let streaming = self.streaming();
                         let mut gap = false;
                         for delta in self.buffered.drain(..) {
                             if self.view.transcript.delta(delta, streaming) == Fold::Gap {

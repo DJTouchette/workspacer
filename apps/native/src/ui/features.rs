@@ -600,7 +600,7 @@ impl Workspace {
             }))
             .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Names and archives are saved on this device for this connection. Archiving keeps the conversation and does not stop an agent."))
     }
-    fn toggle_archive(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(super) fn toggle_archive(&mut self, id: &str, cx: &mut Context<Self>) {
         let ids = self
             .settings
             .archived

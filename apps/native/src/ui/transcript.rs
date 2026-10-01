@@ -822,7 +822,19 @@ impl Workspace {
                         .bg(rgb(p.surface))
                         .rounded_md()
                         .child(title.clone())
-                        .child(self.render_raw(&format!("{key}-report-{i}"), report, window, cx)),
+                        .child(if title.starts_with("Structured result") {
+                            self.render_result(
+                                &format!("{key}-report-{i}"),
+                                title,
+                                report,
+                                window,
+                                cx,
+                            )
+                            .into_any_element()
+                        } else {
+                            self.render_raw(&format!("{key}-report-{i}"), report, window, cx)
+                                .into_any_element()
+                        }),
                 );
             }
             let original = format!("{key}-original");
@@ -893,6 +905,15 @@ impl Workspace {
             match block {
                 AssistantBlock::Markdown(markdown) => {
                     body = body.child(self.render_markdown(&block_key, &markdown, window, cx))
+                }
+                AssistantBlock::Result(raw) => {
+                    body = body.child(self.render_result(
+                        &block_key,
+                        "Structured result",
+                        &raw,
+                        window,
+                        cx,
+                    ));
                 }
                 AssistantBlock::Card(card) => {
                     let mut card_body = div()

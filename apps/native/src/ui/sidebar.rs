@@ -787,6 +787,23 @@ impl Workspace {
                                                     session.approval.is_some()
                                                         || session.questions.is_some(),
                                                     |d| d.child(status_dot(p.warning)),
+                                                )
+                                                .child(
+                                                    this.icon_button(
+                                                        SharedString::from(format!("archive-sidebar-{}", session.id)),
+                                                        "Archive on this device · restore from Session history → Archived",
+                                                        IconName::Inbox,
+                                                        true,
+                                                    )
+                                                    .debug_selector(move || format!("sidebar-archive-{ix}"))
+                                                    .size(px(20.))
+                                                    .on_click(cx.listener({
+                                                        let id = id.clone();
+                                                        move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.toggle_archive(&id, cx);
+                                                        }
+                                                    })),
                                                 ),
                                         )
                                         .child(

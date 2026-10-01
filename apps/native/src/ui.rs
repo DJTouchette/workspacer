@@ -2858,12 +2858,13 @@ mod tests {
             ]}));
             view.requests.insert("subagent-history",wks_native::features::RequestState{
                 request:wks_native::features::Request::SubagentHistory{session:"a".into(),agent:"native-one".into()},number:1,loading:false,error:None,
-                value:Arc::new(serde_json::json!({"rows":[{"key":1,"role":"Assistant","text":"The parser handles these aliases."}]}))
+                value:Arc::new(serde_json::json!({"rows":[{"key":1,"role":"Assistant","text":"The parser handles these aliases.\n```wks-result\n{\"ok\":true,\"caveats\":[]}\n```"}]}))
             });
             this.update_view(Arc::new(view),window,cx);
         }));
         visual.run_until_parked();
         assert!(visual.debug_bounds("child-transcript-panel").is_some());
+        assert!(visual.debug_bounds("structured-result-card").is_some());
         workspace.read_with(&visual, |this, cx| {
             let child = &this.child_ui.agents.by_tool["dispatch"][0];
             assert!(!child.running());
@@ -3669,6 +3670,70 @@ mod tests {
                 assert_eq!(this.extras.attachments["a"].len(), 1);
             })
         });
+    }
+
+    #[gpui::test]
+    fn structured_results_render_in_assistant_and_completion_messages(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        for text in [
+            "Done\n```wks-result\n{\"merged\":true,\"caveats\":[\"Not checked\"],\"customField\":{\"count\":2}}\n```",
+            "[fleet] Worker finished:\n- Builder (session:b, cwd /repo) — last reply: Done\n\nStructured result — Builder (session:b):\n{\"ok\":true}",
+            "```wks-result\ninvalid JSON\n```",
+        ] {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut view = state("a");
+                    view.transcript.snapshot(ConversationSnapshot {
+                        seq: 1,
+                        first_seq: 1,
+                        items: vec![Item {
+                            kind: if text.starts_with("[fleet]") {
+                                "user_message"
+                            } else {
+                                "assistant_text"
+                            }
+                            .into(),
+                            text: text.into(),
+                            ..Default::default()
+                        }],
+                    });
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            });
+            visual.run_until_parked();
+            assert!(visual.debug_bounds("structured-result-card").is_some());
+        }
+    }
+
+    #[gpui::test]
+    fn sidebar_archive_hides_session_without_selecting_or_stopping_it(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let path = std::env::temp_dir().join(format!("native-archive-{}.json", std::process::id()));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settings_path = Some(path.clone());
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("keep draft", window, cx));
+            });
+        });
+        visual.run_until_parked();
+        let archive = visual.debug_bounds("sidebar-archive-1").unwrap();
+        visual.simulate_click(archive.center(), gpui::Modifiers::default());
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.visible_sessions(cx), vec![0]);
+            assert_eq!(this.view.selected.as_deref(), Some("a"));
+            assert_eq!(this.composer.read(cx).value().as_ref(), "keep draft");
+        });
+        assert!(commands.try_recv().is_err());
+        assert_eq!(Settings::load(&path).unwrap().archived["test"], vec!["b"]);
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.toggle_archive("b", cx);
+                assert_eq!(this.visible_sessions(cx), vec![0, 1]);
+            })
+        });
+        let _ = std::fs::remove_file(path);
     }
 
     #[gpui::test]

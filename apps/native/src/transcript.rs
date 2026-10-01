@@ -451,6 +451,7 @@ pub fn file_target(cwd: &str, target: &str) -> Option<String> {
 pub enum AssistantBlock {
     Markdown(String),
     Card(Card),
+    Result(String),
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Card {
@@ -652,6 +653,28 @@ pub fn assistant_blocks(text: &str) -> Vec<AssistantBlock> {
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i].trim_end();
+        let result_fence = line.trim_start().trim_end();
+        let marker = if result_fence.starts_with('`') {
+            '`'
+        } else {
+            '~'
+        };
+        let width = result_fence.chars().take_while(|c| *c == marker).count();
+        if width >= 3
+            && result_fence[width..].trim() == "wks-result"
+            && line.len() - line.trim_start().len() <= 3
+            && let Some(end) = (i + 1..lines.len()).find(|j| {
+                let closing = lines[*j].trim();
+                closing.len() >= width && closing.chars().all(|c| c == marker)
+            })
+        {
+            if !prose.is_empty() {
+                blocks.push(AssistantBlock::Markdown(std::mem::take(&mut prose)));
+            }
+            blocks.push(AssistantBlock::Result(lines[i + 1..end].concat()));
+            i = end + 1;
+            continue;
+        }
         if line == "```wks-html-card"
             && let Some(end) = (i + 1..lines.len()).find(|j| lines[*j].trim_end() == "```")
             && let Some(card) = parse_card(&lines[i + 1..end].concat())
@@ -1163,6 +1186,26 @@ mod tests {
         let mut rendered = String::new();
         text_only(&second.document, &mut rendered);
         assert_eq!(rendered, "<img src=https://example.com>");
+    }
+
+    #[test]
+    fn result_cards_preserve_prose_invalid_payloads_and_example_fences() {
+        let blocks = assistant_blocks("Done\n```wks-result\n{\"ok\":true}\n```\nAfter");
+        assert!(
+            matches!(&blocks[..], [AssistantBlock::Markdown(_), AssistantBlock::Result(raw), AssistantBlock::Markdown(_)] if raw.contains("true"))
+        );
+        assert!(
+            matches!(&assistant_blocks("~~~wks-result\ninvalid\n~~~")[0], AssistantBlock::Result(raw) if raw == "invalid\n")
+        );
+        assert!(
+            assistant_blocks("````markdown\n```wks-result\n{}\n```\n````")
+                .iter()
+                .all(|b| matches!(b, AssistantBlock::Markdown(_)))
+        );
+        assert!(matches!(
+            &assistant_blocks("```wks-result\n{")[0],
+            AssistantBlock::Markdown(_)
+        ));
     }
 
     #[test]
