@@ -213,7 +213,10 @@ async fn run(root: PathBuf) {
         .into_iter()
         .find_map(|row| row["launchInstructions"].as_str().map(str::to_owned))
         .unwrap();
-    let skill_root = project
+    // The installer canonicalizes cwd (macOS temporary paths commonly use
+    // /var aliases for /private/var), so compare its canonical pointer.
+    let skill_root = std::fs::canonicalize(&project)
+        .unwrap()
         .join(".workspacer/skills")
         .join(workspacer_hub::services::launch_instructions::skill_version());
     assert!(pointer.contains(&format!("{:?}", skill_root.join("spawn-agent/SKILL.md"))));
