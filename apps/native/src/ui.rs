@@ -2919,10 +2919,21 @@ mod tests {
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 this.update_view(Arc::new(state("a")), window, cx);
-                this.settings.sidebar_width = 200.;
             })
         });
-        for width in [720., 1000., 1600.] {
+        for (width, sidebar_width) in [
+            (720., 200.),
+            (720., 304.),
+            (720., 520.),
+            (1000., 304.),
+            (1600., 520.),
+        ] {
+            visual.update(|_, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.settings.sidebar_width = sidebar_width;
+                    cx.notify();
+                })
+            });
             visual.simulate_resize(size(px(width), px(700.)));
             for collapsed in [false, true] {
                 for screen in [

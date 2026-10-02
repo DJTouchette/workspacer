@@ -20,4 +20,4 @@ Pinned GPUI 0.2.2 div.rs paint_mouse_listeners automatically calls window.preven
 A valid native Drag hitbox alone does not prove a native drag starts. Title-pill occlusion protects controls but does not protect blank drag areas from the focusable shell.
 
 ## Recommendation
-Test MouseDown DispatchEventResult.propagate and default_prevented on actual rendered drag surfaces. Keep interactive title pills occluding and add an independent collapsed-sidebar drag surface. Source/harness evidence is not Windows runtime verification.
+Test mouse-down default prevention on actual rendered drag surfaces through Window::default_prevented(); DispatchEventResult is private to GPUI. Do not stop propagation on native drag surfaces. Keep interactive title pills occluding and add an independent collapsed-sidebar drag surface. Source/harness evidence is not Windows runtime verification.

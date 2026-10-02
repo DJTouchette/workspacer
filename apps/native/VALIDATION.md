@@ -696,3 +696,89 @@ keeping the last reading on failure; `usage::accounts` twins desktop
   `engine_adapter`.
 - Native serialized suite **200 passed**; strict Clippy and rustfmt passed.
 
+
+## Windows caption dragging repair (2026-10-02)
+
+Source and harness evidence establish a cancellation path in the original
+`cd7a5028` integration, not just missing geometry:
+
+- The original `Workspace::shell` in `src/ui/navigation.rs` used `track_focus`.
+  Pinned GPUI 0.2.2 `src/elements/div.rs:2024-2036` installs an automatic
+  mouse-down focus listener that calls `window.prevent_default()`.
+- GPUI `src/platform/windows/events.rs:974-982` dispatches the nonclient
+  mouse-down through those listeners and returns `Some(0)` when default is
+  prevented. That skips the native default processing that starts HTCAPTION
+  movement. `events.rs:868-878` already maps Drag to HTCAPTION correctly.
+- Original `drag_region` did not occlude, so the focusable shell remained hit.
+  `original_non_occluding_drag_is_cancelled_by_shell_focus` reproduces default
+  prevention, then proves that occluding the drag hitbox removes it. The flag
+  is read through GPUI's public `Window::default_prevented()` after test-platform
+  mouse-down dispatch; the private Windows callback is not invoked on Linux.
+- Contrary to the first repair's learning, `src/window.rs:775-793` stops its
+  reverse hit test at `BlockMouse`, and `window.rs:1133-1146` only considers
+  retained IDs for native control areas. Occluding pills/buttons protect their
+  bounds. An element ID is not required. `start_window_move` is not a Windows
+  fallback in this pinned release.
+
+The repair makes the drag regions themselves occluding, restores the 56px chat
+header region behind its occluding title pill, includes expanded-sidebar row
+padding, and adds a nonshrinking 40x32px logo grab area to the collapsed rail.
+The sidebar remains available on every screen, including New Session. Caption
+buttons keep their original native control areas and deferred occluding group.
+
+`app_drawn_caption_drag_surfaces_survive_layouts_and_exclude_controls` covers
+720/1000/1600px windows, both sidebar states, all nine screens, and New Session
+with minimum/default/maximum preferred sidebar widths (200/304/520px), including
+all three at the 720px window minimum where the larger widths are clamped. It
+checks positive drag dimensions,
+at least 40px beside the expanded controls, usable row padding, title/caption
+geometry, no default prevention on drag mouse-down, exclusion of sidebar and
+caption buttons and the title pill, no drag below the header, and a working
+sidebar toggle. A test-only mouse listener observes the actual Div hitbox;
+it does not change propagation/default handling. Forced-caption Linux tests
+exercise layout and occlusion, not Windows control callbacks or OS movement.
+
+Final Linux checks (Rust 1.94.1, run from the repository root):
+
+- `cargo test --locked --manifest-path apps/native/Cargo.toml --features ui-tests -- --test-threads=1`:
+  **226 passed** (102 library, 86 native binary, 3 background process, 32 protocol,
+  3 Rust hub). Serialized because the existing UI suite shares global test state.
+- `cargo clippy --locked --manifest-path apps/native/Cargo.toml --all-targets --features ui-tests -- -D warnings`:
+  passed.
+- `cargo fmt --manifest-path apps/native/Cargo.toml --check` and `git diff --check`:
+  passed.
+- Rivet `witness.select` and `witness.run` returned empty text for the changed
+  Rust files. Selection was unproven; the complete native suite was run instead.
+
+Windows target/toolchain inspection: Rust 1.94.1 has
+`x86_64-pc-windows-msvc` installed. The UI-only cross-check
+`cargo check --locked --target x86_64-pc-windows-msvc --no-default-features --features ui`
+failed in dependency builds because `lib.exe` was unavailable. Retrying with
+`CC_x86_64_pc_windows_msvc=clang-cl AR_x86_64_pc_windows_msvc=llvm-lib` progressed
+to `ring` but failed because the MSVC CRT header `assert.h` was unavailable.
+Neither attempt reached application checking. No Windows runtime was available;
+there is no claim of Windows compile or end-to-end success.
+
+Manual Windows acceptance checklist (still required):
+
+1. Build this branch with the Windows MSVC/Visual Studio C++ toolchain and launch
+   a separate demo window (`wks-native.exe --demo`), leaving existing app/fleet
+   processes alone. Record the built SHA, Windows version, and display scaling.
+2. At 720px width and normal/maximized widths, drag the expanded sidebar logo,
+   header padding, and blank space around the chat pill. Double-click those
+   surfaces to maximize/restore and drag a maximized window to restore/move it.
+3. Collapse the sidebar and drag the rail logo. Repeat on Conversation, Projects,
+   Settings, Recent, Changes, History, Session, Setup, Model, and New Session.
+   Repeat with minimum/default sidebar widths and 100%/150% display scaling.
+4. Click sidebar actions, toggle, search, title-pill actions, and minimize/
+   maximize/restore/close. Check Snap Layouts on maximize hover, close behavior,
+   and return from fullscreen if used. Buttons must not initiate a move.
+5. Select transcript text, scroll history, edit/select composer text, and resize
+   the sidebar/window. These content interactions must not move the window.
+   Check a child conversation's title actions and drag space too.
+
+Integration: at inspection, main was `ca1183e7`; its relevant native source files
+had no uncommitted changes. This branch touches the shared `ui.rs`, `chrome.rs`,
+`sidebar.rs`, validation notes and Rivet learnings, so recheck overlap before
+integration. Main was read only; no merge, push, application restart, or fleet
+mutation was performed.
