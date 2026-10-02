@@ -350,6 +350,77 @@ pub fn overview(name: &str, input: &str) -> String {
     }
 }
 
+/// One-line overview of a run of tool calls, as the desktop WorkCard header.
+#[derive(Debug, Default, PartialEq)]
+pub struct WorkSummary {
+    pub text: String,
+    pub added: usize,
+    pub removed: usize,
+    pub failed: usize,
+    pub running: usize,
+    /// First call to last result, only once every call has finished.
+    pub duration_ms: Option<i64>,
+}
+
+pub fn summarize_work<'a>(rows: impl IntoIterator<Item = &'a crate::model::Row>) -> WorkSummary {
+    let mut summary = WorkSummary::default();
+    let mut files = std::collections::BTreeSet::new();
+    let (mut commands, mut reads, mut searches, mut other) = (0, 0, 0, 0);
+    let (mut start, mut end, mut finished) = (None::<i64>, None::<i64>, true);
+    for row in rows {
+        let Some(tool) = &row.tool else { continue };
+        let preview = parse(&tool.name, &tool.input, None);
+        summary.added += preview.added;
+        summary.removed += preview.removed;
+        if tool.is_error {
+            summary.failed += 1;
+        } else if !tool.complete {
+            summary.running += 1;
+        }
+        match tool.category() {
+            "Edit" => {
+                files.insert(tool.target());
+            }
+            "Command" => commands += 1,
+            "Read" => reads += 1,
+            "Search" => searches += 1,
+            _ => other += 1,
+        }
+        start = match (start, row.timestamp_ms) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        match tool.completed_at_ms {
+            Some(done) => end = Some(end.map_or(done, |e: i64| e.max(done))),
+            None => finished = false,
+        }
+    }
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut parts = Vec::new();
+    if !files.is_empty() {
+        parts.push(plural(files.len(), "file changed", "files changed"));
+    }
+    if commands > 0 {
+        parts.push(plural(commands, "command", "commands"));
+    }
+    if reads > 0 {
+        parts.push(format!("read {reads}"));
+    }
+    if searches > 0 {
+        parts.push(plural(searches, "search", "searches"));
+    }
+    if other > 0 {
+        parts.push(plural(other, "other tool", "other tools"));
+    }
+    summary.text = parts.join(" · ");
+    summary.duration_ms = match (finished, start, end) {
+        (true, Some(start), Some(end)) if end >= start => Some(end - start),
+        _ => None,
+    };
+    summary
+}
+
 /// Only regular adjacent tool calls group; orchestration remains independently visible.
 pub fn group_span(
     rows: &std::collections::VecDeque<std::sync::Arc<crate::model::Row>>,
@@ -375,7 +446,7 @@ pub fn group_span(
     // cards inside one virtual-list item.
     start += ((ix - start) / 12) * 12;
     end = end.min(start + 12);
-    (end - start >= 3).then_some(start..end)
+    Some(start..end)
 }
 
 #[cfg(test)]
@@ -438,12 +509,56 @@ mod tests {
         ]);
         assert_eq!(group_span(&rows, 0), Some(0..3));
         assert_eq!(group_span(&rows, 2), Some(0..3));
-        assert_eq!(group_span(&rows, 4), None);
+        assert_eq!(group_span(&rows, 4), Some(4..6));
+        assert_eq!(group_span(&rows, 3), None);
         assert_eq!(group_span(&rows, 6), None);
         let long = (0..40).map(|_| tool("Read")).collect();
         assert_eq!(group_span(&long, 11), Some(0..12));
         assert_eq!(group_span(&long, 12), Some(12..24));
         assert_eq!(group_span(&long, 39), Some(36..40));
+    }
+
+    #[test]
+    fn work_summary_counts_like_the_desktop_card() {
+        use crate::{model::Row, transcript::Tool};
+        let row = |name: &str, input: serde_json::Value, at: i64, done: Option<i64>| Row {
+            timestamp_ms: Some(at),
+            tool: Some(Tool {
+                name: name.into(),
+                input: input.to_string(),
+                complete: done.is_some(),
+                completed_at_ms: done,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let rows = [
+            row(
+                "Edit",
+                json!({"file_path":"a.rs","old_string":"x","new_string":"y\nz"}),
+                10,
+                Some(20),
+            ),
+            row(
+                "Edit",
+                json!({"file_path":"a.rs","old_string":"q","new_string":"r"}),
+                20,
+                Some(30),
+            ),
+            row("Bash", json!({"command":"cargo test"}), 30, Some(900)),
+            row("Read", json!({"file_path":"b.rs"}), 40, Some(50)),
+            row("Grep", json!({"pattern":"fn"}), 50, Some(60)),
+        ];
+        let summary = summarize_work(rows.iter());
+        assert_eq!(
+            summary.text,
+            "1 file changed · 1 command · read 1 · 1 search"
+        );
+        assert_eq!((summary.added, summary.removed), (3, 2));
+        assert_eq!(summary.duration_ms, Some(890));
+        let running = [row("Bash", json!({"command":"sleep 9"}), 0, None)];
+        let summary = summarize_work(running.iter());
+        assert_eq!((summary.running, summary.duration_ms), (1, None));
     }
 
     #[test]

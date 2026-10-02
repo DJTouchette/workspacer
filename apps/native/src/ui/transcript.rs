@@ -14,7 +14,7 @@ use wks_native::{
 pub(super) struct ChatUi {
     pub restored: bool,
     pub unread: Option<usize>,
-    open: BTreeMap<String, bool>,
+    pub open: BTreeMap<String, bool>,
     text_pages: BTreeMap<String, usize>,
     dismissed: BTreeMap<String, u64>,
     previews: BTreeMap<String, Preview>,
@@ -430,92 +430,9 @@ impl Workspace {
             );
         }
         if let Some(span) = group {
-            let first = &rows[span.start];
-            let group_key = format!("tool-group:{session}:{}", tools::identity(first));
-            let failed = rows
-                .range(span.clone())
-                .filter(|r| r.tool.as_ref().is_some_and(|t| t.is_error))
-                .count();
-            let running = rows
-                .range(span.clone())
-                .filter(|r| r.tool.as_ref().is_some_and(|t| !t.complete && !t.is_error))
-                .count();
-            let expanded = self
-                .chat
-                .open
-                .get(&group_key)
-                .copied()
-                .unwrap_or(failed > 0);
-            self.chat.open.entry(group_key.clone()).or_insert(expanded);
-            let mut categories = BTreeMap::<&str, usize>::new();
-            for grouped in rows.range(span.clone()) {
-                *categories
-                    .entry(grouped.tool.as_ref().unwrap().category())
-                    .or_default() += 1;
-            }
-            let summary = categories
-                .into_iter()
-                .map(|(name, count)| format!("{count} {}", name.to_ascii_lowercase()))
-                .collect::<Vec<_>>()
-                .join(" · ");
-            let activity = if failed > 0 {
-                format!("{failed} failed · {running} running")
-            } else if running > 0 {
-                format!("{running} running")
-            } else {
-                "Completed".into()
-            };
-            let tool = row.tool.as_ref().unwrap();
-            let p = self.appearance.palette();
-            body = body.child(
-                div()
-                    .debug_selector(|| "tool-activity-group".into())
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(self.toggle_chat(
-                        group_key,
-                        format!(
-                            "{} {} tool calls · {activity}",
-                            if expanded { "Hide" } else { "Show" },
-                            span.len()
-                        ),
-                        cx,
-                    ))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(p.muted))
-                            .child(summary),
-                    )
-                    .when(!expanded, |d| {
-                        d.child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(rgb(p.muted))
-                                .child(wks_native::tool_preview::overview(&tool.name, &tool.input)),
-                        )
-                    }),
-            );
-            if expanded {
-                for grouped in rows.range(span) {
-                    body =
-                        body.child(self.render_message_content(grouped, "live", false, window, cx));
-                }
-            }
-            if let Some(timestamp) = row.timestamp_ms {
-                body = body.child(
-                    div()
-                        .pt_1()
-                        .text_size(px(11.))
-                        .text_color(rgb(p.muted))
-                        .child(timing::timestamp_label(
-                            Some(timestamp),
-                            timing::now_ms(),
-                            self.settings.twelve_hour_clock,
-                        )),
-                );
-            }
+            body = body
+                .child(self.render_work_card(span, window, cx))
+                .child(self.timestamp_footer(None, row.timestamp_ms).px_3());
         } else {
             body = body.child(self.render_message(row, "live", false, window, cx));
         }
@@ -648,34 +565,35 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let p = self.appearance.palette();
+        let duration = (namespace == "live")
+            .then(|| self.duration_labels.get(&row.key).cloned())
+            .flatten();
+        let timestamp = row
+            .timestamp_ms
+            .or_else(|| row.timestamp.as_deref().and_then(timing::parse_timestamp));
+        let footer = self.timestamp_footer(duration.map(Into::into), timestamp);
         self.render_message_content(row, namespace, continued, window, cx)
-            .child(
-                div()
-                    .debug_selector(|| "message-timestamp-footer".into())
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(px(11.))
-                    .text_color(rgb(p.muted))
-                    .when_some(
-                        (namespace == "live")
-                            .then(|| self.duration_labels.get(&row.key))
-                            .flatten(),
-                        |d, label| d.child(label.clone()),
-                    )
-                    .when_some(
-                        row.timestamp_ms
-                            .or_else(|| row.timestamp.as_deref().and_then(timing::parse_timestamp)),
-                        |d, timestamp| {
-                            d.child(timing::timestamp_label(
-                                Some(timestamp),
-                                timing::now_ms(),
-                                self.settings.twelve_hour_clock,
-                            ))
-                        },
-                    ),
-            )
+            .child(footer)
+    }
+
+    /// Quiet, right-aligned metadata below a message or work card.
+    fn timestamp_footer(&self, duration: Option<SharedString>, timestamp: Option<i64>) -> Div {
+        div()
+            .debug_selector(|| "message-timestamp-footer".into())
+            .flex()
+            .justify_end()
+            .items_center()
+            .gap_2()
+            .text_size(px(11.))
+            .text_color(rgb(self.appearance.palette().disabled))
+            .children(duration)
+            .when_some(timestamp, |d, timestamp| {
+                d.child(timing::timestamp_label(
+                    Some(timestamp),
+                    timing::now_ms(),
+                    self.settings.twelve_hour_clock,
+                ))
+            })
     }
     fn render_message_content(
         &mut self,

@@ -586,3 +586,18 @@ Three defects found while verifying, all fixed:
   the font fix. Captures: [dark](docs/ui-chat-markdown-dark.png),
   [light + nord](docs/ui-chat-markdown-light-nord.png). No live-provider calls or
   Windows/macOS rendering checks.
+
+## Work cards and quiet timestamps (2026-10-02)
+
+Adjacent regular tool calls (now including single calls) render as one work card
+modeled on the desktop WorkCard: summary header (`summarize_work`: files changed,
+commands, reads, searches, +/−, running/failed, duration) over one-line steps with
+category icons and session-relative targets; steps expand in place to the shared
+tool details. Timestamps are right-aligned in the disabled tone.
+
+- Complete serialized native suite: **184 passed** (81 library, 68 UI/lifetime,
+  3 background-process, 29 protocol, 3 Rust-host); new summary unit coverage and
+  updated work-card collapse test.
+- Strict all-target Clippy with UI tests, formatting and whitespace passed.
+- Real windows checked on a headless Hyprland output with the rich-transcript
+  fixture in Dark and Light. No live-provider calls or Windows/macOS rendering.

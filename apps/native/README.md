@@ -681,13 +681,16 @@ and offline remain distinct states. Follow resumes when the painted latest messa
 reaches the reading area above the composer, including after keyboard scrolling
 and virtual-list layout, without requiring another wheel event.
 
-Tool overviews use reported descriptions and concrete action/target summaries,
-with exact commands and arguments available on expansion. Runs of three or more
-regular tool calls collapse into activity groups showing categories, the latest
-action, and running/failure status. Groups contain at most 12 calls so expansion
-stays bounded; skill, child-agent and workflow calls remain separate.
+Every run of adjacent regular tool calls renders as one work card, following the
+desktop WorkCard: a header with step count, a summary (files changed, commands,
+reads, searches), +/− lines, running/failed counts and total duration, above
+one-line steps (icon, reported description, session-relative target, duration).
+Clicking a step opens its exact input/output in place; the header collapses the
+steps. A single call is just its step row. Cards hold at most 12 calls and show
+the latest six with an "earlier steps" toggle; skill, child-agent and workflow
+calls remain separate.
 
-Messages and tool calls show server timestamps below their content in local time
+Messages and work cards show quiet, right-aligned server timestamps below their content in local time
 (with the date for older days). Live tool activity groups share one timestamp
 after the group instead of repeating it beneath each call.
 **Settings → Chat → 12-hour clock** enables AM/PM

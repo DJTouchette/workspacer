@@ -21,7 +21,7 @@ pub(super) fn card(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (p, twelve_hour) = appearance;
+    let p = appearance.0;
     let tool = row.tool.as_ref().expect("tool row");
     let origin = wks_native::child_agents::tool_kind(tool);
     let mut preview = tool_preview::parse(
@@ -74,112 +74,7 @@ pub(super) fn card(
     } else {
         status_icon.into_any_element()
     };
-    let details =
-        if expanded {
-            let mut body = div()
-                .id(SharedString::from(format!("{element_key}-details")))
-                .max_h(px(520.))
-                .overflow_y_scroll()
-                .px_3()
-                .pb_3()
-                .pt_2()
-                .border_t_1()
-                .border_color(rgb(p.border))
-                .flex()
-                .flex_col()
-                .gap_3()
-                .when(!preview.working_directory.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(p.muted))
-                            .child(preview.working_directory.clone()),
-                    )
-                })
-                .when(!preview.description.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(rgb(p.text))
-                            .child(preview.description.clone()),
-                    )
-                });
-            for (index, block) in preview.blocks.iter().take(16).enumerate() {
-                let text = block.text.lines().take(160).collect::<Vec<_>>().join("\n");
-                let text: String = text.chars().take(12_000).collect();
-                let clipped = text.len() < block.text.trim_end_matches('\n').len();
-                body = body.child(
-                    div()
-                        .flex_shrink_0()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .text_size(px(11.))
-                                .text_color(rgb(p.muted))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .child(block.label.clone()),
-                                )
-                                .when(block.language != "text", |d| d.child(block.language)),
-                        )
-                        .child(
-                            TextView::markdown(
-                                SharedString::from(format!("{element_key}-{index}")),
-                                tool_preview::fenced(block.language, &text),
-                                window,
-                                cx,
-                            )
-                            .style(gpui_component::text::TextViewStyle {
-                                highlight_theme: gpui_component::Theme::global(cx)
-                                    .highlight_theme
-                                    .clone(),
-                                is_dark: gpui_component::Theme::global(cx).mode.is_dark(),
-                                ..Default::default()
-                            })
-                            .selectable(true),
-                        )
-                        .when(
-                            block.label == "Output" && tool.completed_at_ms.is_some(),
-                            |d| {
-                                d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
-                                    timing::timestamp_label(
-                                        tool.completed_at_ms,
-                                        timing::now_ms(),
-                                        twelve_hour,
-                                    ),
-                                ))
-                            },
-                        )
-                        .when(clipped, |d| {
-                            d.child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(p.muted))
-                                    .child("Preview shortened"),
-                            )
-                        }),
-                );
-            }
-            if preview.blocks.len() > 16 {
-                body = body.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
-                    format!(
-                        "{} additional sections omitted from preview",
-                        preview.blocks.len() - 16
-                    ),
-                ));
-            }
-            Some(body)
-        } else {
-            None
-        };
+    let details = expanded.then(|| details(&preview, tool, &element_key, appearance, window, cx));
     div()
         .id(SharedString::from(format!("{element_key}-card")))
         .rounded(px(p.panel_radius))
@@ -344,4 +239,118 @@ pub(super) fn card(
         })
         .children(details)
         .into_any_element()
+}
+
+/// Expanded tool input/output, shared by standalone cards and work-card steps.
+pub(super) fn details(
+    preview: &tool_preview::ToolPreview,
+    tool: &wks_native::transcript::Tool,
+    element_key: &str,
+    appearance: (Palette, bool),
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let (p, twelve_hour) = appearance;
+    let mut body = div()
+        .id(SharedString::from(format!("{element_key}-details")))
+        .max_h(px(520.))
+        .overflow_y_scroll()
+        .px_3()
+        .pb_3()
+        .pt_2()
+        .border_t_1()
+        .border_color(rgb(p.border))
+        .flex()
+        .flex_col()
+        .gap_3()
+        .when(!preview.working_directory.is_empty(), |d| {
+            d.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(preview.working_directory.clone()),
+            )
+        })
+        .when(!preview.description.is_empty(), |d| {
+            d.child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(p.text))
+                    .child(preview.description.clone()),
+            )
+        });
+    for (index, block) in preview.blocks.iter().take(16).enumerate() {
+        let text = block.text.lines().take(160).collect::<Vec<_>>().join("\n");
+        let text: String = text.chars().take(12_000).collect();
+        let clipped = text.len() < block.text.trim_end_matches('\n').len();
+        body = body.child(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(block.label.clone()),
+                        )
+                        .when(block.language != "text", |d| d.child(block.language)),
+                )
+                .child(
+                    TextView::markdown(
+                        SharedString::from(format!("{element_key}-{index}")),
+                        tool_preview::fenced(block.language, &text),
+                        window,
+                        cx,
+                    )
+                    .style(gpui_component::text::TextViewStyle {
+                        highlight_theme: gpui_component::Theme::global(cx).highlight_theme.clone(),
+                        is_dark: gpui_component::Theme::global(cx).mode.is_dark(),
+                        ..Default::default()
+                    })
+                    .selectable(true),
+                )
+                .when(
+                    block.label == "Output" && tool.completed_at_ms.is_some(),
+                    |d| {
+                        d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                            timing::timestamp_label(
+                                tool.completed_at_ms,
+                                timing::now_ms(),
+                                twelve_hour,
+                            ),
+                        ))
+                    },
+                )
+                .when(clipped, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(p.muted))
+                            .child("Preview shortened"),
+                    )
+                }),
+        );
+    }
+    if preview.blocks.len() > 16 {
+        body = body.child(
+            div()
+                .text_size(px(11.))
+                .text_color(rgb(p.muted))
+                .child(format!(
+                    "{} additional sections omitted from preview",
+                    preview.blocks.len() - 16
+                )),
+        );
+    }
+    body
 }

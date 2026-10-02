@@ -12,6 +12,7 @@ mod syntax;
 mod tools;
 mod transcript;
 mod typography;
+mod work;
 use chrome::ControlTextStyle;
 use gpui::{
     Animation, AnimationExt, App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable,
@@ -2648,12 +2649,14 @@ mod tests {
         });
         visual.run_until_parked();
         assert!(visual.debug_bounds("tool-activity-group").is_some());
-        let collapsed = visual
+        // Work cards open with one-line steps; the header collapses them.
+        assert!(visual.debug_bounds("tool-toggle-0").is_some());
+        let open = visual
             .debug_bounds("last-transcript-row")
             .unwrap()
             .size
             .height;
-        let toggle = visual.debug_bounds("chat-section-toggle").unwrap();
+        let toggle = visual.debug_bounds("work-card-toggle").unwrap();
         visual.simulate_click(toggle.center(), gpui::Modifiers::default());
         visual.run_until_parked();
         assert!(
@@ -2662,9 +2665,11 @@ mod tests {
                 .unwrap()
                 .size
                 .height
-                > collapsed
+                < open
         );
-        assert!(visual.debug_bounds("tool-toggle-0").is_some());
+        let toggle = visual.debug_bounds("work-card-toggle").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
         let tool = visual.debug_bounds("tool-toggle-0").unwrap();
         visual.simulate_click(tool.center(), gpui::Modifiers::default());
         visual.run_until_parked();
