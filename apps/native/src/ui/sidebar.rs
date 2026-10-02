@@ -520,7 +520,10 @@ impl Workspace {
             .flex_col()
             .debug_selector(|| "session-sidebar".into())
             .child(
-                div()
+                // With the app-drawn caption this row is the title bar: the
+                // logo and gap drag the window, the occluding button group
+                // keeps its clicks.
+                chrome::drag_region(div())
                     .px_3()
                     .py_3()
                     .flex()
@@ -528,6 +531,7 @@ impl Workspace {
                     .gap_2()
                     .child(brand_mark(18., p))
                     .child(div().flex_1())
+                    .child(div().flex().items_center().gap_2().occlude()
                     .child(
                         self.icon_button("new-session", "New session", IconName::Plus, !self.demo)
                             .debug_selector(|| "new-session-button".into())
@@ -560,7 +564,7 @@ impl Workspace {
                             this.open_feature(Screen::Recent, window, cx)
                         })),
                     )
-                    .child(self.sidebar_toggle(cx)),
+                    .child(self.sidebar_toggle(cx))),
             )
             .child(
                 div().px_3().pb_2().child(

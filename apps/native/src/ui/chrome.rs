@@ -469,3 +469,107 @@ pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Di
             .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)),
     )
 }
+
+/// Windows draws no system title bar; the app owns the caption buttons and the
+/// drag regions. `WKS_NATIVE_CAPTION=1` previews the same chrome elsewhere.
+pub(crate) fn custom_caption() -> bool {
+    #[cfg(feature = "ui-tests")]
+    if FORCE_CAPTION.load(std::sync::atomic::Ordering::Relaxed) {
+        return true;
+    }
+    cfg!(target_os = "windows") || std::env::var_os("WKS_NATIVE_CAPTION").is_some()
+}
+
+#[cfg(feature = "ui-tests")]
+pub(super) static FORCE_CAPTION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Width reserved at the top-right for the caption buttons.
+pub(super) const CAPTION_WIDTH: f32 = 46. * 3.;
+
+impl Workspace {
+    /// Minimize / maximize / close at the window's top-right, painted over
+    /// everything. On Windows the OS handles them through hit-test areas, which
+    /// keeps native behavior (snap layouts on maximize, close confirmation via
+    /// `on_window_should_close`); elsewhere they act on click.
+    pub(super) fn render_caption(&self, window: &Window) -> Option<impl IntoElement> {
+        if !custom_caption() {
+            return None;
+        }
+        let p = self.appearance.palette();
+        let native = cfg!(target_os = "windows");
+        let maximized = window.is_maximized();
+        let button = |id: &'static str, icon: IconName, area: gpui::WindowControlArea| {
+            let close = matches!(area, gpui::WindowControlArea::Close);
+            div()
+                .id(id)
+                .debug_selector(move || format!("caption-{id}"))
+                .w(px(46.))
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgb(p.muted))
+                .when(close, |d| d.rounded_tr(px(p.panel_radius)))
+                .hover(move |s| {
+                    if close {
+                        s.bg(rgb(0xc42b1c)).text_color(rgb(0xffffff))
+                    } else {
+                        s.bg(rgb(p.selected)).text_color(rgb(p.text))
+                    }
+                })
+                .when(native, |d| d.window_control_area(area))
+                .when(!native, |d| {
+                    d.on_click(move |_, window, _| match area {
+                        gpui::WindowControlArea::Min => window.minimize_window(),
+                        gpui::WindowControlArea::Max => window.zoom_window(),
+                        _ => window.remove_window(),
+                    })
+                })
+                .child(Icon::new(icon).size(px(14.)))
+        };
+        Some(
+            gpui::deferred(
+                div()
+                    .id("window-caption")
+                    .debug_selector(|| "window-caption".into())
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .h(px(32.))
+                    .flex()
+                    .occlude()
+                    .child(button(
+                        "minimize",
+                        IconName::WindowMinimize,
+                        gpui::WindowControlArea::Min,
+                    ))
+                    .child(button(
+                        "maximize",
+                        if maximized {
+                            IconName::WindowRestore
+                        } else {
+                            IconName::WindowMaximize
+                        },
+                        gpui::WindowControlArea::Max,
+                    ))
+                    .child(button(
+                        "close",
+                        IconName::WindowClose,
+                        gpui::WindowControlArea::Close,
+                    )),
+            )
+            .with_priority(1),
+        )
+    }
+}
+
+/// Marks an otherwise-empty area as the window's title bar (drag to move,
+/// double-click to maximize) when the app draws its own caption.
+pub(super) fn drag_region<E: InteractiveElement>(element: E) -> E {
+    if custom_caption() && cfg!(target_os = "windows") {
+        element.window_control_area(gpui::WindowControlArea::Drag)
+    } else {
+        element
+    }
+}

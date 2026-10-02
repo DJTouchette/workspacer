@@ -16,6 +16,7 @@ mod typography;
 mod usage;
 mod work;
 use chrome::ControlTextStyle;
+pub(crate) use chrome::custom_caption;
 use gpui::{
     Animation, AnimationExt, App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable,
     FontWeight, KeyBinding, ListAlignment, ListOffset, ListScrollEvent, ListState, Render,
@@ -1261,6 +1262,11 @@ impl Render for Workspace {
         // under the floating title pill instead of colliding with a hard edge.
         let header = div().absolute().top_0().left_0().w_full().flex().justify_center()
             .bg(gpui::linear_gradient(180., gpui::linear_color_stop(rgb(p.chat), 0.6), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
+            // The title-pill row doubles as the window's title bar; the pill
+            // occludes, so only the empty space around it drags. Keep the pill
+            // clear of the caption buttons.
+            .child(chrome::drag_region(div()).absolute().top_0().left_0().w_full().h(px(56.)))
+            .when(chrome::custom_caption(), |d| d.pr(px(chrome::CAPTION_WIDTH)))
             .child(chrome::chat_column().relative().pt_3().pb_5().flex().flex_col().items_center().gap_2()
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
@@ -2849,6 +2855,31 @@ mod tests {
         visual.run_until_parked();
         visual.simulate_keystrokes("escape");
         workspace.read_with(&visual, |this, _| assert!(!this.usage_open));
+    }
+
+    #[gpui::test]
+    fn app_drawn_caption_sits_top_right_and_clears_the_title_pill(cx: &mut TestAppContext) {
+        chrome::FORCE_CAPTION.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        chrome::FORCE_CAPTION.store(false, std::sync::atomic::Ordering::Relaxed);
+        let width = visual.update(|window, _| window.viewport_size().width);
+        let caption = visual.debug_bounds("window-caption").unwrap();
+        let close = visual.debug_bounds("caption-close").unwrap();
+        assert_eq!(caption.top(), px(0.));
+        assert_eq!(caption.right(), width);
+        assert_eq!(close.right(), width);
+        assert!(visual.debug_bounds("caption-minimize").unwrap().right() <= close.left());
+        let pill = visual.debug_bounds("title-bar").unwrap();
+        assert!(
+            pill.right() <= caption.left(),
+            "the title pill clears the caption buttons"
+        );
     }
 
     #[gpui::test]

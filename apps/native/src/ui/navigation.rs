@@ -230,7 +230,8 @@ impl Workspace {
         let p = self.appearance.palette();
         div()
             .relative()
-            // Deferred, so it paints over the sidebar and content added later.
+            // Deferred, so they paint over the sidebar and content added later.
+            .children(self.render_caption(window))
             .children(self.render_usage_modal(cx))
             .key_context(
                 if self.settings.vim_navigation && self.focus.is_focused(window) {

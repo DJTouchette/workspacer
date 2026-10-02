@@ -228,6 +228,9 @@ fn main() -> Result<()> {
                 window_min_size: Some(size(px(720.), px(480.))),
                 titlebar: Some(gpui::TitlebarOptions {
                     title: Some("Workspacer Native".into()),
+                    // Windows: no system caption; the app draws its buttons
+                    // and drag regions (see `chrome::render_caption`).
+                    appears_transparent: ui::custom_caption(),
                     ..Default::default()
                 }),
                 ..Default::default()

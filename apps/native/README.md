@@ -712,6 +712,13 @@ countdowns, pace verdicts, refresh failures, a refresh button; backdrop, ✕ or
 Esc close it). A tick on each meter marks the expected pace. Unavailable, rolled-over and unmeasured windows
 are omitted, as on desktop.
 
+On Windows the app draws its own title bar: there is no system caption strip;
+minimize, maximize/restore and close sit at the window's top-right (handled by
+the OS through hit-test areas, so snap layouts and the keep-running close
+preference still apply), and the sidebar header and the space around the chat
+title pill drag the window (double-click maximizes). `WKS_NATIVE_CAPTION=1`
+previews the same chrome on other platforms.
+
 The composer shows a **context meter** (`ctx`, a thin track and the percentage;
 green, amber from 70%, red from 90%) once the runtime reports occupancy, with
 tokens held of the window in its tooltip. It follows the TUI/desktop rules: the
