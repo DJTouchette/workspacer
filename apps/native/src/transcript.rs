@@ -514,8 +514,13 @@ pub fn escape_native_html_text(text: &str) -> String {
         .replace('>', "&amp;gt;")
 }
 
-/// Convert response HTML into inert native text/table layout. No URLs, style,
-/// scripts, forms or event handlers cross into the GPUI text parser.
+/// Convert response HTML into inert native text/table layout. No style,
+/// scripts, forms or event handlers cross into the GPUI text parser. The only
+/// attributes kept are link destinations the app itself routes on click
+/// (`crate::links`): `a href` to a web page or file, and `img src` naming an
+/// image file on the session's machine, which renders as a label and is never
+/// loaded. Any other scheme or a remote image is dropped, keeping its text.
+/// The result must be rendered with an app link callback.
 pub fn native_card_html(html: &str) -> String {
     use html5ever::tendril::TendrilSink;
     use markup5ever_rcdom::{Handle, NodeData, RcDom};
@@ -527,8 +532,34 @@ pub fn native_card_html(html: &str) -> String {
             NodeData::Text { contents } => {
                 out.push_str(&escape_native_html_text(&contents.borrow()))
             }
-            NodeData::Element { name, .. } => {
+            NodeData::Element { name, attrs, .. } => {
                 let tag = name.local.as_ref();
+                let attr = |key: &str| {
+                    attrs
+                        .borrow()
+                        .iter()
+                        .find(|a| a.name.local.as_ref() == key)
+                        .map(|a| a.value.to_string())
+                };
+                if tag == "img" {
+                    if let Some(src) = attr("src").filter(|src| routed(src, true)) {
+                        let alt = attr("alt").unwrap_or_default();
+                        let alt: String = alt.chars().take(200).collect();
+                        out.push_str(&format!(
+                            "<img src=\"{}\" alt=\"{}\">",
+                            escape_attribute(&src),
+                            escape_attribute(&alt)
+                        ));
+                    }
+                    return;
+                }
+                let link = (tag == "a")
+                    .then(|| attr("href"))
+                    .flatten()
+                    .filter(|href| routed(href, false));
+                if let Some(href) = &link {
+                    out.push_str(&format!("<a href=\"{}\">", escape_attribute(href)));
+                }
                 if matches!(
                     tag,
                     "script"
@@ -538,7 +569,6 @@ pub fn native_card_html(html: &str) -> String {
                         | "embed"
                         | "svg"
                         | "math"
-                        | "img"
                         | "video"
                         | "audio"
                         | "input"
@@ -592,6 +622,9 @@ pub fn native_card_html(html: &str) -> String {
                     out.push_str(tag);
                     out.push('>');
                 }
+                if link.is_some() {
+                    out.push_str("</a>");
+                }
             }
             _ => {
                 for child in node.children.borrow().iter() {
@@ -599,6 +632,27 @@ pub fn native_card_html(html: &str) -> String {
                 }
             }
         }
+    }
+    /// Only destinations the link router opens survive; relative paths
+    /// resolve against the session cwd at click time, not here.
+    fn routed(raw: &str, image: bool) -> bool {
+        match crate::links::classify("/", raw) {
+            crate::links::Link::Web(_) => !image,
+            crate::links::Link::File(target) => {
+                !image || target.kind == crate::links::FileKind::Image
+            }
+            crate::links::Link::Anchor | crate::links::Link::Refused(_) => false,
+        }
+    }
+    /// The component's minifier decodes attribute values and re-escapes them
+    /// on output, so (unlike text) one encoding survives both parses.
+    fn escape_attribute(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#39;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     }
     if html.len() > 65536 {
         return String::new();
@@ -1081,9 +1135,9 @@ mod tests {
         );
     }
     #[test]
-    fn native_html_keeps_tables_but_has_no_network_or_script_attributes() {
+    fn native_html_keeps_tables_and_routed_links_but_no_script_or_loading() {
         let html = native_card_html(
-            "<div onclick='bad()'><script>secret</script><table><tr><td>A</td><td>B</td></tr></table><img src='https://example.com'><a href='javascript:bad()'>link</a></div>",
+            "<div onclick='bad()'><script>secret</script><table><tr><td>A</td><td>B</td></tr></table><img src='https://example.com/x.png'><a href='javascript:bad()'>link</a></div>",
         );
         assert!(html.contains("<td>A</td>"));
         assert!(html.contains("link"));
@@ -1098,6 +1152,75 @@ mod tests {
         ] {
             assert!(!html.contains(forbidden), "{html}");
         }
+        // Destinations the router refuses or cannot open lose their link
+        // (keeping the text); images never load from the web or a data URL.
+        for refused in [
+            "<a href='mailto:team@example.com'>x</a>",
+            "<a href='data:text/html,hi'>x</a>",
+            "<a href=' JavaScript:bad()'>x</a>",
+            "<a href='vbscript:bad'>x</a>",
+            "<a href='~/secret.txt'>x</a>",
+            "<a href='#top'>x</a>",
+            "<a>x</a>",
+            "<img src='data:image/png;base64,AAAA'>",
+            "<img src='notes.md' alt='not an image'>",
+            "<img alt='no source'>",
+        ] {
+            let html = native_card_html(refused);
+            assert!(
+                !html.contains("href") && !html.contains("<img"),
+                "{refused} -> {html}"
+            );
+        }
+        assert_eq!(
+            native_card_html(
+                "<p><a href='src/long.rs#L150' onclick='x()' title='t' style='color:red'>Source</a></p>"
+            ),
+            "<p><a href=\"src/long.rs#L150\">Source</a></p>"
+        );
+        assert_eq!(
+            native_card_html("<img src='out/shot.png' alt='Shot' onerror='x()' width='99999'>"),
+            "<img src=\"out/shot.png\" alt=\"Shot\">"
+        );
+    }
+    #[test]
+    fn routed_html_destinations_survive_the_double_parse_unchanged() {
+        use html5ever::tendril::TendrilSink;
+        use markup5ever_rcdom::{Handle, NodeData, RcDom};
+        // Collect each element's attributes after a parse.
+        fn attributes(node: &Handle, out: &mut Vec<(String, String, String)>) {
+            if let NodeData::Element { name, attrs, .. } = &node.data {
+                for attr in attrs.borrow().iter() {
+                    out.push((
+                        name.local.to_string(),
+                        attr.name.local.to_string(),
+                        attr.value.to_string(),
+                    ));
+                }
+            }
+            for child in node.children.borrow().iter() {
+                attributes(child, out);
+            }
+        }
+        let href = "https://example.com/a?b=1&c=\"q\"<x>'y'";
+        let src = "shots/a \"b\" & <c>.png";
+        let raw = format!(
+            "<a href='{}'>Web</a><img src='{}' alt='\" onerror=\"x()'>",
+            href.replace('&', "&amp;").replace('\'', "&#39;"),
+            src.replace('&', "&amp;"),
+        );
+        let card = native_card_html(&raw);
+        let dom = html5ever::parse_document(RcDom::default(), Default::default()).one(card);
+        let mut found = vec![];
+        attributes(&dom.document, &mut found);
+        assert_eq!(
+            found,
+            vec![
+                ("a".into(), "href".into(), href.into()),
+                ("img".into(), "src".into(), src.into()),
+                ("img".into(), "alt".into(), "\" onerror=\"x()".into()),
+            ]
+        );
     }
     #[test]
     fn literal_entities_survive_the_native_html_double_parse_boundary() {

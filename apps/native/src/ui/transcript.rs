@@ -998,18 +998,21 @@ impl Workspace {
                     if !card.body.trim().is_empty() {
                         // Card links take the same routes as Markdown links;
                         // the component never opens a scheme or image itself.
+                        let selector = format!("html-card-{block_key}");
                         card_body = card_body.child(
-                            TextView::html(
-                                SharedString::from(format!("{block_key}-body")),
-                                card.body,
-                                window,
-                                cx,
-                            )
-                            .style(gpui_component::text::TextViewStyle {
-                                on_link_click: Some(self.link_handler(cx)),
-                                ..Default::default()
-                            })
-                            .selectable(true),
+                            div().debug_selector(move || selector).child(
+                                TextView::html(
+                                    SharedString::from(format!("{block_key}-body")),
+                                    card.body,
+                                    window,
+                                    cx,
+                                )
+                                .style(gpui_component::text::TextViewStyle {
+                                    on_link_click: Some(self.link_handler(cx)),
+                                    ..Default::default()
+                                })
+                                .selectable(true),
+                            ),
                         );
                     }
                     for (i, action) in card.actions.into_iter().enumerate() {

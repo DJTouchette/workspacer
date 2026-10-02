@@ -1995,6 +1995,127 @@ mod tests {
     }
 
     #[gpui::test]
+    fn html_card_links_route_from_raw_fence_through_sanitizer(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        // Tall enough that every card is laid out at once.
+        visual.simulate_resize(size(px(1000.), px(1600.)));
+        let card = |body: &str| {
+            let raw =
+                serde_json::json!({"v":1,"title":"Card","fallback":"Fallback","bodyHtml":body});
+            format!("```wks-html-card\n{raw}\n```")
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/fixture/repo".into();
+                view.transcript.snapshot(ConversationSnapshot {
+                    seq: 5,
+                    first_seq: 1,
+                    items: [
+                        card("<p><a href='https://example.com/docs?a=1&amp;b=&quot;2&quot;' onclick='x()'>Web docs</a></p>"),
+                        card("<p><a href='src/long.rs#L150'>HTML source</a></p>"),
+                        card("<p><img src='out/shot.png' alt='HTML image' onerror='x()'></p>"),
+                        card("<p><a href='javascript:alert(1)'>Script link</a> <a href='mailto:a@b.c'>Mail</a></p>"),
+                        card("<p><img src='https://example.com/x.png' alt='Remote image'>Remote</p>"),
+                    ]
+                    .into_iter()
+                    .map(|text| Item {
+                        kind: "assistant_text".into(),
+                        text,
+                        ..Default::default()
+                    })
+                    .collect(),
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        // TextView parses HTML behind a real-time debounce; retry clicks.
+        fn click_until(
+            visual: &mut VisualTestContext,
+            card: &'static str,
+            mut done: impl FnMut(&mut VisualTestContext) -> bool,
+        ) {
+            for _ in 0..100 {
+                // Empty until the debounced parse lands.
+                let Some(bounds) = visual.debug_bounds(card) else {
+                    visual.run_until_parked();
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    continue;
+                };
+                visual.simulate_click(
+                    bounds.origin + gpui::point(px(20.), px(8.)),
+                    gpui::Modifiers::default(),
+                );
+                visual.run_until_parked();
+                if done(visual) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            panic!("{card} never responded to a click");
+        }
+        let platform = cx.clone();
+        click_until(&mut visual, "html-card-live:a:0-0", |_| {
+            platform.opened_url().is_some()
+        });
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://example.com/docs?a=1&b=%222%22"),
+            "the web destination survives sanitizing and both HTML parses (then URL-normalized)"
+        );
+        assert!(commands.try_recv().is_err(), "web links never read files");
+        let mut request = None;
+        click_until(&mut visual, "html-card-live:a:1-0", |_| {
+            request = commands.try_recv().ok();
+            request.is_some()
+        });
+        let Some(Command::Request(wks_native::features::Request::FilePreview { session, target })) =
+            request
+        else {
+            panic!("an HTML file link must request a native preview");
+        };
+        assert_eq!(session, "a");
+        assert_eq!(target.path, "/fixture/repo/src/long.rs");
+        assert_eq!(target.line, Some(150));
+        let mut request = None;
+        click_until(&mut visual, "html-card-live:a:2-0", |_| {
+            request = commands.try_recv().ok();
+            request.is_some()
+        });
+        let Some(Command::Request(wks_native::features::Request::FilePreview { target, .. })) =
+            request
+        else {
+            panic!("an HTML image must request a native preview");
+        };
+        assert_eq!(target.path, "/fixture/repo/out/shot.png");
+        assert_eq!(target.kind, wks_native::links::FileKind::Image);
+        // Refused schemes and remote images were dropped by the sanitizer:
+        // nothing opens, nothing is requested, and no router refusal ran.
+        for card in ["html-card-live:a:3-0", "html-card-live:a:4-0"] {
+            for _ in 0..25 {
+                let Some(bounds) = visual.debug_bounds(card) else {
+                    visual.run_until_parked();
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    continue;
+                };
+                visual.simulate_click(
+                    bounds.origin + gpui::point(px(20.), px(8.)),
+                    gpui::Modifiers::default(),
+                );
+                visual.run_until_parked();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://example.com/docs?a=1&b=%222%22")
+        );
+        assert!(commands.try_recv().is_err());
+        workspace.read_with(&visual, |this, _| assert!(this.extras.notice.is_empty()));
+    }
+
+    #[gpui::test]
     fn file_viewer_contains_keys_over_a_nonempty_draft(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
