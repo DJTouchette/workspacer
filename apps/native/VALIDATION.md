@@ -615,3 +615,14 @@ GPUI overflow clipping is rectangular.
   bookmark test with switch-back-lands-on-latest coverage.
 - Desktop renderer typecheck passed; renderer Vitest **1936 passed** (206
   files); `chatTailPin` Playwright renderer spec **2 passed**.
+
+## Floating title pill, inset sidebar, tighter chat (2026-10-02)
+
+The full-width ruled header is now a content-sized floating pill (status,
+project / title, provider·model chip, icon actions) over a fade, so history
+scrolls softly beneath it. The sidebar and collapsed rail are inset rounded
+panels on a chat-colored shell. Assistant copy moved from a reserved row above
+each message to the hover-revealed timestamp line, and row padding tightened.
+
+- Native serialized suite **184 passed**; strict Clippy and whitespace passed.
+- Real windows checked on a headless Hyprland output in Dark, Light and Nord.

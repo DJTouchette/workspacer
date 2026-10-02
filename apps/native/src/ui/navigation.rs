@@ -247,7 +247,7 @@ impl Workspace {
             )
             .size_full()
             .flex()
-            .bg(rgb(p.base))
+            .bg(rgb(p.chat))
             .text_color(rgb(p.text))
             .font_family(gpui_component::Theme::global(cx).font_family.clone())
             .text_size(px(self.settings.text_size.clamp(12, 20) as f32))

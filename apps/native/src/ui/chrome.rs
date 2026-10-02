@@ -130,6 +130,116 @@ pub(super) fn project_label(path: &str) -> &str {
 }
 
 impl Workspace {
+    /// Compact floating title pill: status, project / title, model chip and
+    /// icon actions, sized to its content rather than the whole chat width.
+    pub(super) fn render_title_bar(
+        &self,
+        narrow: bool,
+        enabled: bool,
+        title: &str,
+        session: Option<&Session>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        let divider = || div().w(px(1.)).h(px(18.)).flex_shrink_0().bg(rgb(p.border));
+        div()
+            .id("title-bar")
+            .debug_selector(|| "title-bar".into())
+            .occlude()
+            .max_w_full()
+            .min_w_0()
+            .h(px(40.))
+            .pl_4()
+            .pr_1()
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded_full()
+            .bg(rgb(p.surface))
+            .border_1()
+            .border_color(rgb(p.border))
+            .shadow(floating_shadow(p))
+            .when_some(session, |d, session| {
+                let (label, color) = if self.view.connected {
+                    session_status(session, p)
+                } else {
+                    ("Offline", p.muted)
+                };
+                d.child(
+                    div()
+                        .id("title-status")
+                        .flex_shrink_0()
+                        .tooltip({
+                            let label = SharedString::from(label.to_owned());
+                            move |window, cx| Tooltip::new(label.clone()).build(window, cx)
+                        })
+                        .child(if self.view.connected && session.working() {
+                            brand_spinner(
+                                12.,
+                                p,
+                                SharedString::from(format!("title-working-{}", session.id)),
+                            )
+                        } else {
+                            status_dot(color)
+                        }),
+                )
+                .when(!narrow, |d| {
+                    d.child(
+                        div()
+                            .flex_shrink_0()
+                            .max_w(px(140.))
+                            .truncate()
+                            .text_size(px(12.))
+                            .text_color(rgb(p.muted))
+                            .child(project_label(&session.cwd).to_owned()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(rgb(p.disabled))
+                            .child("/"),
+                    )
+                })
+            })
+            .child(
+                div()
+                    .min_w_0()
+                    .max_w(px(if narrow { 220. } else { 360. }))
+                    .truncate()
+                    .text_size(px(13.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title.to_owned()),
+            )
+            .when_some(session.filter(|_| !narrow), |d, session| {
+                let provider = match session.provider.as_str() {
+                    "claude" => "Claude",
+                    "codex" => "Codex",
+                    "" => "Agent",
+                    other => other,
+                };
+                let model = if session.model.is_empty() {
+                    provider.to_owned()
+                } else {
+                    format!("{provider} · {}", session.model)
+                };
+                d.child(
+                    div()
+                        .flex_shrink_0()
+                        .max_w(px(180.))
+                        .truncate()
+                        .px_2()
+                        .py(px(2.))
+                        .rounded_full()
+                        .bg(rgb(p.selected))
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(model),
+                )
+            })
+            .child(divider())
+            .child(self.chat_actions(enabled, cx))
+    }
+
     pub(super) fn chat_actions(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
         let selected = self.view.selected.is_some();
         let model_enabled = enabled && self.supported_session();
@@ -139,10 +249,10 @@ impl Workspace {
         div()
             .flex()
             .items_center()
-            .gap_1()
+            .gap(px(2.))
             .flex_shrink_0()
             .child(
-                self.quiet_button("open-changes", "Changes", IconName::Replace, selected)
+                self.icon_button("open-changes", "Changes", IconName::Replace, selected)
                     .when(selected, |d| {
                         d.on_click(cx.listener(|this, _, window, cx| {
                             this.open_feature(Screen::Changes, window, cx)

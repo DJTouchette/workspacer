@@ -1163,7 +1163,13 @@ impl Render for Workspace {
             px(0.)
         });
 
-        let sidebar = self.render_sidebar(narrow, compact, window, cx);
+        // Inset so the panel floats with the same rounding as cards and the composer.
+        let sidebar = div()
+            .h_full()
+            .flex_shrink_0()
+            .py_2()
+            .pl_2()
+            .child(self.render_sidebar(narrow, compact, window, cx));
 
         if self.new_session {
             let content = self.render_new_session(cx);
@@ -1207,8 +1213,11 @@ impl Render for Workspace {
                 .into_any_element();
         }
 
-        let header = div().absolute().top_0().left_0().w_full().occlude().bg(rgb(p.chat)).border_b_1().border_color(rgb(p.border)).flex().justify_center()
-            .child(chrome::chat_column().relative().py_3().flex().flex_col().gap_2()
+        // Transparent fade rather than a ruled strip: history scrolls softly
+        // under the floating title pill instead of colliding with a hard edge.
+        let header = div().absolute().top_0().left_0().w_full().flex().justify_center()
+            .bg(gpui::linear_gradient(180., gpui::linear_color_stop(rgb(p.chat), 0.6), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
+            .child(chrome::chat_column().relative().pt_3().pb_5().flex().flex_col().items_center().gap_2()
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
                         let _ = header_view.update(cx, |this, cx| {
@@ -1225,16 +1234,7 @@ impl Render for Workspace {
                         });
                     });
                 }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
-                .child(div().flex().items_center().gap_3()
-                    .child(div().flex_1().min_w_0().flex().items_center().gap_3()
-                        .when(!narrow, |d| d.when_some(selected.as_ref(), |d, session| d
-                            .child(div().max_w(px(160.)).truncate().text_size(px(12.)).text_color(rgb(p.muted)).child(chrome::project_label(&session.cwd).to_owned()))
-                            .child(div().text_color(rgb(p.border)).child("/"))))
-                        .child(div().flex_1().min_w_0().truncate().text_size(px(14.)).font_weight(FontWeight::SEMIBOLD).child(title)))
-                    .when(!narrow, |d| d.child(self.chat_actions(enabled, cx))))
-                .when(narrow, |d| d.child(div().flex().items_center().justify_between().gap_2()
-                    .when_some(selected.as_ref(), |d, session| d.child(session_badge(session, p, self.view.connected)))
-                    .child(self.chat_actions(enabled, cx))))
+                .child(self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx))
                 .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
                 .when(!notice.is_empty(), |d| d.child(div().occlude().py_1().text_size(px(11.)).text_color(rgb(p.warning)).child(notice)))
                 .when(!self.view.connected && !self.view.transcript.rows.is_empty(), |d| d.child(self.render_connection_banner(cx)))

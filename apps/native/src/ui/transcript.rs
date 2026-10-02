@@ -298,7 +298,7 @@ impl Workspace {
         let mut body = div()
             .group("message")
             .w_full()
-            .py_2()
+            .py_1()
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "chat-content-column".into())
             });
@@ -444,7 +444,32 @@ impl Workspace {
         let timestamp = row
             .timestamp_ms
             .or_else(|| row.timestamp.as_deref().and_then(timing::parse_timestamp));
-        let footer = self.timestamp_footer(duration.map(Into::into), timestamp);
+        let mut footer = self.timestamp_footer(duration.map(Into::into), timestamp);
+        if row.tool.is_none() && row.role == "Assistant" {
+            // Hover-only copy lives on the metadata line so it reserves no row.
+            let session = self.view.selected.clone().unwrap_or_default();
+            let copy = row.copy_text();
+            footer = div()
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap_1()
+                .child(
+                    self.icon_button(
+                        SharedString::from(format!("copy-{namespace}:{session}:{}", row.key)),
+                        "Copy message",
+                        IconName::Copy,
+                        true,
+                    )
+                    .size(px(22.))
+                    .opacity(0.)
+                    .group_hover("message", |style| style.opacity(1.))
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                    }),
+                )
+                .child(footer);
+        }
         self.render_message_content(row, namespace, continued, window, cx)
             .child(footer)
     }
@@ -483,7 +508,7 @@ impl Workspace {
         let mut body = div()
             .w_full()
             .px_3()
-            .py_2()
+            .py_1()
             .flex()
             .flex_col()
             .gap_2()
@@ -496,7 +521,7 @@ impl Workspace {
                     .px_4()
                     .py_3()
             })
-            .when(row.tool.is_none(), |d| {
+            .when(row.tool.is_none() && row.role != "Assistant", |d| {
                 d.child(
                     div()
                         .flex()
