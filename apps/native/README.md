@@ -287,8 +287,18 @@ Transcript rendering is described below.
   History keeps full pageable input/output when live previews are shortened.
   Skill, subagent and workflow calls have specialized labels and use reported
   inventory/status when the connected backend supplies it.
-- User messages preserve literal text. Assistant messages retain Markdown/code;
-  Markdown file targets open a guarded, read-only preview on the connected host.
+- User messages preserve literal text. Assistant messages retain Markdown/code.
+  Chat links route through one classifier (`src/links.rs`): `http`/`https` open
+  the system browser; any other scheme is refused with a visible notice. File
+  links (Markdown, HTML cards, tool file targets, image thumbnails) resolve
+  relative paths against the session's cwd, keep `:line[:col]`, `:a-b` and
+  `#L12` anchors, and open a read-only sheet: syntax-highlighted, selectable,
+  searchable (Ctrl+F) source with line numbers (≤1 MiB, ≤50,000 lines), or the
+  image (≤2 MiB source, shown at ≤2560 px). Files are read by the connected hub
+  on the machine that runs the session, never from this client's disk, so a
+  remote hub's paths are never opened locally; `~`, foreign `file://` hosts and
+  relative paths without a cwd are refused. Markdown images render as labels,
+  not client-side loads. Esc, ✕ or the backdrop close the sheet.
   Markdown follows the desktop chat (`components/markdown.tsx`): bold/italic in
   the bright text color over dimmer body copy, accent inline code in the mono
   font, accent bullets, underlined h1/h2, and bordered code blocks with a
@@ -616,6 +626,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/controller.rs` | Selection, RPC lifecycle, snapshot/event reconciliation, UI mailbox |
 | `src/ui.rs` | GPUI views, virtualization, keyboard dispatch, drafts |
 | `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
+| `src/links.rs` | Chat link classification, path/line resolution, preview bounds and errors |
+| `src/ui/file_viewer.rs` | Link routing and the read-only file/image viewer sheet |
 | `src/ui/settings.rs` | Categorized, searchable settings |
 | `src/remote.rs` | Tailscale sharing and pairing state, phone links, QR modules |
 | `src/ui/remote.rs` | Settings → Remote panel |
