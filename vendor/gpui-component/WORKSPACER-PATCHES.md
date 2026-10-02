@@ -12,6 +12,12 @@ tables and code, and its asynchronous parse cache:
   upstream behavior. Callback identity is intentionally excluded from style
   comparisons to avoid reparsing on every render. Native view IDs include the
   session, and the callback checks current session ownership and cwd on click.
+  When `on_link_click` is set, Markdown/HTML images are not loaded by the
+  component at all: `node.rs` renders an inline image label (alt text or file
+  name) whose click goes to the same callback with the image's link, or its
+  source when unlinked. Upstream `img(url)` would read a path from the client's
+  own disk (wrong machine for a remote agent) or fetch any URL unasked, and its
+  click handler called `cx.open_url` directly with any scheme.
 - `unordered_list_marker`: an optional visual bullet override. The default
   preserves upstream behavior; the native transcript chooses a round bullet.
 

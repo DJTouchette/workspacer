@@ -1,10 +1,9 @@
-//! Readable Markdown with session-owned file previews and full text selection.
+//! Readable Markdown with session-routed links and full text selection.
 use super::*;
 use gpui_component::{
     ActiveTheme,
     text::{ProseColors, TextViewStyle},
 };
-use wks_native::{features::Request, transcript::file_target};
 
 impl Workspace {
     pub(super) fn render_markdown(
@@ -14,37 +13,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let workspace = cx.entity().downgrade();
-        let owner = self.view.selected.clone().unwrap_or_default();
         let p = self.appearance.palette();
         let style = TextViewStyle {
-            on_link_click: Some(Arc::new(move |url, _, cx| {
-                if url.starts_with("https://")
-                    || url.starts_with("http://")
-                    || url.starts_with("mailto:")
-                {
-                    cx.open_url(url);
-                    return;
-                }
-                let _ = workspace.update(cx, |this, cx| {
-                    if !this.view.connected || this.view.selected.as_ref() != Some(&owner) {
-                        return;
-                    }
-                    let cwd = this
-                        .selected_session()
-                        .map(|s| s.cwd.as_str())
-                        .unwrap_or("");
-                    if let Some(path) = file_target(cwd, url) {
-                        this.request(
-                            Request::FilePreview {
-                                session: owner.clone(),
-                                path,
-                            },
-                            cx,
-                        );
-                    }
-                });
-            })),
+            on_link_click: Some(self.link_handler(cx)),
             unordered_list_marker: Some("• ".into()),
             // Desktop chat parity (components/markdown.tsx): bright emphasis,
             // accent inline code, accent bullets, labeled bordered fences.

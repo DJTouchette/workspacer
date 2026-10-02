@@ -198,6 +198,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_file_viewer(next, window, cx);
         if self.settings.notifications
             && self.view.connected
             && next.connected

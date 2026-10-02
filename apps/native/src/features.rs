@@ -10,9 +10,10 @@ pub const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub enum Request {
+    /// Read-only view of a chat-linked file on the session's machine.
     FilePreview {
         session: String,
-        path: String,
+        target: crate::links::FileTarget,
     },
     Previews {
         paths: Vec<String>,
@@ -96,15 +97,30 @@ impl Request {
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
         match self {
-            Self::FilePreview { path, .. } => {
-                let value = backend.call("fs.read", json!({"path":path})).await?;
-                ensure!(
-                    value["contents"]
-                        .as_str()
-                        .is_some_and(|s| s.len() <= 1024 * 1024),
-                    "File preview supports text files up to 1 MiB"
-                );
-                Ok(value)
+            Self::FilePreview { target, .. } => {
+                let fail = |e: anyhow::Error| anyhow::anyhow!(crate::links::read_error(target, &e.to_string()));
+                match target.kind {
+                    crate::links::FileKind::Text => {
+                        let value = backend
+                            .call("fs.read", json!({"path":target.path}))
+                            .await
+                            .map_err(fail)?;
+                        let contents = value["contents"]
+                            .as_str()
+                            .ok_or_else(|| anyhow::anyhow!("The hub returned no file contents."))?;
+                        crate::links::check_text(contents)?;
+                        Ok(value)
+                    }
+                    crate::links::FileKind::Image => {
+                        let value = backend
+                            .call("fs.readImage", json!({"path":target.path}))
+                            .await
+                            .map_err(fail)?;
+                        tokio::task::spawn_blocking(move || full_image(value))
+                            .await?
+                            .map_err(fail)
+                    }
+                }
             }
             Self::Previews { paths } => {
                 let mut previews = serde_json::Map::new();
@@ -259,7 +275,29 @@ impl Request {
     }
 }
 
-fn thumbnail(value: Value) -> Result<Value> {
+/// A viewer-sized image, decoded under the same limits as thumbnails and
+/// re-encoded so the UI thread only ever uploads a bounded PNG.
+fn full_image(value: Value) -> Result<Value> {
+    let size = value["size"].as_u64();
+    let image = decode_preview(&value)?;
+    let (width, height) = (image.width(), image.height());
+    let side = crate::links::MAX_IMAGE_SIDE;
+    let image = if width > side || height > side {
+        image.resize(side, side, image::imageops::FilterType::Triangle)
+    } else {
+        image
+    };
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut bytes, image::ImageFormat::Png)?;
+    Ok(json!({
+        "width": width,
+        "height": height,
+        "size": size,
+        "png": base64::engine::general_purpose::STANDARD.encode(bytes.into_inner()),
+    }))
+}
+
+fn decode_preview(value: &Value) -> Result<image::DynamicImage> {
     let url = value["dataUrl"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("No image preview available"))?;
@@ -275,7 +313,11 @@ fn thumbnail(value: Value) -> Result<Value> {
     limits.max_image_height = Some(8192);
     limits.max_alloc = Some(64 * 1024 * 1024);
     reader.limits(limits);
-    let image = reader.decode()?.thumbnail(640, 320);
+    Ok(reader.decode()?)
+}
+
+fn thumbnail(value: Value) -> Result<Value> {
+    let image = decode_preview(&value)?.thumbnail(640, 320);
     let width = image.width();
     let height = image.height();
     let (_, bytes) = encode_png(image)?;
@@ -476,6 +518,28 @@ mod tests {
         assert_eq!(preview["width"], 640);
         assert_eq!(preview["height"], 320);
         assert!(thumbnail(json!({"dataUrl":"data:image/png;base64,bm90IGFuIGltYWdl"})).is_err());
+    }
+    #[test]
+    fn viewer_images_keep_source_size_but_upload_a_bounded_png() {
+        let encode = |w, h| {
+            let (_, bytes) = encode_png(image::DynamicImage::new_rgb8(w, h)).unwrap();
+            json!({"size":bytes.len(),"dataUrl":format!("data:image/png;base64,{}",base64::engine::general_purpose::STANDARD.encode(bytes))})
+        };
+        let decoded = |value: &Value| {
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(value["png"].as_str().unwrap())
+                .unwrap();
+            image::load_from_memory(&png).unwrap()
+        };
+        let small = full_image(encode(300, 200)).unwrap();
+        assert_eq!((small["width"].as_u64(), small["height"].as_u64()), (Some(300), Some(200)));
+        assert_eq!(decoded(&small).width(), 300);
+        let large = full_image(encode(5120, 1280)).unwrap();
+        assert_eq!(large["width"], 5120);
+        let shown = decoded(&large);
+        assert_eq!((shown.width(), shown.height()), (2560, 640));
+        assert!(full_image(json!({"dataUrl":"data:image/png;base64,bm90IGFuIGltYWdl"})).is_err());
+        assert!(full_image(json!({})).is_err());
     }
     #[test]
     fn clipboard_bitmaps_are_encoded_as_uploadable_png() {

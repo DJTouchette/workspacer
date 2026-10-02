@@ -2,6 +2,7 @@ mod bus_commands;
 mod children;
 mod chrome;
 mod features;
+mod file_viewer;
 mod launch;
 mod markdown;
 mod navigation;
@@ -1438,7 +1439,12 @@ mod tests {
                     )
                     .child(
                         workspace
-                            .file_button("file", "src/main.rs".into(), cx)
+                            .file_button(
+                                "file",
+                                wks_native::links::tool_file("/repo", "src/main.rs", None),
+                                "src/main.rs",
+                                cx,
+                            )
                             .debug_selector(|| "file".into()),
                     )
             })
@@ -1744,26 +1750,81 @@ mod tests {
         );
         visual.run_until_parked();
         let request = commands.try_recv().expect("file click issues a request");
-        let Command::Request(wks_native::features::Request::FilePreview { session, path }) =
+        let Command::Request(wks_native::features::Request::FilePreview { session, target }) =
             request
         else {
             panic!("file click must request a native preview");
         };
         assert_eq!(session, "a");
-        assert_eq!(path, "/fixture/repo/docs/README.md");
-        visual.update(|window, cx| {
-            workspace.update(cx, |this, cx| {
-                let mut view = (*this.view).clone();
-                view.requests.insert("file-preview", wks_native::features::RequestState {
-                request: wks_native::features::Request::FilePreview { session, path },
-                number: 1, loading: false, error: None,
-                        value: Arc::new(serde_json::json!({"contents":"# Native preview\nFile content loaded."})),
-            });
-                this.update_view(Arc::new(view), window, cx);
-            })
+        assert_eq!(target.path, "/fixture/repo/docs/README.md");
+        assert_eq!(target.line, Some(12));
+        let preview = |loading: bool, error: Option<&str>, number: u64| {
+            let (session, target, workspace) = (session.clone(), target.clone(), workspace.clone());
+            let error = error.map(str::to_owned);
+            move |window: &mut Window, cx: &mut App| {
+                workspace.update(cx, |this, cx| {
+                    let mut view = (*this.view).clone();
+                    view.requests.insert("file-preview", wks_native::features::RequestState {
+                        request: wks_native::features::Request::FilePreview { session, target },
+                        number, loading, error,
+                        value: Arc::new(serde_json::json!({"contents":(1..=40).map(|i| format!("line {i}\n")).collect::<String>(),"size":290})),
+                    });
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            }
+        };
+        visual.update(preview(true, None, 1));
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("file-viewer").is_some(), "loading opens the sheet");
+        assert!(visual.debug_bounds("file-viewer-text").is_none());
+        visual.update(preview(false, None, 1));
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("file-viewer-title").is_some());
+        assert!(visual.debug_bounds("file-viewer-text").is_some());
+        let (text, cursor) = workspace.read_with(&visual, |this, cx| {
+            let editor = this.chat.viewer.editor().unwrap().read(cx);
+            (editor.value().to_string(), editor.cursor_position())
+        });
+        assert!(text.starts_with("line 1\n"));
+        assert_eq!(cursor.line, 11, "line anchors place the cursor on line 12");
+        // Read-only: typing reaches no file and changes nothing.
+        visual.simulate_input("typed");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.chat.viewer.editor().unwrap().read(cx).value().to_string(), text);
+        });
+        // Wheel over the sheet never scrolls the conversation underneath.
+        let top = |this: &Workspace| {
+            let top = this.list.logical_scroll_top();
+            (top.item_ix, top.offset_in_item)
+        };
+        let before = workspace.read_with(&visual, |this, _| top(this));
+        let sheet = visual.debug_bounds("file-viewer-text").unwrap();
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: sheet.center(),
+            delta: gpui::ScrollDelta::Lines(gpui::point(0., -3.)),
+            ..Default::default()
         });
         visual.run_until_parked();
-        assert!(visual.debug_bounds("file-preview-panel").is_some());
+        assert_eq!(
+            workspace.read_with(&visual, |this, _| top(this)),
+            before
+        );
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.file_viewer().is_none(), "Esc closes the viewer")
+        });
+        // A failed read stays visible as a message inside the sheet.
+        visual.update(preview(false, Some("No file at this path on the session's machine."), 2));
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("file-viewer-error").is_some());
+        let close = visual.debug_bounds("file-viewer-close").unwrap();
+        visual.simulate_click(close.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.file_viewer().is_none(), "close button closes the viewer")
+        });
     }
 
     #[gpui::test]

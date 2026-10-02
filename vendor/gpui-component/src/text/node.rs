@@ -663,6 +663,54 @@ impl Paragraph {
                         .into_any_element(),
                     );
                 }
+                // An app-routed view never loads image sources itself: a path
+                // names a file on the agent's machine, not this one, and a URL
+                // would be fetched without asking. It shows a label and lets the
+                // application decide what a click opens (workspacer patch).
+                if let Some(on_link_click) = node_cx.style.on_link_click.clone() {
+                    let url = image
+                        .link
+                        .as_ref()
+                        .map(|link| link.url.clone())
+                        .unwrap_or_else(|| image.url.to_string().into());
+                    let label: SharedString = match image.alt.as_ref().filter(|a| !a.is_empty()) {
+                        Some(alt) => alt.clone(),
+                        None => image
+                            .url
+                            .rsplit(['/', '\\'])
+                            .find(|s| !s.is_empty())
+                            .unwrap_or("image")
+                            .to_string()
+                            .into(),
+                    };
+                    let tooltip = match image.title() {
+                        title if title.is_empty() => image.url.to_string(),
+                        title => title,
+                    };
+                    child_nodes.push(
+                        h_flex()
+                            .id(ix)
+                            .gap_1()
+                            .cursor_pointer()
+                            .text_color(cx.theme().link)
+                            .hover(|this| this.underline())
+                            .child(Icon::new(IconName::GalleryVerticalEnd).size_3())
+                            .child(label)
+                            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                on_link_click(&url, window, cx);
+                            })
+                            .into_any_element(),
+                    );
+                    text.clear();
+                    links.clear();
+                    highlights.clear();
+                    code_ranges.clear();
+                    offset = 0;
+                    ix += 1;
+                    continue;
+                }
                 child_nodes.push(
                     img(image.url.clone())
                         .id(ix)

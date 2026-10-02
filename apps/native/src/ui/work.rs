@@ -5,7 +5,7 @@ use super::*;
 use gpui::AnyElement;
 use gpui_component::{Icon, IconName};
 use std::ops::Range;
-use wks_native::{model::Row, tool_preview, transcript as content, transcript::Tool};
+use wks_native::{model::Row, tool_preview, transcript::Tool};
 
 /// Older steps beyond this stay behind an "earlier steps" toggle.
 const VISIBLE_STEPS: usize = 6;
@@ -231,9 +231,11 @@ impl Workspace {
                     .selected_session()
                     .map(|s| s.cwd.as_str())
                     .unwrap_or("");
+                let link = super::file_viewer::tool_link(cwd, &input, path);
                 step = step.child(div().px_3().pb_2().child(self.file_button(
                     &format!("live:{session}:{key}-file"),
-                    content::resolve_path(cwd, path),
+                    link,
+                    path,
                     cx,
                 )));
             }

@@ -410,43 +410,6 @@ pub fn file_paths(text: &str, cwd: &str) -> Vec<String> {
     paths
 }
 
-/// Resolve a Markdown file target on its session's host, without opening it locally.
-pub fn file_target(cwd: &str, target: &str) -> Option<String> {
-    let mut target = target.trim().trim_matches(['<', '>']);
-    if target.is_empty()
-        || target.starts_with('#')
-        || target.contains("://")
-        || target.starts_with("mailto:")
-    {
-        return None;
-    }
-    target = target.split('#').next().unwrap_or(target);
-    for _ in 0..2 {
-        if let Some((path, line)) = target.rsplit_once(':')
-            && !line.is_empty()
-            && line.bytes().all(|b| b.is_ascii_digit())
-        {
-            target = path;
-        }
-    }
-    if !absolute(target)
-        && target
-            .split(['/', '\\'])
-            .next()
-            .is_some_and(|part| part.contains(':'))
-    {
-        return None;
-    }
-    if target.is_empty()
-        || target.contains('\0')
-        || target.len() > 4096
-        || (cwd.is_empty() && !absolute(target))
-    {
-        return None;
-    }
-    Some(resolve_path(cwd, target))
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum AssistantBlock {
     Markdown(String),
@@ -1237,33 +1200,3 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod file_target_tests {
-    use super::file_target;
-
-    #[test]
-    fn native_file_links_use_host_paths_and_strip_locations() {
-        assert_eq!(
-            file_target("/remote/repo", "docs/README.md:12:3"),
-            Some("/remote/repo/docs/README.md".into())
-        );
-        assert_eq!(
-            file_target("/remote/repo", "/absolute/README.md#section"),
-            Some("/absolute/README.md".into())
-        );
-        assert_eq!(
-            file_target("C:\\repo", "src\\main.rs:42"),
-            Some("C:\\repo\\src\\main.rs".into())
-        );
-        for target in [
-            "https://example.com/readme",
-            "mailto:user@example.com",
-            "javascript:alert(1)",
-            "#section",
-            "a\0b",
-        ] {
-            assert_eq!(file_target("/remote/repo", target), None);
-        }
-        assert_eq!(file_target("", "README.md"), None);
-    }
-}

@@ -15,7 +15,8 @@ pub(super) struct ChatUi {
     pub restored: bool,
     pub open: BTreeMap<String, bool>,
     text_pages: BTreeMap<String, usize>,
-    dismissed: BTreeMap<String, u64>,
+    pub dismissed: BTreeMap<String, u64>,
+    pub viewer: super::file_viewer::FileViewer,
     previews: BTreeMap<String, Preview>,
     pub wanted: BTreeSet<String>,
     preview_number: u64,
@@ -689,8 +690,9 @@ impl Workspace {
                     .selected_session()
                     .map(|s| s.cwd.as_str())
                     .unwrap_or("");
+                let link = super::file_viewer::tool_link(cwd, &input, path);
                 trail.push(
-                    self.file_button(&format!("{key}-file"), content::resolve_path(cwd, path), cx)
+                    self.file_button(&format!("{key}-file"), link, path, cx)
                         .into_any_element(),
                 );
             }
@@ -936,8 +938,16 @@ impl Workspace {
                     if !marker.is_empty() {
                         text = text.replace(&marker, "");
                     }
+                    let link = wks_native::links::tool_file(&cwd, &path, None);
+                    let owner = session.clone();
                     body = body.child(
                         div()
+                            .id(SharedString::from(format!("{key}-image-{path}")))
+                            .debug_selector(|| "chat-image-thumbnail".into())
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_link(&owner, link.clone(), cx)
+                            }))
                             .child(
                                 gpui::img(image.clone())
                                     .max_w(px(320.))
@@ -986,6 +996,8 @@ impl Workspace {
                         .child(card.title)
                         .child(literal(block_key.clone(), &card.fallback, window, cx));
                     if !card.body.trim().is_empty() {
+                        // Card links take the same routes as Markdown links;
+                        // the component never opens a scheme or image itself.
                         card_body = card_body.child(
                             TextView::html(
                                 SharedString::from(format!("{block_key}-body")),
@@ -993,6 +1005,10 @@ impl Workspace {
                                 window,
                                 cx,
                             )
+                            .style(gpui_component::text::TextViewStyle {
+                                on_link_click: Some(self.link_handler(cx)),
+                                ..Default::default()
+                            })
                             .selectable(true),
                         );
                     }
@@ -1021,14 +1037,24 @@ impl Workspace {
         body
     }
 
+    /// A tool's file target, opened through the same routing as chat links.
     pub(super) fn file_button(
         &self,
         key: &str,
-        path: String,
+        link: wks_native::links::Link,
+        label: &str,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let owner = self.view.selected.clone().unwrap_or_default();
         let p = self.appearance.palette();
+        let label = match &link {
+            wks_native::links::Link::File(target) => target.path.clone(),
+            _ => label.to_owned(),
+        };
+        let image = matches!(
+            &link,
+            wks_native::links::Link::File(t) if t.kind == wks_native::links::FileKind::Image
+        );
         chrome::interactive_control(
             div().id(SharedString::from(key.to_owned())),
             p,
@@ -1047,21 +1073,22 @@ impl Workspace {
         } else {
             p.disabled
         }))
-        .child(Icon::new(IconName::File).size(px(12.)).flex_shrink_0())
-        .child(div().min_w_0().truncate().child(path.clone()))
+        .child(
+            Icon::new(if image {
+                IconName::GalleryVerticalEnd
+            } else {
+                IconName::File
+            })
+            .size(px(12.))
+            .flex_shrink_0(),
+        )
+        .child(div().min_w_0().truncate().child(label))
         .when(self.view.connected, |d| {
             d.cursor_pointer()
                 .hover_text_style(|s| s.text_color(rgb(p.accent)))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.view.selected.as_ref() == Some(&owner) {
-                        this.request(
-                            Request::FilePreview {
-                                session: owner.clone(),
-                                path: path.clone(),
-                            },
-                            cx,
-                        );
-                    }
+                    cx.stop_propagation();
+                    this.open_link(&owner, link.clone(), cx);
                 }))
         })
     }
@@ -1263,61 +1290,6 @@ impl Workspace {
                         cx,
                     )),
             );
-        }
-        if let Some(state) = self
-            .view
-            .requests
-            .get("file-preview")
-            .filter(|s| self.chat.dismissed.get("file-preview") != Some(&s.number))
-            && let Request::FilePreview { session, path } = &state.request
-            && Some(session) == self.view.selected.as_ref()
-        {
-            let mut preview = div()
-                .id("file-preview-panel")
-                .debug_selector(|| "file-preview-panel".into())
-                .occlude()
-                .bg(rgb(p.chat))
-                .rounded(px(p.panel_radius))
-                .shadow(chrome::floating_shadow(p))
-                .p_3()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .justify_between()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_size(px(12.))
-                                .child(path.clone()),
-                        )
-                        .child(self.close_preview("file-preview", state.number, cx)),
-                );
-            if let Some(error) = &state.error {
-                preview = preview.child(div().text_color(rgb(p.warning)).child(error.clone()));
-            } else if state.loading {
-                preview = preview.child("Loading file…");
-            } else {
-                preview = preview.child(super::smooth_scroll::scroll_zone(
-                    div()
-                        .id("file-content")
-                        .max_h(px(300.))
-                        .overflow_y_scroll()
-                        .child(self.render_raw(
-                            &format!("file-{}", state.number),
-                            state.value["contents"].as_str().unwrap_or(""),
-                            window,
-                            cx,
-                        )),
-                ));
-            }
-            body = body.child(preview);
         }
         if let Some(state) = self
             .view

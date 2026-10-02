@@ -128,6 +128,10 @@ impl Workspace {
     }
 
     fn normal_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.file_viewer().is_some() {
+            self.close_file_viewer(window, cx);
+            return;
+        }
         if self.usage_open {
             self.usage_open = false;
             cx.notify();
@@ -260,6 +264,7 @@ impl Workspace {
             // Deferred, so they paint over the sidebar and content added later.
             .children(self.render_caption(window))
             .children(self.render_usage_modal(cx))
+            .children(self.render_file_viewer(window, cx))
             .key_context(
                 if self.settings.vim_navigation && self.focus.is_focused(window) {
                     "Workspace VimNormal"
