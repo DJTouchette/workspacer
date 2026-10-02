@@ -1854,27 +1854,50 @@ mod tests {
             })
         });
         visual.run_until_parked();
-        let click = |visual: &mut VisualTestContext, row: &'static str, x: f32| {
-            let bounds = visual.debug_bounds(row).expect("markdown row");
-            visual.simulate_click(
-                bounds.origin + gpui::point(px(x), bounds.size.height / 2.),
-                gpui::Modifiers::default(),
-            );
-            visual.run_until_parked();
-        };
-        click(&mut visual, "markdown-inline-live:a:0-0", 20.);
+        // TextView parses Markdown behind a real-time debounce the test
+        // executor does not drive, so retry each click within a bounded wait.
+        fn click_until(
+            visual: &mut VisualTestContext,
+            row: &'static str,
+            mut done: impl FnMut(&mut VisualTestContext) -> bool,
+        ) {
+            for _ in 0..100 {
+                let bounds = visual.debug_bounds(row).expect("markdown row");
+                visual.simulate_click(
+                    bounds.origin + gpui::point(px(20.), bounds.size.height / 2.),
+                    gpui::Modifiers::default(),
+                );
+                visual.run_until_parked();
+                if done(visual) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            panic!("{row} never responded to a click");
+        }
+        let platform = cx.clone();
+        click_until(&mut visual, "markdown-inline-live:a:0-0", |_| {
+            platform.opened_url().is_some()
+        });
         assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
         assert!(commands.try_recv().is_err(), "web links never read files");
-        click(&mut visual, "markdown-inline-live:a:1-0", 20.);
-        assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
-        assert!(commands.try_recv().is_err());
+        let notice = workspace.clone();
+        click_until(&mut visual, "markdown-inline-live:a:1-0", |visual| {
+            notice.read_with(visual, |this, _| !this.extras.notice.is_empty())
+        });
         workspace.read_with(&visual, |this, _| {
             assert!(this.extras.notice.contains("mailto"), "refusals are visible")
         });
+        assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+        assert!(commands.try_recv().is_err());
         // The image is a label, not a client-side load, and opens the viewer.
-        click(&mut visual, "markdown-inline-live:a:2-0", 20.);
-        let Ok(Command::Request(wks_native::features::Request::FilePreview { session, target })) =
-            commands.try_recv()
+        let mut request = None;
+        click_until(&mut visual, "markdown-inline-live:a:2-0", |_| {
+            request = commands.try_recv().ok();
+            request.is_some()
+        });
+        let Some(Command::Request(wks_native::features::Request::FilePreview { session, target })) =
+            request
         else {
             panic!("image click must request a native preview");
         };
