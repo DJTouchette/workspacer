@@ -30,6 +30,8 @@ pub struct Settings {
     pub code_font: String,
     pub text_size: u8,
     pub twelve_hour_clock: bool,
+    /// One work card per turn: assistant notes between tool calls join it.
+    pub merge_turn_tools: bool,
     pub sidebar_width: f32,
     pub vim_navigation: bool,
     pub keep_running: bool,
@@ -50,6 +52,7 @@ impl Default for Settings {
             code_font: "JetBrains Mono".into(),
             text_size: 15,
             twelve_hour_clock: false,
+            merge_turn_tools: false,
             sidebar_width: 304.,
             vim_navigation: true,
             keep_running: false,
@@ -168,13 +171,16 @@ mod tests {
     fn clock_preference_is_backwards_compatible_and_round_trips() {
         let old: Settings = serde_json::from_str("{}").unwrap();
         assert!(!old.twelve_hour_clock);
+        assert!(!old.merge_turn_tools);
         let selected = Settings {
             twelve_hour_clock: true,
+            merge_turn_tools: true,
             ..old
         };
         let restored: Settings =
             serde_json::from_str(&serde_json::to_string(&selected).unwrap()).unwrap();
         assert!(restored.twelve_hour_clock);
+        assert!(restored.merge_turn_tools);
     }
 
     #[test]

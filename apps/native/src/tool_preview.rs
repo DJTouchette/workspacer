@@ -421,32 +421,61 @@ pub fn summarize_work<'a>(rows: impl IntoIterator<Item = &'a crate::model::Row>)
     summary
 }
 
-/// Only regular adjacent tool calls group; orchestration remains independently visible.
+/// Rows one work card may hold; with `merge_turn` a turn's notes ride along.
+const GROUP_CAP: usize = 12;
+const MERGED_GROUP_CAP: usize = 48;
+
+/// Only regular adjacent tool calls group; orchestration remains independently
+/// visible. With `merge_turn`, assistant text *between* regular calls joins the
+/// card as narration, so a turn's work reads as one card; text before the first
+/// call or after the last stays a normal message.
 pub fn group_span(
     rows: &std::collections::VecDeque<std::sync::Arc<crate::model::Row>>,
     ix: usize,
+    merge_turn: bool,
 ) -> Option<std::ops::Range<usize>> {
     let regular = |i: usize| {
         rows.get(i)
             .and_then(|r| r.tool.as_ref())
             .is_some_and(|t| !matches!(t.category(), "Subagent" | "Workflow" | "Skill"))
     };
-    if !regular(ix) {
+    let note = |i: usize| merge_turn && rows.get(i).is_some_and(is_note);
+    let member = |i: usize| regular(i) || note(i);
+    if !member(ix) {
         return None;
     }
     let mut start = ix;
-    while start > 0 && regular(start - 1) {
+    while start > 0 && member(start - 1) {
         start -= 1;
     }
     let mut end = ix + 1;
-    while regular(end) {
+    while member(end) {
         end += 1;
+    }
+    while start < end && note(start) {
+        start += 1;
+    }
+    while end > start && note(end - 1) {
+        end -= 1;
+    }
+    if !(start..end).contains(&ix) {
+        return None;
     }
     // Keep expansion bounded: a long burst must not build thousands of tool
     // cards inside one virtual-list item.
-    start += ((ix - start) / 12) * 12;
-    end = end.min(start + 12);
+    let cap = if merge_turn {
+        MERGED_GROUP_CAP
+    } else {
+        GROUP_CAP
+    };
+    start += ((ix - start) / cap) * cap;
+    end = end.min(start + cap);
     Some(start..end)
+}
+
+/// Assistant prose that a merged work card shows as narration between calls.
+pub fn is_note(row: &std::sync::Arc<crate::model::Row>) -> bool {
+    row.tool.is_none() && row.role == "Assistant"
 }
 
 #[cfg(test)]
@@ -507,15 +536,74 @@ mod tests {
             tool("Read"),
             tool("Task"),
         ]);
-        assert_eq!(group_span(&rows, 0), Some(0..3));
-        assert_eq!(group_span(&rows, 2), Some(0..3));
-        assert_eq!(group_span(&rows, 4), Some(4..6));
-        assert_eq!(group_span(&rows, 3), None);
-        assert_eq!(group_span(&rows, 6), None);
+        assert_eq!(group_span(&rows, 0, false), Some(0..3));
+        assert_eq!(group_span(&rows, 2, false), Some(0..3));
+        assert_eq!(group_span(&rows, 4, false), Some(4..6));
+        assert_eq!(group_span(&rows, 3, false), None);
+        assert_eq!(group_span(&rows, 6, false), None);
         let long = (0..40).map(|_| tool("Read")).collect();
-        assert_eq!(group_span(&long, 11), Some(0..12));
-        assert_eq!(group_span(&long, 12), Some(12..24));
-        assert_eq!(group_span(&long, 39), Some(36..40));
+        assert_eq!(group_span(&long, 11, false), Some(0..12));
+        assert_eq!(group_span(&long, 12, false), Some(12..24));
+        assert_eq!(group_span(&long, 39, false), Some(36..40));
+    }
+
+    #[test]
+    fn merged_turns_carry_notes_between_calls_only() {
+        use crate::{model::Row, transcript::Tool};
+        use std::{collections::VecDeque, sync::Arc};
+        let tool = |name: &str| {
+            Arc::new(Row {
+                role: "Assistant".into(),
+                tool: Some(Tool {
+                    name: name.into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
+        let text = |role: &str| {
+            Arc::new(Row {
+                role: role.into(),
+                text: "Checking the tests next.".into(),
+                ..Default::default()
+            })
+        };
+        let rows = VecDeque::from(vec![
+            text("You"),
+            text("Assistant"),
+            tool("Read"),
+            text("Assistant"),
+            tool("Bash"),
+            text("Assistant"),
+            text("Assistant"),
+            tool("Grep"),
+            text("Assistant"),
+            tool("Task"),
+            tool("Read"),
+            text("You"),
+        ]);
+        // Leading and trailing prose stay messages; interior prose joins.
+        assert_eq!(group_span(&rows, 1, true), None);
+        assert_eq!(group_span(&rows, 2, true), Some(2..8));
+        assert_eq!(group_span(&rows, 5, true), Some(2..8));
+        assert_eq!(group_span(&rows, 8, true), None);
+        // Orchestration and user turns still break the card.
+        assert_eq!(group_span(&rows, 9, true), None);
+        assert_eq!(group_span(&rows, 10, true), Some(10..11));
+        // Off, prose splits cards exactly as before.
+        assert_eq!(group_span(&rows, 3, false), None);
+        assert_eq!(group_span(&rows, 4, false), Some(4..5));
+        let long: VecDeque<_> = (0..100)
+            .map(|n| {
+                if n % 2 == 0 {
+                    tool("Read")
+                } else {
+                    text("Assistant")
+                }
+            })
+            .collect();
+        assert_eq!(group_span(&long, 0, true), Some(0..48));
+        assert_eq!(group_span(&long, 98, true), Some(96..99));
     }
 
     #[test]

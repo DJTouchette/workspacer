@@ -106,6 +106,11 @@ impl Workspace {
     }
 
     fn normal_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.usage_open {
+            self.usage_open = false;
+            cx.notify();
+            return;
+        }
         if self.focus.is_focused(window) {
             self.back_from_feature(window, cx);
         } else {
@@ -224,6 +229,9 @@ impl Workspace {
     pub(super) fn shell(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         div()
+            .relative()
+            // Deferred, so it paints over the sidebar and content added later.
+            .children(self.render_usage_modal(cx))
             .key_context(
                 if self.settings.vim_navigation && self.focus.is_focused(window) {
                     "Workspace VimNormal"
@@ -319,7 +327,12 @@ impl Workspace {
                 cx.listener(|this, _: &FocusComposer, window, cx| this.focus_editor(window, cx)),
             )
             .on_action(cx.listener(|this, _: &Search, window, cx| {
-                this.search.update(cx, |input, cx| input.focus(window, cx));
+                if this.screen == Screen::Settings && !this.new_session {
+                    this.settings_search
+                        .update(cx, |input, cx| input.focus(window, cx));
+                } else {
+                    this.search.update(cx, |input, cx| input.focus(window, cx));
+                }
                 cx.notify();
             }))
             .on_action(
@@ -370,114 +383,5 @@ impl Workspace {
                 }).collect::<Vec<_>>()
             })).track_scroll(self.projects_scroll.clone()).flex_1().min_h_0())
             .child(div().px_5().py_3().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · / filter · i add · Ctrl Enter save" } else { "Click a project to open it · Ctrl Enter to save a path" }))
-    }
-
-    pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        use gpui_component::switch::Switch;
-        let p = self.appearance.palette();
-        let update_busy = self.view.requests.get("updates").is_some_and(|s| s.loading);
-        div().id("settings-view").flex_1().min_w_0().h_full().overflow_y_scroll().bg(rgb(p.chat)).p_5()
-            .child(div().max_w(px(700.)).mx_auto().flex().flex_col().gap_4()
-                .child(div().py_3().flex().flex_col().gap_2()
-                    .child(overline("MAKE IT YOURS", p))
-                    .child(div().text_size(px(28.)).font_weight(FontWeight::BOLD).child("Settings"))
-                    .child(div().text_color(rgb(p.muted)).text_size(px(12.)).child("A workspace that feels like yours. Preferences apply immediately on this device.")))
-                .child(chrome::section("Appearance", "Choose the palette for your workspace.", p)
-                    .child(div().flex().gap_2().children(Appearance::ALL.into_iter().map(|appearance| {
-                        let colors = appearance.palette();
-                        let active = self.appearance == appearance;
-                        chrome::interactive_control(div().id(appearance.label()), p, true).flex_1().min_w_0().rounded(px(p.panel_radius)).overflow_hidden().cursor_pointer()
-                            .bg(rgb(if active { p.selected } else { p.base }))
-                            .hover(|style| style.bg(rgb(p.selected)))
-                            .child(div().m_2().h(px(64.)).rounded(px(p.control_radius)).bg(rgb(colors.chat)).flex().overflow_hidden()
-                                .child(div().w(px(24.)).h_full().bg(rgb(colors.base)).p_2().child(status_dot(colors.accent)))
-                                .child(div().flex_1().p_2().flex().flex_col().gap_2()
-                                    .child(div().h(px(6.)).w(px(36.)).rounded_full().bg(rgb(colors.text)))
-                                    .child(div().h(px(4.)).w_full().rounded_full().bg(rgb(colors.border)))
-                                    .child(div().h(px(14.)).w_full().rounded(px(4.)).bg(rgb(colors.surface)))))
-                            .child(div().px_3().pb_3().flex().items_center().justify_between()
-                                .child(div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(rgb(if active { p.accent } else { p.text })).child(appearance.label()))
-                                .when(active, |d| d.child(Icon::new(IconName::Check).size(px(14.)).text_color(rgb(p.accent)))))
-                            .on_click(cx.listener(move |this, _, window, cx| this.choose_theme(appearance, window, cx)))
-                    })))
-                    .when(!self.theme_error.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(rgb(p.warning)).child(self.theme_error.clone()))))
-                .child(self.render_typography(cx))
-                .child(chrome::section("Workspace", "Control how your workspace fits into your day.", p)
-                    .child(chrome::preference("Keep running when closed", "Minimize to the taskbar or Dock. Use Quit to stop the local backend.", p)
-                        .child(Switch::new("settings-background").checked(self.settings.keep_running).tooltip("Keep running when closed")
-                            .on_click(cx.listener(|this, checked, _, cx| { this.settings.keep_running = *checked; this.extras.keep_running.set(*checked); this.save_settings(cx); }))))
-                    .child(chrome::preference("Notifications", "Completion, approval and question alerts while this window is inactive.", p)
-                        .child(Switch::new("settings-notifications").checked(self.settings.notifications).tooltip("Notifications")
-                            .on_click(cx.listener(|this, checked, _, cx| { this.settings.notifications = *checked; this.save_settings(cx); }))))
-                    .child(chrome::preference("Agent setup", "Install and connect the agents on your workspace host.", p)
-                        .child(self.quiet_button("settings-setup", "Set up", IconName::ArrowRight, true).on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx))))))
-                .child(chrome::section("Default agent", "Used for new sessions. Existing sessions keep their provider.", p)
-                    .child(div().flex().gap_2().children([(Provider::Claude, "Claude"), (Provider::Codex, "Codex")].into_iter().map(|(provider, label)| {
-                        self.button(label, label, true).flex_1().flex().items_center().justify_between()
-                            .when(self.settings.default_provider == provider, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)).child(Icon::new(IconName::Check).size(px(14.))))
-                            .on_click(cx.listener(move |this, _, _, cx| { this.settings.default_provider = provider; this.save_settings(cx); }))
-                    }))))
-                .child(chrome::section("Default access mode", "Used when starting a new agent or switching providers. You can override it for each session.", p)
-                    .children([("claude", "Claude"), ("codex", "Codex")].into_iter().map(|(provider, label)| {
-                        let selected = self.settings.default_access(provider);
-                        div().flex().flex_col().gap_2()
-                            .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(label))
-                            .child(div().flex().flex_wrap().gap_2().children(Permission::choices(provider).iter().copied().map(|access| {
-                                self.button("default-access", access.label(), true).id((provider, access as usize))
-                                    .when(selected == access, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if provider == "claude" { this.settings.default_claude_access = access; }
-                                        else { this.settings.default_codex_access = access; }
-                                        this.save_settings(cx);
-                                    }))
-                            })))
-                            .child(div().text_size(px(12.)).text_color(rgb(if selected == Permission::FullAccess { p.warning } else { p.muted })).child(selected.description()))
-                    })))
-                .child(chrome::section("Chat", "Time display in conversations and tool calls.", p)
-                    .child(chrome::preference("12-hour clock", "Show AM / PM instead of a 24-hour clock.", p)
-                        .child(Switch::new("settings-clock").checked(self.settings.twelve_hour_clock).tooltip("12-hour clock")
-                            .on_click(cx.listener(|this, checked, _, cx| {
-                                this.settings.twelve_hour_clock = *checked;
-                                this.list.splice(0..this.view.transcript.rows.len(), this.view.transcript.rows.len());
-                                this.save_settings(cx);
-                            })))))
-                .child(chrome::section("Keyboard", "Move around your workspace at your own pace.", p)
-                    .child(chrome::preference("Vim navigation", "Normal mode for navigation. Insert mode for typing.", p)
-                        .child(Switch::new("toggle-vim").checked(self.settings.vim_navigation).tooltip("Vim navigation")
-                            .on_click(cx.listener(|this, checked, window, cx| {
-                                this.settings.vim_navigation = *checked;
-                                window.focus(&this.focus);
-                                this.save_settings(cx);
-                            })))))
-                .child(chrome::section("Updates", "Native preview updates are installed manually.", p)
-                    .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(format!("Installed version {}", wks_native::features::installed_version())))
-                    .child(div().flex().flex_wrap().gap_2()
-                        .child(self.button("check-updates", if update_busy { "Checking…" } else { "Check for updates" }, !update_busy)
-                            .when(!update_busy, |d| d.on_click(cx.listener(|this, _, _, cx| this.request(wks_native::features::Request::Updates, cx)))))
-                        .child(self.quiet_button("open-releases", "Release notes", IconName::ExternalLink, true).on_click(|_, _, cx| cx.open_url(wks_native::features::RELEASES_URL))))
-                    .child(self.feature_message("updates"))
-                    .when_some(self.view.requests.get("updates").and_then(|s| s.value["version"].as_str()), |d, version| d.child(div().text_size(px(12.)).child(format!("Latest stable release: {version}")))))
-                .when(!self.settings_error.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(rgb(p.warning)).child(self.settings_error.clone())))
-                .child(chrome::section("Shortcuts", "Vim shortcuts apply in Normal mode. Text fields keep ordinary editing keys.", p)
-                .children([
-                    ("Esc", "Leave a text field; press again to return to the conversation"),
-                    ("j / k", "Next / previous session or project"),
-                    ("gg / G", "First / last session or project"),
-                    ("i", "Compose, edit the new-session form, or add a project path"),
-                    ("/", "Filter sessions and projects"),
-                    ("g p / h", "Projects"), ("Enter / l", "Open the selected project"),
-                    ("g h / g d", "Session history / changes"), ("g a / g e / g m", "Agent setup / session / model"),
-                    ("g s", "Settings"), ("g c", "Conversation"),
-                    ("n", "New session in the selected project"),
-                    ("t / v / a", "Settings: cycle theme / toggle Vim / switch default agent"),
-                    ("Ctrl U / D", "Scroll conversation up / down"),
-                    ("Ctrl/Cmd ,", "Settings (also when Vim navigation is off)"),
-                    ("Ctrl/Cmd P", "Projects (also when Vim navigation is off)"),
-                    ("Ctrl/Cmd Enter", "Send message, create session, or save a project path"),
-                    ("Ctrl/Cmd L", "Focus the editor"),
-                ].into_iter().map(|(keys, label)| div().flex().gap_3().items_start()
-                    .child(keycap(keys, p).w(px(120.)).flex_shrink_0())
-                    .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(label))))
-                ))
     }
 }

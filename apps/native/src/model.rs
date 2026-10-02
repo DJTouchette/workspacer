@@ -26,9 +26,112 @@ pub struct Session {
     /// by snapshots that omit it, unlike the selection alias in `model`.
     pub runtime_model: String,
     pub context_window: Option<u64>,
+    pub context: ContextUsage,
     pub telemetry: crate::child_agents::Telemetry,
     pub approval: Option<Value>,
     pub questions: Option<Value>,
+}
+
+/// Context-window occupancy as the runtime reports it: the status line's
+/// percentage/window pair, transcript-derived tokens held, and the daemon's
+/// resolved window. Each source is replaced whole when a snapshot carries it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ContextUsage {
+    pub status_pct: Option<f64>,
+    pub status_window: Option<u64>,
+    /// The provider knows its window but not current-request usage.
+    pub waiting: bool,
+    pub held_tokens: u64,
+    pub usage_limit: Option<u64>,
+    pub resolved_window: Option<u64>,
+}
+
+/// What the context meter shows; `pct` is 0–100.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ContextReading {
+    pub pct: f64,
+    pub tokens: Option<u64>,
+    pub window: Option<u64>,
+}
+
+impl ContextUsage {
+    fn merge(&mut self, value: &Value) {
+        let field = |object: &Value, names: &[&str]| {
+            names
+                .iter()
+                .find_map(|name| object.get(*name))
+                .filter(|v| !v.is_null())
+                .cloned()
+        };
+        if let Some(status) = field(value, &["statusLine", "status_line"]) {
+            self.status_pct = field(&status, &["contextUsedPct", "context_used_pct"])
+                .and_then(|v| v.as_f64())
+                .filter(|pct| pct.is_finite());
+            self.status_window = field(&status, &["contextWindowSize", "context_window_size"])
+                .and_then(|v| v.as_u64())
+                .filter(|w| *w > 0);
+            self.waiting = matches!(
+                field(&status, &["contextUsageState", "context_usage_state"])
+                    .as_ref()
+                    .and_then(Value::as_str),
+                Some("waitingForRuntimeUsage" | "waiting_for_runtime_usage")
+            );
+        }
+        if let Some(usage) = field(value, &["usage"]) {
+            self.held_tokens = field(&usage, &["contextTokens", "context_tokens"])
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            self.usage_limit = field(&usage, &["contextLimit", "context_limit"])
+                .and_then(|v| v.as_u64())
+                .filter(|w| *w > 0);
+        }
+        if let Some(window) = field(value, &["resolvedContextWindow", "resolved_context_window"])
+            .and_then(|v| v.as_u64())
+            .filter(|w| *w > 0)
+        {
+            self.resolved_window = Some(window);
+        }
+    }
+
+    /// TWIN: `derive_stats` in apps/tui/src/types.rs and desktop
+    /// `deriveSessionStats`. A status percentage and its window are one claim;
+    /// when the session demonstrably holds more than that window (past the
+    /// shared 2% tolerance) both are rejected for the resolved window.
+    pub fn reading(&self) -> Option<ContextReading> {
+        if self.waiting {
+            return None;
+        }
+        let owner = self.resolved_window.or(self.usage_limit);
+        let from_usage = || {
+            let window = owner?;
+            (self.held_tokens > 0).then(|| ContextReading {
+                pct: self.held_tokens as f64 / window as f64 * 100.,
+                tokens: Some(self.held_tokens),
+                window: Some(window),
+            })
+        };
+        let disproved = self
+            .status_window
+            .is_some_and(|window| self.held_tokens > window.saturating_mul(102) / 100);
+        if disproved {
+            return from_usage();
+        }
+        match self.status_pct {
+            Some(pct) => {
+                let window = self.status_window.or(owner);
+                Some(ContextReading {
+                    pct,
+                    tokens: match (self.status_window, self.held_tokens) {
+                        (Some(window), _) => Some((pct / 100. * window as f64).round() as u64),
+                        (None, held) if held > 0 => Some(held),
+                        _ => None,
+                    },
+                    window,
+                })
+            }
+            None => from_usage(),
+        }
+    }
 }
 
 impl Session {
@@ -42,6 +145,7 @@ impl Session {
 
     pub fn merge(&mut self, value: &Value) {
         self.telemetry.merge(value);
+        self.context.merge(value);
         for (target, names) in [
             (&mut self.id, &["sessionId", "session_id"][..]),
             (
@@ -426,6 +530,10 @@ pub struct Transcript {
     pub seq: Option<u64>,
     pub bytes: usize,
     pub omitted: bool,
+    /// The daemon retains older items than this window; page back for them.
+    pub has_older: bool,
+    /// The client's row/byte budget dropped rows from the front.
+    trimmed: bool,
     pub revision: u64,
     next_key: u64,
     history: bool,
@@ -450,6 +558,8 @@ impl Transcript {
         }
         self.bytes = 0;
         self.omitted = snapshot.first_seq > 1;
+        self.trimmed = false;
+        self.has_older = false;
         for item in snapshot.items {
             self.push(item, streaming);
         }
@@ -484,6 +594,21 @@ impl Transcript {
         }
         self.seq = Some(snapshot.seq);
         self.revision += 1;
+    }
+
+    /// A limited read: `window_first_seq` is the daemon's sequence for the
+    /// first returned item (absent from daemons without paging, whose reads
+    /// are complete). Older retained items exist while it exceeds `first_seq`;
+    /// paging stops at the client budget, past which History owns the rest.
+    pub fn snapshot_page(
+        &mut self,
+        snapshot: ConversationSnapshot,
+        window_first_seq: Option<u64>,
+        streaming: bool,
+    ) {
+        let first_seq = snapshot.first_seq.max(1);
+        self.snapshot_for_transport(snapshot, streaming);
+        self.has_older = !self.trimmed && window_first_seq.is_some_and(|w| w > first_seq);
     }
 
     pub fn delta(&mut self, delta: Delta, streaming: bool) -> Fold {
@@ -656,6 +781,7 @@ impl Transcript {
                 .expect("over budget implies a row")
                 .bytes();
             self.omitted = true;
+            self.trimmed = true;
         }
     }
 }
@@ -678,6 +804,23 @@ fn truncate(text: &mut String, limit: usize) -> bool {
 /// Friendly model name: `claude-opus-5-5` → "Opus 5.5", `opus[1m]` → "Opus",
 /// `claude-3-5-sonnet-20241022` → "Sonnet 3.5", `gpt-5.6-sol` → "GPT-5.6 Sol".
 /// Unrecognized ids are returned unchanged.
+/// The provider whose brand a model id belongs to, when the id says so.
+pub fn model_provider(id: &str) -> Option<&'static str> {
+    let lower = id.trim().to_ascii_lowercase();
+    let lower = lower.rsplit('/').next().unwrap_or(&lower);
+    if lower.starts_with("claude")
+        || ["opus", "sonnet", "haiku", "fable"]
+            .iter()
+            .any(|f| lower.split('-').any(|w| w == *f))
+    {
+        Some("claude")
+    } else if lower.starts_with("gpt") || lower.contains("codex") {
+        Some("codex")
+    } else {
+        None
+    }
+}
+
 pub fn model_display_name(id: &str) -> String {
     let id = id.trim();
     let id = id.rsplit('/').next().unwrap_or(id);
@@ -725,6 +868,53 @@ pub fn model_display_name(id: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn context_reading_follows_the_runtime_and_rejects_disproved_windows() {
+        let mut session = Session::default();
+        assert_eq!(session.context.reading(), None);
+        session.merge(&json!({"usage":{"contextTokens":50_000,"contextLimit":200_000}}));
+        let reading = session.context.reading().unwrap();
+        assert_eq!(reading.pct, 25.);
+        assert_eq!(reading.tokens, Some(50_000));
+        // The status line is authoritative and supplies its own window.
+        session.merge(&json!({"statusLine":{"contextUsedPct":42.0,"contextWindowSize":200_000}}));
+        let reading = session.context.reading().unwrap();
+        assert_eq!(reading.pct, 42.);
+        assert_eq!(reading.tokens, Some(84_000));
+        // Snapshots without the sources keep the last reading.
+        session.merge(&json!({"mode":"responding"}));
+        assert_eq!(session.context.reading().unwrap().pct, 42.);
+        // Holding more than the claimed window disproves the pair.
+        session.merge(&json!({
+            "usage":{"contextTokens":400_000,"contextLimit":1_000_000},
+            "resolvedContextWindow":1_000_000
+        }));
+        let reading = session.context.reading().unwrap();
+        assert_eq!(reading.pct, 40.);
+        assert_eq!(reading.window, Some(1_000_000));
+        // Waiting for current-request usage shows nothing rather than a guess.
+        session.merge(&json!({"statusLine":{"contextWindowSize":200_000,"contextUsageState":"waitingForRuntimeUsage"}}));
+        assert!(session.context.waiting);
+        assert_eq!(session.context.reading(), None);
+        // claudemon's snake_case spelling reads the same.
+        let mut raw = Session::default();
+        raw.merge(
+            &json!({"status_line":{"context_used_pct":10.0,"context_window_size":1_000_000}}),
+        );
+        assert_eq!(raw.context.reading().unwrap().tokens, Some(100_000));
+    }
+
+    #[test]
+    fn model_ids_name_their_provider() {
+        assert_eq!(model_provider("claude-sonnet-4-6"), Some("claude"));
+        assert_eq!(model_provider("opus"), Some("claude"));
+        assert_eq!(model_provider("anthropic/claude-haiku-4-5"), Some("claude"));
+        assert_eq!(model_provider("gpt-5.6-luna"), Some("codex"));
+        assert_eq!(model_provider("gpt-5-codex"), Some("codex"));
+        assert_eq!(model_provider("llama-3"), None);
+        assert_eq!(model_provider(""), None);
+    }
 
     #[test]
     fn timestamped_provider_echoes_converge_in_snapshots_and_live_deltas() {

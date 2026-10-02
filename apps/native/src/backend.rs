@@ -137,14 +137,22 @@ impl Backend {
         ))
     }
 
+    /// Account usage windows for every provider; see [`crate::usage`].
+    pub async fn usage_report(&self) -> Result<Value> {
+        self.hub.call("usage.report", json!({})).await
+    }
+
     pub async fn snapshots(&self) -> Result<Value> {
         self.hub.call("sessions.snapshots", json!({})).await
     }
 
-    pub async fn conversation(&self, id: &str) -> Result<Value> {
-        self.hub
-            .call("sessions.conversation", json!({"sessionId":id}))
-            .await
+    /// The newest `limit` items, or everything retained when `None`.
+    pub async fn conversation(&self, id: &str, limit: Option<usize>) -> Result<Value> {
+        let mut params = json!({"sessionId":id});
+        if let Some(limit) = limit {
+            params["limit"] = json!(limit);
+        }
+        self.hub.call("sessions.conversation", params).await
     }
 
     pub async fn models(&self, key: &CatalogKey) -> Result<Value> {

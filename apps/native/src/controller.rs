@@ -23,6 +23,9 @@ use crate::{
 
 const MAX_SESSIONS: usize = 10_000;
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
+/// Conversation items per page: opening a session reads only the newest page,
+/// and each "earlier messages" step widens the window by one more.
+pub const CONVERSATION_PAGE: usize = 200;
 
 #[derive(Clone, Debug)]
 pub enum Action {
@@ -142,6 +145,10 @@ pub enum Command {
         action: Action,
     },
     Refresh,
+    /// Widen the selected conversation's window by one page of older items.
+    LoadOlder,
+    /// Re-read account usage now rather than at the next minute.
+    RefreshUsage,
     Create(NewSession),
     LoadModels {
         key: CatalogKey,
@@ -182,6 +189,10 @@ pub struct View {
     pub transcript: Transcript,
     pub pending_messages: Vec<PendingMessage>,
     pub loading: bool,
+    /// An "earlier messages" page is in flight.
+    pub loading_older: bool,
+    /// The last `usage.report` read; kept across failed refreshes.
+    pub usage: Option<Arc<Value>>,
     pub sessions_loading: bool,
     pub busy: bool,
     pub notice: String,
@@ -260,6 +271,7 @@ enum Completion {
     Models(u64, u64, Result<Vec<crate::launch::ModelChoice>>),
     Spawn(u64, NewSession, Result<Value>),
     Fleet(u64, Result<Value>),
+    Usage(u64, Result<Value>),
     Conversation(u64, u64, Result<Value>),
     Action(u64, String, Action, Result<Value>),
 }
@@ -274,6 +286,8 @@ struct Worker {
     fleet_pending: bool,
     fleet_overlay: BTreeMap<String, Value>,
     conversation_pending: bool,
+    /// Items requested for the selected conversation (newest first).
+    conversation_limit: usize,
     buffered: Vec<Delta>,
     buffered_bytes: usize,
     resync_after_read: bool,
@@ -287,6 +301,8 @@ struct Worker {
     created_row: Option<Value>,
     last_fleet: Instant,
     last_conversation: Instant,
+    usage_pending: bool,
+    last_usage: Instant,
 }
 
 impl Worker {
@@ -305,6 +321,7 @@ impl Worker {
             fleet_pending: false,
             fleet_overlay: BTreeMap::new(),
             conversation_pending: false,
+            conversation_limit: CONVERSATION_PAGE,
             buffered: Vec::new(),
             buffered_bytes: 0,
             resync_after_read: false,
@@ -318,6 +335,8 @@ impl Worker {
             created_row: None,
             last_fleet: Instant::now(),
             last_conversation: Instant::now(),
+            usage_pending: false,
+            last_usage: Instant::now(),
         }
     }
 
@@ -358,6 +377,15 @@ impl Worker {
                             self.dirty=true;
                         }
                     }
+                    Some(Command::RefreshUsage) => self.fetch_usage(),
+                    Some(Command::LoadOlder) => {
+                        if self.view.transcript.has_older && !self.conversation_pending {
+                            self.conversation_limit += CONVERSATION_PAGE;
+                            self.view.loading_older = true;
+                            self.fetch_conversation();
+                            self.dirty = true;
+                        }
+                    }
                     Some(Command::Refresh) => {
                         self.view.loading = self.view.connected && self.view.selected.is_some();
                         self.fetch_fleet();self.fetch_conversation();self.dirty=true;
@@ -388,6 +416,8 @@ impl Worker {
                 _ = maintenance.tick() => {
                     if self.view.connected {
                         if self.last_fleet.elapsed() >= Duration::from_secs(30) { self.fetch_fleet(); }
+                        // The hub's report is valid for 60s; account windows move slowly.
+                        if self.last_usage.elapsed() >= Duration::from_secs(60) { self.fetch_usage(); }
                         // Ready suppresses fast polling. A slow reconciliation also
                         // repairs a provider restart behind an otherwise healthy hub.
                         let pace = if self.push_ready { Duration::from_secs(30) } else { Duration::from_secs(1) };
@@ -550,6 +580,19 @@ impl Worker {
         }));
     }
 
+    fn fetch_usage(&mut self) {
+        if !self.view.connected || self.usage_pending {
+            return;
+        }
+        self.usage_pending = true;
+        self.last_usage = Instant::now();
+        let backend = self.backend.clone();
+        let epoch = self.epoch;
+        self.jobs.push(Box::pin(async move {
+            Completion::Usage(epoch, backend.usage_report().await)
+        }));
+    }
+
     fn fetch_conversation(&mut self) {
         if !self.view.connected || self.conversation_pending {
             return;
@@ -565,8 +608,11 @@ impl Worker {
         let backend = self.backend.clone();
         let epoch = self.epoch;
         let selection = self.selection;
+        // Reconciliation and gap repairs re-read the same window, never the
+        // whole retained log.
+        let limit = Some(self.conversation_limit);
         self.jobs.push(Box::pin(async move {
-            Completion::Conversation(epoch, selection, backend.conversation(&id).await)
+            Completion::Conversation(epoch, selection, backend.conversation(&id, limit).await)
         }));
     }
 
@@ -588,6 +634,8 @@ impl Worker {
         }
         self.view.transcript = Transcript::default();
         self.view.loading = self.view.selected.is_some();
+        self.view.loading_older = false;
+        self.conversation_limit = CONVERSATION_PAGE;
         self.conversation_pending = false;
         self.push_ready = false;
         self.buffered.clear();
@@ -655,7 +703,9 @@ impl Worker {
                 self.view.notice.clear();
                 self.fleet_pending = false;
                 self.conversation_pending = false;
+                self.usage_pending = false;
                 self.fetch_fleet();
+                self.fetch_usage();
                 self.select(self.view.selected.clone()).await;
             }
             Event::Disconnected(reason) => self.disconnected(reason, false),
@@ -986,6 +1036,15 @@ impl Worker {
                     }
                 }
             }
+            Completion::Usage(epoch, result) if epoch == self.epoch => {
+                self.usage_pending = false;
+                // Older hubs lack usage.report; a failed refresh keeps the last
+                // reading, whose rolled-over windows drop out on their own.
+                if let Ok(report) = result {
+                    self.view.usage = Some(Arc::new(report));
+                    self.dirty = true;
+                }
+            }
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;
                 self.view.sessions_loading = false;
@@ -1046,6 +1105,11 @@ impl Worker {
             {
                 self.conversation_pending = false;
                 self.view.loading = false;
+                self.view.loading_older = false;
+                let window_first_seq = result
+                    .as_ref()
+                    .ok()
+                    .and_then(|v| v["window_first_seq"].as_u64());
                 match result.and_then(|v| {
                     serde_json::from_value::<ConversationSnapshot>(v).map_err(Into::into)
                 }) {
@@ -1064,7 +1128,7 @@ impl Worker {
                         let streaming = self.streaming();
                         self.view
                             .transcript
-                            .snapshot_for_transport(snapshot, streaming);
+                            .snapshot_page(snapshot, window_first_seq, streaming);
                         if self.view.notice.starts_with("Conversation unavailable:") {
                             self.view.notice.clear();
                         }

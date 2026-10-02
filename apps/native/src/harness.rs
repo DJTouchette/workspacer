@@ -108,10 +108,12 @@ pub async fn serve_with_transcript(
                                     }).collect()),
                                     "sessions.subagentConversation" if rich => rich_subagent_conversation(id, frame["params"]["agentId"].as_str().unwrap_or_default()),
                                     "sessions.conversation" => {
-                                        if id == active_id { json!({"seq":seq, "first_seq":1, "items":items}) }
-                                        else if let Some((items, seq)) = history.get(id) { json!({"seq":seq,"first_seq":1,"items":items}) }
-                                        else { json!({"seq":seed.len(),"first_seq":1,"items":seed}) }
+                                        let limit = frame["params"]["limit"].as_u64().map(|l| l as usize);
+                                        if id == active_id { page(&items, seq, limit) }
+                                        else if let Some((items, seq)) = history.get(id) { page(items, *seq, limit) }
+                                        else { page(&seed, seed.len() as u64, limit) }
                                     }
+                                    "usage.report" => usage_report(),
                                     "agents.sendMessage" => {
                                         if active_id != id {
                                             let (next, next_seq) = history.remove(id).unwrap_or_else(|| (seed.clone(),seed.len() as u64));
@@ -146,6 +148,47 @@ pub async fn serve_with_transcript(
     }
 }
 
+/// Two Claude logins and Codex, shaped like the hub's `usage.report`.
+fn usage_report() -> Value {
+    let now = chrono::Utc::now().timestamp();
+    let window = |pct: f64, reset_in: i64, pace: &str, expected: f64| {
+        json!({"used_percent":{"state":"ok","value":pct},"resets_at":now+reset_in,"is_current":true,
+            "pace":{"known":true,"state":pace,"expectedPct":expected}})
+    };
+    let off = json!({"used_percent":{"state":"unavailable","reason":"extra usage is off"}});
+    json!({"generated_at":now,"evaluated_at":now,"valid_until":now+60,"providers":[
+        {"provider":"claude","accounts":[
+            {"account":"","label":"default","is_default":true,"fresh":true,"windows":{
+                "five_hour":window(42.,8_040,"on_track",45.),
+                "seven_day":window(76.,3*86_400+4*3_600,"overspending",58.),
+                "monthly":off}},
+            {"account":"work","label":"work","is_default":false,"fresh":true,"windows":{
+                "five_hour":window(8.,15_000,"on_track",20.),
+                "seven_day":window(31.,5*86_400,"on_track",30.),
+                "monthly":off}}
+        ]},
+        {"provider":"codex","accounts":[
+            {"account":"","label":"default","is_default":true,"fresh":true,"windows":{
+                "five_hour":window(93.,2_400,"overspending",70.),
+                "seven_day":window(55.,2*86_400,"ahead",48.)}}
+        ]}
+    ]})
+}
+
+/// A claudemon-shaped conversation read: the newest `limit` items and the
+/// first returned item's sequence (one sequence per fixture item).
+fn page(items: &[Value], seq: u64, limit: Option<usize>) -> Value {
+    let start = limit.map_or(0, |limit| items.len().saturating_sub(limit));
+    let window_first_seq = if start == 0 {
+        1
+    } else {
+        (seq + 1)
+            .saturating_sub((items.len() - start) as u64)
+            .max(2)
+    };
+    json!({"seq":seq,"first_seq":1,"window_first_seq":window_first_seq,"items":&items[start..]})
+}
+
 pub fn event(topic: &str, data: Value) -> Message {
     Message::Text(json!({"op":"event", "event":{"type":topic, "data":data}}).to_string())
 }
@@ -160,6 +203,7 @@ pub fn rich_items() -> Vec<Value> {
         json!({"kind":"tool_result","tool_use_id":"read-1","content":"1 fn main() {\n2     start();\n3 }"}),
         json!({"kind":"tool_use","id":"edit-1","name":"Edit","input":{"file_path":"src/main.rs","old_string":"    start();","new_string":"    restore_workspace();\n    start();"}}),
         json!({"kind":"tool_result","tool_use_id":"edit-1","content":"File updated."}),
+        json!({"kind":"assistant_text","text":"Now I’ll confirm nothing else calls the old entry point."}),
         json!({"kind":"tool_use","id":"search-1","name":"Grep","input":{"pattern":"restore_workspace","path":"src","description":"Find workspace restoration call sites"}}),
         json!({"kind":"tool_result","tool_use_id":"search-1","content":"src/main.rs:2: restore_workspace();"}),
         json!({"kind":"tool_use","id":"skill-1","name":"Skill","input":{"skill":"review","args":"Check the transcript"}}),
@@ -167,8 +211,8 @@ pub fn rich_items() -> Vec<Value> {
         json!({"kind":"assistant_text","text":format!("Implemented the change in [main.rs](src/main.rs:2).\n\n```wks-html-card\n{card}\n```\n")}),
         json!({"kind":"tool_use","id":"workspacer-spawn","name":"mcp__workspacer__spawn_agent","input":{"message":"Review session creation and model selection","label":"Session creation review","trackTask":false}}),
         json!({"kind":"tool_result","tool_use_id":"workspacer-spawn","content":"{\"sessionId\":\"demo-0001\",\"messageQueued\":true,\"taskTracking\":false}"}),
-        json!({"kind":"tool_use","id":"subagent-running","name":"Agent","input":{"description":"Review chat rendering and regression coverage"}}),
-        json!({"kind":"assistant_text","text":"## Ready for review\n\nThe conversation is easier to scan, with quieter controls and a little more room to read.\n\n- **Clear hierarchy** for headings and paragraphs.\n- Round bullets, comfortable spacing, and `inline code`.\n- File links open a preview in this workspace.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs).\n\n```rust\nlet workspace = connect().await?;\nworkspace.restore_session();\n```"}),
+        json!({"kind":"tool_use","id":"subagent-running","name":"Agent","input":{"description":"Review chat rendering and regression coverage","prompt":"Review the native chat rendering pass.\n\n1. Read apps/native/src/ui/markdown.rs and the vendored text renderer.\n2. Compare tables, blockquotes and code fences with the desktop renderer.\n3. Check every theme (Dark, Light, Nord) for contrast regressions.\n4. Run the ui-tests suite and report failures verbatim.\n5. Note anything that looks unpolished, with file and line.\n\nDo not edit files; report findings only."}}),
+        json!({"kind":"assistant_text","text":"## Ready for review\n\nThe conversation is easier to scan, with quieter controls and a little more room to read.\n\n- **Clear hierarchy** for headings and paragraphs.\n- Round bullets, comfortable spacing, and `inline code`.\n- File links open a preview in this workspace.\n\n| Area | Status | Notes |\n|:--|:-:|--:|\n| Tables | Done | Header, stripes, wrapping |\n| Blockquotes | Done | Accent rail |\n| Work cards | Done | `Skill` and `Agent` too |\n\n> Quotes read as asides: a slim rail and muted italic copy,\n> so they never compete with the answer.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs).\n\n```rust\nlet workspace = connect().await?;\nworkspace.restore_session();\n```"}),
     ];
     let start = chrono::Utc::now().timestamp_millis() - 60_000;
     for (index, item) in items.iter_mut().enumerate() {
@@ -185,6 +229,7 @@ pub fn rich_items() -> Vec<Value> {
 fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
     match index {
         0 => {
+            snapshot["statusLine"] = json!({"contextUsedPct":42.0,"contextWindowSize":200000});
             snapshot["subagents"] = json!([
                 {"id":"fixture-native-review","toolUseId":"subagent-running","type":"Explore","description":"Inspect transcript parsing","status":"running","model":"gpt-5.6-luna","startedAt":1790852400000i64,"toolCalls":4,"tokens":12400,"costUSD":0.018,"lastToolName":"Read","lastToolSummary":"apps/native/src/model.rs"},
                 {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":7,"tokens":28300,"costUSD":0.084}
@@ -199,7 +244,7 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
             snapshot["startedAt"] = json!(1790852400000i64);
             snapshot["lastToolName"] = json!("Read");
             snapshot["lastToolSummary"] = json!("apps/native/src/launch.rs");
-            snapshot["usage"] = json!({"inputTokens":15800,"outputTokens":2400,"costUSD":0.046});
+            snapshot["usage"] = json!({"inputTokens":15800,"outputTokens":2400,"costUSD":0.046,"contextTokens":183000,"contextLimit":200000});
         }
         _ => (),
     }

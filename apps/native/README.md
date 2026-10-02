@@ -85,7 +85,7 @@ starting message. **Customize** reveals access mode and an optional session name
 current choices remain visible in a summary when collapsed. Keep Provider default
 or choose a model.
 Custom model accepts an exact ID or alias. **Start working** opens the real agent
-conversation. **Settings → Default access mode** saves separate defaults for
+conversation. **Settings → Agents** saves separate default access modes for
 Claude and Codex, initially Ask to approve. Claude also offers Accept
 edits, Plan mode, and Full access; Codex offers Ask to approve and Full access.
 The provider CLI must be installed and signed in on the hub. Failed launches retain the form. If the connection drops
@@ -329,8 +329,10 @@ Opening a project filters the session sidebar; **All** clears the project filter
 The sidebar search matches session names/paths and project paths. Keyboard
 navigation follows the filtered list and keeps the highlighted row in view.
 
-**Settings** contains the theme picker, a Vim navigation toggle, a default-agent
-picker (Claude/Codex), and the shortcut reference. Keyboard preferences, default
+**Settings** has a category rail (Appearance, Typography, Workspace, Agents,
+Chat, Keyboard, About) beside grouped cards, and a search box (`/`) that filters
+every preference across categories by title, description and keywords; `j` / `k`
+step through categories in Normal mode. Keyboard preferences, default
 provider, and project bookmarks persist in `workspacer/native-settings.json`
 next to `native-theme.json`. These are local client preferences; the shared hub
 configuration and running agents are unaffected. Missing settings use defaults;
@@ -343,10 +345,10 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | Keys | Action |
 | --- | --- |
 | `Esc` | Leave a text field; press again to return to the conversation |
-| `j` / `k` | Next / previous session or project |
+| `j` / `k` | Next / previous session, project or settings category |
 | `gg` / `G` | First / last session or project |
 | `i` | Focus composer, new-session project field, or saved-project path field |
-| `/` | Focus the sidebar filter |
+| `/` | Focus the sidebar filter, or settings search in Settings |
 | `g p` / `h` | Projects |
 | `Enter` / `l` | Open the highlighted project |
 | `g s` | Settings |
@@ -406,7 +408,7 @@ be expanded, and attachment controls share the composer action row.
 - **Question choices** support single and multiple selections and custom answers.
   Labels and typed numbers are sent literally. **Model…** applies a selected model
   and context to the running session; queued changes are reported as queued.
-- **Settings → Updates** shows the installed build version and can query the latest
+- **Settings → About** shows the installed build version and can query the latest
   stable GitHub release. Downloads/release notes open in the browser; updates are
   installed manually.
 
@@ -576,8 +578,11 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/model.rs` | Session projection and bounded, sequence-aware transcript reducer |
 | `src/controller.rs` | Selection, RPC lifecycle, snapshot/event reconciliation, UI mailbox |
 | `src/ui.rs` | GPUI views, virtualization, keyboard dispatch, drafts |
-| `src/ui/navigation.rs` | Projects/settings views, shared navigation and focus handling |
+| `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
+| `src/ui/settings.rs` | Categorized, searchable settings |
 | `src/navigation.rs` | Project grouping and persistent native preferences |
+| `src/usage.rs` | Account usage windows from `usage.report` |
+| `src/ui/usage.rs` | Sidebar usage strip, hover card and detail modal |
 | `src/harness.rs` | Isolated protocol fixture |
 | `src/live.rs` | Explicit disposable live-provider exercise |
 | `src/bin/native-harness.rs` | Repeatable fixture and benchmark commands |
@@ -687,7 +692,42 @@ one-line steps (icon, reported description, session-relative target, duration).
 Clicking a step opens its exact input/output in place; the header collapses the
 steps. A single call is just its step row. Cards hold at most 12 calls and show
 the latest six with an "earlier steps" toggle; skill, child-agent and workflow
-calls remain separate.
+calls remain separate but use the same card shell: a step-style header (icon,
+title, target, status pill, duration) with the skill description, dispatch brief
+(long briefs fold behind "Show full task"), child agents and workflow run inside.
+
+Conversations open on the newest page (200 items) instead of the whole retained
+log. Scrolling to the top loads the next page automatically (or use **Earlier
+messages**), keeping the reading position; periodic consistency reads re-read
+only the current window. Paging stops at the client budget (2,000 rows / 4 MB),
+after which History holds the rest. Hubs or daemons without paging still answer
+with the full log, and the client then offers no older pages.
+
+The sidebar shows **Usage** for every connected account from the hub's
+`usage.report` (refreshed each minute): each Claude login (default and profiles),
+Codex and any other provider with a measured window gets one compact line with
+its most pressing window (5-hour, else weekly, else monthly). Hovering shows
+every window as a card; clicking opens a detail modal (percentages, reset
+countdowns, pace verdicts, refresh failures, a refresh button; backdrop, ✕ or
+Esc close it). A tick on each meter marks the expected pace. Unavailable, rolled-over and unmeasured windows
+are omitted, as on desktop.
+
+The composer shows a **context meter** (`ctx`, a thin track and the percentage;
+green, amber from 70%, red from 90%) once the runtime reports occupancy, with
+tokens held of the window in its tooltip. It follows the TUI/desktop rules: the
+status line's percentage and window are one claim, rejected for the daemon's
+resolved window when the session demonstrably holds more; a provider that knows
+its window but not current usage shows `—` rather than a guess.
+
+**Settings → Chat → One card per turn** (off by default) also folds the agent's
+notes *between* calls into the card, so a turn's work reads as one narrated card
+of up to 48 rows; text before the first call and the closing answer stay normal
+messages.
+
+Markdown tables follow the desktop chat: a rounded frame, a bright bold header
+on the code-header tint, hairline row rules, faint zebra stripes, smaller text
+and wrapping (never truncated) cells. Blockquotes get a slim accent rail and
+muted italic copy.
 
 Messages and work cards show quiet, right-aligned server timestamps below their content in local time
 (with the date for older days). Live tool activity groups share one timestamp

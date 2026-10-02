@@ -1092,6 +1092,7 @@ impl Node {
 
     fn render_table(
         item: &Node,
+        mb: gpui::Rems,
         node_cx: &NodeContext,
         window: &mut Window,
         cx: &mut App,
@@ -1117,6 +1118,11 @@ impl Node {
             }
             _ => vec![],
         };
+
+        if let (Some(prose), Node::Table(table)) = (node_cx.style.prose, item) {
+            return Self::render_prose_table(table, &col_lens, prose, mb, node_cx, window, cx)
+                .into_any_element();
+        }
 
         match item {
             Node::Table(table) => div()
@@ -1189,6 +1195,77 @@ impl Node {
                 .into_any_element(),
             _ => div().into_any_element(),
         }
+    }
+
+    /// Desktop chat tables (components/markdown.tsx `renderTable`): a quiet
+    /// rounded frame, a bright bold header on the code-header tint, hairline
+    /// row rules, faint zebra striping, smaller text, and wrapping cells
+    /// instead of truncation so nothing is hidden.
+    fn render_prose_table(
+        table: &Table,
+        col_lens: &[usize],
+        prose: super::ProseColors,
+        mb: gpui::Rems,
+        node_cx: &NodeContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        const MAX_LENGTH: usize = 60;
+        let row_count = table.children.len();
+        let cols = col_lens.len().max(1);
+        let len = |ix: usize| col_lens.get(ix).copied().unwrap_or(1).clamp(3, MAX_LENGTH);
+        let total: usize = (0..cols).map(len).sum();
+        let rows = table.children.iter().enumerate().map(|(row_ix, row)| {
+            let header = row_ix == 0;
+            let striped = !header && row_ix % 2 == 0;
+            h_flex()
+                .id(("row", row_ix))
+                .w_full()
+                .items_start()
+                .when(header, |this| {
+                    this.bg(prose.code_header)
+                        .text_color(prose.strong)
+                        .font_weight(FontWeight::SEMIBOLD)
+                })
+                .when(striped, |this| this.bg(prose.code_header.opacity(0.45)))
+                .when(row_ix + 1 < row_count, |this| {
+                    this.border_b_1().border_color(if header {
+                        prose.border
+                    } else {
+                        prose.border.opacity(0.6)
+                    })
+                })
+                .children((0..cols).map(|ix| {
+                    let align = table.column_align(ix);
+                    div()
+                        .id(("cell", ix))
+                        .flex()
+                        .min_w_0()
+                        .w(relative(len(ix) as f32 / total as f32))
+                        .when(align == ColumnumnAlign::Center, |this| this.justify_center())
+                        .when(align == ColumnumnAlign::Right, |this| this.justify_end())
+                        .px(px(10.))
+                        .py(px(if header { 6. } else { 5. }))
+                        .whitespace_normal()
+                        .children(
+                            row.children
+                                .get(ix)
+                                .map(|cell| cell.children.render(node_cx, window, cx)),
+                        )
+                }))
+        });
+        div().pb(mb).w_full().child(
+            div()
+                .id("table")
+                .w_full()
+                .text_size(rems(0.875))
+                .line_height(relative(1.5))
+                .border_1()
+                .border_color(prose.border)
+                .rounded(px(8.))
+                .overflow_hidden()
+                .children(rows),
+        )
     }
 
     pub(super) fn render_root(
@@ -1304,10 +1381,21 @@ impl Node {
                     div()
                         .id("blockquote")
                         .w_full()
-                        .text_color(cx.theme().muted_foreground)
-                        .border_l_3()
-                        .border_color(cx.theme().secondary_active)
-                        .px_4()
+                        .map(|this| match node_cx.style.prose {
+                            // Desktop parity: a slim marker bar and muted italic copy.
+                            Some(prose) => this
+                                .text_color(prose.muted)
+                                .italic()
+                                .border_l_2()
+                                .border_color(prose.marker.opacity(0.55))
+                                .pl(px(12.))
+                                .py(px(2.)),
+                            None => this
+                                .text_color(cx.theme().muted_foreground)
+                                .border_l_3()
+                                .border_color(cx.theme().secondary_active)
+                                .px_4(),
+                        })
                         .children({
                             let children_len = children.len();
                             children.into_iter().enumerate().map(move |(index, c)| {
@@ -1346,7 +1434,9 @@ impl Node {
                 })
                 .into_any_element(),
             Node::CodeBlock(code_block) => code_block.render(&options, node_cx, window, cx),
-            Node::Table { .. } => Self::render_table(self, node_cx, window, cx).into_any_element(),
+            Node::Table { .. } => {
+                Self::render_table(self, mb, node_cx, window, cx).into_any_element()
+            }
             Node::Divider => div()
                 .pb(mb)
                 .child(match node_cx.style.prose {

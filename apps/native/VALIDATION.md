@@ -642,3 +642,57 @@ static status dot so the composer line owns the only animated loader.
 - Native serialized suite **186 passed**; strict Clippy passed.
 - Checked in the live release app against the real session (headless capture
   skipped: the headless output would have taken the user's workspace).
+
+## Tables, quotes, orchestration cards, one card per turn (2026-10-02)
+
+Prose-mode Markdown tables (`render_prose_table` in vendored `node.rs`) and
+blockquotes follow desktop `markdown.tsx`. Skill/Subagent/Workflow calls use the
+work-card shell with their detail inside the card (`tools::card` `extras`).
+`group_span(rows, ix, merge_turn)` folds interior assistant notes into the card
+when `Settings.merge_turn_tools` is on (cap 48 rows; 12 when off). Nord
+`disabled` moved from nord3 0x4c566a (~1.9:1 on chat) to 0x616e88 (~2.8:1).
+
+- Native serialized suite **190 passed** (new: grouping with notes, orchestration
+  card shell, merged turn card, quiet-text contrast across themes); strict
+  Clippy and rustfmt passed.
+- Rich harness fixture now carries a table, blockquote, interior note and a long
+  subagent brief.
+- No screenshots: the Hyprland headless output took the user's occupied
+  workspace 5 both times it was created (even with a workspace-9 rule), so it was
+  removed at once and the visual pass was skipped.
+
+## Context meter, settings categories and search (2026-10-02)
+
+`ContextUsage` on `Session` merges `statusLine`/`usage`/`resolvedContextWindow`
+(camelCase hub and snake_case claudemon spellings) and `reading()` twins TUI
+`derive_stats` (2% drift tolerance, waiting state). `chrome::context_meter`
+renders it in the composer toolbar. Settings moved to `src/ui/settings.rs`:
+entries are data (section, title, description, keywords, control), so the rail,
+category view and search all filter one list. Sidebar child rows fit the 64px
+`uniform_list` slot and use the shared `chrome::brand_badge`.
+
+- Native serialized suite **195 passed**; strict Clippy and rustfmt passed.
+- GPUI test debug bounds can outlive rows removed by a later frame, so the
+  settings UI test asserts presence only; `settings_match` pins filtering.
+
+## Paged conversations and account usage (2026-10-02)
+
+claudemon `/conversation?limit=N` returns the newest N items plus
+`window_first_seq` (`ConversationStore::snapshot_window`, replacing
+`snapshot_since`); hub `sessions.conversation` validates and forwards `limit`
+beside `sinceSeq`. The native controller reads `CONVERSATION_PAGE` (200) items,
+widens by a page on `Command::LoadOlder` and re-folds the wider window, which
+keeps existing row keys so the scroll anchor holds. Reconciliation and gap
+repairs re-read the same window. The first chat row triggers the next page as
+it renders (the list overdraws 250px). On a 4,000-item fixture the first read
+dropped from 599 KB to 30 KB.
+
+Usage: `Backend::usage_report` polls `usage.report` on connect and every 60s,
+keeping the last reading on failure; `usage::accounts` twins desktop
+`usagePacingRows` filtering; the sidebar renders one row per account.
+
+- claudemon: new window unit test + `?limit=` HTTP test; strict Clippy passed.
+- hub-rs: `conversation_query` unit test, `limit` validation case in
+  `engine_adapter`.
+- Native serialized suite **200 passed**; strict Clippy and rustfmt passed.
+

@@ -54,7 +54,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn toggle_open(&mut self, key: String, default: bool, cx: &mut Context<Self>) {
+    pub(super) fn toggle_open(&mut self, key: String, default: bool, cx: &mut Context<Self>) {
         if self.chat.open.len() > 2048 {
             self.chat.open.clear();
         }
@@ -241,6 +241,34 @@ impl Workspace {
         step
     }
 
+    /// An assistant note between calls in a merged turn card, aligned with
+    /// the step titles so the card reads as one narrated piece of work.
+    fn render_note(
+        &mut self,
+        row: &Row,
+        session: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let key = row.key;
+        div()
+            .debug_selector(move || format!("work-note-{key}"))
+            .pl(px(33.))
+            .pr_3()
+            .py(px(6.))
+            // A note introduces the calls after it, so it opens a new section.
+            .border_t_1()
+            .border_color(gpui::Hsla::from(rgb(p.border)).opacity(0.5))
+            .text_size(px((self.settings.text_size as f32 - 1.).max(11.)))
+            .child(self.render_markdown(
+                &format!("work-note:{session}:{key}"),
+                &row.text,
+                window,
+                cx,
+            ))
+    }
+
     pub(super) fn render_work_card(
         &mut self,
         span: Range<usize>,
@@ -253,7 +281,11 @@ impl Workspace {
         let session = self.view.selected.clone().unwrap_or_default();
         let card_key = format!("work:{session}:{}", tools::identity(&rows[span.start]));
         let summary = tool_preview::summarize_work(rows.range(span.clone()).map(AsRef::as_ref));
-        let steps = span.len();
+        // Merged turns interleave assistant notes; only calls count as steps.
+        let steps = rows
+            .range(span.clone())
+            .filter(|r| r.tool.is_some())
+            .count();
         let open = summary.failed > 0
             || steps == 1
             || self.chat.open.get(&card_key).copied().unwrap_or(true);
@@ -262,8 +294,12 @@ impl Workspace {
         let hidden = if show_earlier {
             0
         } else {
-            steps.saturating_sub(VISIBLE_STEPS)
+            span.len().saturating_sub(VISIBLE_STEPS)
         };
+        let hidden_steps = rows
+            .range(span.start..span.start + hidden)
+            .filter(|r| r.tool.is_some())
+            .count();
         let radius = px((p.panel_radius - 1.).max(0.));
         let mut card = div()
             .debug_selector(|| "tool-activity-group".into())
@@ -391,10 +427,11 @@ impl Workspace {
                         .hover(|s| s.bg(rgb(p.selected)))
                         .text_size(px(11.))
                         .text_color(rgb(p.muted))
-                        .child(format!(
-                            "{hidden} earlier step{}",
-                            if hidden == 1 { "" } else { "s" }
-                        ))
+                        .child(match hidden_steps {
+                            0 => "Earlier notes".to_owned(),
+                            1 => "1 earlier step".to_owned(),
+                            n => format!("{n} earlier steps"),
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.toggle_open(earlier_key.clone(), false, cx)
                         })),
@@ -403,7 +440,11 @@ impl Workspace {
             let shown = rows.range(span.start + hidden..span.end);
             let last = shown.len().saturating_sub(1);
             for (n, row) in shown.enumerate() {
-                list = list.child(self.render_step(row, (steps == 1, n == last), window, cx));
+                list = list.child(if row.tool.is_some() {
+                    self.render_step(row, (steps == 1, n == last), window, cx)
+                } else {
+                    self.render_note(row, &session, window, cx)
+                });
             }
             card = card.child(list);
         }

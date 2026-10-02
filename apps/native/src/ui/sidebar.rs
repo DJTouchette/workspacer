@@ -54,6 +54,13 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.appearance.palette();
+        // Children inherit the parent's provider unless their model says otherwise.
+        let provider = self
+            .view
+            .sessions
+            .iter()
+            .find(|s| s.id == parent)
+            .map_or("", |s| s.provider.as_str());
         let parent = parent.to_owned();
         let agent = child.id.clone();
         let title = if child.description.is_empty() {
@@ -102,8 +109,10 @@ impl Workspace {
                 }),
             );
         }
+        // The sidebar is a uniform_list: every row takes the 64px session-card
+        // height, so child rows must fit two lines like session cards do.
         div()
-            .h(px(84.))
+            .h(px(64.))
             .px_2()
             .pl(px(8. + depth.min(6) as f32 * 16.))
             .pb_1()
@@ -130,27 +139,25 @@ impl Workspace {
                     Tooltip::new("Provider-native agent · open conversation preview")
                         .build(window, cx)
                 })
+                // Same type and badge as session cards: title on top, brand
+                // model badge and status below.
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap_2()
                         .child(
-                            Icon::new(IconName::SquareTerminal)
-                                .size(px(12.))
-                                .text_color(rgb(p.accent)),
-                        )
-                        .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(13.))
+                                .text_size(px(14.))
+                                .font_weight(FontWeight::MEDIUM)
                                 .child(title),
                         )
                         .when(child.running() && self.view.connected, |d| {
                             d.child(brand_spinner(
-                                10.,
+                                12.,
                                 p,
                                 SharedString::from(format!("sidebar-native-working-{}", child.id)),
                             ))
@@ -158,20 +165,36 @@ impl Workspace {
                 )
                 .child(
                     div()
-                        .truncate()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
                         .text_size(px(11.))
                         .text_color(rgb(p.muted))
-                        .child(if child.model.is_empty() {
-                            "Native agent".to_owned()
-                        } else {
-                            child.model.clone()
+                        .child(
+                            div()
+                                .debug_selector(move || format!("sidebar-child-model-{ix}"))
+                                .flex_1()
+                                .min_w_0()
+                                .child(chrome::brand_badge(
+                                    wks_native::model::model_provider(&child.model)
+                                        .unwrap_or(provider),
+                                    wks_native::model::model_display_name(&child.model),
+                                    p,
+                                    11.,
+                                )),
+                        )
+                        .when(!(child.running() && self.view.connected), |d| {
+                            d.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(rgb(if child.failed() {
+                                        p.error
+                                    } else {
+                                        p.success
+                                    }))
+                                    .child(state),
+                            )
                         }),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(rgb(if child.failed() { p.error } else { p.muted }))
-                        .child(state),
                 )
                 .when(self.view.connected, |d| {
                     d.cursor_pointer()
@@ -865,6 +888,7 @@ impl Workspace {
                 .flex_1()
                 .min_h_0(),
             )
+            .children(self.render_usage_strip(cx))
             .child(
                 div()
                     .px_3()

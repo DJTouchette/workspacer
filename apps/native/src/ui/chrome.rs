@@ -65,14 +65,18 @@ pub(super) const CLAUDE_CLAY: u32 = 0xD97757;
 /// Provider mark and brand color, following desktop `agentLogos.tsx`: Claude
 /// keeps its clay; the OpenAI mark (Codex) takes the text color.
 pub(super) fn model_badge(session: &Session, p: Palette, size: f32) -> Div {
-    let (mark, color) = match session.provider.as_str() {
+    brand_badge(&session.provider, session.display_model(), p, size)
+}
+
+/// The badge for any provider and display name (sessions and child agents).
+pub(super) fn brand_badge(provider: &str, name: String, p: Palette, size: f32) -> Div {
+    let (mark, color) = match provider {
         "claude" => (Some("brand/claude.svg"), CLAUDE_CLAY),
         "codex" => (Some("brand/openai.svg"), p.text),
         _ => (None, p.accent),
     };
-    let name = session.display_model();
     let name = if name.is_empty() {
-        match session.provider.as_str() {
+        match provider {
             "claude" => "Claude".to_owned(),
             "codex" => "Codex".to_owned(),
             "" => "Agent".to_owned(),
@@ -119,57 +123,6 @@ pub(super) fn floating_shadow(p: Palette) -> Vec<gpui::BoxShadow> {
         blur_radius: px(20.),
         spread_radius: px(-4.),
     }]
-}
-
-pub(super) fn section(title: &'static str, description: &'static str, p: Palette) -> Div {
-    div()
-        .py_5()
-        .border_t_1()
-        .border_color(rgb(p.border))
-        .flex()
-        .flex_col()
-        .gap_4()
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    div()
-                        .text_size(px(16.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(rgb(p.muted))
-                        .child(description),
-                ),
-        )
-}
-
-pub(super) fn preference(label: &'static str, description: &'static str, p: Palette) -> Div {
-    div().flex().items_center().justify_between().gap_4().child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(rgb(p.muted))
-                    .child(description),
-            ),
-    )
 }
 
 pub(super) fn project_label(path: &str) -> &str {
@@ -424,4 +377,95 @@ impl Workspace {
             })
             .child(Icon::new(icon).size(px(13.)))
     }
+}
+
+fn token_label(tokens: u64) -> String {
+    match tokens {
+        t if t >= 1_000_000 => {
+            let m = t as f64 / 1_000_000.;
+            if m.fract() < 0.05 {
+                format!("{m:.0}M")
+            } else {
+                format!("{m:.1}M")
+            }
+        }
+        t if t >= 1_000 => format!("{}K", (t as f64 / 1_000.).round() as u64),
+        t => t.to_string(),
+    }
+}
+
+/// Context-window meter, following the desktop status bar's `ctx` gauge: a
+/// thin rounded track, green → amber (70%) → red (90%), the percentage, and
+/// tokens held of the window in the tooltip. `None` until the runtime reports.
+pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Div>> {
+    let usage = &session.context;
+    let (label, pct, tooltip) = match usage.reading() {
+        Some(reading) => {
+            let pct = reading.pct.clamp(0., 100.);
+            let detail = match (reading.tokens, reading.window) {
+                (Some(tokens), Some(window)) => format!(
+                    "{} of {} tokens in context",
+                    token_label(tokens),
+                    token_label(window)
+                ),
+                (Some(tokens), None) => format!("{} tokens in context", token_label(tokens)),
+                _ => "Share of the context window in use".to_owned(),
+            };
+            (
+                format!("{}%", pct.round() as u64),
+                Some(pct),
+                format!("Context {}% · {detail}", pct.round() as u64),
+            )
+        }
+        None if usage.waiting => (
+            "—".to_owned(),
+            None,
+            "The provider reported a context window but not current-request usage yet".to_owned(),
+        ),
+        None => return None,
+    };
+    let color = match pct {
+        Some(pct) if pct >= 90. => p.error,
+        Some(pct) if pct >= 70. => p.warning,
+        Some(_) => p.success,
+        None => p.muted,
+    };
+    const TRACK: f32 = 44.;
+    Some(
+        div()
+            .id("context-meter")
+            .debug_selector(|| "context-meter".into())
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .px_2()
+            .h(px(28.))
+            .rounded_full()
+            .text_size(px(11.))
+            .child(div().text_color(rgb(p.muted)).child("ctx"))
+            .child(
+                div()
+                    .w(px(TRACK))
+                    .h(px(4.))
+                    .rounded_full()
+                    .bg(rgb(p.border))
+                    .overflow_hidden()
+                    .when_some(pct, |d, pct| {
+                        d.child(
+                            div()
+                                .h_full()
+                                .rounded_full()
+                                .bg(rgb(color))
+                                .w(px(if pct > 0. {
+                                    (pct.max(2.) / 100.) as f32 * TRACK
+                                } else {
+                                    0.
+                                })),
+                        )
+                    }),
+            )
+            .child(div().text_color(rgb(color)).child(label))
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)),
+    )
 }

@@ -125,7 +125,9 @@ impl Appearance {
                 text: 0xeceff4,
                 prose: 0xd8dee9,
                 muted: 0x8eabc7,
-                disabled: 0x4c566a,
+                // Nord's brightened comment tone: nord3 (0x4c566a) fell to
+                // ~1.9:1 on the chat surface, faintest of the three themes.
+                disabled: 0x616e88,
                 accent: 0x88c0d0,
                 primary: 0x81a1c1,
                 primary_hover: 0x7395b8,
@@ -184,6 +186,38 @@ pub fn preference_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn luminance(color: u32) -> f64 {
+        let channel = |shift: u32| {
+            let c = ((color >> shift) & 0xff) as f64 / 255.;
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+
+    fn contrast(a: u32, b: u32) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn quiet_text_stays_legible_on_the_chat_surface() {
+        // Timestamps and durations use `disabled`; keep every theme readable.
+        for appearance in Appearance::ALL {
+            let p = appearance.palette();
+            let ratio = contrast(p.disabled, p.chat);
+            assert!(ratio >= 2.4, "{appearance:?} disabled contrast {ratio:.2}");
+            assert!(
+                contrast(p.muted, p.chat) > ratio,
+                "{appearance:?} muted ≤ disabled"
+            );
+        }
+    }
+
     #[test]
     fn preference_round_trip_and_invalid_input() {
         let nonce = std::time::SystemTime::now()

@@ -19,7 +19,11 @@ tables and code, and its asynchronous parse cache:
   italic use a bright color, inline code uses an accent color/background and
   the theme mono font (per-run family in `inline.rs`), bullets/ordered markers,
   headings (h1/h2 underlined) and rules use app colors, and fenced code gets a
-  bordered panel with a language header. `None` keeps upstream rendering.
+  bordered panel with a language header. Tables render through
+  `render_prose_table` (rounded frame, tinted bold header, hairline rules,
+  zebra stripes, smaller wrapping cells sized by content share) and blockquotes
+  get a slim marker-colored rail with muted italic text. `None` keeps upstream
+  rendering.
 
   In prose mode inline code is drawn by `Inline` as rounded (4px), padded quads
   per visual line instead of square text-run backgrounds, and the Markdown

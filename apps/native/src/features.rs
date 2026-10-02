@@ -142,7 +142,9 @@ impl Request {
                     )
                     .await
             }
-            Self::History { session } => history_document(backend.conversation(session).await?),
+            Self::History { session } => {
+                history_document(backend.conversation(session, None).await?)
+            }
             Self::SubagentHistory { session, agent } => {
                 let value = backend
                     .call(

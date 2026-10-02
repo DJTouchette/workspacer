@@ -288,7 +288,7 @@ impl Workspace {
         let Some(row) = rows.get(ix) else {
             return div().into_any_element();
         };
-        let group = wks_native::tool_preview::group_span(rows, ix);
+        let group = wks_native::tool_preview::group_span(rows, ix, self.settings.merge_turn_tools);
         // Preserve raw list indices for bookmarks and selection. The final slot
         // owns the group, so the existing tail probe still tracks its painted end.
         if group.as_ref().is_some_and(|span| ix + 1 < span.end) {
@@ -418,6 +418,7 @@ impl Workspace {
                 )
                 .child(self.render_children(&session, "unanchored", &children, window, cx));
         }
+        let earlier = (ix == 0 && self.view.transcript.has_older).then(|| self.render_earlier(cx));
         // Virtual list items are placed directly at the viewport origin. Center
         // the column inside a full-width item rather than on the item itself.
         div()
@@ -427,9 +428,57 @@ impl Workspace {
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "last-transcript-row".into())
             })
-            .child(chrome::chat_column().child(body))
+            .child(chrome::chat_column().children(earlier).child(body))
             .into_any_element()
     }
+    /// Top-of-chat pager. The list draws 250px past the viewport, so the first
+    /// row renders just before the reader reaches it: that is the moment to
+    /// fetch the next page, keeping the scroll anchored on the current row.
+    fn render_earlier(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        let loading = self.view.loading_older;
+        if !loading && !self.view.loading && self.view.connected {
+            let this = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                let _ = this.update(cx, |this, cx| this.command(Command::LoadOlder, cx));
+            });
+        }
+        div()
+            .id("earlier-messages")
+            .debug_selector(|| "earlier-messages".into())
+            .py_3()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .id("earlier-messages-pill")
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.surface))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .when(loading, |d| {
+                        d.child(brand_spinner(11., p, "earlier-messages-loading"))
+                            .child("Loading earlier messages…")
+                    })
+                    .when(!loading, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.text_color(rgb(p.text)).bg(rgb(p.selected)))
+                            .child(Icon::new(IconName::ArrowUp).size(px(11.)))
+                            .child("Earlier messages")
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.command(Command::LoadOlder, cx)),
+                            )
+                    }),
+            )
+    }
+
     pub(super) fn render_message(
         &mut self,
         row: &Row,
@@ -561,30 +610,11 @@ impl Workspace {
                 )
             });
         if let Some(tool) = &row.tool {
-            if namespace == "live" {
-                body = body.child(tools::card(
-                    row,
-                    &session,
-                    self.tool_expansion.get(&tools::identity(row)).copied(),
-                    cx.entity().downgrade(),
-                    (p, self.settings.twelve_hour_clock),
-                    window,
-                    cx,
-                ));
-            } else {
-                body = body.child(format!(
-                    "{} · {} · {}",
-                    tool.category(),
-                    wks_native::tool_preview::overview(&tool.name, &tool.input),
-                    if tool.is_error {
-                        "Failed"
-                    } else if tool.complete {
-                        "Completed"
-                    } else {
-                        "Awaiting result"
-                    }
-                ));
-            }
+            let live = namespace == "live";
+            let input = tool.value();
+            // Orchestration detail; live cards hold it inside the card body.
+            let mut lead: Vec<gpui::AnyElement> = Vec::new();
+            let mut trail: Vec<gpui::AnyElement> = Vec::new();
             if tool.category() == "Skill" {
                 let target = tool.target();
                 if let Some(skill) = self
@@ -594,15 +624,28 @@ impl Workspace {
                     .flatten()
                     .find(|s| s["name"] == target)
                 {
-                    body = body.child(format!(
-                        "{} · {}",
-                        skill["description"].as_str().unwrap_or(""),
-                        skill["origin"].as_str().unwrap_or("")
-                    ));
+                    let description = skill["description"].as_str().unwrap_or("");
+                    let origin = skill["origin"].as_str().unwrap_or("");
+                    lead.push(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_baseline()
+                            .gap_2()
+                            .child(div().text_color(rgb(p.prose)).child(description.to_owned()))
+                            .when(!origin.is_empty(), |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.disabled))
+                                        .child(origin.to_owned()),
+                                )
+                            })
+                            .into_any_element(),
+                    );
                 }
             }
             if matches!(tool.category(), "Subagent" | "Workflow") {
-                let input = tool.value();
                 let description = input["prompt"]
                     .as_str()
                     .or_else(|| input["message"].as_str())
@@ -610,10 +653,118 @@ impl Workspace {
                     .or_else(|| input["description"].as_str())
                     .unwrap_or("");
                 if !description.is_empty() && description != tool.target() {
-                    body = body.child(literal(format!("{key}-task"), description, window, cx));
+                    // Long dispatch briefs stay a few lines tall until asked for.
+                    let long = description.lines().count() > 6 || description.len() > 600;
+                    let open_key = format!("{key}-task-open");
+                    let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
+                    lead.push(
+                        div()
+                            .pl(px(10.))
+                            .border_l_2()
+                            .border_color(gpui::Hsla::from(rgb(p.accent)).opacity(0.45))
+                            .text_color(rgb(p.prose))
+                            .child(
+                                div()
+                                    .when(long && !open, |d| d.max_h(px(132.)).overflow_hidden())
+                                    .child(literal(format!("{key}-task"), description, window, cx)),
+                            )
+                            .when(long, |d| {
+                                d.child(
+                                    div()
+                                        .id(SharedString::from(format!("{open_key}-toggle")))
+                                        .debug_selector(|| "task-brief-toggle".into())
+                                        .mt_1()
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.accent))
+                                        .cursor_pointer()
+                                        .hover(|s| s.underline())
+                                        .child(if open { "Show less" } else { "Show full task" })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_open(open_key.clone(), false, cx)
+                                        })),
+                                )
+                            })
+                            .into_any_element(),
+                    );
                 }
             }
-            if namespace != "live" {
+            if let Some(path) = input["file_path"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+            {
+                let cwd = self
+                    .selected_session()
+                    .map(|s| s.cwd.as_str())
+                    .unwrap_or("");
+                trail.push(
+                    self.file_button(&format!("{key}-file"), content::resolve_path(cwd, path), cx)
+                        .into_any_element(),
+                );
+            }
+            if live && let Some(children) = self.child_ui.agents.by_tool.get(&tool.id).cloned() {
+                trail.push(
+                    self.render_children(&session, &key, &children, window, cx)
+                        .into_any_element(),
+                );
+            }
+            if tool.category() == "Workflow" {
+                let result =
+                    serde_json::from_str::<serde_json::Value>(&tool.output).unwrap_or_default();
+                let run_id = input["runId"]
+                    .as_str()
+                    .or_else(|| input["run_id"].as_str())
+                    .or_else(|| result["runId"].as_str())
+                    .or_else(|| result["run_id"].as_str());
+                if let Some(run) = run_id.and_then(|id| {
+                    self.selected_session()
+                        .and_then(|s| s.workflows.as_array())
+                        .into_iter()
+                        .flatten()
+                        .find(|w| w["runId"] == id)
+                }) {
+                    trail.push(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_color(rgb(p.text))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(run["name"].as_str().unwrap_or("Workflow").to_owned()),
+                            )
+                            .child(run["status"].as_str().unwrap_or("").to_owned())
+                            .into_any_element(),
+                    );
+                }
+            }
+            if live {
+                lead.append(&mut trail);
+                body = body.child(tools::card(
+                    row,
+                    &session,
+                    self.tool_expansion.get(&tools::identity(row)).copied(),
+                    cx.entity().downgrade(),
+                    (p, self.settings.twelve_hour_clock),
+                    lead,
+                    window,
+                    cx,
+                ));
+            } else {
+                body = body
+                    .child(format!(
+                        "{} · {} · {}",
+                        tool.category(),
+                        wks_native::tool_preview::overview(&tool.name, &tool.input),
+                        if tool.is_error {
+                            "Failed"
+                        } else if tool.complete {
+                            "Completed"
+                        } else {
+                            "Awaiting result"
+                        }
+                    ))
+                    .children(lead);
                 let changes = tool.changes();
                 for (n, file) in changes.iter().enumerate() {
                     body = body
@@ -648,52 +799,11 @@ impl Workspace {
                         cx,
                     ));
                 }
-            }
-            let input = tool.value();
-            if let Some(path) = input["file_path"]
-                .as_str()
-                .or_else(|| input["path"].as_str())
-            {
-                let cwd = self
-                    .selected_session()
-                    .map(|s| s.cwd.as_str())
-                    .unwrap_or("");
-                body = body.child(self.file_button(
-                    &format!("{key}-file"),
-                    content::resolve_path(cwd, path),
-                    cx,
-                ));
-            }
-            if namespace == "live"
-                && let Some(children) = self.child_ui.agents.by_tool.get(&tool.id).cloned()
-            {
-                body = body.child(self.render_children(&session, &key, &children, window, cx));
-            }
-            if tool.category() == "Workflow" {
-                let result =
-                    serde_json::from_str::<serde_json::Value>(&tool.output).unwrap_or_default();
-                let run_id = input["runId"]
-                    .as_str()
-                    .or_else(|| input["run_id"].as_str())
-                    .or_else(|| result["runId"].as_str())
-                    .or_else(|| result["run_id"].as_str());
-                if let Some(run) = run_id.and_then(|id| {
-                    self.selected_session()
-                        .and_then(|s| s.workflows.as_array())
-                        .into_iter()
-                        .flatten()
-                        .find(|w| w["runId"] == id)
-                }) {
-                    body = body.child(format!(
-                        "{} · {}",
-                        run["name"].as_str().unwrap_or("Workflow"),
-                        run["status"].as_str().unwrap_or("")
-                    ));
-                }
+                body = body.children(trail);
             }
             let tool_copy = row.copy_text();
             return body.child(
-                div().absolute().top(px(12.)).right(px(8.)).child(
+                div().absolute().top(px(9.)).right(px(8.)).child(
                     self.icon_button(
                         SharedString::from(format!("copy-{key}")),
                         "Copy message",

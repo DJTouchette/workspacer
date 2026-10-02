@@ -58,14 +58,25 @@ workspace is empty before launching or closing anything there. Desktop checks
 for the revert: renderer `tsc`, `npx vitest run` (1936 pass), and
 `npx playwright test tests/e2e/chatTailPin.test.ts --project=renderer`.
 
+## Follow-up pass (same day, uncommitted at time of writing)
+
+- Tables and blockquotes use desktop styling (vendored `node.rs`, prose mode).
+- Skill/subagent/workflow calls use the work-card shell; their detail sits
+  inside the card and long dispatch briefs fold.
+- **Settings → Chat → One card per turn** merges a turn's calls and the notes
+  between them into one card (`Settings.merge_turn_tools`, default off).
+- Nord timestamps brightened (`disabled` 0x616e88); a test pins quiet-text
+  contrast for every theme.
+
 ## Open follow-ups
 
-- Skill/subagent/workflow cards could adopt the work-card look.
-- Option to merge a whole turn's tool calls into one card across interleaved
-  assistant text (today, text between calls splits cards — same as desktop).
-- Tables and blockquotes still use library defaults, not desktop styling.
+- Chat paging and account usage shipped (see VALIDATION.md). Paging re-reads a
+  widening window rather than prepending a `before` page; fine up to the 2,000
+  row client budget, but an O(n²) re-read if that budget ever grows a lot.
+- Visual check of the above was not done (see VALIDATION.md); run the rich
+  harness and look at tables, quotes, the Skill/Agent cards and the merged
+  turn card in all three themes.
 - Inline code renders at full size (desktop uses 0.9em); GPUI can't vary size
   within a line.
-- Nord timestamps (disabled tone) are the faintest of the three themes.
 - No Windows/macOS rendering checks or live-provider runs were done for this
   pass; the bundled fonts and SVG marks are compiled in, so they should carry over.

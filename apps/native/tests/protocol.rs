@@ -219,6 +219,83 @@ async fn session_loading_and_read_retry_follow_actual_replies() {
     assert!(recovered.notice.is_empty());
 }
 
+fn page(seq: u64, first: u64, count: u64) -> Value {
+    let items: Vec<Value> = (first..first + count)
+        .map(|n| json!({"kind":"user_message","text":format!("message {n}")}))
+        .collect();
+    json!({"seq":seq,"first_seq":1,"window_first_seq":first,"items":items})
+}
+
+#[tokio::test]
+async fn conversations_open_on_the_newest_page_and_page_back_on_request() {
+    use wks_native::controller::CONVERSATION_PAGE;
+    let page_size = CONVERSATION_PAGE as u64;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([session("a")]))
+        .await;
+    let read = hub.frame("call", Some("sessions.conversation")).await;
+    assert_eq!(read.value["params"]["limit"], CONVERSATION_PAGE);
+    // 500 retained items; the newest page starts at 301.
+    read.result(page(500, 500 - page_size + 1, page_size)).await;
+    let opened = view(&controller, |v| !v.loading && !v.transcript.rows.is_empty()).await;
+    assert!(opened.transcript.has_older);
+    assert_eq!(opened.transcript.rows.len(), CONVERSATION_PAGE);
+    controller.command(Command::LoadOlder).unwrap();
+    let older = hub.frame("call", Some("sessions.conversation")).await;
+    assert_eq!(older.value["params"]["limit"], 2 * CONVERSATION_PAGE);
+    view(&controller, |v| v.loading_older).await;
+    older
+        .result(page(500, 500 - 2 * page_size + 1, 2 * page_size))
+        .await;
+    let widened = view(&controller, |v| {
+        !v.loading_older && v.transcript.rows.len() > CONVERSATION_PAGE
+    })
+    .await;
+    assert!(widened.transcript.has_older);
+    // Rows already on screen keep their keys, so the reader's anchor holds.
+    let newest = opened.transcript.rows.back().unwrap().key;
+    assert_eq!(widened.transcript.rows.back().unwrap().key, newest);
+    controller.command(Command::LoadOlder).unwrap();
+    let rest = hub.frame("call", Some("sessions.conversation")).await;
+    assert_eq!(rest.value["params"]["limit"], 3 * CONVERSATION_PAGE);
+    rest.result(page(500, 1, 500)).await;
+    let all = view(&controller, |v| {
+        !v.loading_older && v.transcript.rows.len() == 500
+    })
+    .await;
+    assert!(!all.transcript.has_older, "the whole log is loaded");
+    assert!(!all.transcript.omitted);
+}
+
+#[tokio::test]
+async fn daemons_without_paging_read_completely_and_never_offer_older_pages() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([session("a")]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(3, "An older daemon ignores limit"))
+        .await;
+    let v = view(&controller, |v| !v.loading && !v.transcript.rows.is_empty()).await;
+    assert!(!v.transcript.has_older);
+    controller.command(Command::LoadOlder).unwrap();
+    // No read follows; the next frame is the next unrelated call, if any.
+    assert!(
+        timeout(
+            Duration::from_millis(300),
+            hub.frame("call", Some("sessions.conversation"))
+        )
+        .await
+        .is_err()
+    );
+}
+
 #[tokio::test]
 async fn controller_reconciles_snapshot_races_gaps_and_stale_selection() {
     let mut hub = Hub::new().await;
@@ -529,6 +606,7 @@ async fn live_harness_targets_and_cleans_up_only_its_disposable_session() {
                                 .push((method.to_owned(), f["params"]["sessionId"].clone()));
                             json!({"ok":true})
                         }
+                        "usage.report" => json!({"providers":[]}),
                         other => panic!("unexpected live harness method {other}"),
                     };
                     if ws

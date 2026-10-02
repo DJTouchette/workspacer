@@ -12,12 +12,26 @@ pub(super) fn identity(row: &Row) -> String {
         .unwrap_or_else(|| format!("row:{}", row.key))
 }
 
+fn category_icon(category: &str) -> IconName {
+    match category {
+        "Skill" => IconName::BookOpen,
+        "Workflow" => IconName::GalleryVerticalEnd,
+        "Subagent" => IconName::Bot,
+        _ => IconName::Settings,
+    }
+}
+
+/// Orchestration calls (Skill, Subagent, Workflow) stand alone but share the
+/// work-card shell: a tinted bordered card whose header reads like a work
+/// step, with the call's extra detail (`extras`) inside the card body.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn card(
     row: &Row,
     session: &str,
     expansion: Option<bool>,
     workspace: WeakEntity<Workspace>,
     appearance: (Palette, bool),
+    extras: Vec<AnyElement>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -41,9 +55,9 @@ pub(super) fn card(
     let element_key = format!("{session}-{stable_identity}");
     let title = preview.title.clone();
     let subtitle = if preview.target == title {
-        ""
+        String::new()
     } else {
-        &preview.target
+        preview.target.clone()
     };
     let (status, color, icon) = if tool.is_error {
         ("Failed", p.error, IconName::TriangleAlert)
@@ -54,11 +68,9 @@ pub(super) fn card(
     } else {
         ("Running", p.busy, IconName::LoaderCircle)
     };
-    let status = match (row.timestamp_ms, tool.completed_at_ms) {
-        (Some(start), Some(end)) if end >= start => {
-            format!("{status} · {}", timing::duration_label(end - start))
-        }
-        _ => status.into(),
+    let duration = match (row.timestamp_ms, tool.completed_at_ms) {
+        (Some(start), Some(end)) if end >= start => Some(timing::duration_label(end - start)),
+        _ => None,
     };
     let status_icon = Icon::new(icon).size(px(12.));
     let status_icon = if !tool.complete && !tool.is_error {
@@ -74,159 +86,198 @@ pub(super) fn card(
     } else {
         status_icon.into_any_element()
     };
+    let lead = match origin {
+        Some(origin) => {
+            let managed = origin == wks_native::child_agents::ChildKind::Workspacer;
+            div()
+                .id(SharedString::from(format!("{element_key}-origin")))
+                .flex_shrink_0()
+                .debug_selector(move || {
+                    if managed {
+                        "workspacer-spawn-icon".into()
+                    } else {
+                        "native-spawn-icon".into()
+                    }
+                })
+                .tooltip(move |window, cx| {
+                    Tooltip::new(if managed {
+                        "Workspacer spawn"
+                    } else {
+                        "Provider-native subagent"
+                    })
+                    .build(window, cx)
+                })
+                .child(
+                    Icon::new(if managed {
+                        IconName::Bot
+                    } else {
+                        IconName::SquareTerminal
+                    })
+                    .size(px(14.))
+                    .text_color(rgb(if tool.is_error {
+                        p.error
+                    } else {
+                        p.accent
+                    })),
+                )
+        }
+        None => div()
+            .id(SharedString::from(format!("{element_key}-icon")))
+            .child(
+                Icon::new(category_icon(tool.category()))
+                    .size(px(14.))
+                    .flex_shrink_0()
+                    .text_color(rgb(if tool.is_error { p.error } else { p.accent })),
+            ),
+    };
+    let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
+    let radius = px((p.panel_radius - 1.).max(0.));
+    let has_body = !extras.is_empty() || row.truncated || expanded;
+    let header = div()
+        .id(SharedString::from(format!("{element_key}-toggle")))
+        .debug_selector(move || format!("tool-toggle-{key}"))
+        .rounded_t(radius)
+        .when(!has_body, |d| d.rounded_b(radius))
+        .pl_3()
+        // Room for the transcript's hover copy button over the right edge.
+        .pr(px(40.))
+        .py_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .focusable()
+        .tab_stop(true)
+        .key_context("NativeControl")
+        .focus(|s| s.bg(rgb(p.selected)))
+        .cursor_pointer()
+        .hover(|s| s.bg(rgb(p.selected)))
+        .child(lead)
+        .child(
+            div()
+                .flex_shrink_0()
+                .max_w(px(320.))
+                .truncate()
+                .text_size(px(12.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(p.text))
+                .child(title),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .font_family(mono)
+                .text_size(px(11.5))
+                .text_color(rgb(p.muted))
+                .child(subtitle),
+        )
+        .when(preview.added > 0, |d| {
+            d.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.success))
+                    .child(format!("+{}", preview.added)),
+            )
+        })
+        .when(preview.removed > 0, |d| {
+            d.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.error))
+                    .child(format!("−{}", preview.removed)),
+            )
+        })
+        .child(
+            div()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .gap_1()
+                .px(px(7.))
+                .py(px(1.))
+                .rounded_full()
+                .bg(gpui::Hsla::from(rgb(color)).opacity(0.12))
+                .text_size(px(11.))
+                .text_color(rgb(color))
+                .child(status_icon)
+                .child(status),
+        )
+        .when_some(duration, |d, label| {
+            d.child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.disabled))
+                    .child(label),
+            )
+        })
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(11.))
+                .text_color(rgb(p.disabled))
+                .child(tool.category()),
+        )
+        .child(
+            Icon::new(if expanded {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
+            })
+            .size(px(12.))
+            .flex_shrink_0()
+            .text_color(rgb(p.disabled)),
+        )
+        .on_click(move |_, _, cx| {
+            let _ = workspace.update(cx, |this, cx| {
+                if this
+                    .view
+                    .transcript
+                    .rows
+                    .iter()
+                    .any(|r| identity(r) == stable_identity)
+                {
+                    this.pause_follow();
+                    let anchor = this.scroll_anchor();
+                    this.tool_expansion
+                        .insert(stable_identity.clone(), !expanded);
+                    this.list.splice(
+                        0..this.view.transcript.rows.len(),
+                        this.view.transcript.rows.len(),
+                    );
+                    this.list.scroll_to(anchor);
+                }
+                cx.notify();
+            });
+        });
     let details = expanded.then(|| details(&preview, tool, &element_key, appearance, window, cx));
     div()
         .id(SharedString::from(format!("{element_key}-card")))
+        .debug_selector(|| "orchestration-card".into())
+        .w_full()
         .rounded(px(p.panel_radius))
+        .border_1()
+        .border_color(rgb(if tool.is_error { p.error } else { p.border }))
+        .bg(gpui::Hsla::from(rgb(p.surface)).opacity(0.6))
         .overflow_hidden()
-        .child(
-            chrome::interactive_control(
-                div().id(SharedString::from(format!("{element_key}-toggle"))),
-                p,
-                true,
-            )
-            .rounded(px(p.panel_radius))
-            .focus(|s| s.border_color(rgb(p.accent)).bg(rgb(p.selected)))
-            .debug_selector(|| format!("tool-toggle-{key}"))
-            .cursor_pointer()
-            .px_3()
-            .py_2()
-            .flex()
-            .items_start()
-            .gap_2()
-            .hover(|s| s.bg(rgb(p.selected)))
-            .child(
-                Icon::new(if expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .size(px(14.))
-                .mt(px(2.))
-                .text_color(rgb(p.muted)),
-            )
-            .child(
+        .flex()
+        .flex_col()
+        .child(header)
+        .when(!extras.is_empty(), |d| {
+            d.child(
                 div()
-                    .flex_1()
-                    .min_w_0()
+                    .px_3()
+                    .pb_3()
+                    .pt_1()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_3()
-                            .pr_6()
-                            .when_some(origin, |d, origin| {
-                                let managed =
-                                    origin == wks_native::child_agents::ChildKind::Workspacer;
-                                d.child(
-                                    div()
-                                        .id(SharedString::from(format!("{element_key}-origin")))
-                                        .debug_selector(move || {
-                                            if managed {
-                                                "workspacer-spawn-icon".into()
-                                            } else {
-                                                "native-spawn-icon".into()
-                                            }
-                                        })
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::new(if managed {
-                                                "Workspacer spawn"
-                                            } else {
-                                                "Provider-native subagent"
-                                            })
-                                            .build(window, cx)
-                                        })
-                                        .child(
-                                            Icon::new(if managed {
-                                                IconName::Bot
-                                            } else {
-                                                IconName::SquareTerminal
-                                            })
-                                            .size(px(14.))
-                                            .text_color(rgb(p.accent)),
-                                        ),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(title),
-                            )
-                            .when(preview.added > 0, |d| {
-                                d.child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(p.success))
-                                        .child(format!("+{}", preview.added)),
-                                )
-                            })
-                            .when(preview.removed > 0, |d| {
-                                d.child(
-                                    div()
-                                        .text_size(px(11.))
-                                        .text_color(rgb(p.error))
-                                        .child(format!("−{}", preview.removed)),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .flex()
-                                    .text_size(px(11.))
-                                    .items_center()
-                                    .gap_1()
-                                    .text_color(rgb(color))
-                                    .child(status_icon)
-                                    .child(status),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(p.muted))
-                                    .child(tool.category()),
-                            ),
-                    )
-                    .when(!subtitle.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .truncate()
-                                .text_size(px(11.))
-                                .text_color(rgb(p.muted))
-                                .font_family(
-                                    gpui_component::Theme::global(cx).mono_font_family.clone(),
-                                )
-                                .child(subtitle.to_owned()),
-                        )
-                    }),
+                    .gap_2()
+                    .text_size(px(12.))
+                    .text_color(rgb(p.muted))
+                    .children(extras),
             )
-            .on_click(move |_, _, cx| {
-                let _ = workspace.update(cx, |this, cx| {
-                    if this
-                        .view
-                        .transcript
-                        .rows
-                        .iter()
-                        .any(|r| identity(r) == stable_identity)
-                    {
-                        this.pause_follow();
-                        let anchor = this.scroll_anchor();
-                        this.tool_expansion
-                            .insert(stable_identity.clone(), !expanded);
-                        this.list.splice(
-                            0..this.view.transcript.rows.len(),
-                            this.view.transcript.rows.len(),
-                        );
-                        this.list.scroll_to(anchor);
-                    }
-                    cx.notify();
-                });
-            }),
-        )
+        })
         .when(row.truncated, |d| {
             d.child(
                 div()

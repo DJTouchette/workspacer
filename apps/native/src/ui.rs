@@ -6,12 +6,14 @@ mod launch;
 mod markdown;
 mod navigation;
 mod scroll;
+mod settings;
 mod sidebar;
 mod states;
 mod syntax;
 mod tools;
 mod transcript;
 mod typography;
+mod usage;
 mod work;
 use chrome::ControlTextStyle;
 use gpui::{
@@ -347,6 +349,9 @@ pub struct Workspace {
     project_cursor: usize,
     project_path: Entity<InputState>,
     search: Entity<InputState>,
+    settings_search: Entity<InputState>,
+    settings_section: settings::SettingsSection,
+    usage_open: bool,
     navigation_selected: Option<String>,
     sidebar_collapsed: bool,
     sidebar_drag: Option<(gpui::Pixels, f32)>,
@@ -432,7 +437,17 @@ impl Workspace {
             InputState::new(window, cx).placeholder("Absolute project directory on this hub")
         });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions…"));
+        let settings_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search settings…"));
         let mut focus_watch = vec![cx.subscribe(
+            &settings_search,
+            |_, _, event: &gpui_component::input::InputEvent, cx| {
+                if matches!(event, gpui_component::input::InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        )];
+        focus_watch.push(cx.subscribe(
             &search,
             |this, _, event: &gpui_component::input::InputEvent, cx| {
                 if matches!(event, gpui_component::input::InputEvent::Change) {
@@ -444,7 +459,7 @@ impl Workspace {
                     cx.notify();
                 }
             },
-        )];
+        ));
         let model_picker_subscription = cx.subscribe_in(&model_picker, window, Self::on_model_pick);
         focus_watch.push(cx.subscribe_in(
             &project,
@@ -505,6 +520,9 @@ impl Workspace {
             project_cursor: 0,
             project_path,
             search,
+            settings_search,
+            settings_section: Default::default(),
+            usage_open: false,
             navigation_selected: None,
             sidebar_collapsed: false,
             sidebar_drag: None,
@@ -1008,6 +1026,10 @@ impl Workspace {
     }
 
     fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
+        if self.screen == Screen::Settings && !self.new_session {
+            self.step_settings_section(step, cx);
+            return;
+        }
         if self.new_session || !matches!(self.screen, Screen::Conversation | Screen::Projects) {
             return;
         }
@@ -1260,7 +1282,7 @@ impl Render for Workspace {
                 .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
                 .when(!notice.is_empty(), |d| d.child(div().occlude().py_1().text_size(px(11.)).text_color(rgb(p.warning)).child(notice)))
                 .when(!self.view.connected && !self.view.transcript.rows.is_empty(), |d| d.child(self.render_connection_banner(cx)))
-                .when(self.view.transcript.omitted, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
+                .when(self.view.transcript.omitted && !self.view.transcript.has_older, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
                 .when(self.view.loading && !self.view.transcript.rows.is_empty(), |d| d.child(div().occlude().flex().items_center().gap_2().text_size(px(12.)).text_color(rgb(p.muted)).child(brand_spinner(12., p, "conversation-refresh")).child("Refreshing conversation…")))
                 .when(self.view.connected && !self.view.loading && self.view.notice.starts_with("Conversation unavailable:"), |d| d.child(self.button("retry-conversation", "Retry conversation", true).debug_selector(|| "retry-conversation".into()).on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
 );
@@ -1320,7 +1342,8 @@ impl Render for Workspace {
                         .child(div().flex().items_center().justify_between().gap_2()
                             .child(div().flex().items_center().gap_1()
                                 .child(self.icon_button("attach-file", if self.uploading() { "Attaching file…" } else { "Attach a file" }, IconName::Plus, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx)))))
-                                .child(self.icon_button("paste-image", "Paste an image from the clipboard", IconName::GalleryVerticalEnd, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, _, cx| { if !this.paste_image(cx) { this.extras.notice = "No supported image on the clipboard.".into(); cx.notify(); } })))))
+                                .child(self.icon_button("paste-image", "Paste an image from the clipboard", IconName::GalleryVerticalEnd, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, _, cx| { if !this.paste_image(cx) { this.extras.notice = "No supported image on the clipboard.".into(); cx.notify(); } }))))
+                                .children(selected.as_ref().and_then(|s| chrome::context_meter(s, p))))
                             .child(div().flex().items_center().gap_2()
                                 .when(working, |d| d.child(self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx))))))
                                 .child(self.primary_icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).size(px(32.)).rounded_full()
@@ -1509,6 +1532,11 @@ mod tests {
                 && native.top() < child.top()
                 && child.top() < grandchild.top()
         );
+        // uniform_list gives every row the session-card height; a taller
+        // child row would paint over its neighbours.
+        assert!(parent.bottom() <= native.top() && native.bottom() <= child.top());
+        // Child rows carry the same brand model badge as session cards.
+        assert!(visual.debug_bounds("sidebar-child-model-1").is_some());
         visual.simulate_click(native.center(), gpui::Modifiers::default());
         visual.run_until_parked();
         assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "a"));
@@ -1913,6 +1941,63 @@ mod tests {
         workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Settings));
         visual.simulate_keystrokes("ctrl-p");
         workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Projects));
+    }
+
+    #[gpui::test]
+    fn settings_categories_and_search_filter_preferences(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("g s");
+        visual.run_until_parked();
+        // One category at a time; Appearance first.
+        assert!(visual.debug_bounds("setting-theme").is_some());
+        assert!(visual.debug_bounds("setting-vim").is_none());
+        // j / k step through categories in Normal mode.
+        visual.simulate_keystrokes("j");
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("setting-interface-font").is_some());
+        assert!(visual.debug_bounds("setting-theme").is_none());
+        let keyboard = visual.debug_bounds("settings-nav-Keyboard").unwrap();
+        visual.simulate_click(keyboard.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("setting-vim").is_some());
+        // `/` searches every category at once.
+        visual.simulate_keystrokes("/");
+        visual.simulate_input("clock");
+        visual.run_until_parked();
+        // Results span categories (debug bounds outlive removed rows, so
+        // filtering itself is pinned by `settings_match`'s unit test).
+        assert!(visual.debug_bounds("setting-clock").is_some());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settings_search
+                    .update(cx, |input, cx| input.set_value("font mono", window, cx));
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("setting-code-font").is_some());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settings_search
+                    .update(cx, |input, cx| input.set_value("zzzz", window, cx));
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("settings-no-results").is_some());
+        // Picking a category clears the search.
+        let chat = visual.debug_bounds("settings-nav-Chat").unwrap();
+        visual.simulate_click(chat.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("setting-merge-turn").is_some());
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.settings_search.read(cx).value().is_empty())
+        });
     }
 
     #[gpui::test]
@@ -2685,6 +2770,166 @@ mod tests {
             assert_eq!(this.tool_expansion.get("call:call-0"), Some(&true));
         });
         assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn composer_shows_context_meter_once_the_runtime_reports(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("context-meter").is_none());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                Arc::make_mut(&mut next.sessions)[0].merge(&serde_json::json!({
+                    "statusLine": {"contextUsedPct": 73.0, "contextWindowSize": 200000}
+                }));
+                this.update_view(Arc::new(next), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let meter = visual.debug_bounds("context-meter").unwrap();
+        let composer = visual.debug_bounds("chat-composer").unwrap();
+        assert!(composer.contains(&meter.center()));
+    }
+
+    #[gpui::test]
+    fn sidebar_shows_measured_usage_windows_per_account(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("sidebar-usage").is_none());
+        let now = chrono::Utc::now().timestamp();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.usage = Some(Arc::new(
+                    serde_json::json!({"providers":[{"provider":"claude","accounts":[
+                        {"label":"default","is_default":true,"windows":{"five_hour":{
+                            "used_percent":{"state":"ok","value":42.0},"resets_at":now + 3600}}}
+                    ]}]}),
+                ));
+                this.update_view(Arc::new(next), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let usage = visual.debug_bounds("sidebar-usage").unwrap();
+        assert!(usage.size.height > px(0.));
+        // Hover shows every window as a card.
+        visual.simulate_mouse_move(usage.center(), None, gpui::Modifiers::default());
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_millis(800));
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("usage-hover-card").is_some());
+        // Click opens the detail modal and asks for a fresh reading.
+        visual.simulate_click(usage.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(this.usage_open));
+        assert!(matches!(commands.try_recv(), Ok(Command::RefreshUsage)));
+        // Clicks inside the card do not dismiss it; the close button does.
+        let modal = visual.debug_bounds("usage-modal").unwrap();
+        visual.simulate_click(modal.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(this.usage_open));
+        let close = visual.debug_bounds("usage-close").unwrap();
+        visual.simulate_click(close.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(!this.usage_open));
+        // Esc closes it too.
+        visual.simulate_click(usage.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        visual.simulate_keystrokes("escape");
+        workspace.read_with(&visual, |this, _| assert!(!this.usage_open));
+    }
+
+    #[gpui::test]
+    fn merged_turn_card_carries_interior_notes_only(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let mut view = state("a");
+        let call = |i: usize| Item {
+            kind: "tool_use".into(),
+            id: format!("call-{i}"),
+            name: "Read".into(),
+            input: serde_json::json!({"file_path":format!("src/file-{i}.rs")}),
+            ..Default::default()
+        };
+        let note = |text: &str| Item {
+            kind: "assistant_text".into(),
+            text: text.into(),
+            ..Default::default()
+        };
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 4,
+            first_seq: 1,
+            items: vec![
+                call(0),
+                note("Now the second file."),
+                call(2),
+                note("All done."),
+            ],
+        });
+        let view = Arc::new(view);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(view.clone(), window, cx))
+        });
+        visual.run_until_parked();
+        // Off (the default): prose splits the calls into separate cards.
+        assert!(visual.debug_bounds("work-note-1").is_none());
+        assert!(visual.debug_bounds("work-card-toggle").is_none());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settings.merge_turn_tools = true;
+                let count = this.view.transcript.rows.len();
+                this.list.splice(0..count, count);
+                this.update_view(view.clone(), window, cx);
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("work-card-toggle").is_some());
+        assert!(visual.debug_bounds("work-note-1").is_some());
+        // The closing answer stays an ordinary message below the card.
+        assert!(visual.debug_bounds("work-note-3").is_none());
+    }
+
+    #[gpui::test]
+    fn orchestration_calls_use_the_work_card_shell(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![Item {
+                kind: "tool_use".into(),
+                id: "skill-0".into(),
+                name: "Skill".into(),
+                input: serde_json::json!({"skill":"review"}),
+                ..Default::default()
+            }],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let card = visual.debug_bounds("orchestration-card").unwrap();
+        let toggle = visual.debug_bounds("tool-toggle-0").unwrap();
+        assert!(visual.debug_bounds("tool-activity-group").is_none());
+        // The header row spans the card, inset only by its border.
+        assert!(toggle.size.width + px(4.) >= card.size.width);
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.tool_expansion.get("call:skill-0"), Some(&true));
+        });
     }
 
     #[gpui::test]

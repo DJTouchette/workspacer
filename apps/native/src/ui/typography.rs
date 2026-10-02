@@ -129,7 +129,7 @@ impl FontControls {
         }
     }
 
-    fn resolved(&self, family: &str, fallback: &str) -> SharedString {
+    pub(super) fn resolved(&self, family: &str, fallback: &str) -> SharedString {
         if family.is_empty() {
             if fallback == "JetBrains Mono" {
                 mono_font().into()
@@ -194,95 +194,5 @@ impl Workspace {
         self.list.splice(0..count, count);
         self.list.scroll_to(anchor);
         cx.notify();
-    }
-
-    pub(super) fn render_typography(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
-        chrome::section(
-            "Typography",
-            "Choose your fonts. Changes apply immediately and are saved on this device.",
-            p,
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().text_size(px(13.)).child("Interface font"))
-                .child(Select::new(&self.fonts.interface).w_full()),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().text_size(px(13.)).child("Code font"))
-                .child(Select::new(&self.fonts.code).w_full()),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().text_size(px(13.)).child("Conversation text size"))
-                .child(div().flex().flex_wrap().gap_2().children(
-                    [13, 15, 17, 19].into_iter().map(|size| {
-                        self.button(
-                            SharedString::from(format!("text-size-{size}")),
-                            format!("{size} px"),
-                            true,
-                        )
-                        .debug_selector(move || format!("text-size-{size}"))
-                        .when(self.settings.text_size == size, |d| {
-                            d.bg(rgb(p.selected)).text_color(rgb(p.accent))
-                        })
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.settings.text_size = size;
-                                this.apply_typography(cx);
-                                this.save_settings(cx);
-                                window.refresh();
-                            },
-                        ))
-                    }),
-                )),
-        )
-        .child(
-            div()
-                .p_3()
-                .rounded(px(p.panel_radius))
-                .bg(rgb(p.surface))
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .font_family(self.fonts.resolved(&self.settings.interface_font, "Inter"))
-                        .text_size(px(self.settings.text_size as f32))
-                        .child("The quick brown fox jumps over the lazy dog."),
-                )
-                .child(
-                    div()
-                        .font_family(
-                            self.fonts
-                                .resolved(&self.settings.code_font, "JetBrains Mono"),
-                        )
-                        .text_size(px((self.settings.text_size as f32 - 2.).max(12.)))
-                        .child("const workspace = await connect();"),
-                ),
-        )
-        .child(
-            self.quiet_button("reset-fonts", "Reset typography", IconName::Undo2, true)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    let defaults = Settings::default();
-                    this.settings.interface_font = defaults.interface_font;
-                    this.settings.code_font = defaults.code_font;
-                    this.settings.text_size = defaults.text_size;
-                    this.fonts.sync(&this.settings, window, cx);
-                    this.apply_typography(cx);
-                    this.save_settings(cx);
-                    window.refresh();
-                })),
-        )
     }
 }
