@@ -31,6 +31,13 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
             bail!("{key} must be an integer");
         }
     }
+    if method == "sessions.conversation"
+        && params
+            .get("limit")
+            .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
+    {
+        bail!("limit must be a non-negative integer");
+    }
     if method == "claude.gate"
         && params
             .get("on")

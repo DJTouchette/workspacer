@@ -1385,6 +1385,11 @@ struct ConversationQuery {
     /// poll cheap incremental deltas — e.g. a supervisor digesting just the new
     /// turns since it last looked, instead of the whole transcript every time.
     since: Option<u64>,
+    /// Return only the newest `limit` items (after `since`). The response's
+    /// `window_first_seq` is the first returned item's sequence; a client sees
+    /// older retained items while it exceeds `first_seq`, and pages back by
+    /// asking again with a larger limit.
+    limit: Option<usize>,
 }
 
 /// Parsed conversation snapshot for one session: item history + the sequence
@@ -1421,13 +1426,21 @@ async fn get_conversation(
         }
         return Json(conv.summary_source(&id)).into_response();
     }
-    let (seq, first_seq, items) = conv
-        .snapshot_since(&id, q.since)
-        .unwrap_or((0, 0, Vec::new()));
+    let Some(window) = conv.snapshot_window(&id, q.since, q.limit.filter(|limit| *limit > 0))
+    else {
+        return Json(json!({ "session_id": id, "seq": 0, "first_seq": 0, "items": [] }))
+            .into_response();
+    };
     // `first_seq` rides along so a client can place the window without
     // reconstructing it from the item count — which coalescing makes wrong.
-    Json(json!({ "session_id": id, "seq": seq, "first_seq": first_seq, "items": items }))
-        .into_response()
+    Json(json!({
+        "session_id": id,
+        "seq": window.seq,
+        "first_seq": window.first_seq,
+        "window_first_seq": window.window_first_seq,
+        "items": window.items,
+    }))
+    .into_response()
 }
 
 /// Parsed conversation for one provider-owned child agent. Codex children use
@@ -2594,6 +2607,33 @@ mod tests {
         let (_, body) = request(state, get("/sessions/poll-stream/conversation?since=103")).await;
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert!(v["items"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_conversation_limit_returns_the_newest_page_and_its_first_seq() {
+        let state = test_state();
+        for i in 0..6 {
+            state.conv.push(
+                "paged",
+                vec![ConversationItem::UserMessage {
+                    text: format!("m{i}"),
+                    timestamp: None,
+                }],
+            );
+        }
+        let (_, body) =
+            request(state.clone(), get("/sessions/paged/conversation?limit=2")).await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["seq"], 6);
+        assert_eq!(v["first_seq"], 1);
+        assert_eq!(v["window_first_seq"], 5, "older retained items remain");
+        assert_eq!(v["items"][0]["text"], "m4");
+        assert_eq!(v["items"][1]["text"], "m5");
+        // limit=0 is "no limit", like omitting it.
+        let (_, body) = request(state, get("/sessions/paged/conversation?limit=0")).await;
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["items"].as_array().unwrap().len(), 6);
+        assert_eq!(v["window_first_seq"], 1);
     }
 
     #[tokio::test]

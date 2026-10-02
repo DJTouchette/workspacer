@@ -651,10 +651,7 @@ impl Sessions {
                 self.request("GET", path, None).await
             }
             "sessions.conversation" => {
-                let mut path = format!("{root}/conversation");
-                if let Some(since) = params["sinceSeq"].as_i64() {
-                    path.push_str(&format!("?since={since}"));
-                }
+                let path = format!("{root}/conversation{}", conversation_query(&params));
                 self.request("GET", path, None).await
             }
             "sessions.subagentConversation" => {
@@ -957,5 +954,46 @@ mod projection_tests {
         hub.shutdown()?;
         engine.shutdown().await?;
         Ok(())
+    }
+}
+
+/// claudemon `/conversation` query for `sinceSeq` / `limit`. `limit` asks for
+/// the newest N items; the reply's `window_first_seq` says whether older
+/// retained items remain.
+fn conversation_query(params: &Value) -> String {
+    let query: Vec<String> = [
+        params["sinceSeq"]
+            .as_i64()
+            .map(|since| format!("since={since}")),
+        params["limit"]
+            .as_u64()
+            .filter(|limit| *limit > 0)
+            .map(|limit| format!("limit={limit}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if query.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", query.join("&"))
+    }
+}
+
+#[cfg(test)]
+mod conversation_query_tests {
+    use super::conversation_query;
+    use serde_json::json;
+
+    #[test]
+    fn forwards_since_and_limit() {
+        assert_eq!(conversation_query(&json!({})), "");
+        assert_eq!(conversation_query(&json!({"sinceSeq":4})), "?since=4");
+        assert_eq!(conversation_query(&json!({"limit":200})), "?limit=200");
+        assert_eq!(
+            conversation_query(&json!({"sinceSeq":4,"limit":200})),
+            "?since=4&limit=200"
+        );
+        assert_eq!(conversation_query(&json!({"limit":0})), "");
     }
 }

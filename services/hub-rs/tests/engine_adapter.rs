@@ -126,6 +126,11 @@ async fn malformed_control_fields_never_become_gate_changes_or_pty_input() {
             "sinceSeq must be an integer",
         ),
         (
+            "sessions.conversation",
+            json!({"limit":-1}),
+            "limit must be a non-negative integer",
+        ),
+        (
             "claude.approve",
             json!({"decision":"yes","reason":42}),
             "reason must be text",
