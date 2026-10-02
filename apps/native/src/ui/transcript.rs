@@ -407,16 +407,9 @@ impl Workspace {
             .left_0()
             .size_full()
         });
-        if ix + 1 == rows.len() && !self.child_ui.agents.unanchored.is_empty() {
-            let children = self.child_ui.agents.unanchored.clone();
-            body = body
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(rgb(self.appearance.palette().muted))
-                        .child("Child agents"),
-                )
-                .child(self.render_children(&session, "unanchored", &children, window, cx));
+        // Children with no spawning call in view, pinned where they started.
+        if let Some(children) = self.child_ui.overview.get(&ix).cloned() {
+            body = body.child(self.render_overview(&session, &children, window, cx));
         }
         let earlier = (ix == 0 && self.view.transcript.has_older).then(|| self.render_earlier(cx));
         // Virtual list items are placed directly at the viewport origin. Center

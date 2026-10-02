@@ -17,4 +17,5 @@ pub mod transcript;
 pub mod timing;
 pub mod tool_preview;
 pub mod ui_requests;
+pub mod updates;
 pub mod usage;

@@ -169,7 +169,6 @@ impl Workspace {
     fn settings_entries(&self, cx: &mut Context<Self>) -> Vec<Entry> {
         use SettingsSection as S;
         let p = self.appearance.palette();
-        let update_busy = self.view.requests.get("updates").is_some_and(|s| s.loading);
         let mut entries = Vec::new();
 
         let themes = div()
@@ -281,6 +280,25 @@ impl Workspace {
             "palette color colour dark light nord mode",
             Layout::Block,
             themes,
+        ));
+
+        entries.push(Entry::new(
+            S::Appearance,
+            "interface-size",
+            "Interface size",
+            "Scales the whole app on top of your display's scaling. Ctrl/Cmd + and − step it; Ctrl/Cmd 0 resets.",
+            "zoom scale dpi size bigger smaller tiny huge display resolution",
+            Layout::Block,
+            self.segmented(
+                "interface-size",
+                wks_native::navigation::INTERFACE_SCALES
+                    .into_iter()
+                    .map(|pct| (pct, format!("{pct}%")))
+                    .collect(),
+                self.settings.interface_scale,
+                |this, pct, window, cx| this.set_interface_scale(pct, window, cx),
+                cx,
+            ),
         ));
 
         entries.push(Entry::new(
@@ -587,6 +605,10 @@ impl Workspace {
                         "Send message, create session, or save a project path",
                     ),
                     ("Ctrl/Cmd L", "Focus the editor"),
+                    (
+                        "Ctrl/Cmd + / − / 0",
+                        "Larger / smaller / default interface size",
+                    ),
                 ]
                 .into_iter()
                 .map(|(keys, label)| {
@@ -609,69 +631,10 @@ impl Workspace {
             S::About,
             "updates",
             "Updates",
-            "Native preview updates are installed manually.",
-            "version release upgrade check download changelog",
+            "Follows the channel this build came from: nightly builds track the rolling nightly, stable builds the latest release.",
+            "version release upgrade check download changelog nightly stable install",
             Layout::Block,
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_size(px(12.))
-                                .text_color(rgb(p.muted))
-                                .child(format!(
-                                    "Installed version {}",
-                                    wks_native::features::installed_version()
-                                )),
-                        )
-                        .child(
-                            self.button(
-                                "check-updates",
-                                if update_busy {
-                                    "Checking…"
-                                } else {
-                                    "Check for updates"
-                                },
-                                !update_busy,
-                            )
-                            .when(!update_busy, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| {
-                                    this.request(wks_native::features::Request::Updates, cx)
-                                }))
-                            }),
-                        )
-                        .child(
-                            self.quiet_button(
-                                "open-releases",
-                                "Release notes",
-                                IconName::ExternalLink,
-                                true,
-                            )
-                            .on_click(|_, _, cx| cx.open_url(wks_native::features::RELEASES_URL)),
-                        ),
-                )
-                .child(self.feature_message("updates"))
-                .when_some(
-                    self.view
-                        .requests
-                        .get("updates")
-                        .and_then(|s| s.value["version"].as_str()),
-                    |d, version| {
-                        d.child(
-                            div()
-                                .text_size(px(12.))
-                                .child(format!("Latest stable release: {version}")),
-                        )
-                    },
-                ),
+            self.render_update_card(cx),
         ));
         entries
     }

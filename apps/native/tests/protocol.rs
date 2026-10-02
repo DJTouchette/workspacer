@@ -297,6 +297,77 @@ async fn daemons_without_paging_read_completely_and_never_offer_older_pages() {
 }
 
 #[tokio::test]
+async fn subagent_view_reads_the_child_ignores_parent_deltas_and_returns() {
+    use wks_native::controller::ChildTarget;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let mut parent = session("a");
+    parent["subagents"] = json!([{"id":"task-1","description":"Audit","status":"running"}]);
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([parent]))
+        .await;
+    let read = hub.frame("call", Some("sessions.conversation")).await;
+    read.result(snapshot(5, "Parent reply")).await;
+    view(&controller, |v| {
+        v.transcript.rows.iter().any(|r| r.text == "Parent reply")
+    })
+    .await;
+
+    controller
+        .command(Command::ViewChild(Some(ChildTarget {
+            parent: "a".into(),
+            agent: "task-1".into(),
+        })))
+        .unwrap();
+    let child = hub
+        .frame("call", Some("sessions.subagentConversation"))
+        .await;
+    assert_eq!(child.value["params"]["sessionId"], "a");
+    assert_eq!(child.value["params"]["agentId"], "task-1");
+    child
+        .result(
+            json!({"session_id":"a","agent_id":"task-1","seq":2,"first_seq":1,
+            "items":[{"kind":"assistant_text","text":"Child finding"}]}),
+        )
+        .await;
+    let v = view(&controller, |v| {
+        v.child.is_some() && v.transcript.rows.iter().any(|r| r.text == "Child finding")
+    })
+    .await;
+    assert!(!v.transcript.rows.iter().any(|r| r.text == "Parent reply"));
+    // Parent deltas while the child is shown never land in its transcript.
+    child
+        .event(
+            "agent.conversation.a",
+            json!({"session_id":"a","seq":6,"items":[{"kind":"assistant_text","text":"Parent moved on"}]}),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let v = controller.views.borrow().clone();
+    assert!(
+        !v.transcript
+            .rows
+            .iter()
+            .any(|r| r.text == "Parent moved on")
+    );
+
+    controller.command(Command::ViewChild(None)).unwrap();
+    let back = hub.frame("call", Some("sessions.conversation")).await;
+    assert_eq!(back.value["params"]["sessionId"], "a");
+    back.result(snapshot(6, "Parent moved on")).await;
+    let v = view(&controller, |v| {
+        v.child.is_none()
+            && v.transcript
+                .rows
+                .iter()
+                .any(|r| r.text == "Parent moved on")
+    })
+    .await;
+    assert!(!v.transcript.rows.iter().any(|r| r.text == "Child finding"));
+}
+
+#[tokio::test]
 async fn controller_reconciles_snapshot_races_gaps_and_stale_selection() {
     let mut hub = Hub::new().await;
     let controller = Controller::start(hub.config.clone());

@@ -408,9 +408,15 @@ be expanded, and attachment controls share the composer action row.
 - **Question choices** support single and multiple selections and custom answers.
   Labels and typed numbers are sent literally. **Model…** applies a selected model
   and context to the running session; queued changes are reported as queued.
-- **Settings → About** shows the installed build version and can query the latest
-  stable GitHub release. Downloads/release notes open in the browser; updates are
-  installed manually.
+- **Updates follow the build's channel.** A nightly install (version contains
+  `-nightly`) checks the rolling `nightly` prerelease; a stable install checks the
+  latest release. The app checks 8 seconds after launch and every 6 hours, shows
+  an **Update** pill in the sidebar when a newer build exists, and Settings →
+  About shows channel, installed and latest versions. On Windows **Install and
+  restart** downloads the native installer and verifies its size and GitHub's
+  SHA-256 digest. A hidden helper then waits for the app and its local backend
+  to exit, runs the per-user installer silently (`/S`, upgrade in place) and
+  relaunches with the same arguments. Other platforms link to the release page.
 
 Normal-mode shortcuts: `g h` session history, `g d` changes, `g a` setup,
 `g e` session actions, and `g m` model. `Esc` returns from a secondary view;
@@ -712,12 +718,43 @@ countdowns, pace verdicts, refresh failures, a refresh button; backdrop, ✕ or
 Esc close it). A tick on each meter marks the expected pace. Unavailable, rolled-over and unmeasured windows
 are omitted, as on desktop.
 
+**Settings → Appearance → Interface size** (70–200%, Ctrl/Cmd + / − / 0) scales
+the whole app on top of the display scale the OS already applies (Windows DPI,
+Wayland output scale). It suits a high-resolution monitor left at 100% or a
+laptop at 150%. Every UI size goes through a zoom-aware `px`; gpui-component
+widgets follow the rem size, which is set from the theme font size. Stored sizes
+such as the sidebar width stay in unzoomed units.
+
 On Windows the app draws its own title bar: there is no system caption strip;
 minimize, maximize/restore and close sit at the window's top-right (handled by
 the OS through hit-test areas, so snap layouts and the keep-running close
 preference still apply), and the sidebar header and the space around the chat
 title pill drag the window (double-click maximizes). `WKS_NATIVE_CAPTION=1`
 previews the same chrome on other platforms.
+
+Clicking a provider-native subagent (Claude's Task/Agent children) in the
+sidebar, or **Open as chat** on its inline panel, opens its conversation as the
+chat with the same work cards and Markdown. A back button and the parent's name
+lead the title pill, which shows the subagent's model and status. The composer
+becomes a read-only notice with **Back to parent**, since these subagents take
+no input. Esc and the parent's sidebar row also return. While the subagent runs, its
+transcript refreshes every two seconds; parent approvals still surface. Agents
+started through Workspacer's spawn skill are real sessions and keep a working
+composer.
+
+In the sidebar, a provider-native subagent row stays while it runs or while its
+parent's turn is still going (working, or waiting on an approval or question).
+Once it has finished and the turn is over it leaves, and the chat keeps its
+record. Agents started through the spawn skill are sessions, nested under their
+parent with the same archive button.
+
+Subagents with no spawning call in view (an untracked dispatch or one whose call
+scrolled out) gather in a collapsible **subagents** card pinned where they
+started, after the last message before their start, or where they first appeared
+when untimed. Later messages arrive below it rather than under it. The card
+stays open while any subagent works, showing counts of working, waiting, done
+and failed. When all have settled it re-collapses into an "N subagents
+finished" summary with tool count and span, which can be reopened.
 
 The composer shows a **context meter** (`ctx`, a thin track and the percentage;
 green, amber from 70%, red from 90%) once the runtime reports occupancy, with

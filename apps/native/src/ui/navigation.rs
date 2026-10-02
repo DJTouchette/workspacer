@@ -27,8 +27,30 @@ impl Workspace {
         self.settings = settings;
         self.settings_path = path;
         self.project_scope = scope;
+        set_zoom(self.settings.interface_scale as f32 / 100.);
         self.fonts.sync(&self.settings, window, cx);
         self.apply_typography(cx);
+    }
+
+    /// Resize the whole interface; layout caches are rebuilt at the new size.
+    pub(super) fn set_interface_scale(
+        &mut self,
+        percent: u16,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let percent = percent.clamp(
+            wks_native::navigation::INTERFACE_SCALES[0],
+            *wks_native::navigation::INTERFACE_SCALES.last().unwrap(),
+        );
+        if percent == self.settings.interface_scale {
+            return;
+        }
+        self.settings.interface_scale = percent;
+        set_zoom(percent as f32 / 100.);
+        self.apply_typography(cx);
+        self.save_settings(cx);
+        window.refresh();
     }
 
     pub(super) fn save_settings(&mut self, cx: &mut Context<Self>) {
@@ -112,6 +134,11 @@ impl Workspace {
             return;
         }
         if self.focus.is_focused(window) {
+            if self.view.child.is_some() && self.screen == Screen::Conversation && !self.new_session
+            {
+                self.command(Command::ViewChild(None), cx);
+                return;
+            }
             self.back_from_feature(window, cx);
         } else {
             window.focus(&self.focus);
@@ -261,6 +288,19 @@ impl Workspace {
             .font_family(gpui_component::Theme::global(cx).font_family.clone())
             .text_size(px(self.settings.text_size.clamp(12, 20) as f32))
             .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(|this, _: &ZoomIn, window, cx| {
+                let next =
+                    wks_native::navigation::step_interface_scale(this.settings.interface_scale, 1);
+                this.set_interface_scale(next, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ZoomOut, window, cx| {
+                let next =
+                    wks_native::navigation::step_interface_scale(this.settings.interface_scale, -1);
+                this.set_interface_scale(next, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ZoomReset, window, cx| {
+                this.set_interface_scale(100, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &CycleTheme, window, cx| {
                 if this.screen == Screen::Settings {
                     let index = Appearance::ALL

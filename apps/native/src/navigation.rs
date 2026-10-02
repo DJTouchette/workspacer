@@ -32,6 +32,8 @@ pub struct Settings {
     pub twelve_hour_clock: bool,
     /// One work card per turn: assistant notes between tool calls join it.
     pub merge_turn_tools: bool,
+    /// Interface size in percent, on top of the OS display scale.
+    pub interface_scale: u16,
     pub sidebar_width: f32,
     pub vim_navigation: bool,
     pub keep_running: bool,
@@ -53,6 +55,7 @@ impl Default for Settings {
             text_size: 15,
             twelve_hour_clock: false,
             merge_turn_tools: false,
+            interface_scale: 100,
             sidebar_width: 304.,
             vim_navigation: true,
             keep_running: false,
@@ -168,10 +171,21 @@ pub fn projects(sessions: &[Session], saved: &[String]) -> Vec<Project> {
 mod tests {
     use super::*;
     #[test]
+    fn interface_scale_steps_through_offered_sizes() {
+        assert_eq!(step_interface_scale(100, 1), 110);
+        assert_eq!(step_interface_scale(100, -1), 90);
+        assert_eq!(step_interface_scale(200, 1), 200);
+        assert_eq!(step_interface_scale(70, -1), 70);
+        assert_eq!(step_interface_scale(105, 1), 110);
+        assert_eq!(step_interface_scale(105, -1), 100);
+    }
+
+    #[test]
     fn clock_preference_is_backwards_compatible_and_round_trips() {
         let old: Settings = serde_json::from_str("{}").unwrap();
         assert!(!old.twelve_hour_clock);
         assert!(!old.merge_turn_tools);
+        assert_eq!(old.interface_scale, 100);
         let selected = Settings {
             twelve_hour_clock: true,
             merge_turn_tools: true,
@@ -286,6 +300,29 @@ mod tests {
 }
 
 // Keep enough room for the conversation at small window sizes.
+/// Interface sizes offered in Settings and stepped by Ctrl/Cmd + / −.
+pub const INTERFACE_SCALES: [u16; 9] = [70, 80, 90, 100, 110, 125, 150, 175, 200];
+
+/// The next offered size above (`step > 0`) or below `current`.
+pub fn step_interface_scale(current: u16, step: i32) -> u16 {
+    let (first, last) = (
+        INTERFACE_SCALES[0],
+        INTERFACE_SCALES[INTERFACE_SCALES.len() - 1],
+    );
+    if step > 0 {
+        INTERFACE_SCALES
+            .into_iter()
+            .find(|s| *s > current)
+            .unwrap_or(last)
+    } else {
+        INTERFACE_SCALES
+            .into_iter()
+            .rev()
+            .find(|s| *s < current)
+            .unwrap_or(first)
+    }
+}
+
 pub fn sidebar_width(preferred: f32, viewport: f32) -> f32 {
     let preferred = if preferred.is_finite() {
         preferred

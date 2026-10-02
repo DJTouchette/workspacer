@@ -3,7 +3,7 @@ use super::*;
 use gpui_component::tooltip::Tooltip;
 
 #[derive(Clone)]
-enum SidebarRow {
+pub(super) enum SidebarRow {
     Session {
         index: usize,
         depth: usize,
@@ -16,14 +16,27 @@ enum SidebarRow {
 }
 
 impl Workspace {
-    fn sidebar_rows(&self, cx: &App) -> Vec<SidebarRow> {
+    pub(super) fn sidebar_rows(&self, cx: &App) -> Vec<SidebarRow> {
         let visible = self.visible_sessions(cx);
         let mut rows = Vec::new();
         for (index, depth) in wks_native::navigation::session_tree(&self.view.sessions, &visible) {
             rows.push(SidebarRow::Session { index, depth });
             let parent = &self.view.sessions[index];
             let native = wks_native::child_agents::project(parent, &[], std::iter::empty());
-            for child in native.unanchored {
+            // Provider-native subagents are the parent's business: once one
+            // has finished and the parent's turn is over, it leaves the sidebar
+            // (the chat keeps its record). The one being viewed stays put.
+            let parent_busy =
+                parent.working() || parent.approval.is_some() || parent.questions.is_some();
+            for child in native.unanchored.into_iter().filter(|child| {
+                !child.settled()
+                    || parent_busy
+                    || self
+                        .view
+                        .child
+                        .as_ref()
+                        .is_some_and(|t| t.parent == parent.id && t.agent == child.id)
+            }) {
                 rows.push(SidebarRow::Provider {
                     parent: parent.id.clone(),
                     child: Box::new(child),
@@ -61,6 +74,9 @@ impl Workspace {
             .iter()
             .find(|s| s.id == parent)
             .map_or("", |s| s.provider.as_str());
+        let viewing = self.view.child.as_ref().is_some_and(|t| {
+            t.parent == parent && t.agent == child.id && self.navigation_selected.is_none()
+        });
         let parent = parent.to_owned();
         let agent = child.id.clone();
         let title = if child.description.is_empty() {
@@ -127,6 +143,7 @@ impl Workspace {
                 .debug_selector(move || format!("sidebar-provider-{ix}"))
                 .h_full()
                 .w_full()
+                .when(viewing, |d| d.bg(rgb(p.selected)))
                 .px_3()
                 .py_2()
                 .rounded(px(p.control_radius))
@@ -206,10 +223,12 @@ impl Workspace {
             )
     }
 
-    fn open_sidebar_child(&mut self, parent: &str, agent: &str, cx: &mut Context<Self>) {
+    /// Open a provider-native subagent as its own (read-only) chat.
+    pub(super) fn open_sidebar_child(&mut self, parent: &str, agent: &str, cx: &mut Context<Self>) {
         if !self.view.connected {
             return;
         }
+        // A window pinned to another session never navigates away from it.
         if self
             .requested_session
             .as_ref()
@@ -220,27 +239,14 @@ impl Workspace {
         }
         self.new_session = false;
         self.screen = Screen::Conversation;
-        self.pending_sidebar_child = None;
-        if self.view.selected.as_deref() == Some(parent)
-            && self
-                .navigation_selected
-                .as_deref()
-                .is_none_or(|id| id == parent)
-            && !self.view.loading
-        {
-            self.child_ui.page = 0;
-            self.child_ui.closed = None;
-            self.request(
-                wks_native::features::Request::SubagentHistory {
-                    session: parent.to_owned(),
-                    agent: agent.to_owned(),
-                },
-                cx,
-            );
-        } else {
-            self.pending_sidebar_child = Some((parent.to_owned(), agent.to_owned()));
-            self.command(Command::Select(parent.to_owned()), cx);
-        }
+        self.command(
+            Command::ViewChild(Some(wks_native::controller::ChildTarget {
+                parent: parent.to_owned(),
+                agent: agent.to_owned(),
+            })),
+            cx,
+        );
+        cx.notify();
     }
 
     fn sidebar_toggle(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -363,11 +369,14 @@ impl Workspace {
                                 };
                                 let session = &this.view.sessions[index];
                                 let id = session.id.clone();
+                                // A viewed subagent owns the highlight, not its parent.
                                 let active = this
                                     .navigation_selected
                                     .as_ref()
                                     .or(this.view.selected.as_ref())
-                                    == Some(&id);
+                                    == Some(&id)
+                                    && (this.navigation_selected.is_some()
+                                        || this.view.child.is_none());
                                 let title = this.session_title(session);
                                 let initial = title
                                     .split_whitespace()
@@ -507,7 +516,7 @@ impl Workspace {
             .relative()
             .w(px(wks_native::navigation::sidebar_width(
                 self.settings.sidebar_width,
-                f32::from(window.viewport_size().width),
+                unzoom(window.viewport_size().width),
             )))
             .h_full()
             .flex_shrink_0()
@@ -716,11 +725,13 @@ impl Workspace {
                                 };
                                 let session = &this.view.sessions[index];
                                 let id = session.id.clone();
+                                // A viewed subagent owns the highlight, not its parent.
                                 let active = this
                                     .navigation_selected
                                     .as_ref()
                                     .or(this.view.selected.as_ref())
-                                    == Some(&id);
+                                    == Some(&id)
+                                    && (this.navigation_selected.is_some() || this.view.child.is_none());
                                 let title = this.session_title(session);
                                 let (status, color) = if this.view.connected {
                                     session_status(session, p)
@@ -933,6 +944,30 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .when(self.update_available(), |d| {
+                        d.child(
+                            div()
+                                .id("update-pill")
+                                .debug_selector(|| "update-pill".into())
+                                .px_2()
+                                .py(px(2.))
+                                .rounded_full()
+                                .bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.15))
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(rgb(p.accent))
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(gpui::Hsla::from(rgb(p.accent)).opacity(0.25)))
+                                .child("Update")
+                                .tooltip(|window, cx| {
+                                    Tooltip::new("A newer build is available on your channel").build(window, cx)
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.settings_section = super::settings::SettingsSection::About;
+                                    this.show_screen(Screen::Settings, window, cx)
+                                })),
+                        )
+                    })
                     .child(
                         self.quiet_button("nav-settings", "Settings", IconName::Settings, true)
                             .when(!self.new_session && self.screen == Screen::Settings, |d| {
@@ -983,7 +1018,7 @@ impl Workspace {
                             } else {
                                 let width = wks_native::navigation::sidebar_width(
                                     this.settings.sidebar_width,
-                                    f32::from(window.viewport_size().width),
+                                    unzoom(window.viewport_size().width),
                                 );
                                 this.sidebar_drag = Some((event.position.x, width));
                                 cx.notify();
@@ -1009,8 +1044,8 @@ impl Workspace {
                                         if let Some((start, width)) = this.sidebar_drag {
                                             this.settings.sidebar_width =
                                                 wks_native::navigation::sidebar_width(
-                                                    width + f32::from(event.position.x - start),
-                                                    f32::from(window.viewport_size().width),
+                                                    width + unzoom(event.position.x - start),
+                                                    unzoom(window.viewport_size().width),
                                                 );
                                             cx.stop_propagation();
                                             cx.notify();

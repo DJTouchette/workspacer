@@ -232,7 +232,9 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
             snapshot["statusLine"] = json!({"contextUsedPct":42.0,"contextWindowSize":200000});
             snapshot["subagents"] = json!([
                 {"id":"fixture-native-review","toolUseId":"subagent-running","type":"Explore","description":"Inspect transcript parsing","status":"running","model":"gpt-5.6-luna","startedAt":1790852400000i64,"toolCalls":4,"tokens":12400,"costUSD":0.018,"lastToolName":"Read","lastToolSummary":"apps/native/src/model.rs"},
-                {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":7,"tokens":28300,"costUSD":0.084}
+                {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":7,"tokens":28300,"costUSD":0.084},
+                // No spawning call in view: lands in a timeline overview card.
+                {"id":"fixture-native-audit","type":"Explore","description":"Audit settings search","status":"running","model":"claude-haiku-4-5","startedAt":chrono::Utc::now().timestamp_millis() - 59_000,"toolCalls":3}
             ]);
         }
         1 => {
@@ -252,7 +254,11 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
 }
 
 fn rich_subagent_conversation(session: &str, agent: &str) -> Value {
-    if session != "demo-0000" || !matches!(agent, "fixture-native-review" | "fixture-native-tests")
+    if session != "demo-0000"
+        || !matches!(
+            agent,
+            "fixture-native-review" | "fixture-native-tests" | "fixture-native-audit"
+        )
     {
         return json!({"ok":false,"error":"Subagent does not belong to this fixture session"});
     }
@@ -348,10 +354,12 @@ mod child_fixture_tests {
         let items = rich_items();
         let parent = rich_snapshot(0, json!({"sessionId":"demo-0000"}));
         for child in parent["subagents"].as_array().unwrap() {
+            // One child deliberately has no spawning call (timeline overview).
             assert!(
-                items
-                    .iter()
-                    .any(|item| { item["kind"] == "tool_use" && item["id"] == child["toolUseId"] })
+                child["toolUseId"].is_null()
+                    || items.iter().any(|item| {
+                        item["kind"] == "tool_use" && item["id"] == child["toolUseId"]
+                    })
             );
             let agent = child["id"].as_str().unwrap();
             let replay = rich_subagent_conversation("demo-0000", agent);

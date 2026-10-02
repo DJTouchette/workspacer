@@ -181,6 +181,13 @@ impl ChildAgent {
             "complete" | "completed" | "done" | "stopped" | "ended"
         )
     }
+    /// Finished for good: done, failed, ended, or a Workspacer child session
+    /// back at its prompt.
+    pub fn settled(&self) -> bool {
+        self.complete()
+            || self.failed()
+            || (self.session_id.is_some() && matches!(self.status.as_str(), "input" | "idle"))
+    }
     pub fn duration_ms(&self, now_ms: i64) -> Option<u64> {
         self.telemetry.duration_ms.or_else(|| {
             let start = self.telemetry.started_at_ms?;
@@ -357,10 +364,71 @@ pub fn project<'a>(
     out
 }
 
+/// Where an unanchored child belongs in the timeline: after the last row that
+/// precedes its start, so later messages flow below it. `None` when it has no
+/// start time or no row carries a timestamp; the caller then pins it to the
+/// row that was newest when the child first appeared.
+pub fn overview_anchor<'a>(
+    child: &ChildAgent,
+    rows: impl IntoIterator<Item = &'a Row>,
+) -> Option<usize> {
+    let start = child.telemetry.started_at_ms?;
+    let mut anchor = None;
+    let mut timed = false;
+    for (ix, row) in rows.into_iter().enumerate() {
+        if let Some(at) = row.timestamp_ms {
+            timed = true;
+            if at <= start {
+                anchor = Some(ix);
+            } else {
+                break;
+            }
+        }
+    }
+    // Started before every retained row: it leads the window.
+    timed.then(|| anchor.unwrap_or(0))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::transcript::Tool;
+    #[test]
+    fn overview_pins_children_where_they_started_and_reports_settling() {
+        let row = |at: Option<i64>| Row {
+            timestamp_ms: at,
+            ..Default::default()
+        };
+        let rows = [row(Some(10)), row(None), row(Some(20)), row(Some(30))];
+        let child = |start: Option<i64>| {
+            let mut c = ChildAgent::default();
+            c.telemetry.started_at_ms = start;
+            c
+        };
+        assert_eq!(overview_anchor(&child(Some(25)), &rows), Some(2));
+        assert_eq!(overview_anchor(&child(Some(20)), &rows), Some(2));
+        assert_eq!(overview_anchor(&child(Some(99)), &rows), Some(3));
+        assert_eq!(overview_anchor(&child(Some(5)), &rows), Some(0));
+        assert_eq!(overview_anchor(&child(None), &rows), None);
+        assert_eq!(overview_anchor(&child(Some(5)), &[row(None)]), None);
+        let mut c = ChildAgent {
+            status: "running".into(),
+            ..Default::default()
+        };
+        assert!(!c.settled());
+        c.status = "completed".into();
+        assert!(c.settled());
+        c.status = "input".into();
+        assert!(
+            !c.settled(),
+            "a native child at input is not known to be done"
+        );
+        c.session_id = Some("s".into());
+        assert!(
+            c.settled(),
+            "a Workspacer child back at its prompt finished its turn"
+        );
+    }
     use serde_json::json;
     #[test]
     fn card_provenance_distinguishes_provider_dispatch_and_workspacer_receipts() {

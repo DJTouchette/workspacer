@@ -13,6 +13,7 @@ mod syntax;
 mod tools;
 mod transcript;
 mod typography;
+mod updater;
 mod usage;
 mod work;
 use chrome::ControlTextStyle;
@@ -20,9 +21,40 @@ pub(crate) use chrome::custom_caption;
 use gpui::{
     Animation, AnimationExt, App, ClipboardItem, Context, Div, Entity, FocusHandle, Focusable,
     FontWeight, KeyBinding, ListAlignment, ListOffset, ListScrollEvent, ListState, Render,
-    SharedString, Stateful, Task, Window, actions, canvas, div, list, prelude::*, px, rgb,
+    SharedString, Stateful, Task, Window, actions, canvas, div, list, prelude::*, rgb,
     uniform_list,
 };
+
+/// Interface size multiplier on top of the OS display scale (which GPUI
+/// already applies): 1.0 = 100%. Every literal size in the UI goes through
+/// [`px`], and gpui-component's rem-based widgets follow the theme font size,
+/// which is set through `px` too, so one factor zooms the whole app.
+static ZOOM_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+
+pub(crate) fn zoom() -> f32 {
+    f32::from_bits(ZOOM_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+pub(crate) fn set_zoom(zoom: f32) {
+    let zoom = if zoom.is_finite() {
+        zoom.clamp(0.5, 2.5)
+    } else {
+        1.
+    };
+    ZOOM_BITS.store(zoom.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Logical pixels at the current interface size. Shadows `gpui::px` for the
+/// whole UI module tree (`use super::*`).
+pub(crate) fn px(value: f32) -> gpui::Pixels {
+    gpui::px(value * zoom())
+}
+
+/// Convert measured logical pixels (mouse, viewport) back to unzoomed units,
+/// for values stored in settings.
+pub(crate) fn unzoom(value: gpui::Pixels) -> f32 {
+    f32::from(value) / zoom()
+}
 use gpui_component::{
     Icon, IconName,
     input::{Input, InputState},
@@ -280,6 +312,9 @@ actions!(
         CycleTheme,
         ToggleVim,
         CycleProvider,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
         Quit
     ]
 );
@@ -291,6 +326,14 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-,", ShowSettings, Some("Workspace")),
         KeyBinding::new("cmd-,", ShowSettings, Some("Workspace")),
         KeyBinding::new("ctrl-p", ShowProjects, Some("Workspace")),
+        KeyBinding::new("ctrl-=", ZoomIn, Some("Workspace")),
+        KeyBinding::new("ctrl-+", ZoomIn, Some("Workspace")),
+        KeyBinding::new("ctrl--", ZoomOut, Some("Workspace")),
+        KeyBinding::new("ctrl-0", ZoomReset, Some("Workspace")),
+        KeyBinding::new("cmd-=", ZoomIn, Some("Workspace")),
+        KeyBinding::new("cmd-+", ZoomIn, Some("Workspace")),
+        KeyBinding::new("cmd--", ZoomOut, Some("Workspace")),
+        KeyBinding::new("cmd-0", ZoomReset, Some("Workspace")),
         KeyBinding::new("cmd-p", ShowProjects, Some("Workspace")),
         KeyBinding::new("t", CycleTheme, Some("VimNormal")),
         KeyBinding::new("v", ToggleVim, Some("VimNormal")),
@@ -356,7 +399,6 @@ pub struct Workspace {
     navigation_selected: Option<String>,
     sidebar_collapsed: bool,
     sidebar_drag: Option<(gpui::Pixels, f32)>,
-    pending_sidebar_child: Option<(String, String)>,
     has_connected: bool,
     sidebar_scroll: gpui::UniformListScrollHandle,
     projects_scroll: gpui::UniformListScrollHandle,
@@ -527,7 +569,6 @@ impl Workspace {
             navigation_selected: None,
             sidebar_collapsed: false,
             sidebar_drag: None,
-            pending_sidebar_child: None,
             has_connected: false,
             sidebar_scroll: gpui::UniformListScrollHandle::new(),
             projects_scroll: gpui::UniformListScrollHandle::new(),
@@ -669,7 +710,7 @@ impl Workspace {
             }
         }
         self.local_notice.clear();
-        if self.view.selected != view.selected {
+        if self.view.selected != view.selected || self.view.child != view.child {
             self.tool_expansion.clear();
             if let Some(id) = &self.view.selected {
                 self.drafts
@@ -819,23 +860,7 @@ impl Workspace {
             .map(|clock| clock.message_labels(&view.transcript))
             .unwrap_or_default();
         self.view = view;
-        if self
-            .pending_sidebar_child
-            .as_ref()
-            .is_some_and(|(parent, _)| {
-                self.view.connected
-                    && self.view.selected.as_ref() == Some(parent)
-                    && !self.view.loading
-            })
-            && let Some((session, agent)) = self.pending_sidebar_child.take()
-        {
-            self.child_ui.page = 0;
-            self.child_ui.closed = None;
-            self.request(
-                wks_native::features::Request::SubagentHistory { session, agent },
-                cx,
-            );
-        }
+        self.hand_off_update(cx);
         self.land_on_latest();
         if self.new_session || self.screen == Screen::Model {
             self.sync_models(window, cx);
@@ -848,14 +873,6 @@ impl Workspace {
     }
 
     fn command(&mut self, command: Command, cx: &mut Context<Self>) {
-        if let Command::Select(id) = &command
-            && self
-                .pending_sidebar_child
-                .as_ref()
-                .is_some_and(|(parent, _)| parent != id)
-        {
-            self.pending_sidebar_child = None;
-        }
         let command = if matches!(command, Command::Refresh) && self.view.power_paused {
             Command::ResumePowerPause(self.view.power_pause_generation)
         } else {
@@ -1284,7 +1301,10 @@ impl Render for Workspace {
                         });
                     });
                 }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
-                .child(self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx))
+                .child(match self.render_child_title_bar(cx) {
+                    Some(bar) => bar,
+                    None => self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
+                })
                 .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
                 .when(!notice.is_empty(), |d| d.child(div().occlude().py_1().text_size(px(11.)).text_color(rgb(p.warning)).child(notice)))
                 .when(!self.view.connected && !self.view.transcript.rows.is_empty(), |d| d.child(self.render_connection_banner(cx)))
@@ -1296,8 +1316,8 @@ impl Render for Workspace {
         self.shell(window, cx)
             .child(sidebar)
             .child(div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
-                .when(self.view.transcript.rows.is_empty() && self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_empty_state(compact, window, cx)))
-                .when(self.view.transcript.rows.is_empty() && !self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_child_only(window, cx)))
+                .when(self.view.transcript.rows.is_empty() && (self.view.child.is_some() || self.child_ui.agents.unanchored.is_empty()), |d| d.child(self.render_empty_state(compact, window, cx)))
+                .when(self.view.transcript.rows.is_empty() && self.view.child.is_none() && !self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_child_only(window, cx)))
                 .when(!self.view.transcript.rows.is_empty(), |d| d.child(transcript))
                 .child(header)
                 .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).shadow(chrome::floating_shadow(p)).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, _, cx| {
@@ -1316,7 +1336,7 @@ impl Render for Workspace {
                         });
                     });
                 }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
-                .child(self.render_pending(window, cx))
+                .when(self.view.child.is_none(), |d| d.child(self.render_pending(window, cx)))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
                     let summary = approval.pointer("/toolInput/command").or_else(|| approval.pointer("/toolInput/file_path")).and_then(serde_json::Value::as_str).unwrap_or("").lines().next().unwrap_or("").to_owned();
@@ -1331,7 +1351,8 @@ impl Render for Workspace {
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
                 .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, cx)))
-                .when(selected.is_some(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
+                .children(self.render_child_bar(cx))
+                .when(selected.is_some() && self.view.child.is_none(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
                     .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).occlude().bg(rgb(p.surface)).border_1()
                         .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) { rgb(p.accent).into() } else { gpui::Hsla::from(rgb(p.border)).opacity(0.55) })
                         .rounded(px(p.composer_radius)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
@@ -1541,22 +1562,18 @@ mod tests {
         // uniform_list gives every row the session-card height; a taller
         // child row would paint over its neighbours.
         assert!(parent.bottom() <= native.top() && native.bottom() <= child.top());
+        // Workspacer-spawned children are sessions: they archive like parents.
+        assert!(visual.debug_bounds("sidebar-archive-2").is_some());
+        assert!(visual.debug_bounds("sidebar-archive-3").is_some());
         // Child rows carry the same brand model badge as session cards.
         assert!(visual.debug_bounds("sidebar-child-model-1").is_some());
+        // A provider-native child opens as its own chat; the controller
+        // selects its parent first.
         visual.simulate_click(native.center(), gpui::Modifiers::default());
         visual.run_until_parked();
-        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "a"));
-        assert!(commands.try_recv().is_err());
-        visual.update(|window, cx| {
-            workspace.update(cx, |this, cx| {
-                let mut next = (*this.view).clone();
-                next.selected = Some("a".into());
-                this.update_view(Arc::new(next), window, cx);
-            })
-        });
         assert!(matches!(commands.try_recv().unwrap(),
-            Command::Request(wks_native::features::Request::SubagentHistory { session, agent })
-            if session == "a" && agent == "codex-child"));
+            Command::ViewChild(Some(t)) if t.parent == "a" && t.agent == "codex-child"));
+        assert!(commands.try_recv().is_err());
 
         visual.update(|_, cx| {
             workspace.update(cx, |this, cx| {
@@ -1570,8 +1587,7 @@ mod tests {
         visual.simulate_click(rail_child.center(), gpui::Modifiers::default());
         visual.run_until_parked();
         assert!(matches!(commands.try_recv().unwrap(),
-            Command::Request(wks_native::features::Request::SubagentHistory { session, agent })
-            if session == "a" && agent == "codex-child"));
+            Command::ViewChild(Some(t)) if t.parent == "a" && t.agent == "codex-child"));
     }
 
     #[gpui::test]
@@ -2880,6 +2896,283 @@ mod tests {
             pill.right() <= caption.left(),
             "the title pill clears the caption buttons"
         );
+    }
+
+    #[gpui::test]
+    fn viewed_subagent_reads_as_its_own_chat_without_a_composer(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                Arc::make_mut(&mut next.sessions)[0].subagents = serde_json::json!([{
+                    "id": "task-1", "description": "Audit the parser", "status": "running", "model": "claude-sonnet-4-6"
+                }]);
+                next.child = Some(wks_native::controller::ChildTarget {
+                    parent: "a".into(),
+                    agent: "task-1".into(),
+                });
+                next.transcript.snapshot(ConversationSnapshot {
+                    seq: 1,
+                    first_seq: 1,
+                    items: vec![Item {
+                        kind: "assistant_text".into(),
+                        text: "Reading the parser now.".into(),
+                        ..Default::default()
+                    }],
+                });
+                this.update_view(Arc::new(next), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("child-title-bar").is_some());
+        assert!(visual.debug_bounds("child-read-only-bar").is_some());
+        assert!(
+            visual.debug_bounds("chat-composer").is_none(),
+            "subagents take no input"
+        );
+        let back = visual.debug_bounds("child-back-parent").unwrap();
+        visual.simulate_click(back.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::ViewChild(None)
+        ));
+    }
+
+    #[gpui::test]
+    fn subagent_overview_holds_its_place_and_collapses_when_all_finish(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let say = |text: &str, at: &str| Item {
+            kind: "assistant_text".into(),
+            text: text.into(),
+            timestamp: Some(format!("2026-10-02T10:00:{at}Z")),
+            ..Default::default()
+        };
+        let ask = |text: &str, at: &str| Item {
+            kind: "user_message".into(),
+            text: text.into(),
+            timestamp: Some(format!("2026-10-02T10:00:{at}Z")),
+            ..Default::default()
+        };
+        let render = |items: Vec<Item>, status: &str, visual: &mut gpui::VisualTestContext| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut next = state("a");
+                    Arc::make_mut(&mut next.sessions)[0].subagents = serde_json::json!([
+                        {"id":"t1","description":"Audit the parser","status":status,"startedAt":"2026-10-02T10:00:15Z"},
+                        {"id":"t2","description":"Check the tests","status":status,"startedAt":"2026-10-02T10:00:16Z"}
+                    ]);
+                    next.transcript.snapshot(ConversationSnapshot {
+                        seq: items.len() as u64,
+                        first_seq: 1,
+                        items,
+                    });
+                    this.update_view(Arc::new(next), window, cx)
+                })
+            });
+            visual.run_until_parked();
+        };
+        render(
+            vec![
+                ask("Audit everything", "10"),
+                say("Spawning two agents.", "12"),
+            ],
+            "running",
+            &mut visual,
+        );
+        // Both started after row 1 and before anything later: one card there.
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(
+                this.child_ui.overview.keys().copied().collect::<Vec<_>>(),
+                [1]
+            );
+            assert_eq!(this.child_ui.overview[&1].len(), 2);
+        });
+        let running = visual
+            .debug_bounds("subagent-overview")
+            .unwrap()
+            .size
+            .height;
+        // New messages land below the card instead of under it.
+        render(
+            vec![
+                ask("Audit everything", "10"),
+                say("Spawning two agents.", "12"),
+                say("Still waiting on both.", "40"),
+            ],
+            "running",
+            &mut visual,
+        );
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(
+                this.child_ui.overview.keys().copied().collect::<Vec<_>>(),
+                [1]
+            );
+        });
+        // All finished: a collapsed summary.
+        render(
+            vec![
+                ask("Audit everything", "10"),
+                say("Spawning two agents.", "12"),
+                say("Still waiting on both.", "40"),
+            ],
+            "completed",
+            &mut visual,
+        );
+        let finished = visual
+            .debug_bounds("subagent-overview")
+            .unwrap()
+            .size
+            .height;
+        assert!(finished < running, "the finished overview collapses");
+        // It can be reopened.
+        let toggle = visual.debug_bounds("subagent-overview-toggle").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(
+            visual
+                .debug_bounds("subagent-overview")
+                .unwrap()
+                .size
+                .height
+                > finished
+        );
+    }
+
+    #[gpui::test]
+    fn finished_native_subagents_leave_the_sidebar_once_the_parent_turn_ends(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let rows = |parent_state: &str,
+                    child_status: &str,
+                    visual: &mut gpui::VisualTestContext| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut next = state("b");
+                    let parent = &mut Arc::make_mut(&mut next.sessions)[0];
+                    parent.state = parent_state.into();
+                    parent.subagents = serde_json::json!([{"id":"t1","description":"Audit","status":child_status}]);
+                    this.update_view(Arc::new(next), window, cx);
+                    this.sidebar_rows(cx).len()
+                })
+            })
+        };
+        // Sessions a and b, plus the subagent row while it matters.
+        assert_eq!(rows("input", "running", &mut visual), 3, "running: shown");
+        assert_eq!(
+            rows("responding", "complete", &mut visual),
+            3,
+            "parent mid-turn: shown"
+        );
+        assert_eq!(
+            rows("input", "complete", &mut visual),
+            2,
+            "done and turn over: gone"
+        );
+        // Viewing it keeps it, so the highlight has somewhere to live.
+        let kept = visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = (*this.view).clone();
+                next.child = Some(wks_native::controller::ChildTarget {
+                    parent: "a".into(),
+                    agent: "t1".into(),
+                });
+                this.update_view(Arc::new(next), window, cx);
+                this.sidebar_rows(cx).len()
+            })
+        });
+        assert_eq!(kept, 3);
+    }
+
+    #[gpui::test]
+    fn interface_size_zooms_layout_and_widgets_together(cx: &mut TestAppContext) {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                set_zoom(1.);
+            }
+        }
+        let _reset = Reset;
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let before = visual.debug_bounds("session-sidebar").unwrap().size.width;
+        // Ctrl + steps to the next offered size.
+        visual.simulate_keystrokes("ctrl-=");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.settings.interface_scale, 110);
+            // gpui-component sizes widgets from the theme font size (rem).
+            assert_eq!(
+                gpui_component::Theme::global(cx).font_size,
+                gpui::px(15. * 1.1)
+            );
+        });
+        let after = visual.debug_bounds("session-sidebar").unwrap().size.width;
+        assert!((f32::from(after) - f32::from(before) * 1.1).abs() < 1.);
+        // The stored width stays in unzoomed units.
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.settings.sidebar_width, 304.)
+        });
+        visual.simulate_keystrokes("ctrl-0");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.settings.interface_scale, 100)
+        });
+        assert_eq!(
+            visual.debug_bounds("session-sidebar").unwrap().size.width,
+            before
+        );
+    }
+
+    #[gpui::test]
+    fn available_update_shows_a_pill_and_installs_from_about(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let asset = serde_json::json!({"name":"Workspacer-Native-Rust-Preview-Setup-0.170.0-nightly.1-x64.exe",
+            "version":"0.170.0-nightly.1","size":10,"url":"https://github.com/DJTouchette/workspacer/releases/download/nightly/x.exe"});
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.requests.insert(
+                    "updates",
+                    wks_native::features::RequestState {
+                        number: 1,
+                        request: wks_native::features::Request::Updates,
+                        loading: false,
+                        value: Arc::new(serde_json::json!({
+                            "channel":"nightly","installed":"0.169.0-nightly.1",
+                            "latest":"0.170.0-nightly.1","update_available":true,
+                            "installable":true,"asset":asset.clone()
+                        })),
+                        error: None,
+                    },
+                );
+                this.update_view(Arc::new(next), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let pill = visual.debug_bounds("update-pill").unwrap();
+        visual.simulate_click(pill.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.screen, Screen::Settings);
+            assert_eq!(this.settings_section, settings::SettingsSection::About);
+        });
+        let install = visual.debug_bounds("install-update").unwrap();
+        visual.simulate_click(install.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let requested = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(wks_native::features::Request::DownloadUpdate { asset }) => {
+                Some(asset)
+            }
+            _ => None,
+        });
+        assert_eq!(requested, Some(asset));
     }
 
     #[gpui::test]

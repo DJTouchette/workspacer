@@ -174,6 +174,13 @@ impl Workspace {
                 "We couldn’t complete the workspace request. Refresh to check your sessions again.",
                 false,
             )
+        } else if self.view.child.is_some() {
+            (
+                "state-child-empty",
+                "No subagent messages yet",
+                "Its transcript appears here as it works.",
+                false,
+            )
         } else if self.selected_session().is_some_and(Session::stopped) {
             (
                 "state-session-ended",

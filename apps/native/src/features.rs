@@ -52,6 +52,10 @@ pub enum Request {
         source: AttachmentSource,
     },
     Updates,
+    /// Download and verify the installer from an `Updates` result's `asset`.
+    DownloadUpdate {
+        asset: Value,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -80,6 +84,7 @@ impl Request {
             Self::SubagentHistory { .. } => "subagent-history",
             Self::Upload { .. } => "upload",
             Self::Updates => "updates",
+            Self::DownloadUpdate { .. } => "update-download",
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -236,25 +241,10 @@ impl Request {
                 );
                 Ok(json!({"name":name,"path":path}))
             }
-            Self::Updates => {
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(20))
-                    .build()?;
-                let response = client
-                    .get("https://api.github.com/repos/DJTouchette/workspacer/releases/latest")
-                    .header("User-Agent", "Workspacer-Native")
-                    .send()
-                    .await?
-                    .error_for_status()?;
-                ensure!(
-                    response.content_length().unwrap_or(0) <= 1024 * 1024,
-                    "Release response too large"
-                );
-                let value: Value = response.json().await?;
-                let version = value["tag_name"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Release has no version"))?;
-                Ok(json!({"version":version}))
+            Self::Updates => crate::updates::check(&installed_version()).await,
+            Self::DownloadUpdate { asset } => {
+                let path = crate::updates::download(asset).await?;
+                Ok(json!({"installer": path}))
             }
         }
     }

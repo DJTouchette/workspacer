@@ -24,6 +24,10 @@ pub(super) struct Extras {
     pub diff_scroll: gpui::ScrollHandle,
     pub question_signature: String,
     pub answers: Vec<Entity<InputState>>,
+    /// Background update checks (started by the app, never by tests).
+    pub _update_timer: Option<Task<()>>,
+    /// The download request already handed to the installer helper.
+    pub update_handoff: u64,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -48,6 +52,8 @@ impl Extras {
             diff_scroll: gpui::ScrollHandle::new(),
             question_signature: String::new(),
             answers: Vec::new(),
+            _update_timer: None,
+            update_handoff: 0,
         }
     }
 }

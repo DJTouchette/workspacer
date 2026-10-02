@@ -149,11 +149,21 @@ pub enum Command {
     LoadOlder,
     /// Re-read account usage now rather than at the next minute.
     RefreshUsage,
+    /// Show a provider-native subagent's conversation as the chat (read-only),
+    /// or return to its parent with `None`.
+    ViewChild(Option<ChildTarget>),
     Create(NewSession),
     LoadModels {
         key: CatalogKey,
         refresh: bool,
     },
+}
+
+/// A provider-native subagent of a session (Claude's Task/Agent children).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChildTarget {
+    pub parent: String,
+    pub agent: String,
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +203,9 @@ pub struct View {
     pub loading_older: bool,
     /// The last `usage.report` read; kept across failed refreshes.
     pub usage: Option<Arc<Value>>,
+    /// When set, `transcript` is this subagent's conversation, not the
+    /// selected session's; the parent stays `selected`.
+    pub child: Option<ChildTarget>,
     pub sessions_loading: bool,
     pub busy: bool,
     pub notice: String,
@@ -272,6 +285,7 @@ enum Completion {
     Spawn(u64, NewSession, Result<Value>),
     Fleet(u64, Result<Value>),
     Usage(u64, Result<Value>),
+    Child(u64, u64, Result<Value>),
     Conversation(u64, u64, Result<Value>),
     Action(u64, String, Action, Result<Value>),
 }
@@ -303,6 +317,8 @@ struct Worker {
     last_conversation: Instant,
     usage_pending: bool,
     last_usage: Instant,
+    child_pending: bool,
+    last_child: Instant,
 }
 
 impl Worker {
@@ -337,6 +353,8 @@ impl Worker {
             last_conversation: Instant::now(),
             usage_pending: false,
             last_usage: Instant::now(),
+            child_pending: false,
+            last_child: Instant::now(),
         }
     }
 
@@ -378,6 +396,7 @@ impl Worker {
                         }
                     }
                     Some(Command::RefreshUsage) => self.fetch_usage(),
+                    Some(Command::ViewChild(target)) => self.view_child(target).await,
                     Some(Command::LoadOlder) => {
                         if self.view.transcript.has_older && !self.conversation_pending {
                             self.conversation_limit += CONVERSATION_PAGE;
@@ -388,7 +407,9 @@ impl Worker {
                     }
                     Some(Command::Refresh) => {
                         self.view.loading = self.view.connected && self.view.selected.is_some();
-                        self.fetch_fleet();self.fetch_conversation();self.dirty=true;
+                        self.fetch_fleet();
+                        if self.view.child.is_some() { self.fetch_child(); } else { self.fetch_conversation(); }
+                        self.dirty=true;
                     }
                     _ => {}
                 },
@@ -421,7 +442,10 @@ impl Worker {
                         // Ready suppresses fast polling. A slow reconciliation also
                         // repairs a provider restart behind an otherwise healthy hub.
                         let pace = if self.push_ready { Duration::from_secs(30) } else { Duration::from_secs(1) };
-                        if self.last_conversation.elapsed() >= pace { self.fetch_conversation(); }
+                        if self.view.child.is_some() {
+                            // Subagent transcripts have no push feed: poll while it runs.
+                            if self.child_running() && self.last_child.elapsed() >= Duration::from_secs(2) { self.fetch_child(); }
+                        } else if self.last_conversation.elapsed() >= pace { self.fetch_conversation(); }
                     }
                 }
             }
@@ -593,8 +617,89 @@ impl Worker {
         }));
     }
 
+    fn child_running(&self) -> bool {
+        let Some(target) = &self.view.child else {
+            return false;
+        };
+        self.sessions
+            .get(&target.parent)
+            .and_then(|s| s.subagents.as_array())
+            .into_iter()
+            .flatten()
+            .find(|c| c["id"].as_str() == Some(target.agent.as_str()))
+            .is_some_and(|c| {
+                matches!(
+                    c["status"].as_str(),
+                    Some(
+                        "running"
+                            | "responding"
+                            | "streaming"
+                            | "working"
+                            | "thinking"
+                            | "background"
+                    )
+                )
+            })
+    }
+
+    fn fetch_child(&mut self) {
+        let Some(target) = self.view.child.clone() else {
+            return;
+        };
+        if !self.view.connected || self.child_pending {
+            return;
+        }
+        self.child_pending = true;
+        self.last_child = Instant::now();
+        let backend = self.backend.clone();
+        let (epoch, selection) = (self.epoch, self.selection);
+        self.jobs.push(Box::pin(async move {
+            let result = backend
+                .call(
+                    "sessions.subagentConversation",
+                    json!({"sessionId":target.parent,"agentId":target.agent}),
+                )
+                .await;
+            Completion::Child(epoch, selection, result)
+        }));
+    }
+
+    /// Enter or leave a subagent's conversation. Entering selects the parent
+    /// first; the selection fence then drops any in-flight parent read, and
+    /// parent deltas are ignored until the reader returns.
+    async fn view_child(&mut self, target: Option<ChildTarget>) {
+        if target == self.view.child {
+            return;
+        }
+        if let Some(target) = &target
+            && self.view.selected.as_ref() != Some(&target.parent)
+        {
+            if !self.sessions.contains_key(&target.parent) {
+                return;
+            }
+            self.select(Some(target.parent.clone())).await;
+        }
+        let entering = target.is_some();
+        self.selection += 1;
+        self.view.child = target;
+        self.view.transcript = Transcript::default();
+        self.view.loading = true;
+        self.view.loading_older = false;
+        self.conversation_pending = false;
+        self.child_pending = false;
+        self.buffered.clear();
+        self.buffered_bytes = 0;
+        if entering {
+            self.fetch_child();
+        } else {
+            self.conversation_limit = CONVERSATION_PAGE;
+            self.fetch_conversation();
+        }
+        self.dirty = true;
+    }
+
     fn fetch_conversation(&mut self) {
-        if !self.view.connected || self.conversation_pending {
+        if !self.view.connected || self.conversation_pending || self.view.child.is_some() {
             return;
         }
         let Some(id) = self.view.selected.clone() else {
@@ -619,6 +724,8 @@ impl Worker {
     async fn select(&mut self, id: Option<String>) {
         self.selection += 1;
         self.view.selected = id;
+        self.view.child = None;
+        self.child_pending = false;
         for key in [
             "history",
             "subagent-history",
@@ -706,7 +813,11 @@ impl Worker {
                 self.usage_pending = false;
                 self.fetch_fleet();
                 self.fetch_usage();
+                let child = self.view.child.clone();
                 self.select(self.view.selected.clone()).await;
+                if child.is_some() {
+                    self.view_child(child).await;
+                }
             }
             Event::Disconnected(reason) => self.disconnected(reason, false),
             Event::PowerPaused => self.disconnected(String::new(), true),
@@ -774,11 +885,12 @@ impl Worker {
                         self.fleet_overlay.insert(id.into(), merged);
                     }
                     self.upsert(&data);
-                } else if self
-                    .view
-                    .selected
-                    .as_ref()
-                    .is_some_and(|id| topic == format!("agent.conversation.{id}"))
+                } else if self.view.child.is_none()
+                    && self
+                        .view
+                        .selected
+                        .as_ref()
+                        .is_some_and(|id| topic == format!("agent.conversation.{id}"))
                 {
                     let size = data.to_string().len();
                     if let Ok(delta) = serde_json::from_value::<Delta>(data) {
@@ -1035,6 +1147,40 @@ impl Worker {
                         });
                     }
                 }
+            }
+            Completion::Child(epoch, selection, result)
+                if epoch == self.epoch && selection == self.selection =>
+            {
+                self.child_pending = false;
+                self.view.loading = false;
+                let Some(target) = self.view.child.clone() else {
+                    return;
+                };
+                let snapshot = result.and_then(|value| {
+                    anyhow::ensure!(!value.is_null(), "Subagent transcript is not available yet");
+                    anyhow::ensure!(
+                        value["session_id"]
+                            .as_str()
+                            .is_none_or(|id| id == target.parent)
+                            && value["agent_id"]
+                                .as_str()
+                                .is_none_or(|id| id == target.agent),
+                        "Subagent transcript belongs to another session"
+                    );
+                    Ok(serde_json::from_value::<ConversationSnapshot>(value)?)
+                });
+                match snapshot {
+                    Ok(snapshot) => {
+                        // Same fold and identity-stable keys as a parent reseed,
+                        // so polling keeps the reader's place.
+                        self.view.transcript.snapshot_for_transport(snapshot, false);
+                        if self.view.notice.starts_with("Conversation unavailable:") {
+                            self.view.notice.clear();
+                        }
+                    }
+                    Err(e) => self.view.notice = format!("Conversation unavailable: {e}"),
+                }
+                self.dirty = true;
             }
             Completion::Usage(epoch, result) if epoch == self.epoch => {
                 self.usage_pending = false;
