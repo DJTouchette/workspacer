@@ -293,6 +293,19 @@ impl Workspace {
             .items_center()
             .gap_2()
             .py_3()
+            .when(chrome::custom_caption(), |d| {
+                d.child(
+                    chrome::drag_region(div())
+                        .debug_selector(|| "sidebar-drag-region".into())
+                        .w(px(40.))
+                        .h(px(32.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(brand_mark(18., p)),
+                )
+            })
             .child(self.sidebar_toggle(cx))
             .child(
                 self.icon_button(
@@ -529,28 +542,20 @@ impl Workspace {
             .flex_col()
             .debug_selector(|| "session-sidebar".into())
             .child(
-                // Keep the native titlebar hitbox confined to the logo and
-                // empty space. GPUI resolves WindowControlArea hitboxes during
-                // Windows' WM_NCHITTEST before ordinary click dispatch, so a
-                // parent Drag area cannot safely wrap these controls.
-                div()
+                // Padding and the logo remain a useful drag target even at
+                // minimum sidebar width. The occluding action group excludes
+                // this native hitbox from GPUI's reverse-order hit test.
+                chrome::drag_region(div())
+                    .debug_selector(|| "sidebar-drag-region".into())
                     .px_3()
                     .py_3()
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        chrome::drag_region(div())
-                            .debug_selector(|| "sidebar-drag-region".into())
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .flex_1()
-                            .min_w(px(18.))
-                            .child(brand_mark(18., p))
-                            .child(div().flex_1()),
-                    )
-                    .child(div().flex().items_center().gap_2()
+                    .child(brand_mark(18., p))
+                    .child(div().flex_1())
+                    .child(div().flex().items_center().gap_2().flex_shrink_0().occlude()
                     .child(
                         self.icon_button("new-session", "New session", IconName::Plus, !self.demo)
                             .debug_selector(|| "new-session-button".into())
