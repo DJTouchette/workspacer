@@ -718,6 +718,13 @@ countdowns, pace verdicts, refresh failures, a refresh button; backdrop, ✕ or
 Esc close it). A tick on each meter marks the expected pace. Unavailable, rolled-over and unmeasured windows
 are omitted, as on desktop.
 
+Mouse-wheel scrolling in the conversation glides instead of jumping. Wheel
+notches arrive as line deltas on Windows, Wayland and X11; the chat takes them
+in the capture phase and eases the list (about 96px per notch, most of it within
+~150ms) with the same clamping and follow-the-tail rules as keyboard paging.
+Touchpad pixel deltas stay immediate. Scrollable panels inside messages (tool
+output, subagent transcripts, diffs, file previews) keep native wheel scrolling.
+
 **Settings → Appearance → Interface size** (70–200%, Ctrl/Cmd + / − / 0) scales
 the whole app on top of the display scale the OS already applies (Windows DPI,
 Wayland output scale). It suits a high-resolution monitor left at 100% or a

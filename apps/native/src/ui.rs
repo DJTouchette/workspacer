@@ -8,6 +8,7 @@ mod navigation;
 mod scroll;
 mod settings;
 mod sidebar;
+mod smooth_scroll;
 mod states;
 mod syntax;
 mod tools;
@@ -396,6 +397,7 @@ pub struct Workspace {
     settings_search: Entity<InputState>,
     settings_section: settings::SettingsSection,
     usage_open: bool,
+    smooth_scroll: smooth_scroll::SmoothScroll,
     navigation_selected: Option<String>,
     sidebar_collapsed: bool,
     sidebar_drag: Option<(gpui::Pixels, f32)>,
@@ -566,6 +568,7 @@ impl Workspace {
             settings_search,
             settings_section: Default::default(),
             usage_open: false,
+            smooth_scroll: Default::default(),
             navigation_selected: None,
             sidebar_collapsed: false,
             sidebar_drag: None,
@@ -1318,7 +1321,7 @@ impl Render for Workspace {
             .child(div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
                 .when(self.view.transcript.rows.is_empty() && (self.view.child.is_some() || self.child_ui.agents.unanchored.is_empty()), |d| d.child(self.render_empty_state(compact, window, cx)))
                 .when(self.view.transcript.rows.is_empty() && self.view.child.is_none() && !self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_child_only(window, cx)))
-                .when(!self.view.transcript.rows.is_empty(), |d| d.child(transcript))
+                .when(!self.view.transcript.rows.is_empty(), |d| d.child(transcript).child(self.wheel_smoother(cx)))
                 .child(header)
                 .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).shadow(chrome::floating_shadow(p)).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, _, cx| {
                     this.follow = true;
@@ -3610,6 +3613,137 @@ mod tests {
             assert!(matches!(&this.view.requests["subagent-history"].request,wks_native::features::Request::SubagentHistory{session,..} if session!="b"));
             assert!(this.child_ui.agents.by_tool.is_empty());
         });
+    }
+
+    #[gpui::test]
+    fn wheel_notches_glide_instead_of_jumping(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let items: Vec<Item> = (0..40)
+            .map(|i| Item {
+                kind: "assistant_text".into(),
+                text: format!("Message {i}\n\nA paragraph to scroll past smoothly."),
+                ..Default::default()
+            })
+            .collect();
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 40,
+            first_seq: 1,
+            items,
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let top = |visual: &mut gpui::VisualTestContext| {
+            visual.debug_bounds("last-transcript-row").unwrap().top()
+        };
+        let start = top(&mut visual);
+        let wheel = |visual: &mut gpui::VisualTestContext, lines: f32| {
+            visual.simulate_event(gpui::ScrollWheelEvent {
+                position: gpui::point(px(600.), px(300.)),
+                delta: gpui::ScrollDelta::Lines(gpui::point(0., lines)),
+                ..Default::default()
+            });
+        };
+        // One notch toward older messages: no instant jump…
+        wheel(&mut visual, 3.);
+        visual.run_until_parked();
+        assert_eq!(
+            top(&mut visual),
+            start,
+            "the list does not jump on the event"
+        );
+        // …a partial glide after a frame or two…
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_millis(20));
+        visual.run_until_parked();
+        let partway = top(&mut visual) - start;
+        assert!(
+            partway > px(0.) && partway < px(96.),
+            "partway: {partway:?}"
+        );
+        // …and it settles on exactly three lines.
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_millis(600));
+        visual.run_until_parked();
+        assert!((f32::from(top(&mut visual) - start) - 96.).abs() < 0.01);
+        workspace.read_with(&visual, |this, _| assert!(!this.follow, "reading history"));
+        // Scrolling back down past the end re-pins the newest message.
+        wheel(&mut visual, -30.);
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_millis(800));
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(this.follow));
+        // Touchpad pixel deltas stay immediate.
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: gpui::point(px(600.), px(300.)),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(50.))),
+            ..Default::default()
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(!this.follow));
+    }
+
+    #[gpui::test]
+    fn wheel_over_a_scrollable_panel_stays_with_the_panel(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let mut items: Vec<Item> = (0..30)
+            .map(|i| Item {
+                kind: "assistant_text".into(),
+                text: format!("Message {i}"),
+                ..Default::default()
+            })
+            .collect();
+        items.push(Item {
+            kind: "tool_use".into(),
+            id: "fail-1".into(),
+            name: "Bash".into(),
+            input: serde_json::json!({"command":"cargo test"}),
+            ..Default::default()
+        });
+        items.push(Item {
+            kind: "tool_result".into(),
+            tool_use_id: "fail-1".into(),
+            is_error: true,
+            content: (0..200).map(|n| format!("line {n}\n")).collect(),
+            ..Default::default()
+        });
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: items.len() as u64,
+            first_seq: 1,
+            items,
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        // Failed calls open their details; the panel scrolls itself.
+        let panel = visual.debug_bounds("tool-details").unwrap();
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: panel.center(),
+            delta: gpui::ScrollDelta::Lines(gpui::point(0., 3.)),
+            ..Default::default()
+        });
+        workspace.read_with(&visual, |this, _| assert!(!this.smooth_scroll.gliding()));
+        // Outside it, the same notch glides the conversation.
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: gpui::point(
+                workspace.read_with(&visual, |this, _| this.list.viewport_bounds().left()) + px(8.),
+                panel.center().y,
+            ),
+            delta: gpui::ScrollDelta::Lines(gpui::point(0., 3.)),
+            ..Default::default()
+        });
+        workspace.read_with(&visual, |this, _| assert!(this.smooth_scroll.gliding()));
+        visual
+            .executor()
+            .advance_clock(std::time::Duration::from_millis(800));
+        visual.run_until_parked();
     }
 
     #[gpui::test]

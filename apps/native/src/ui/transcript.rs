@@ -1155,8 +1155,8 @@ impl Workspace {
         div().child(div().flex().gap_2()
             .child(self.button(SharedString::from(format!("{key}-copy")),"Copy diff",true).on_click(move|_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))
             .child(self.toggle_chat(raw_key.clone(),if expanded {"Hide selectable diff"}else{"Show selectable diff"}.into(),cx)))
-            .child(div().id(SharedString::from(key.to_owned())).max_h(px(320.)).overflow_y_scroll().font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
-                .children(text.lines().take(1000).map(|line|div().text_color(rgb(if line.starts_with('+'){p.success}else if line.starts_with('-'){p.error}else{p.muted})).child(line.to_owned()))))
+            .child(super::smooth_scroll::scroll_zone(div().id(SharedString::from(key.to_owned())).max_h(px(320.)).overflow_y_scroll().font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
+                .children(text.lines().take(1000).map(|line|div().text_color(rgb(if line.starts_with('+'){p.success}else if line.starts_with('-'){p.error}else{p.muted})).child(line.to_owned())))))
             .when(text.lines().count()>1000,|d|d.child("Showing the first 1,000 lines. Copy or open the selectable diff for all lines."))
             .when(expanded,|d|d.child(self.render_raw(&raw_key,text,window,cx)))
     }
@@ -1304,7 +1304,7 @@ impl Workspace {
             } else if state.loading {
                 preview = preview.child("Loading file…");
             } else {
-                preview = preview.child(
+                preview = preview.child(super::smooth_scroll::scroll_zone(
                     div()
                         .id("file-content")
                         .max_h(px(300.))
@@ -1315,7 +1315,7 @@ impl Workspace {
                             window,
                             cx,
                         )),
-                );
+                ));
             }
             body = body.child(preview);
         }

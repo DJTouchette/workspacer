@@ -300,10 +300,11 @@ pub(super) fn details(
     appearance: (Palette, bool),
     window: &mut Window,
     cx: &mut App,
-) -> Stateful<Div> {
+) -> Div {
     let (p, twelve_hour) = appearance;
     let mut body = div()
         .id(SharedString::from(format!("{element_key}-details")))
+        .debug_selector(|| "tool-details".into())
         .max_h(px(520.))
         .overflow_y_scroll()
         .px_3()
@@ -403,5 +404,5 @@ pub(super) fn details(
                 )),
         );
     }
-    body
+    super::smooth_scroll::scroll_zone(body)
 }

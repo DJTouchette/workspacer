@@ -530,7 +530,7 @@ impl Workspace {
                     content.child(self.render_message(&row, "child-history", false, window, cx));
             }
         }
-        body.child(content)
+        body.child(super::smooth_scroll::scroll_zone(content))
             .when(pages > 1, |d| {
                 d.child(
                     div()
