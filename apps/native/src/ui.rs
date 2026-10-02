@@ -1828,6 +1828,86 @@ mod tests {
     }
 
     #[gpui::test]
+    fn chat_links_route_web_refused_and_image_targets(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/fixture/repo".into();
+                view.transcript.snapshot(ConversationSnapshot {
+                    seq: 3,
+                    first_seq: 1,
+                    items: [
+                        "[Docs site](https://example.com/docs)",
+                        "[Mail the team](mailto:team@example.com)",
+                        "![Screenshot](out/shot.png)",
+                    ]
+                    .into_iter()
+                    .map(|text| Item {
+                        kind: "assistant_text".into(),
+                        text: text.into(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let click = |visual: &mut VisualTestContext, row: &'static str, x: f32| {
+            let bounds = visual.debug_bounds(row).expect("markdown row");
+            visual.simulate_click(
+                bounds.origin + gpui::point(px(x), bounds.size.height / 2.),
+                gpui::Modifiers::default(),
+            );
+            visual.run_until_parked();
+        };
+        click(&mut visual, "markdown-inline-live:a:0-0", 20.);
+        assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+        assert!(commands.try_recv().is_err(), "web links never read files");
+        click(&mut visual, "markdown-inline-live:a:1-0", 20.);
+        assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+        assert!(commands.try_recv().is_err());
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.extras.notice.contains("mailto"), "refusals are visible")
+        });
+        // The image is a label, not a client-side load, and opens the viewer.
+        click(&mut visual, "markdown-inline-live:a:2-0", 20.);
+        let Ok(Command::Request(wks_native::features::Request::FilePreview { session, target })) =
+            commands.try_recv()
+        else {
+            panic!("image click must request a native preview");
+        };
+        assert_eq!(target.path, "/fixture/repo/out/shot.png");
+        assert_eq!(target.kind, wks_native::links::FileKind::Image);
+        let png = {
+            use base64::Engine;
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(64, 32)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            base64::engine::general_purpose::STANDARD.encode(bytes.into_inner())
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.requests.insert("file-preview", wks_native::features::RequestState {
+                    request: wks_native::features::Request::FilePreview { session, target },
+                    number: 1, loading: false, error: None,
+                    value: Arc::new(serde_json::json!({"png":png,"width":64,"height":32,"size":120})),
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("file-viewer-image").is_some());
+        // Backdrop click closes it.
+        visual.simulate_click(gpui::point(px(4.), px(4.)), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+    }
+
+    #[gpui::test]
     fn font_controls_preserve_drafts_and_survive_theme_changes(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
