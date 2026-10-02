@@ -1285,10 +1285,9 @@ impl Render for Workspace {
         // under the floating title pill instead of colliding with a hard edge.
         let header = div().absolute().top_0().left_0().w_full().flex().justify_center()
             .bg(gpui::linear_gradient(180., gpui::linear_color_stop(rgb(p.chat), 0.6), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
-            // The title-pill row doubles as the window's title bar; the pill
-            // occludes, so only the empty space around it drags. Keep the pill
-            // clear of the caption buttons.
-            .child(chrome::drag_region(div()).absolute().top_0().left_0().w_full().h(px(56.)))
+            // Leave the top-right clear of the app-drawn caption buttons. The
+            // dedicated sidebar chrome owns the native drag region; do not put
+            // a Drag hitbox behind this interactive title pill.
             .when(chrome::custom_caption(), |d| d.pr(px(chrome::CAPTION_WIDTH)))
             .child(chrome::chat_column().relative().pt_3().pb_5().flex().flex_col().items_center().gap_2()
                 .child(canvas(move |bounds, _, cx| {
@@ -2893,10 +2892,16 @@ mod tests {
         let width = visual.update(|window, _| window.viewport_size().width);
         let caption = visual.debug_bounds("window-caption").unwrap();
         let close = visual.debug_bounds("caption-close").unwrap();
+        let drag = visual.debug_bounds("sidebar-drag-region").unwrap();
+        let new_session = visual.debug_bounds("new-session-button").unwrap();
         assert_eq!(caption.top(), px(0.));
         assert_eq!(caption.right(), width);
         assert_eq!(close.right(), width);
         assert!(visual.debug_bounds("caption-minimize").unwrap().right() <= close.left());
+        assert!(
+            drag.right() <= new_session.left(),
+            "the native drag area must not overlap a sidebar control"
+        );
         let pill = visual.debug_bounds("title-bar").unwrap();
         assert!(
             pill.right() <= caption.left(),

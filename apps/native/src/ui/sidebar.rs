@@ -529,18 +529,28 @@ impl Workspace {
             .flex_col()
             .debug_selector(|| "session-sidebar".into())
             .child(
-                // With the app-drawn caption this row is the title bar: the
-                // logo and gap drag the window, the occluding button group
-                // keeps its clicks.
-                chrome::drag_region(div())
+                // Keep the native titlebar hitbox confined to the logo and
+                // empty space. GPUI resolves WindowControlArea hitboxes during
+                // Windows' WM_NCHITTEST before ordinary click dispatch, so a
+                // parent Drag area cannot safely wrap these controls.
+                div()
                     .px_3()
                     .py_3()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(brand_mark(18., p))
-                    .child(div().flex_1())
-                    .child(div().flex().items_center().gap_2().occlude()
+                    .child(
+                        chrome::drag_region(div())
+                            .debug_selector(|| "sidebar-drag-region".into())
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .flex_1()
+                            .min_w(px(18.))
+                            .child(brand_mark(18., p))
+                            .child(div().flex_1()),
+                    )
+                    .child(div().flex().items_center().gap_2()
                     .child(
                         self.icon_button("new-session", "New session", IconName::Plus, !self.demo)
                             .debug_selector(|| "new-session-button".into())
