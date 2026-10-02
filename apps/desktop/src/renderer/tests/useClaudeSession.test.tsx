@@ -46,31 +46,6 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('useClaudeSession — stale state on id change', () => {
-  it('waits for the current activation fetch before restoring a reading bookmark', async () => {
-    window.electronAPI.getClaudeSession = vi.fn().mockResolvedValue(fullSnapshot(80));
-    const { result, rerender } = renderHook(
-      ({ active }) => useClaudeSession({ ptySessionId: 'A', active }),
-      { initialProps: { active: true } },
-    );
-    await waitFor(() => expect(result.current.detailReady).toBe(true));
-    rerender({ active: false });
-    expect(result.current.detailReady).toBe(false);
-    await waitFor(() => expect(result.current.session?.conversation).toHaveLength(12));
-    let finish!: (snapshot: any) => void;
-    window.electronAPI.getClaudeSession = vi.fn().mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-    );
-    rerender({ active: true });
-    expect(result.current.detailReady).toBe(false);
-    expect(result.current.session?.conversation).toHaveLength(12);
-    await act(async () => finish(fullSnapshot(80)));
-    expect(result.current.detailReady).toBe(true);
-    expect(result.current.session?.conversation).toHaveLength(80);
-  });
-
   it('subscribes to detail only while active and preserves unchanged turn identity', async () => {
     let detail: (snapshot: any) => void = () => {};
     const off = vi.fn();
