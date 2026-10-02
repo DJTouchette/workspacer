@@ -321,8 +321,8 @@ impl Workspace {
             .overflow_hidden()
             .flex()
             .flex_col()
-            // Deferred, the sheet's dispatch path skips the workspace, so
-            // none of its bindings reach here; Tab must not walk focus out.
+            // The shell drops its workspace context while this is open; Tab
+            // must not walk focus out to the covered composer either.
             .key_context("FileViewer")
             .track_focus(&self.viewer_focus)
             .on_action(cx.listener(|_, _: &ViewerTab, _, _| {}))

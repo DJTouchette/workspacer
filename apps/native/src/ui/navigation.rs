@@ -298,7 +298,7 @@ impl Workspace {
             // conversation, and only the viewer's own keys work.
             .map(|shell| {
                 if viewer {
-                    shell.on_action(cx.listener(|_, _: &ViewerTab, _, _| {}))
+                    shell
                 } else {
                     self.workspace_actions(shell, cx)
                 }
