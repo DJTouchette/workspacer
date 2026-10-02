@@ -68,7 +68,15 @@ impl Workspace {
         cx.notify();
     }
 
-    fn render_step(&mut self, row: &Row, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    /// `round_top`/`round_bottom` give the hover fill the card's corners;
+    /// overflow clipping is rectangular, so a square fill would poke out.
+    fn render_step(
+        &mut self,
+        row: &Row,
+        (round_top, round_bottom): (bool, bool),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.appearance.palette();
         let tool = row.tool.as_ref().expect("tool row");
         let session = self.view.selected.clone().unwrap_or_default();
@@ -103,8 +111,11 @@ impl Workspace {
         };
         let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
         let key = row.key;
+        let radius = px((p.panel_radius - 1.).max(0.));
         let header = div()
             .id(SharedString::from(format!("{element_key}-step")))
+            .when(round_top, |d| d.rounded_t(radius))
+            .when(round_bottom && !expanded, |d| d.rounded_b(radius))
             .debug_selector(move || format!("tool-toggle-{key}"))
             .px_3()
             .py(px(6.))
@@ -253,6 +264,7 @@ impl Workspace {
         } else {
             steps.saturating_sub(VISIBLE_STEPS)
         };
+        let radius = px((p.panel_radius - 1.).max(0.));
         let mut card = div()
             .debug_selector(|| "tool-activity-group".into())
             .w_full()
@@ -283,6 +295,8 @@ impl Workspace {
                 div()
                     .id(SharedString::from(format!("{card_key}-header")))
                     .debug_selector(|| "work-card-toggle".into())
+                    .rounded_t(radius)
+                    .when(!open, |d| d.rounded_b(radius))
                     .px_3()
                     .py_2()
                     .flex()
@@ -386,8 +400,10 @@ impl Workspace {
                         })),
                 );
             }
-            for row in rows.range(span.start + hidden..span.end) {
-                list = list.child(self.render_step(row, window, cx));
+            let shown = rows.range(span.start + hidden..span.end);
+            let last = shown.len().saturating_sub(1);
+            for (n, row) in shown.enumerate() {
+                list = list.child(self.render_step(row, (steps == 1, n == last), window, cx));
             }
             card = card.child(list);
         }

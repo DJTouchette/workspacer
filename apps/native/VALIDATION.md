@@ -601,3 +601,17 @@ tool details. Timestamps are right-aligned in the disabled tone.
 - Strict all-target Clippy with UI tests, formatting and whitespace passed.
 - Real windows checked on a headless Hyprland output with the rich-transcript
   fixture in Dark and Light. No live-provider calls or Windows/macOS rendering.
+
+## Land on latest; rounded work-card hover (2026-10-02)
+
+Removed persisted reading positions and the unread banner from both clients:
+desktop reverts db0dc488 (open snaps to the bottom again), native drops
+`Settings.reading`/`Bookmark` (old preference files still load; the field is
+ignored) and window-activation restores, so opening or switching lands on the
+latest message. Work-card hover fills now round to the card's corners because
+GPUI overflow clipping is rectangular.
+
+- Native serialized suite **184 passed**; strict Clippy passed. Replaced the
+  bookmark test with switch-back-lands-on-latest coverage.
+- Desktop renderer typecheck passed; renderer Vitest **1936 passed** (206
+  files); `chatTailPin` Playwright renderer spec **2 passed**.

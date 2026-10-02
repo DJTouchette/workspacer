@@ -452,23 +452,14 @@ impl Workspace {
             }
         });
         let list = ListState::new(0, ListAlignment::Bottom, px(250.));
-        list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, window, cx| {
+        list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, _, cx| {
             this.follow = !event.is_scrolled;
-            cx.defer_in(window, |this, window, cx| this.capture_reading(window, cx));
             cx.notify();
         }));
         let focus = cx.focus_handle();
         focus_watch.push(cx.on_focus(&focus, window, |_, _, cx| cx.notify()));
         focus_watch.push(cx.on_blur(&focus, window, |_, _, cx| cx.notify()));
-        focus_watch.push(cx.observe_window_activation(window, |this, window, cx| {
-            if window.is_window_active() {
-                this.chat.restored = false;
-                this.restore_reading(window, cx);
-            } else {
-                this.capture_reading(window, cx);
-            }
-            cx.notify();
-        }));
+        focus_watch.push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
         focus_watch.push(cx.on_release(|this, _| {
             if let Some(path) = &this.settings_path
                 && let Err(error) = this.settings.save(path)
@@ -577,7 +568,6 @@ impl Workspace {
 
     fn update_view(&mut self, view: Arc<View>, window: &mut Window, cx: &mut Context<Self>) {
         self.has_connected |= view.connected;
-        self.capture_reading(window, cx);
         let children_changed = self.sync_children(&view, cx);
         self.receive_chat_requests(&view, cx);
         self.sync_features(&view, window, cx);
@@ -655,7 +645,6 @@ impl Workspace {
             self.list.reset(view.transcript.rows.len());
             self.chat.restored = false;
             self.chat.wanted.clear();
-            self.chat.unread = None;
             self.follow = true;
         } else {
             let anchor = (!self.follow).then(|| self.scroll_anchor());
@@ -806,7 +795,7 @@ impl Workspace {
                 cx,
             );
         }
-        self.restore_reading(window, cx);
+        self.land_on_latest();
         if self.new_session || self.screen == Screen::Model {
             self.sync_models(window, cx);
             if reconnected {
@@ -1261,9 +1250,9 @@ impl Render for Workspace {
                 .when(self.view.transcript.rows.is_empty() && !self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_child_only(window, cx)))
                 .when(!self.view.transcript.rows.is_empty(), |d| d.child(transcript))
                 .child(header)
-                .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).shadow(chrome::floating_shadow(p)).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, window, cx| {
+                .when(!self.follow, |d| d.child(div().absolute().left_0().w_full().bottom(self.composer_dock_bounds.size.height + px(6.)).flex().justify_center().child(self.button("latest", "Jump to latest", true).shadow(chrome::floating_shadow(p)).debug_selector(|| "jump-latest".into()).mx_auto().rounded_full().bg(rgb(p.surface)).occlude().on_click(cx.listener(|this, _, _, cx| {
                     this.follow = true;
-                    this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); this.chat.unread = None; this.capture_reading(window, cx); cx.notify();
+                    this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); cx.notify();
                 })))))
                 .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center()
                     .child(chrome::chat_column().id("conversation-dock").relative().pt(px(if compact { 8. } else { 12. })).pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * if compact { 0.45 } else { 0.55 }).overflow_y_scroll().flex().flex_col().gap(px(if compact { 4. } else { 8. }))
@@ -1277,10 +1266,6 @@ impl Render for Workspace {
                         });
                     });
                 }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
-                .when_some(self.chat.unread, |d, ix| d.child(self.button("new-activity", "New activity · jump to first unread", true).on_click(cx.listener(move |this, _, _, cx| {
-                    this.follow = false;
-                    this.list.scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) }); cx.notify();
-                }))))
                 .child(self.render_pending(window, cx))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
@@ -3324,7 +3309,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn reading_position_survives_switch_and_marks_new_activity(cx: &mut TestAppContext) {
+    fn switching_back_lands_on_the_latest_message(cx: &mut TestAppContext) {
         let (workspace, mut visual, _commands, _updates) = fixture(cx);
         visual.update(|window, _| window.activate_window());
         visual.run_until_parked();
@@ -3343,14 +3328,14 @@ mod tests {
                         .collect(),
                 });
                 this.update_view(Arc::new(a.clone()), window, cx);
+                assert!(this.follow);
+                // Scroll up, leave, and come back after new activity.
                 this.follow = false;
                 this.list.scroll_to(ListOffset {
                     item_ix: 12,
                     offset_in_item: px(7.),
                 });
-                this.capture_reading(window, cx);
                 this.update_view(Arc::new(state("b")), window, cx);
-                // Empty attach snapshots must not erase a saved bookmark.
                 let mut loading = state("a");
                 loading.loading = true;
                 this.update_view(Arc::new(loading), window, cx);
@@ -3367,11 +3352,13 @@ mod tests {
                     true,
                 );
                 this.update_view(Arc::new(a), window, cx);
-                assert!(!this.follow);
-                assert_eq!(this.list.logical_scroll_top().item_ix, 12);
-                assert_eq!(f32::from(this.list.logical_scroll_top().offset_in_item), 7.);
-                assert_eq!(this.chat.unread, Some(50));
+                assert!(this.follow);
             });
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.follow);
+            assert_ne!(this.list.logical_scroll_top().item_ix, 12);
         });
     }
 

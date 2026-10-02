@@ -269,10 +269,9 @@ Transcript rendering is described below.
   acknowledges them. Messages sent during work say **Queued**. Failed or uncertain
   sends preserve the existing draft behavior; acceptance alone does not remove
   the provisional bubble.
-- Reading positions persist per hub/session, including the viewport offset and
-  last-read content. Session switches, empty attach snapshots and background
-  updates preserve them. **New activity** jumps to the first unread location;
-  **Jump to latest** resumes following. Bookmarks are capped at 200 sessions.
+- Opening or switching to a conversation lands on the latest message and follows
+  new output; scrolling up pauses following and **Jump to latest** resumes it.
+  Reading positions are not remembered between visits (matching desktop).
 - Each turn has a changed-files summary. Observed live turn completion captures
   repository counts; historical turns and unavailable/committed files use clearly
   labelled estimates from successful tool calls. Captures are client-local and

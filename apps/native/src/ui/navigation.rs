@@ -212,12 +212,11 @@ impl Workspace {
         cx.notify();
     }
 
-    fn page(&mut self, direction: f32, window: &Window, cx: &mut Context<Self>) {
+    fn page(&mut self, direction: f32, _window: &Window, cx: &mut Context<Self>) {
         if self.screen == Screen::Conversation && !self.new_session {
             self.pause_follow();
             self.list
                 .scroll_by(self.list.viewport_bounds().size.height * (direction * 0.5));
-            cx.defer_in(window, |this, window, cx| this.capture_reading(window, cx));
             cx.notify();
         }
     }

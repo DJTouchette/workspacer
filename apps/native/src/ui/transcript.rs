@@ -2,18 +2,17 @@
 use super::*;
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use wks_native::{
     features::Request,
     model::Row,
-    reading::{Anchor, Bookmark},
+    reading::Anchor,
     transcript::{self as content, AssistantBlock, CardAction, FileChange},
 };
 
 #[derive(Default)]
 pub(super) struct ChatUi {
     pub restored: bool,
-    pub unread: Option<usize>,
     pub open: BTreeMap<String, bool>,
     text_pages: BTreeMap<String, usize>,
     dismissed: BTreeMap<String, u64>,
@@ -24,7 +23,6 @@ pub(super) struct ChatUi {
     preview_inflight: bool,
     frozen: BTreeMap<String, Frozen>,
     capture_number: u64,
-    save: Option<Task<()>>,
 }
 struct Preview {
     image: Option<Arc<gpui::Image>>,
@@ -36,12 +34,6 @@ struct Frozen {
     estimated: bool,
 }
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
 fn turn_id(rows: &std::collections::VecDeque<Arc<Row>>, start: usize) -> String {
     serde_json::to_string(&Anchor::at(rows, start)).unwrap_or_default()
 }
@@ -58,123 +50,17 @@ fn literal(id: String, text: &str, window: &mut Window, cx: &mut App) -> TextVie
     .selectable(true)
 }
 impl Workspace {
-    fn reading_key(&self) -> Option<String> {
-        Some(format!(
-            "{}\0{}",
-            self.project_scope,
-            self.view.selected.as_ref()?
-        ))
-    }
-    pub(super) fn capture_reading(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !window.is_window_active()
-            || !self.chat.restored
-            || self.view.loading
-            || self.screen != Screen::Conversation
-            || self.new_session
-        {
+    /// Opening or switching to a conversation always lands on the latest message.
+    pub(super) fn land_on_latest(&mut self) {
+        if self.chat.restored || self.view.loading || self.view.transcript.rows.is_empty() {
             return;
         }
-        let Some(key) = self.reading_key() else {
-            return;
-        };
-        let rows = &self.view.transcript.rows;
-        if rows.is_empty() {
-            return;
-        }
-        let offset = self.list.logical_scroll_top();
-        let Some(anchor) = Anchor::at(rows, offset.item_ix.min(rows.len() - 1)) else {
-            return;
-        };
-        let previous = self.settings.reading.get(&key).cloned().unwrap_or_default();
-        let watching = window.is_window_active() && self.follow;
-        let mark = Bookmark {
-            anchor,
-            offset: f32::from(offset.offset_in_item),
-            at_bottom: self.follow,
-            read: if watching {
-                Anchor::at(rows, rows.len() - 1)
-            } else {
-                previous.read
-            },
-            read_hash: if watching {
-                rows.back().unwrap().fingerprint()
-            } else {
-                previous.read_hash
-            },
-            updated: now(),
-        };
-        if self.settings.reading.get(&key) == Some(&mark) {
-            return;
-        }
-        self.settings.reading.insert(key, mark);
-        while self.settings.reading.len() > 200 {
-            let oldest = self
-                .settings
-                .reading
-                .iter()
-                .min_by_key(|(_, v)| v.updated)
-                .map(|(k, _)| k.clone())
-                .unwrap();
-            self.settings.reading.remove(&oldest);
-        }
-        if watching {
-            self.chat.unread = None;
-        }
-        // Debounce disk writes, but keep anchors immediately in memory on switches.
-        if self.chat.save.is_none() {
-            self.chat.save = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(250))
-                    .await;
-                let _ = this.update(cx, |this, cx| {
-                    this.chat.save = None;
-                    if this.settings_path.is_some() {
-                        this.save_settings(cx);
-                    }
-                });
-            }));
-        }
-    }
-    pub(super) fn restore_reading(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.view.loading || self.view.transcript.rows.is_empty() {
-            return;
-        }
-        let Some(key) = self.reading_key() else {
-            return;
-        };
-        let rows = &self.view.transcript.rows;
-        let saved = self.settings.reading.get(&key);
-        if !self.chat.restored {
-            self.chat.unread = saved.and_then(|b| b.unread(rows));
-            self.follow = saved.is_none_or(|b| b.at_bottom && self.chat.unread.is_none());
-            let target = if self.follow {
-                rows.len()
-            } else {
-                saved
-                    .and_then(|b| b.anchor.locate(rows))
-                    .or(self.chat.unread)
-                    .unwrap_or(0)
-            };
-            let offset = if self.follow {
-                0.
-            } else {
-                saved.map_or(0., |b| b.offset)
-            };
-            self.list.scroll_to(ListOffset {
-                item_ix: target,
-                offset_in_item: px(offset),
-            });
-            self.chat.restored = true;
-        } else if !self.follow || !window.is_window_active() || self.screen != Screen::Conversation
-        {
-            self.chat.unread = self
-                .chat
-                .unread
-                .or_else(|| saved.and_then(|b| b.unread(rows)));
-        }
-        if self.follow && window.is_window_active() {
-            self.capture_reading(window, cx);
-        }
+        self.follow = true;
+        self.list.scroll_to(ListOffset {
+            item_ix: self.view.transcript.rows.len(),
+            offset_in_item: px(0.),
+        });
+        self.chat.restored = true;
     }
     pub(super) fn receive_chat_requests(&mut self, view: &View, cx: &mut Context<Self>) {
         if let Some(state) = view
@@ -416,19 +302,6 @@ impl Workspace {
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "chat-content-column".into())
             });
-        if self.chat.unread == Some(ix)
-            || group.as_ref().is_some_and(|span| {
-                self.chat
-                    .unread
-                    .is_some_and(|unread| span.contains(&unread))
-            })
-        {
-            body = body.child(
-                div()
-                    .text_color(rgb(self.appearance.palette().accent))
-                    .child("New activity"),
-            );
-        }
         if let Some(span) = group {
             body = body
                 .child(self.render_work_card(span, window, cx))
