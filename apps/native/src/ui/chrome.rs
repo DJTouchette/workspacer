@@ -567,9 +567,31 @@ impl Workspace {
 /// Marks an otherwise-empty area as the window's title bar (drag to move,
 /// double-click to maximize) when the app draws its own caption.
 pub(super) fn drag_region<E: InteractiveElement>(element: E) -> E {
-    if custom_caption() && cfg!(target_os = "windows") {
-        element.window_control_area(gpui::WindowControlArea::Drag)
+    if custom_caption() {
+        // GPUI's focusable shell prevents default on mouse-down. Windows sends
+        // WM_NCLBUTTONDOWN through those listeners before DefWindowProc starts
+        // the move, so the drag surface must exclude the shell's hitbox too.
+        // BlockMouse also excludes underlying transcript selection; later
+        // occluding title pills/buttons still exclude this drag hitbox.
+        let element = element.occlude();
+        let element = if cfg!(target_os = "windows") {
+            element.window_control_area(gpui::WindowControlArea::Drag)
+        } else {
+            element
+        };
+        // Observe the real Div hitbox in the cross-platform harness. This
+        // listener changes neither default handling nor event propagation.
+        #[cfg(all(test, feature = "ui-tests"))]
+        let element = element.on_mouse_down(gpui::MouseButton::Left, |_, _, _| {
+            DRAG_HIT.set(true);
+        });
+        element
     } else {
         element
     }
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+thread_local! {
+    pub(super) static DRAG_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
