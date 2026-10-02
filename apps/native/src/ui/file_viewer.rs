@@ -36,7 +36,10 @@ impl Workspace {
     pub(super) fn close_file_viewer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(number) = self.file_viewer().map(|s| s.number) {
             self.chat.dismissed.insert("file-preview".into(), number);
-            self.chat.viewer = FileViewer::default();
+            // Keep `shown` so later view updates never rebuild (or focus) a
+            // viewer for the dismissed request.
+            self.chat.viewer.editor = None;
+            self.chat.viewer.image = None;
             window.focus(&self.focus);
             cx.notify();
         }
@@ -99,7 +102,10 @@ impl Workspace {
             self.chat.viewer = FileViewer::default();
             return;
         };
-        if state.loading || state.number == self.chat.viewer.shown {
+        if state.loading
+            || state.number == self.chat.viewer.shown
+            || self.chat.dismissed.get("file-preview") == Some(&state.number)
+        {
             return;
         }
         let Request::FilePreview { target, .. } = &state.request else {
@@ -376,5 +382,26 @@ pub(super) fn tool_link(cwd: &str, input: &serde_json::Value, path: &str) -> Lin
 impl FileViewer {
     pub(super) fn editor(&self) -> Option<&Entity<InputState>> {
         self.editor.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_targets_keep_the_read_offset_as_their_line() {
+        let input = serde_json::json!({"file_path":"src/lib.rs","offset":40});
+        let Link::File(target) = tool_link("/repo", &input, "src/lib.rs") else {
+            panic!("tool path is a file");
+        };
+        assert_eq!(
+            (target.path.as_str(), target.line),
+            ("/repo/src/lib.rs", Some(40))
+        );
+        let Link::File(target) = tool_link("/repo", &serde_json::json!({}), "/tmp/a.png") else {
+            panic!("absolute image path is a file");
+        };
+        assert_eq!((target.line, target.kind), (None, FileKind::Image));
     }
 }

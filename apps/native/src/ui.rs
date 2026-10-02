@@ -1824,6 +1824,13 @@ mod tests {
         workspace.read_with(&visual, |this, _| {
             assert!(this.file_viewer().is_none(), "Esc closes the viewer")
         });
+        // Later view updates never rebuild a dismissed viewer or take focus.
+        visual.update(preview(false, None, 1));
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.file_viewer().is_none());
+            assert!(this.chat.viewer.editor().is_none());
+        });
         // A failed read stays visible as a message inside the sheet.
         visual.update(preview(
             false,
