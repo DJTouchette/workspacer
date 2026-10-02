@@ -372,6 +372,55 @@ impl CodeBlock {
     ) -> AnyElement {
         let style = &node_cx.style;
 
+        if let Some(prose) = style.prose {
+            return div()
+                .when(!options.is_last, |this| this.pb(style.paragraph_gap))
+                .child(
+                    div()
+                        .id("codeblock")
+                        .rounded(cx.theme().radius)
+                        .border_1()
+                        .border_color(prose.border)
+                        .overflow_hidden()
+                        .bg(cx.theme().muted)
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(cx.theme().mono_font_size)
+                        .relative()
+                        .refine_style(&style.code_block)
+                        .when_some(self.lang.clone().filter(|l| !l.is_empty()), |this, lang| {
+                            this.child(
+                                div()
+                                    .id("codeblock-language")
+                                    .px_3()
+                                    .py(px(3.))
+                                    .bg(prose.code_header)
+                                    .border_b_1()
+                                    .border_color(prose.border)
+                                    .text_size(cx.theme().mono_font_size * 0.85)
+                                    .text_color(prose.muted)
+                                    .child(lang),
+                            )
+                        })
+                        .child(div().p_3().child(Inline::new(
+                            "code",
+                            self.state.clone(),
+                            vec![],
+                            self.styles.clone(),
+                            style.on_link_click.clone(),
+                        )))
+                        .when_some(node_cx.code_block_actions.clone(), |this, actions| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .top_1()
+                                    .right_2()
+                                    .child(actions(&self, window, cx)),
+                            )
+                        }),
+                )
+                .into_any_element();
+        }
+
         div()
             .when(!options.is_last, |this| this.pb(style.paragraph_gap))
             .child(
@@ -582,6 +631,11 @@ impl Paragraph {
         let mut text = String::new();
         let mut highlights: Vec<(Range<usize>, HighlightStyle)> = vec![];
         let mut links: Vec<(Range<usize>, LinkMark)> = vec![];
+        let mut code_ranges: Vec<Range<usize>> = vec![];
+        let mono = node_cx
+            .style
+            .prose
+            .map(|_| cx.theme().mono_font_family.clone());
         let mut offset = 0;
 
         let mut ix = 0;
@@ -604,6 +658,7 @@ impl Paragraph {
                             highlights.clone(),
                             node_cx.style.on_link_click.clone(),
                         )
+                        .mono(mono.clone(), code_ranges.clone())
                         .into_any_element(),
                     );
                 }
@@ -630,18 +685,23 @@ impl Paragraph {
                 text.clear();
                 links.clear();
                 highlights.clear();
+                code_ranges.clear();
                 offset = 0;
             } else {
                 let mut node_highlights = vec![];
                 for (range, style) in &inline_node.marks {
                     let inner_range = (offset + range.start)..(offset + range.end);
 
+                    let prose = node_cx.style.prose;
                     let mut highlight = HighlightStyle::default();
                     if style.bold {
                         highlight.font_weight = Some(FontWeight::BOLD);
                     }
                     if style.italic {
                         highlight.font_style = Some(FontStyle::Italic);
+                    }
+                    if let Some(prose) = prose.filter(|_| style.bold || style.italic) {
+                        highlight.color = Some(prose.strong);
                     }
                     if style.strikethrough {
                         highlight.strikethrough = Some(gpui::StrikethroughStyle {
@@ -650,7 +710,13 @@ impl Paragraph {
                         });
                     }
                     if style.code {
-                        highlight.background_color = Some(cx.theme().accent);
+                        code_ranges.push(inner_range.clone());
+                        if let Some(prose) = prose {
+                            highlight.background_color = Some(prose.code_background);
+                            highlight.color = Some(prose.code);
+                        } else {
+                            highlight.background_color = Some(cx.theme().accent);
+                        }
                     }
 
                     if let Some(mut link_mark) = style.link.clone() {
@@ -690,6 +756,7 @@ impl Paragraph {
                     highlights,
                     node_cx.style.on_link_click.clone(),
                 )
+                .mono(mono, code_ranges)
                 .into_any_element(),
             );
         }
@@ -947,7 +1014,7 @@ impl Node {
                                         .items_start()
                                         .content_start()
                                         .when(!options.todo && checked.is_none(), |this| {
-                                            this.child(if !options.ordered {
+                                            let marker: SharedString = if !options.ordered {
                                                 node_cx
                                                     .style
                                                     .unordered_list_marker
@@ -958,7 +1025,20 @@ impl Node {
                                                     })
                                             } else {
                                                 list_item_prefix(ix, true, options.depth).into()
-                                            })
+                                            };
+                                            match node_cx.style.prose {
+                                                Some(prose) => this.child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .text_color(if options.ordered {
+                                                            prose.muted
+                                                        } else {
+                                                            prose.marker
+                                                        })
+                                                        .child(marker),
+                                                ),
+                                                None => this.child(marker),
+                                            }
                                         })
                                         .when_some(*checked, |this, checked| {
                                             // Todo list checkbox
@@ -1164,14 +1244,22 @@ impl Node {
         };
 
         match self {
-            Node::Root { children } => div()
-                .id("div")
-                .children(
-                    children
-                        .into_iter()
-                        .map(move |node| node.render_block(options, node_cx, window, cx)),
-                )
-                .into_any_element(),
+            Node::Root { children } => {
+                // Only the final block is last; passing the root's flag to every
+                // child removed all paragraph gaps outside the scrolling list.
+                let count = children.len();
+                div()
+                    .id("div")
+                    .children(children.iter().enumerate().map(move |(ix, node)| {
+                        node.render_block(
+                            options.is_last(options.is_last && ix + 1 == count),
+                            node_cx,
+                            window,
+                            cx,
+                        )
+                    }))
+                    .into_any_element()
+            }
             Node::Paragraph(paragraph) => div()
                 .id("p")
                 .pb(mb)
@@ -1199,6 +1287,12 @@ impl Node {
                     .whitespace_normal()
                     .text_size(text_size)
                     .font_weight(font_weight)
+                    .when_some(node_cx.style.prose, |this, prose| {
+                        this.text_color(prose.strong)
+                            .when(*level <= 2, |this| {
+                                this.mb(rems(0.4)).border_b_1().border_color(prose.rule)
+                            })
+                    })
                     .child(children.render(node_cx, window, cx))
                     .into_any_element()
             }
@@ -1254,7 +1348,10 @@ impl Node {
             Node::Table { .. } => Self::render_table(self, node_cx, window, cx).into_any_element(),
             Node::Divider => div()
                 .pb(mb)
-                .child(div().id("divider").bg(cx.theme().border).h(px(2.)))
+                .child(match node_cx.style.prose {
+                    Some(prose) => div().id("divider").bg(prose.rule).h(px(1.)),
+                    None => div().id("divider").bg(cx.theme().border).h(px(2.)),
+                })
                 .into_any_element(),
             Node::Break { .. } => div().id("break").into_any_element(),
             Node::Unknown | Node::Definition { .. } => div().into_any_element(),

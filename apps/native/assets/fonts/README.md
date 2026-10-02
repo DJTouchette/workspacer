@@ -17,4 +17,9 @@ To regenerate them, install the `woff2_decompress` utility and run:
 bash apps/native/scripts/prepare-fonts.sh
 ```
 
-The generated files are committed; the utility is not a build dependency.
+GPUI renders a variable font only at its default instance, so the script also
+derives static Inter Medium/SemiBold/Bold and JetBrains Mono Bold instances with
+fontTools; without them Markdown bold and semibold headings render at regular
+weight. Point `FONT_PYTHON` at an interpreter with `fonttools` installed.
+
+The generated files are committed; neither utility is a build dependency.

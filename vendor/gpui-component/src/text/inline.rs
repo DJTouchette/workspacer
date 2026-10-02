@@ -22,6 +22,9 @@ pub(super) struct Inline {
     text: SharedString,
     links: Rc<Vec<(Range<usize>, LinkMark)>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
+    /// Font family for inline code; every highlight run inside one of the
+    /// ranges uses it (combined highlights only ever split code ranges).
+    mono: Option<(SharedString, Vec<Range<usize>>)>,
     styled_text: StyledText,
 
     state: Arc<Mutex<InlineState>>,
@@ -57,10 +60,16 @@ impl Inline {
             id: id.into(),
             links: Rc::new(links),
             highlights,
+            mono: None,
             text: text.clone(),
             styled_text: StyledText::new(text),
             state,
         }
+    }
+
+    pub(super) fn mono(mut self, family: Option<SharedString>, ranges: Vec<Range<usize>>) -> Self {
+        self.mono = family.filter(|_| !ranges.is_empty()).map(|f| (f, ranges));
+        self
     }
 
     /// Get link at given mouse position.
@@ -255,7 +264,16 @@ impl Element for Inline {
             if ix < range.start {
                 runs.push(text_style.clone().to_run(range.start - ix));
             }
-            runs.push(text_style.clone().highlight(*highlight).to_run(range.len()));
+            let mut run = text_style.clone().highlight(*highlight).to_run(range.len());
+            if let Some((family, ranges)) = &self.mono {
+                if ranges
+                    .iter()
+                    .any(|code| code.start <= range.start && range.end <= code.end)
+                {
+                    run.font.family = family.clone();
+                }
+            }
+            runs.push(run);
             ix = range.end;
         }
         if ix < self.text.len() {

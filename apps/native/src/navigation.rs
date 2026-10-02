@@ -29,6 +29,7 @@ pub struct Settings {
     pub interface_font: String,
     pub code_font: String,
     pub text_size: u8,
+    pub twelve_hour_clock: bool,
     pub sidebar_width: f32,
     pub reading: BTreeMap<String, crate::reading::Bookmark>,
     pub vim_navigation: bool,
@@ -49,6 +50,7 @@ impl Default for Settings {
             interface_font: "Inter".into(),
             code_font: "JetBrains Mono".into(),
             text_size: 15,
+            twelve_hour_clock: false,
             sidebar_width: 304.,
             reading: BTreeMap::new(),
             vim_navigation: true,
@@ -164,6 +166,19 @@ pub fn projects(sessions: &[Session], saved: &[String]) -> Vec<Project> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn clock_preference_is_backwards_compatible_and_round_trips() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!old.twelve_hour_clock);
+        let selected = Settings {
+            twelve_hour_clock: true,
+            ..old
+        };
+        let restored: Settings =
+            serde_json::from_str(&serde_json::to_string(&selected).unwrap()).unwrap();
+        assert!(restored.twelve_hour_clock);
+    }
+
     #[test]
     fn projects_keep_same_names_distinct_and_include_empty_bookmarks() {
         let sessions = vec![

@@ -10,11 +10,17 @@ pub(super) fn register_fonts(cx: &mut App) {
     if cx.has_global::<RegisteredFonts>() {
         return;
     }
+    // GPUI renders a variable font at its default instance only, so markdown
+    // bold and semibold headings need static weights registered alongside it.
     if let Err(error) = cx.text_system().add_fonts(vec![
         Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Variable.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Medium.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-SemiBold.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Bold.ttf")),
         Cow::Borrowed(include_bytes!(
             "../../assets/fonts/JetBrainsMono-Variable.ttf"
         )),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
     ]) {
         log_font_error(error);
     }

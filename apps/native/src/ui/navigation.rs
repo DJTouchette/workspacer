@@ -434,6 +434,14 @@ impl Workspace {
                             })))
                             .child(div().text_size(px(12.)).text_color(rgb(if selected == Permission::FullAccess { p.warning } else { p.muted })).child(selected.description()))
                     })))
+                .child(chrome::section("Chat", "Time display in conversations and tool calls.", p)
+                    .child(chrome::preference("12-hour clock", "Show AM / PM instead of a 24-hour clock.", p)
+                        .child(Switch::new("settings-clock").checked(self.settings.twelve_hour_clock).tooltip("12-hour clock")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.settings.twelve_hour_clock = *checked;
+                                this.list.splice(0..this.view.transcript.rows.len(), this.view.transcript.rows.len());
+                                this.save_settings(cx);
+                            })))))
                 .child(chrome::section("Keyboard", "Move around your workspace at your own pace.", p)
                     .child(chrome::preference("Vim navigation", "Normal mode for navigation. Insert mode for typing.", p)
                         .child(Switch::new("toggle-vim").checked(self.settings.vim_navigation).tooltip("Vim navigation")

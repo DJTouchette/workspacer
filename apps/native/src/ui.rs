@@ -8,6 +8,7 @@ mod navigation;
 mod scroll;
 mod sidebar;
 mod states;
+mod syntax;
 mod tools;
 mod transcript;
 mod typography;
@@ -73,6 +74,7 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
     theme.colors.popover = rgb(p.surface).into();
     theme.colors.popover_foreground = rgb(p.text).into();
     theme.colors.selection = rgb(p.selected).into();
+    theme.highlight_theme = syntax::highlight_theme(appearance);
     theme.font_size = px(15.);
     theme.font_family = "Inter".into();
     theme.mono_font_family = "JetBrains Mono".into();
@@ -1599,6 +1601,42 @@ mod tests {
     }
 
     #[gpui::test]
+    fn chat_markdown_follows_the_appearance_syntax_theme(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        for appearance in Appearance::ALL {
+            visual.update(|window, cx| {
+                configure_theme(appearance, Some(window), cx);
+                assert_eq!(
+                    *gpui_component::Theme::global(cx).highlight_theme,
+                    *syntax::highlight_theme(appearance)
+                );
+                workspace.update(cx, |this, cx| {
+                    this.appearance = appearance;
+                    let mut view = state("a");
+                    view.transcript.snapshot(ConversationSnapshot {
+                        seq: 1,
+                        first_seq: 1,
+                        items: vec![Item {
+                            kind: "assistant_text".into(),
+                            text: "## Plan\n\n**Bold** and *italic* with `src/main.rs`.\n\n\
+                                   - one\n1. two\n\n---\n\n```rust\nfn main() {}\n```\n\n```\nplain\n```"
+                                .into(),
+                            ..Default::default()
+                        }],
+                    });
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            });
+            visual.run_until_parked();
+            assert!(visual.debug_bounds("markdown-inline-live:a:0-0").is_some());
+        }
+        assert_ne!(
+            syntax::highlight_theme(Appearance::Dark),
+            syntax::highlight_theme(Appearance::Nord)
+        );
+    }
+
+    #[gpui::test]
     fn markdown_file_link_requests_preview_and_shows_the_result(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.update(|window, cx| {
@@ -2582,6 +2620,88 @@ mod tests {
             assert!(this.composer_dock_bounds.top() > px(180.));
             assert!(last_row.bottom() <= this.composer_dock_bounds.top());
         });
+    }
+
+    #[gpui::test]
+    fn consecutive_tools_group_expand_and_keep_draft(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 3,
+            first_seq: 1,
+            items: (0..3)
+                .map(|i| Item {
+                    kind: "tool_use".into(),
+                    id: format!("call-{i}"),
+                    name: "Read".into(),
+                    input: serde_json::json!({"file_path":format!("src/file-{i}.rs")}),
+                    ..Default::default()
+                })
+                .collect(),
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(view), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("keep my draft", window, cx));
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("tool-activity-group").is_some());
+        let collapsed = visual
+            .debug_bounds("last-transcript-row")
+            .unwrap()
+            .size
+            .height;
+        let toggle = visual.debug_bounds("chat-section-toggle").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(
+            visual
+                .debug_bounds("last-transcript-row")
+                .unwrap()
+                .size
+                .height
+                > collapsed
+        );
+        assert!(visual.debug_bounds("tool-toggle-0").is_some());
+        let tool = visual.debug_bounds("tool-toggle-0").unwrap();
+        visual.simulate_click(tool.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "keep my draft");
+            assert_eq!(this.tool_expansion.get("call:call-0"), Some(&true));
+        });
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[gpui::test]
+    fn message_timestamps_are_below_user_assistant_and_tool_content(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        for role in ["user_message", "assistant_text", "tool_use"] {
+            let mut view = state("a");
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 1,
+                first_seq: 1,
+                items: vec![Item {
+                    kind: role.into(),
+                    text: "A message to timestamp".into(),
+                    id: "timestamped".into(),
+                    name: "Read".into(),
+                    input: serde_json::json!({"file_path":"src/main.rs"}),
+                    ..Default::default()
+                }],
+            });
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            });
+            visual.run_until_parked();
+            let footer = visual.debug_bounds("message-timestamp-footer").unwrap();
+            let row = visual.debug_bounds("last-transcript-row").unwrap();
+            assert!(footer.top() > row.top() + row.size.height / 2.);
+        }
     }
 
     #[gpui::test]

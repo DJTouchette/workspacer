@@ -372,6 +372,7 @@ impl Workspace {
     }
     fn toggle_chat(&self, key: String, label: String, cx: &mut Context<Self>) -> Stateful<Div> {
         self.button(SharedString::from(format!("toggle-{key}")), label, true)
+            .debug_selector(|| "chat-section-toggle".into())
             .on_click(cx.listener(move |this, _, _, cx| {
                 if this.chat.open.len() > 2048 {
                     this.chat.open.clear();
@@ -401,6 +402,12 @@ impl Workspace {
         let Some(row) = rows.get(ix) else {
             return div().into_any_element();
         };
+        let group = wks_native::tool_preview::group_span(rows, ix);
+        // Preserve raw list indices for bookmarks and selection. The final slot
+        // owns the group, so the existing tail probe still tracks its painted end.
+        if group.as_ref().is_some_and(|span| ix + 1 < span.end) {
+            return div().w_full().h(px(0.)).into_any_element();
+        }
         let session = self.view.selected.clone().unwrap_or_default();
         let mut body = div()
             .group("message")
@@ -409,14 +416,109 @@ impl Workspace {
             .when(ix + 1 == rows.len(), |d| {
                 d.debug_selector(|| "chat-content-column".into())
             });
-        if self.chat.unread == Some(ix) {
+        if self.chat.unread == Some(ix)
+            || group.as_ref().is_some_and(|span| {
+                self.chat
+                    .unread
+                    .is_some_and(|unread| span.contains(&unread))
+            })
+        {
             body = body.child(
                 div()
                     .text_color(rgb(self.appearance.palette().accent))
                     .child("New activity"),
             );
         }
-        body = body.child(self.render_message(row, "live", false, window, cx));
+        if let Some(span) = group {
+            let first = &rows[span.start];
+            let group_key = format!("tool-group:{session}:{}", tools::identity(first));
+            let failed = rows
+                .range(span.clone())
+                .filter(|r| r.tool.as_ref().is_some_and(|t| t.is_error))
+                .count();
+            let running = rows
+                .range(span.clone())
+                .filter(|r| r.tool.as_ref().is_some_and(|t| !t.complete && !t.is_error))
+                .count();
+            let expanded = self
+                .chat
+                .open
+                .get(&group_key)
+                .copied()
+                .unwrap_or(failed > 0);
+            self.chat.open.entry(group_key.clone()).or_insert(expanded);
+            let mut categories = BTreeMap::<&str, usize>::new();
+            for grouped in rows.range(span.clone()) {
+                *categories
+                    .entry(grouped.tool.as_ref().unwrap().category())
+                    .or_default() += 1;
+            }
+            let summary = categories
+                .into_iter()
+                .map(|(name, count)| format!("{count} {}", name.to_ascii_lowercase()))
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let activity = if failed > 0 {
+                format!("{failed} failed · {running} running")
+            } else if running > 0 {
+                format!("{running} running")
+            } else {
+                "Completed".into()
+            };
+            let tool = row.tool.as_ref().unwrap();
+            let p = self.appearance.palette();
+            body = body.child(
+                div()
+                    .debug_selector(|| "tool-activity-group".into())
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(self.toggle_chat(
+                        group_key,
+                        format!(
+                            "{} {} tool calls · {activity}",
+                            if expanded { "Hide" } else { "Show" },
+                            span.len()
+                        ),
+                        cx,
+                    ))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(rgb(p.muted))
+                            .child(summary),
+                    )
+                    .when(!expanded, |d| {
+                        d.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(rgb(p.muted))
+                                .child(wks_native::tool_preview::overview(&tool.name, &tool.input)),
+                        )
+                    }),
+            );
+            if expanded {
+                for grouped in rows.range(span) {
+                    body =
+                        body.child(self.render_message_content(grouped, "live", false, window, cx));
+                }
+            }
+            if let Some(timestamp) = row.timestamp_ms {
+                body = body.child(
+                    div()
+                        .pt_1()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(timing::timestamp_label(
+                            Some(timestamp),
+                            timing::now_ms(),
+                            self.settings.twelve_hour_clock,
+                        )),
+                );
+            }
+        } else {
+            body = body.child(self.render_message(row, "live", false, window, cx));
+        }
         if row.role != "You" && (ix + 1 == rows.len() || rows[ix + 1].role == "You") {
             let start = (0..=ix)
                 .rev()
@@ -547,6 +649,43 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.appearance.palette();
+        self.render_message_content(row, namespace, continued, window, cx)
+            .child(
+                div()
+                    .debug_selector(|| "message-timestamp-footer".into())
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .when_some(
+                        (namespace == "live")
+                            .then(|| self.duration_labels.get(&row.key))
+                            .flatten(),
+                        |d, label| d.child(label.clone()),
+                    )
+                    .when_some(
+                        row.timestamp_ms
+                            .or_else(|| row.timestamp.as_deref().and_then(timing::parse_timestamp)),
+                        |d, timestamp| {
+                            d.child(timing::timestamp_label(
+                                Some(timestamp),
+                                timing::now_ms(),
+                                self.settings.twelve_hour_clock,
+                            ))
+                        },
+                    ),
+            )
+    }
+    fn render_message_content(
+        &mut self,
+        row: &Row,
+        namespace: &str,
+        continued: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
         let session = self.view.selected.clone().unwrap_or_default();
         let key = format!("{namespace}:{session}:{}", row.key);
         let copy = row.copy_text();
@@ -557,6 +696,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
+            .when(row.tool.is_some(), |d| d.relative().px_0().py_1().gap_1())
             .when(row.role == "You", |d| {
                 d.max_w(gpui::relative(0.85))
                     .ml_auto()
@@ -565,53 +705,38 @@ impl Workspace {
                     .px_4()
                     .py_3()
             })
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .text_size(px(11.))
-                    .text_color(rgb(p.muted))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .when(row.role != "Assistant" && row.tool.is_none(), |d| {
-                                d.child(row.role.clone())
-                            })
-                            .when_some(
-                                (namespace == "live")
-                                    .then(|| self.duration_labels.get(&row.key))
-                                    .flatten(),
-                                |d, label| d.child(label.clone()),
-                            )
-                            .when_some(
-                                row.timestamp_ms.or_else(|| {
-                                    row.timestamp.as_deref().and_then(timing::parse_timestamp)
+            .when(row.tool.is_none(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .when(row.role != "Assistant" && row.tool.is_none(), |d| {
+                                    d.child(row.role.clone())
                                 }),
-                                |d, timestamp| {
-                                    d.child(timing::timestamp_label(
-                                        Some(timestamp),
-                                        timing::now_ms(),
-                                    ))
-                                },
-                            ),
-                    )
-                    .child(
-                        self.icon_button(
-                            SharedString::from(format!("copy-{key}")),
-                            "Copy message",
-                            IconName::Copy,
-                            true,
                         )
-                        .size(px(24.))
-                        .opacity(0.)
-                        .group_hover("message", |style| style.opacity(1.))
-                        .on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
-                        }),
-                    ),
-            )
+                        .child(
+                            self.icon_button(
+                                SharedString::from(format!("copy-{key}")),
+                                "Copy message",
+                                IconName::Copy,
+                                true,
+                            )
+                            .size(px(24.))
+                            .opacity(0.)
+                            .group_hover("message", |style| style.opacity(1.))
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                            }),
+                        ),
+                )
+            })
             .when(row.truncated, |d| {
                 d.child(
                     div()
@@ -626,7 +751,7 @@ impl Workspace {
                     &session,
                     self.tool_expansion.get(&tools::identity(row)).copied(),
                     cx.entity().downgrade(),
-                    p,
+                    (p, self.settings.twelve_hour_clock),
                     window,
                     cx,
                 ));
@@ -634,7 +759,7 @@ impl Workspace {
                 body = body.child(format!(
                     "{} · {} · {}",
                     tool.category(),
-                    tool.target(),
+                    wks_native::tool_preview::overview(&tool.name, &tool.input),
                     if tool.is_error {
                         "Failed"
                     } else if tool.complete {
@@ -750,7 +875,23 @@ impl Workspace {
                     ));
                 }
             }
-            return body;
+            let tool_copy = row.copy_text();
+            return body.child(
+                div().absolute().top(px(12.)).right(px(8.)).child(
+                    self.icon_button(
+                        SharedString::from(format!("copy-{key}")),
+                        "Copy message",
+                        IconName::Copy,
+                        true,
+                    )
+                    .size(px(24.))
+                    .opacity(0.)
+                    .group_hover("message", |style| style.opacity(1.))
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(tool_copy.clone()))
+                    }),
+                ),
+            );
         }
         if row.role == "Plan"
             && let Ok(steps) = serde_json::from_str::<serde_json::Value>(&row.text)
@@ -960,6 +1101,7 @@ impl Workspace {
         }
         body
     }
+
     pub(super) fn file_button(
         &self,
         key: &str,

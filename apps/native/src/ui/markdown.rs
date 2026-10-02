@@ -1,6 +1,9 @@
 //! Readable Markdown with session-owned file previews and full text selection.
 use super::*;
-use gpui_component::{ActiveTheme, text::TextViewStyle};
+use gpui_component::{
+    ActiveTheme,
+    text::{ProseColors, TextViewStyle},
+};
 use wks_native::{features::Request, transcript::file_target};
 
 impl Workspace {
@@ -13,6 +16,7 @@ impl Workspace {
     ) -> Stateful<Div> {
         let workspace = cx.entity().downgrade();
         let owner = self.view.selected.clone().unwrap_or_default();
+        let p = self.appearance.palette();
         let style = TextViewStyle {
             on_link_click: Some(Arc::new(move |url, _, cx| {
                 if url.starts_with("https://")
@@ -42,7 +46,19 @@ impl Workspace {
                 });
             })),
             unordered_list_marker: Some("• ".into()),
-            paragraph_gap: gpui::rems(0.65),
+            // Desktop chat parity (components/markdown.tsx): bright emphasis,
+            // accent inline code, accent bullets, labeled bordered fences.
+            prose: Some(ProseColors {
+                strong: rgb(p.text).into(),
+                code: rgb(p.accent).into(),
+                code_background: rgb(p.code_inline).into(),
+                marker: rgb(p.accent).into(),
+                muted: rgb(p.muted).into(),
+                rule: rgb(p.border).into(),
+                border: rgb(p.border).into(),
+                code_header: rgb(p.code_header).into(),
+            }),
+            paragraph_gap: gpui::rems(0.5),
             heading_base_font_size: px(self.settings.text_size as f32),
             heading_font_size: Some(Arc::new(|level, base| {
                 base + px(match level {
@@ -55,8 +71,8 @@ impl Workspace {
             highlight_theme: cx.theme().highlight_theme.clone(),
             is_dark: self.appearance != Appearance::Light,
             code_block: div()
-                .rounded(px(self.appearance.palette().panel_radius))
-                .p_3()
+                .rounded(px(p.control_radius))
+                .bg(rgb(p.code_block))
                 .style()
                 .clone(),
         };
@@ -67,6 +83,7 @@ impl Workspace {
             .debug_selector(move || format!("markdown-inline-{debug_key}"))
             .min_w_0()
             .w_full()
+            .text_color(rgb(p.prose))
             .line_height(gpui::relative(1.6))
             .child(
                 TextView::markdown(

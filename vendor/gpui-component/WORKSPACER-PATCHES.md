@@ -15,7 +15,21 @@ tables and code, and its asynchronous parse cache:
 - `unordered_list_marker`: an optional visual bullet override. The default
   preserves upstream behavior; the native transcript chooses a round bullet.
 
-Text changes are confined to `src/text/{style,inline,node}.rs`. Reapply them explicitly
+- `prose`: optional `ProseColors` for desktop-chat parity. When set, bold and
+  italic use a bright color, inline code uses an accent color/background and
+  the theme mono font (per-run family in `inline.rs`), bullets/ordered markers,
+  headings (h1/h2 underlined) and rules use app colors, and fenced code gets a
+  bordered panel with a language header. `None` keeps upstream rendering.
+
+Two upstream bug fixes in the same files:
+
+- A non-list root passed `is_last = true` to every block, so chat Markdown had
+  no paragraph gaps; only the final block is now last (`node.rs`).
+- Style updates now re-highlight with the new style's `highlight_theme`
+  instead of the theme captured at creation (`text_view.rs`), so switching
+  appearance recolors code already on screen.
+
+Text changes are confined to `src/text/{style,inline,node,text_view}.rs`. Reapply them explicitly
 when upgrading GPUI Component. Do not modify the user's Cargo registry cache.
 
 Native interaction polish also patches:

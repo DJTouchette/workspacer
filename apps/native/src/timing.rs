@@ -24,23 +24,27 @@ pub fn parse_timestamp(value: &str) -> Option<i64> {
         .map(|t| t.timestamp_millis())
 }
 
-pub fn timestamp_label(timestamp: Option<i64>, now: i64) -> String {
+pub fn timestamp_label(timestamp: Option<i64>, now: i64, twelve_hour: bool) -> String {
     let Some(time) = timestamp.and_then(DateTime::<Utc>::from_timestamp_millis) else {
         return "Time unavailable".into();
     };
     let time = time.with_timezone(&Local);
     let today =
         DateTime::<Utc>::from_timestamp_millis(now).map(|t| t.with_timezone(&Local).date_naive());
-    time.format(if today == Some(time.date_naive()) {
-        "%H:%M:%S"
-    } else {
-        "%b %d · %H:%M:%S"
+    time.format(match (today == Some(time.date_naive()), twelve_hour) {
+        (true, false) => "%H:%M:%S",
+        (false, false) => "%b %d · %H:%M:%S",
+        (true, true) => "%-I:%M:%S %p",
+        (false, true) => "%b %d · %-I:%M:%S %p",
     })
     .to_string()
 }
 
 pub fn duration_label(milliseconds: i64) -> String {
-    let seconds = milliseconds.max(0) / 1000;
+    if milliseconds < 1000 {
+        return format!("{}ms", milliseconds.max(0));
+    }
+    let seconds = milliseconds / 1000;
     if seconds < 60 {
         format!("{seconds}s")
     } else {
@@ -303,7 +307,17 @@ mod tests {
         );
         assert_eq!(parse_timestamp("invalid"), None);
         assert_eq!(duration_label(72_999), "1m 12s");
-        assert_eq!(duration_label(-100), "0s");
+        assert_eq!(duration_label(-100), "0ms");
+        assert_eq!(duration_label(999), "999ms");
+        assert_eq!(duration_label(1000), "1s");
+        let now = now_ms();
+        assert!(
+            timestamp_label(Some(now), now, true).ends_with("AM")
+                || timestamp_label(Some(now), now, true).ends_with("PM")
+        );
+        assert!(!timestamp_label(Some(now), now, false).contains("AM"));
+        assert!(timestamp_label(Some(now - 172_800_000), now, true).contains(" · "));
+        assert_eq!(timestamp_label(None, now, true), "Time unavailable");
         assert_eq!(duration_label(3_661_000), "61m 01s");
     }
 

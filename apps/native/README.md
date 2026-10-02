@@ -258,6 +258,11 @@ Transcript rendering is described below.
   inventory/status when the connected backend supplies it.
 - User messages preserve literal text. Assistant messages retain Markdown/code;
   Markdown file targets open a guarded, read-only preview on the connected host.
+  Markdown follows the desktop chat (`components/markdown.tsx`): bold/italic in
+  the bright text color over dimmer body copy, accent inline code in the mono
+  font, accent bullets, underlined h1/h2, and bordered code blocks with a
+  language header. Code uses GitHub Dark/Light Default colors (as desktop does)
+  and a Nord palette under Nord, and recolors when the appearance changes.
   Image attachment markers and mentioned image paths load host-backed thumbnails.
   Missing/unsupported previews leave the original text visible.
 - Sent messages remain visibly provisional until a new authoritative user turn
@@ -676,8 +681,18 @@ and offline remain distinct states. Follow resumes when the painted latest messa
 reaches the reading area above the composer, including after keyboard scrolling
 and virtual-list layout, without requiring another wheel event.
 
-Messages and tool calls show server timestamps in local time (with the date for
-older days). The composer shows elapsed minutes/seconds while working and a frozen
+Tool overviews use reported descriptions and concrete action/target summaries,
+with exact commands and arguments available on expansion. Runs of three or more
+regular tool calls collapse into activity groups showing categories, the latest
+action, and running/failure status. Groups contain at most 12 calls so expansion
+stays bounded; skill, child-agent and workflow calls remain separate.
+
+Messages and tool calls show server timestamps below their content in local time
+(with the date for older days). Live tool activity groups share one timestamp
+after the group instead of repeating it beneath each call.
+**Settings → Chat → 12-hour clock** enables AM/PM
+on this device, including History and child previews. Durations below one second
+use milliseconds. The composer shows elapsed minutes/seconds while working and a frozen
 duration when the turn finishes; completed assistant replies also retain that
 duration. Tool durations use their call/result timestamps. Turn timers keep the
 same start through queued follow-ups and approval waits, so they measure elapsed

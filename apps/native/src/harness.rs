@@ -153,13 +153,15 @@ pub fn event(topic: &str, data: Value) -> Message {
 /// Mixed-provider presentation fixture; useful in real-window smoke and tests.
 pub fn rich_items() -> Vec<Value> {
     let card = json!({"v":1,"title":"Review complete","bodyHtml":"<table><tr><th>Check</th><th>Result</th></tr><tr><td>Native transcript</td><td>Ready for review</td></tr></table>","fallback":"The native transcript is ready for review.","actions":[{"kind":"fill_composer","label":"Continue","text":"Please continue with the next task."},{"kind":"view_diff","label":"main.rs","path":"src/main.rs"},{"kind":"open_worker","label":"Worker 1","sessionId":"demo-0001"}]});
-    vec![
+    let mut items = vec![
         json!({"kind":"user_message","text":"Keep **this literal**, including <tags>. Review the attached screenshot.\n[Image: /workspaces/project-0/screen.png]"}),
         json!({"kind":"assistant_text","text":"I’ll review the implementation and its tests."}),
         json!({"kind":"tool_use","id":"read-1","name":"Read","input":{"file_path":"/workspaces/project-0/src/main.rs"}}),
         json!({"kind":"tool_result","tool_use_id":"read-1","content":"1 fn main() {\n2     start();\n3 }"}),
         json!({"kind":"tool_use","id":"edit-1","name":"Edit","input":{"file_path":"src/main.rs","old_string":"    start();","new_string":"    restore_workspace();\n    start();"}}),
         json!({"kind":"tool_result","tool_use_id":"edit-1","content":"File updated."}),
+        json!({"kind":"tool_use","id":"search-1","name":"Grep","input":{"pattern":"restore_workspace","path":"src","description":"Find workspace restoration call sites"}}),
+        json!({"kind":"tool_result","tool_use_id":"search-1","content":"src/main.rs:2: restore_workspace();"}),
         json!({"kind":"tool_use","id":"skill-1","name":"Skill","input":{"skill":"review","args":"Check the transcript"}}),
         json!({"kind":"tool_result","tool_use_id":"skill-1","content":"Review completed."}),
         json!({"kind":"assistant_text","text":format!("Implemented the change in [main.rs](src/main.rs:2).\n\n```wks-html-card\n{card}\n```\n")}),
@@ -167,7 +169,16 @@ pub fn rich_items() -> Vec<Value> {
         json!({"kind":"tool_result","tool_use_id":"workspacer-spawn","content":"{\"sessionId\":\"demo-0001\",\"messageQueued\":true,\"taskTracking\":false}"}),
         json!({"kind":"tool_use","id":"subagent-running","name":"Agent","input":{"description":"Review chat rendering and regression coverage"}}),
         json!({"kind":"assistant_text","text":"## Ready for review\n\nThe conversation is easier to scan, with quieter controls and a little more room to read.\n\n- **Clear hierarchy** for headings and paragraphs.\n- Round bullets, comfortable spacing, and `inline code`.\n- File links open a preview in this workspace.\n\nSee [README.md](README.md:12) or the [session tests](tests/session.rs).\n\n```rust\nlet workspace = connect().await?;\nworkspace.restore_session();\n```"}),
-    ]
+    ];
+    let start = chrono::Utc::now().timestamp_millis() - 60_000;
+    for (index, item) in items.iter_mut().enumerate() {
+        item["timestamp"] = json!(
+            chrono::DateTime::from_timestamp_millis(start + index as i64 * 80)
+                .unwrap()
+                .to_rfc3339()
+        );
+    }
+    items
 }
 
 /// Rich-only child metadata. Keep load/benchmark fixtures unchanged.

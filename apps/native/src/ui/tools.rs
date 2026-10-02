@@ -17,10 +17,11 @@ pub(super) fn card(
     session: &str,
     expansion: Option<bool>,
     workspace: WeakEntity<Workspace>,
-    p: Palette,
+    appearance: (Palette, bool),
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let (p, twelve_hour) = appearance;
     let tool = row.tool.as_ref().expect("tool row");
     let origin = wks_native::child_agents::tool_kind(tool);
     let mut preview = tool_preview::parse(
@@ -38,18 +39,8 @@ pub(super) fn card(
     let key = row.key;
     let stable_identity = identity(row);
     let element_key = format!("{session}-{stable_identity}");
-    let command_title = preview.description.is_empty()
-        && preview
-            .blocks
-            .first()
-            .is_some_and(|block| block.label == "Command")
-        && !preview.target.is_empty();
-    let title = if command_title {
-        preview.target.clone()
-    } else {
-        preview.title.clone()
-    };
-    let subtitle = if command_title || preview.target == title {
+    let title = preview.title.clone();
+    let subtitle = if preview.target == title {
         ""
     } else {
         &preview.target
@@ -137,12 +128,6 @@ pub(super) fn card(
                                         .truncate()
                                         .child(block.label.clone()),
                                 )
-                                .when(block.label == "Output", |d| {
-                                    d.child(timing::timestamp_label(
-                                        tool.completed_at_ms,
-                                        timing::now_ms(),
-                                    ))
-                                })
                                 .when(block.language != "text", |d| d.child(block.language)),
                         )
                         .child(
@@ -152,7 +137,26 @@ pub(super) fn card(
                                 window,
                                 cx,
                             )
+                            .style(gpui_component::text::TextViewStyle {
+                                highlight_theme: gpui_component::Theme::global(cx)
+                                    .highlight_theme
+                                    .clone(),
+                                is_dark: gpui_component::Theme::global(cx).mode.is_dark(),
+                                ..Default::default()
+                            })
                             .selectable(true),
+                        )
+                        .when(
+                            block.label == "Output" && tool.completed_at_ms.is_some(),
+                            |d| {
+                                d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                                    timing::timestamp_label(
+                                        tool.completed_at_ms,
+                                        timing::now_ms(),
+                                        twelve_hour,
+                                    ),
+                                ))
+                            },
                         )
                         .when(clipped, |d| {
                             d.child(
@@ -216,8 +220,10 @@ pub(super) fn card(
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .items_center()
                             .gap_3()
+                            .pr_6()
                             .when_some(origin, |d, origin| {
                                 let managed =
                                     origin == wks_native::child_agents::ChildKind::Workspacer;
@@ -252,18 +258,9 @@ pub(super) fn card(
                             })
                             .child(
                                 div()
-                                    .flex_1()
                                     .min_w_0()
-                                    .truncate()
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
-                                    .when(command_title, |d| {
-                                        d.font_family(
-                                            gpui_component::Theme::global(cx)
-                                                .mono_font_family
-                                                .clone(),
-                                        )
-                                    })
                                     .child(title),
                             )
                             .when(preview.added > 0, |d| {
@@ -281,30 +278,23 @@ pub(super) fn card(
                                         .text_color(rgb(p.error))
                                         .child(format!("−{}", preview.removed)),
                                 )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_3()
-                            .text_size(px(11.))
+                            })
                             .child(
                                 div()
                                     .flex()
+                                    .text_size(px(11.))
                                     .items_center()
                                     .gap_1()
                                     .text_color(rgb(color))
                                     .child(status_icon)
                                     .child(status),
                             )
-                            .child(div().text_color(rgb(p.muted)).child(tool.category()))
-                            .when_some(row.timestamp_ms, |d, timestamp| {
-                                d.child(div().text_color(rgb(p.muted)).child(
-                                    timing::timestamp_label(Some(timestamp), timing::now_ms()),
-                                ))
-                            }),
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child(tool.category()),
+                            ),
                     )
                     .when(!subtitle.is_empty(), |d| {
                         d.child(
@@ -321,18 +311,21 @@ pub(super) fn card(
             )
             .on_click(move |_, _, cx| {
                 let _ = workspace.update(cx, |this, cx| {
-                    if let Some(ix) = this
+                    if this
                         .view
                         .transcript
                         .rows
                         .iter()
-                        .position(|r| identity(r) == stable_identity)
+                        .any(|r| identity(r) == stable_identity)
                     {
                         this.pause_follow();
                         let anchor = this.scroll_anchor();
                         this.tool_expansion
                             .insert(stable_identity.clone(), !expanded);
-                        this.list.splice(ix..ix + 1, 1);
+                        this.list.splice(
+                            0..this.view.transcript.rows.len(),
+                            this.view.transcript.rows.len(),
+                        );
                         this.list.scroll_to(anchor);
                     }
                     cx.notify();

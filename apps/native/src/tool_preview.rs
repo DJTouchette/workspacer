@@ -281,13 +281,40 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
                 .join(" ↵ ");
             preview.block("Command", "bash", &command);
         }
+        "grep" | "search" | "recon_grep" | "recon_search" => {
+            preview.title = "Search".into();
+            let query = field(&input, &["pattern", "query"]);
+            if !query.is_empty() {
+                preview.target = if path.is_empty() {
+                    one_line(query)
+                } else {
+                    format!("{} in {path}", one_line(query))
+                };
+            }
+        }
+        "glob" => preview.title = "Find files".into(),
+        "list" | "list_directory" => preview.title = "List directory".into(),
         _ => {}
     }
     if !preview.description.is_empty() {
         preview.title = one_line(&preview.description);
     }
     if preview.target.is_empty() {
-        preview.target = one_line(field(&input, &["query", "pattern", "url", "prompt"]));
+        preview.target = one_line(field(
+            &input,
+            &["query", "pattern", "url", "symbol", "name", "prompt"],
+        ));
+    }
+    if preview.target.is_empty() {
+        if let Some(args) = input.get("args").and_then(Value::as_array) {
+            preview.target = args
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+        } else {
+            preview.target = one_line(field(&input, &["code", "input", "task", "message"]));
+        }
     }
     if preview.blocks.is_empty() {
         let pretty = serde_json::to_string_pretty(&input).unwrap_or_else(|_| raw.into());
@@ -306,10 +333,118 @@ pub fn parse(name: &str, raw: &str, output: Option<&str>) -> ToolPreview {
     preview
 }
 
+/// A concise description derived only from recorded arguments.
+pub fn overview(name: &str, input: &str) -> String {
+    let preview = parse(name, input, None);
+    let text = if preview.target.is_empty() || preview.target == preview.title {
+        preview.title
+    } else {
+        format!("{} · {}", preview.title, preview.target)
+    };
+    let mut chars = text.chars();
+    let short: String = chars.by_ref().take(180).collect();
+    if chars.next().is_some() {
+        format!("{short}…")
+    } else {
+        short
+    }
+}
+
+/// Only regular adjacent tool calls group; orchestration remains independently visible.
+pub fn group_span(
+    rows: &std::collections::VecDeque<std::sync::Arc<crate::model::Row>>,
+    ix: usize,
+) -> Option<std::ops::Range<usize>> {
+    let regular = |i: usize| {
+        rows.get(i)
+            .and_then(|r| r.tool.as_ref())
+            .is_some_and(|t| !matches!(t.category(), "Subagent" | "Workflow" | "Skill"))
+    };
+    if !regular(ix) {
+        return None;
+    }
+    let mut start = ix;
+    while start > 0 && regular(start - 1) {
+        start -= 1;
+    }
+    let mut end = ix + 1;
+    while regular(end) {
+        end += 1;
+    }
+    // Keep expansion bounded: a long burst must not build thousands of tool
+    // cards inside one virtual-list item.
+    start += ((ix - start) / 12) * 12;
+    end = end.min(start + 12);
+    (end - start >= 3).then_some(start..end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn overview_uses_actions_and_recorded_targets() {
+        assert_eq!(
+            overview("Read", r#"{"file_path":"src/main.rs"}"#),
+            "Read file · src/main.rs"
+        );
+        assert_eq!(
+            overview(
+                "Bash",
+                r#"{"command":"cargo test","description":"Check the parser regressions"}"#
+            ),
+            "Check the parser regressions · cargo test"
+        );
+        assert_eq!(
+            overview(
+                "mcp__rivet__recon_search",
+                r#"{"args":["timestamp_label"]}"#
+            ),
+            "Search · timestamp_label"
+        );
+        assert!(
+            overview(
+                "Search",
+                &serde_json::json!({"query":"é".repeat(500)}).to_string()
+            )
+            .chars()
+            .count()
+                <= 181
+        );
+    }
+
+    #[test]
+    fn grouping_stops_at_prose_and_dispatches() {
+        use crate::{model::Row, transcript::Tool};
+        use std::{collections::VecDeque, sync::Arc};
+        let tool = |name: &str| {
+            Arc::new(Row {
+                tool: Some(Tool {
+                    name: name.into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+        };
+        let rows = VecDeque::from(vec![
+            tool("Read"),
+            tool("Bash"),
+            tool("Grep"),
+            Arc::new(Row::default()),
+            tool("Read"),
+            tool("Read"),
+            tool("Task"),
+        ]);
+        assert_eq!(group_span(&rows, 0), Some(0..3));
+        assert_eq!(group_span(&rows, 2), Some(0..3));
+        assert_eq!(group_span(&rows, 4), None);
+        assert_eq!(group_span(&rows, 6), None);
+        let long = (0..40).map(|_| tool("Read")).collect();
+        assert_eq!(group_span(&long, 11), Some(0..12));
+        assert_eq!(group_span(&long, 12), Some(12..24));
+        assert_eq!(group_span(&long, 39), Some(36..40));
+    }
 
     #[test]
     fn command_descriptions_and_wrapped_commands_are_readable() {

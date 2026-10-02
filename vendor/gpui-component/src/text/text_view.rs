@@ -170,6 +170,9 @@ impl Future for UpdateFuture {
                             true
                         }
                         Update::Style(style) if self.current_style != *style => {
+                            // Re-highlight fenced code with the new theme; the
+                            // init-time theme would otherwise outlive a switch.
+                            self.highlight_theme = style.highlight_theme.clone();
                             self.current_style = *style;
                             true
                         }
