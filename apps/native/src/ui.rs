@@ -3747,6 +3747,38 @@ mod tests {
     }
 
     #[gpui::test]
+    fn markdown_table_cells_wrap_inside_their_column(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let long = "apps/native/src/ui/transcript.rs keeps growing with words that must wrap \
+                    inside this column rather than run across the next one";
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 1,
+            first_seq: 1,
+            items: vec![Item {
+                kind: "assistant_text".into(),
+                text: format!("| File | Notes | Status |\n|---|---|---|\n| {long} | short | ok |"),
+                ..Default::default()
+            }],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let long_cell = visual.debug_bounds("prose-table-cell-1-0").unwrap();
+        let next = visual.debug_bounds("prose-table-cell-1-1").unwrap();
+        let header = visual.debug_bounds("prose-table-cell-0-0").unwrap();
+        assert!(
+            long_cell.right() <= next.left() + px(0.5),
+            "{long_cell:?} vs {next:?}"
+        );
+        assert!(
+            long_cell.size.height > header.size.height * 2.,
+            "the long cell wraps onto several lines: {long_cell:?}"
+        );
+    }
+
+    #[gpui::test]
     fn reading_history_stays_anchored_through_updates_and_scroll_stop(cx: &mut TestAppContext) {
         let (workspace, mut visual, _commands, _updates) = fixture(cx);
         let mut items: Vec<Item> = (0..40)

@@ -21,7 +21,8 @@ tables and code, and its asynchronous parse cache:
   headings (h1/h2 underlined) and rules use app colors, and fenced code gets a
   bordered panel with a language header. Tables render through
   `render_prose_table` (rounded frame, tinted bold header, hairline rules,
-  zebra stripes, smaller wrapping cells sized by content share) and blockquotes
+  zebra stripes, smaller cells sized by content share; cells are blocks with
+  text alignment and clipping, not flex rows, so text wraps inside its column) and blockquotes
   get a slim marker-colored rail with muted italic text. `None` keeps upstream
   rendering.
 

@@ -1237,13 +1237,19 @@ impl Node {
                 })
                 .children((0..cols).map(|ix| {
                     let align = table.column_align(ix);
+                    // A block, not a flex row: the paragraph then takes the
+                    // cell's width and wraps inside it instead of sizing to its
+                    // unwrapped text and spilling into the next column. Text
+                    // alignment replaces flex justification; clipping catches
+                    // anything still too wide (an image, a giant token).
                     div()
                         .id(("cell", ix))
-                        .flex()
+                        .debug_selector(move || format!("prose-table-cell-{row_ix}-{ix}"))
                         .min_w_0()
+                        .overflow_hidden()
                         .w(relative(len(ix) as f32 / total as f32))
-                        .when(align == ColumnumnAlign::Center, |this| this.justify_center())
-                        .when(align == ColumnumnAlign::Right, |this| this.justify_end())
+                        .when(align == ColumnumnAlign::Center, |this| this.text_center())
+                        .when(align == ColumnumnAlign::Right, |this| this.text_right())
                         .px(px(10.))
                         .py(px(if header { 6. } else { 5. }))
                         .whitespace_normal()
