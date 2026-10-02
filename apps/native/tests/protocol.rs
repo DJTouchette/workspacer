@@ -1647,3 +1647,119 @@ async fn controller_pauses_all_host_reads_until_user_refresh() {
         "a queued old GUI gesture woke a later stop episode"
     );
 }
+
+#[tokio::test]
+async fn chat_file_links_read_on_the_session_hub_with_visible_errors() {
+    use base64::Engine;
+    use wks_native::{
+        features::Request,
+        links::{FileKind, Link, classify},
+    };
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([session("a")]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "See [main](src/main.rs:2)"))
+        .await;
+    view(&controller, |v| v.transcript.seq == Some(1)).await;
+    let open = |raw: &str| {
+        let Link::File(target) = classify("/test", raw) else {
+            panic!("{raw} is a file link");
+        };
+        controller
+            .command(Command::Request(Request::FilePreview {
+                session: "a".into(),
+                target,
+            }))
+            .unwrap();
+    };
+    let done = |number: u64| {
+        move |v: &View| {
+            v.requests
+                .get("file-preview")
+                .is_some_and(|r| !r.loading && r.number > number)
+        }
+    };
+
+    // Source text: read by the hub (the session's machine), never locally.
+    open("src/main.rs:2");
+    let read = hub.frame("call", Some("fs.read")).await;
+    assert_eq!(read.value["params"], json!({"path":"/test/src/main.rs"}));
+    read.result(
+        json!({"path":"/test/src/main.rs","contents":"fn main() {\n    start();\n}\n","size":28}),
+    )
+    .await;
+    let v = view(&controller, done(0)).await;
+    let state = &v.requests["file-preview"];
+    assert!(state.error.is_none());
+    assert_eq!(state.value["contents"], "fn main() {\n    start();\n}\n");
+    let Request::FilePreview { target, .. } = &state.request else {
+        unreachable!()
+    };
+    assert_eq!(
+        (target.line, target.kind.clone()),
+        (Some(2), FileKind::Text)
+    );
+    let last = state.number;
+
+    // Missing files and hub limits come back as readable, visible errors.
+    open("docs/gone.md");
+    let read = hub.frame("call", Some("fs.read")).await;
+    read.send
+        .send(Message::Text(
+            json!({"op":"error","id":read.value["id"],"error":"No such file or directory (os error 2)"})
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let v = view(&controller, done(last)).await;
+    assert_eq!(
+        v.requests["file-preview"].error.as_deref(),
+        Some("No file at this path on the session's machine.")
+    );
+    let last = v.requests["file-preview"].number;
+
+    open("big.log");
+    hub.frame("call", Some("fs.read"))
+        .await
+        .result(json!({"contents":"x\n".repeat(60_000),"size":120_000}))
+        .await;
+    let v = view(&controller, done(last)).await;
+    assert!(
+        v.requests["file-preview"]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("lines")
+    );
+    let last = v.requests["file-preview"].number;
+
+    // Images use the bounded image read and arrive as a PNG for the viewer.
+    open("out/shot.png");
+    let read = hub.frame("call", Some("fs.readImage")).await;
+    assert_eq!(read.value["params"], json!({"path":"/test/out/shot.png"}));
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(40, 20)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let data = base64::engine::general_purpose::STANDARD.encode(png.into_inner());
+    read.result(
+        json!({"dataUrl":format!("data:image/png;base64,{data}"),"width":40,"height":20,"size":80}),
+    )
+    .await;
+    let v = view(&controller, done(last)).await;
+    let state = &v.requests["file-preview"];
+    assert!(state.error.is_none(), "{:?}", state.error);
+    assert_eq!(
+        (
+            state.value["width"].as_u64(),
+            state.value["height"].as_u64()
+        ),
+        (Some(40), Some(20))
+    );
+    assert!(state.value["png"].as_str().is_some_and(|s| !s.is_empty()));
+}
