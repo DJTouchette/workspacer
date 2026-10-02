@@ -298,7 +298,13 @@ Transcript rendering is described below.
   on the machine that runs the session, never from this client's disk, so a
   remote hub's paths are never opened locally; `~`, foreign `file://` hosts and
   relative paths without a cwd are refused. Markdown images render as labels,
-  not client-side loads. Esc, ✕ or the backdrop close the sheet.
+  not client-side loads. HTML cards keep only `a href` web/file destinations
+  and `img src` session image files (a label, never loaded); other schemes,
+  remote images and every other attribute are dropped by the sanitizer. The
+  sheet is modal for the keyboard in every state (loading, text, image,
+  error): focus stays inside it, workspace shortcuts such as Ctrl+Enter send
+  and session navigation are inert, and keys aimed behind it are dropped.
+  Esc, ✕ or the backdrop close the sheet and return focus to the composer.
   Markdown follows the desktop chat (`components/markdown.tsx`): bold/italic in
   the bright text color over dimmer body copy, accent inline code in the mono
   font, accent bullets, underlined h1/h2, and bordered code blocks with a
