@@ -706,12 +706,15 @@ impl Workspace {
                                     "" => "Agent",
                                     other => other,
                                 };
-                                let model = if session.model.is_empty() {
-                                    "Provider default"
+                                let model = session.display_model();
+                                let model = if model.is_empty() {
+                                    "Provider default".to_owned()
                                 } else {
-                                    &session.model
+                                    model
                                 };
                                 let model_info = format!("{provider} · {model}");
+                                let working = session.working();
+                                let badge = chrome::model_badge(session, p, 11.);
                                 let context = session
                                     .context_window
                                     .map(|tokens| format!(" · {}K context", tokens / 1000))
@@ -721,7 +724,7 @@ impl Workspace {
                                     session.cwd
                                 );
                                 div()
-                                    .h(px(84.))
+                                    .h(px(64.))
                                     .px_2()
                                     .pl(px(8. + depth.min(6) as f32 * 16.))
                                     .pb_1()
@@ -810,34 +813,41 @@ impl Workspace {
                                                     })),
                                                 ),
                                         )
-                                        .child(
-                                            div()
-                                                .debug_selector(move || {
-                                                    format!("sidebar-model-{ix}")
-                                                })
-                                                .min_w_0()
-                                                .truncate()
-                                                .text_size(px(11.))
-                                                .text_color(rgb(p.accent))
-                                                .child(model_info),
-                                        )
+                                        // Model and folder share one line; the
+                                        // title-row loader already says "working".
                                         .child(
                                             div()
                                                 .flex()
                                                 .items_center()
-                                                .gap_2()
+                                                .gap(px(6.))
                                                 .text_size(px(11.))
                                                 .text_color(rgb(p.muted))
-                                                .child(Icon::new(IconName::Folder).size(px(11.)))
+                                                .child(
+                                                    div()
+                                                        .debug_selector(move || {
+                                                            format!("sidebar-model-{ix}")
+                                                        })
+                                                        .flex_shrink_0()
+                                                        .max_w(gpui::relative(0.55))
+                                                        .child(badge),
+                                                )
+                                                .child(div().text_color(rgb(p.disabled)).child("·"))
+                                                .child(
+                                                    Icon::new(IconName::Folder)
+                                                        .size(px(11.))
+                                                        .flex_shrink_0(),
+                                                )
                                                 .child(div().flex_1().min_w_0().truncate().child(
                                                     chrome::project_label(&session.cwd).to_owned(),
                                                 ))
-                                                .child(
-                                                    div()
-                                                        .flex_shrink_0()
-                                                        .text_color(rgb(color))
-                                                        .child(status.to_owned()),
-                                                ),
+                                                .when(!(working && this.view.connected), |d| {
+                                                    d.child(
+                                                        div()
+                                                            .flex_shrink_0()
+                                                            .text_color(rgb(color))
+                                                            .child(status.to_owned()),
+                                                    )
+                                                }),
                                         )
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {

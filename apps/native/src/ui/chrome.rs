@@ -59,6 +59,55 @@ pub(super) fn interactive_control(
 }
 
 /// Shared outer measure and gutters for transcript, header and composer.
+/// Anthropic brand clay, as the desktop's `CLAUDE_CLAY`.
+pub(super) const CLAUDE_CLAY: u32 = 0xD97757;
+
+/// Provider mark and brand color, following desktop `agentLogos.tsx`: Claude
+/// keeps its clay; the OpenAI mark (Codex) takes the text color.
+pub(super) fn model_badge(session: &Session, p: Palette, size: f32) -> Div {
+    let (mark, color) = match session.provider.as_str() {
+        "claude" => (Some("brand/claude.svg"), CLAUDE_CLAY),
+        "codex" => (Some("brand/openai.svg"), p.text),
+        _ => (None, p.accent),
+    };
+    let name = session.display_model();
+    let name = if name.is_empty() {
+        match session.provider.as_str() {
+            "claude" => "Claude".to_owned(),
+            "codex" => "Codex".to_owned(),
+            "" => "Agent".to_owned(),
+            other => other.to_owned(),
+        }
+    } else {
+        name
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .min_w_0()
+        .child(match mark {
+            Some(path) => gpui::svg()
+                .path(path)
+                .size(px(size))
+                .flex_shrink_0()
+                .text_color(rgb(color))
+                .into_any_element(),
+            None => Icon::new(IconName::Bot)
+                .size(px(size))
+                .flex_shrink_0()
+                .text_color(rgb(color))
+                .into_any_element(),
+        })
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_color(rgb(color))
+                .child(name),
+        )
+}
+
 pub(super) fn chat_column() -> Div {
     div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5()
 }
@@ -173,15 +222,9 @@ impl Workspace {
                             let label = SharedString::from(label.to_owned());
                             move |window, cx| Tooltip::new(label.clone()).build(window, cx)
                         })
-                        .child(if self.view.connected && session.working() {
-                            brand_spinner(
-                                12.,
-                                p,
-                                SharedString::from(format!("title-working-{}", session.id)),
-                            )
-                        } else {
-                            status_dot(color)
-                        }),
+                        // Static: the composer status line owns the animated
+                        // loader and elapsed time, so the pill only signals state.
+                        .child(status_dot(color)),
                 )
                 .when(!narrow, |d| {
                     d.child(
@@ -211,29 +254,18 @@ impl Workspace {
                     .child(title.to_owned()),
             )
             .when_some(session.filter(|_| !narrow), |d, session| {
-                let provider = match session.provider.as_str() {
-                    "claude" => "Claude",
-                    "codex" => "Codex",
-                    "" => "Agent",
-                    other => other,
-                };
-                let model = if session.model.is_empty() {
-                    provider.to_owned()
-                } else {
-                    format!("{provider} · {}", session.model)
-                };
                 d.child(
                     div()
                         .flex_shrink_0()
                         .max_w(px(180.))
-                        .truncate()
-                        .px_2()
-                        .py(px(2.))
+                        .pl(px(6.))
+                        .pr_2()
+                        .py(px(3.))
                         .rounded_full()
                         .bg(rgb(p.selected))
                         .text_size(px(11.))
-                        .text_color(rgb(p.muted))
-                        .child(model),
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(model_badge(session, p, 12.)),
                 )
             })
             .child(divider())

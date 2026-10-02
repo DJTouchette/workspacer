@@ -626,3 +626,19 @@ each message to the hover-revealed timestamp line, and row padding tightened.
 
 - Native serialized suite **184 passed**; strict Clippy and whitespace passed.
 - Real windows checked on a headless Hyprland output in Dark, Light and Nord.
+
+## Brand model badges, rounded inline code, one loader (2026-10-02)
+
+Models render with the provider mark from desktop `agentLogos.tsx` (Claude in
+brand clay #D97757, OpenAI mark for Codex) and a product name from
+`model_display_name` (`claude-opus-5-5` → "Opus 5.5"). `Session.runtime_model`
+holds the resolved id from `statusLine.modelDisplay`/`usage.model` and is never
+cleared by alias-only or null snapshots; the selection still wins right after a
+switch until the runtime reports the new family. Inline code gets rounded,
+padded fills with thin-space margins. Sidebar cards put model and folder on one
+line (64px rows) and drop the redundant "Working" label; the title pill shows a
+static status dot so the composer line owns the only animated loader.
+
+- Native serialized suite **186 passed**; strict Clippy passed.
+- Checked in the live release app against the real session (headless capture
+  skipped: the headless output would have taken the user's workspace).

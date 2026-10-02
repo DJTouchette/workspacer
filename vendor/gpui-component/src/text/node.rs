@@ -636,6 +636,7 @@ impl Paragraph {
             .style
             .prose
             .map(|_| cx.theme().mono_font_family.clone());
+        let code_background = node_cx.style.prose.map(|prose| prose.code_background);
         let mut offset = 0;
 
         let mut ix = 0;
@@ -658,7 +659,7 @@ impl Paragraph {
                             highlights.clone(),
                             node_cx.style.on_link_click.clone(),
                         )
-                        .mono(mono.clone(), code_ranges.clone())
+                        .mono(mono.clone(), code_background, code_ranges.clone())
                         .into_any_element(),
                     );
                 }
@@ -712,7 +713,7 @@ impl Paragraph {
                     if style.code {
                         code_ranges.push(inner_range.clone());
                         if let Some(prose) = prose {
-                            highlight.background_color = Some(prose.code_background);
+                            // Inline paints a rounded, padded fill instead.
                             highlight.color = Some(prose.code);
                         } else {
                             highlight.background_color = Some(cx.theme().accent);
@@ -756,7 +757,7 @@ impl Paragraph {
                     highlights,
                     node_cx.style.on_link_click.clone(),
                 )
-                .mono(mono, code_ranges)
+                .mono(mono, code_background, code_ranges)
                 .into_any_element(),
             );
         }

@@ -310,7 +310,8 @@ impl TextViewState {
                 .as_ref()
                 .ok()?
                 .root_node
-                .selected_text(),
+                .selected_text()
+                .replace(super::format::markdown::INLINE_CODE_MARGIN, ""),
         )
     }
 }

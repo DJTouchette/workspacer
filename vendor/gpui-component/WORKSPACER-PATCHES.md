@@ -21,6 +21,11 @@ tables and code, and its asynchronous parse cache:
   headings (h1/h2 underlined) and rules use app colors, and fenced code gets a
   bordered panel with a language header. `None` keeps upstream rendering.
 
+  In prose mode inline code is drawn by `Inline` as rounded (4px), padded quads
+  per visual line instead of square text-run backgrounds, and the Markdown
+  parser surrounds each code span with thin spaces (U+2009) for margin; those
+  are stripped from copied selections (`format/markdown.rs`, `text_view.rs`).
+
 Two upstream bug fixes in the same files:
 
 - A non-list root passed `is_last = true` to every block, so chat Markdown had
@@ -29,7 +34,7 @@ Two upstream bug fixes in the same files:
   instead of the theme captured at creation (`text_view.rs`), so switching
   appearance recolors code already on screen.
 
-Text changes are confined to `src/text/{style,inline,node,text_view}.rs`. Reapply them explicitly
+Text changes are confined to `src/text/{style,inline,node,text_view}.rs` and `src/text/format/markdown.rs`. Reapply them explicitly
 when upgrading GPUI Component. Do not modify the user's Cargo registry cache.
 
 Native interaction polish also patches:

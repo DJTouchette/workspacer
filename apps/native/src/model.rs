@@ -22,6 +22,9 @@ pub struct Session {
     pub subagents: Value,
     pub workflows: Value,
     pub model: String,
+    /// Resolved model the runtime reports (`claude-opus-5-5`); never cleared
+    /// by snapshots that omit it, unlike the selection alias in `model`.
+    pub runtime_model: String,
     pub context_window: Option<u64>,
     pub telemetry: crate::child_agents::Telemetry,
     pub approval: Option<Value>,
@@ -82,6 +85,18 @@ impl Session {
             && !model.is_empty()
         {
             self.model = model.to_owned();
+        }
+        if let Some(model) = [
+            "/statusLine/modelDisplay",
+            "/status_line/model_display",
+            "/usage/model",
+        ]
+        .iter()
+        .find_map(|path| value.pointer(path).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        {
+            self.runtime_model = crate::transcript::head(model, 128);
         }
         if let Some(skills) = value.pointer("/statusLine/capabilities/inventory/skills") {
             self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
@@ -163,6 +178,30 @@ impl Session {
                     (pending["kind"] == "question").then(|| pending["questions"].clone());
             }
         }
+    }
+
+    /// Human model name for display: the running model when it matches the
+    /// selection (so `opus` reads "Opus 5.5"), otherwise the fresher selection.
+    pub fn display_model(&self) -> String {
+        let selected = self.model.split('[').next().unwrap_or("").trim();
+        let observed = if self.runtime_model.is_empty() {
+            self.telemetry.observed_model.trim()
+        } else {
+            self.runtime_model.trim()
+        };
+        let id = if selected.chars().any(|c| c.is_ascii_digit()) {
+            selected
+        } else if !observed.is_empty()
+            && (selected.is_empty()
+                || observed
+                    .to_ascii_lowercase()
+                    .contains(&selected.to_ascii_lowercase()))
+        {
+            observed
+        } else {
+            selected
+        };
+        model_display_name(id)
     }
 
     pub fn title(&self) -> &str {
@@ -636,6 +675,52 @@ fn truncate(text: &mut String, limit: usize) -> bool {
     true
 }
 
+/// Friendly model name: `claude-opus-5-5` → "Opus 5.5", `opus[1m]` → "Opus",
+/// `claude-3-5-sonnet-20241022` → "Sonnet 3.5", `gpt-5.6-sol` → "GPT-5.6 Sol".
+/// Unrecognized ids are returned unchanged.
+pub fn model_display_name(id: &str) -> String {
+    let id = id.trim();
+    let id = id.rsplit('/').next().unwrap_or(id);
+    let id = id.split('[').next().unwrap_or(id);
+    let lower = id.to_ascii_lowercase();
+    let capitalize = |word: &str| {
+        let mut chars = word.chars();
+        chars
+            .next()
+            .map(|c| c.to_ascii_uppercase().to_string() + chars.as_str())
+            .unwrap_or_default()
+    };
+    let parts: Vec<&str> = lower
+        .strip_prefix("claude-")
+        .unwrap_or(&lower)
+        .split('-')
+        .filter(|p| !(p.len() >= 6 && p.chars().all(|c| c.is_ascii_digit())))
+        .collect();
+    const FAMILIES: [&str; 4] = ["opus", "sonnet", "haiku", "fable"];
+    if let Some(family) = parts.iter().find(|p| FAMILIES.contains(p)) {
+        let version = parts
+            .iter()
+            .filter(|p| p.chars().all(|c| c.is_ascii_digit()))
+            .copied()
+            .collect::<Vec<_>>()
+            .join(".");
+        return format!("{} {version}", capitalize(family))
+            .trim()
+            .to_owned();
+    }
+    if let Some(rest) = lower.strip_prefix("gpt-") {
+        let mut words = rest.split('-');
+        let version = words.next().unwrap_or_default();
+        let mut name = format!("GPT-{version}");
+        for word in words {
+            name.push(' ');
+            name.push_str(&capitalize(word));
+        }
+        return name;
+    }
+    id.to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,6 +1056,39 @@ mod tests {
         assert_eq!(s.title(), "Build");
         s.merge(&json!({"sessionId":"s", "pendingApproval":null, "mode":"input"}));
         assert!(s.approval.is_none());
+    }
+
+    #[test]
+    fn model_names_read_like_product_names() {
+        for (id, name) in [
+            ("claude-opus-5-5", "Opus 5.5"),
+            ("claude-haiku-4-5-20251001", "Haiku 4.5"),
+            ("claude-3-5-sonnet-20241022", "Sonnet 3.5"),
+            ("anthropic/claude-sonnet-4-6", "Sonnet 4.6"),
+            ("opus[1m]", "Opus"),
+            ("fable", "Fable"),
+            ("gpt-5.6-sol", "GPT-5.6 Sol"),
+            ("gpt-5.4", "GPT-5.4"),
+            ("o3", "o3"),
+            ("", ""),
+        ] {
+            assert_eq!(model_display_name(id), name, "{id}");
+        }
+    }
+
+    #[test]
+    fn display_model_prefers_running_model_only_when_it_matches_the_selection() {
+        let mut session = Session::default();
+        session.merge(&json!({"requestedSelection":{"model":"opus"}, "statusLine":{"modelDisplay":"claude-opus-5-5"}}));
+        assert_eq!(session.display_model(), "Opus 5.5");
+        // Later snapshots with a bare alias or a null usage model keep it.
+        session.merge(&json!({"model":"opus[1m]", "usage":{"model":null}}));
+        assert_eq!(session.display_model(), "Opus 5.5");
+        // A fresh switch shows the new selection until the runtime reports it.
+        session.merge(&json!({"requestedSelection":{"model":"sonnet"}}));
+        assert_eq!(session.display_model(), "Sonnet");
+        session.merge(&json!({"requestedSelection":{"model":"claude-sonnet-4-6"}}));
+        assert_eq!(session.display_model(), "Sonnet 4.6");
     }
 
     #[test]

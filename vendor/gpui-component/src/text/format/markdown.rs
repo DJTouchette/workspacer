@@ -52,6 +52,9 @@ fn parse_table_cell(row: &mut node::TableRow, node: &mdast::TableCell, cx: &mut 
     row.children.push(table_cell);
 }
 
+/// Thin space placed around inline code in prose mode (see `TextView`).
+pub(crate) const INLINE_CODE_MARGIN: &str = "\u{2009}";
+
 fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeContext) -> String {
     let span = node.position().map(|pos| Span {
         start: pos.start.offset,
@@ -103,9 +106,18 @@ fn parse_paragraph(paragraph: &mut Paragraph, node: &mdast::Node, cx: &mut NodeC
         }
         Node::InlineCode(val) => {
             text = val.value.clone();
+            // Prose mode paints a padded fill; thin spaces give it margin so
+            // it never touches neighbouring words. Stripped from selections.
+            let margin = cx.style.prose.is_some();
+            if margin {
+                paragraph.push(InlineNode::new(INLINE_CODE_MARGIN));
+            }
             paragraph.push(
                 InlineNode::new(&text).marks(vec![(0..text.len(), TextMark::default().code())]),
             );
+            if margin {
+                paragraph.push(InlineNode::new(INLINE_CODE_MARGIN));
+            }
         }
         Node::Link(val) => {
             let link_mark = Some(LinkMark {

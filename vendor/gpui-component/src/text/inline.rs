@@ -6,7 +6,7 @@ use std::{
 
 use gpui::{
     App, BorderStyle, Bounds, CursorStyle, Edges, Element, ElementId, GlobalElementId, Half,
-    HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+    HighlightStyle, Hsla, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, StyledText, TextLayout, Window,
     point, px, quad,
 };
@@ -25,6 +25,9 @@ pub(super) struct Inline {
     /// Font family for inline code; every highlight run inside one of the
     /// ranges uses it (combined highlights only ever split code ranges).
     mono: Option<(SharedString, Vec<Range<usize>>)>,
+    /// Rounded, padded fill painted behind inline code (prose mode); text-run
+    /// backgrounds can only be square and flush with the glyphs.
+    code_background: Option<Hsla>,
     styled_text: StyledText,
 
     state: Arc<Mutex<InlineState>>,
@@ -61,15 +64,77 @@ impl Inline {
             links: Rc::new(links),
             highlights,
             mono: None,
+            code_background: None,
             text: text.clone(),
             styled_text: StyledText::new(text),
             state,
         }
     }
 
-    pub(super) fn mono(mut self, family: Option<SharedString>, ranges: Vec<Range<usize>>) -> Self {
+    pub(super) fn mono(
+        mut self,
+        family: Option<SharedString>,
+        background: Option<Hsla>,
+        ranges: Vec<Range<usize>>,
+    ) -> Self {
         self.mono = family.filter(|_| !ranges.is_empty()).map(|f| (f, ranges));
+        self.code_background = background;
         self
+    }
+
+    /// One rounded quad per visual line of each inline-code range.
+    fn paint_code_backgrounds(&self, layout: &TextLayout, window: &mut Window) {
+        let (Some((_, ranges)), Some(color)) = (&self.mono, self.code_background) else {
+            return;
+        };
+        let line_height = layout.line_height();
+        let (pad, inset) = (px(3.), line_height * 0.12);
+        for range in ranges {
+            let Some(code) = self.text.get(range.clone()) else {
+                continue;
+            };
+            let boundaries = code
+                .char_indices()
+                .map(|(i, _)| range.start + i)
+                .chain(std::iter::once(range.end));
+            let mut segments = Vec::new();
+            let mut start: Option<Point<Pixels>> = None;
+            let mut prev: Option<Point<Pixels>> = None;
+            let mut width = px(0.);
+            for ix in boundaries {
+                let Some(pos) = layout.position_for_index(ix) else {
+                    continue;
+                };
+                match (start, prev) {
+                    (Some(s), Some(p)) if pos.y != s.y => {
+                        segments.push((s, p.x + width));
+                        start = Some(pos);
+                    }
+                    (None, _) => start = Some(pos),
+                    _ => {}
+                }
+                if let Some(p) = prev.filter(|p| p.y == pos.y) {
+                    width = pos.x - p.x;
+                }
+                prev = Some(pos);
+            }
+            if let (Some(s), Some(p)) = (start, prev) {
+                segments.push((s, p.x));
+            }
+            for (s, right) in segments.into_iter().filter(|(s, r)| *r - s.x > px(1.)) {
+                window.paint_quad(quad(
+                    Bounds::from_corners(
+                        point(s.x - pad, s.y + inset),
+                        point(right + pad, s.y + line_height - inset),
+                    ),
+                    px(4.),
+                    color,
+                    Edges::default(),
+                    gpui::transparent_black(),
+                    BorderStyle::default(),
+                ));
+            }
+        }
     }
 
     /// Get link at given mouse position.
@@ -319,6 +384,7 @@ impl Element for Inline {
         let mut state = self.state.lock().unwrap();
 
         let text_layout = self.styled_text.layout().clone();
+        self.paint_code_backgrounds(&text_layout, window);
         self.styled_text
             .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
 

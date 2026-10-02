@@ -38,6 +38,28 @@ use wks_native::timing::{self, TurnClock};
 
 const CHAT_WIDTH: f32 = 900.;
 
+/// Bundled provider marks layered over gpui-component's icon set.
+pub struct Assets;
+
+impl gpui::AssetSource for Assets {
+    fn load(&self, path: &str) -> anyhow::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        use std::borrow::Cow;
+        match path {
+            "brand/claude.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icons/brand/claude.svg"
+            )))),
+            "brand/openai.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icons/brand/openai.svg"
+            )))),
+            _ => gpui_component_assets::Assets.load(path),
+        }
+    }
+
+    fn list(&self, path: &str) -> anyhow::Result<Vec<SharedString>> {
+        gpui_component_assets::Assets.list(path)
+    }
+}
+
 pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: &mut App) {
     typography::register_fonts(cx);
     use gpui_component::{Theme, ThemeMode};

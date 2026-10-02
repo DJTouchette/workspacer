@@ -216,56 +216,54 @@ fn main() -> Result<()> {
         stopped: None,
     }));
     let quitting_backend = backend.clone();
-    Application::new()
-        .with_assets(gpui_component_assets::Assets)
-        .run(move |cx| {
-            stop_backend_on_quit(quitting_backend, cx);
-            gpui_component::init(cx);
-            ui::configure_theme(appearance, None, cx);
-            ui::bind_keys(cx);
-            let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(720.), px(480.))),
-                    titlebar: Some(gpui::TitlebarOptions {
-                        title: Some("Workspacer Native".into()),
-                        ..Default::default()
-                    }),
+    Application::new().with_assets(ui::Assets).run(move |cx| {
+        stop_backend_on_quit(quitting_backend, cx);
+        gpui_component::init(cx);
+        ui::configure_theme(appearance, None, cx);
+        ui::bind_keys(cx);
+        let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(720.), px(480.))),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some("Workspacer Native".into()),
                     ..Default::default()
-                },
-                |window, cx| {
-                    let close_preference = keep_running.clone();
-                    window.on_window_should_close(cx, move |window, _| {
-                        if close_preference.get() {
-                            window.minimize_window();
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                    window.set_window_title("Workspacer Native");
-                    window.set_app_id("workspacer-native");
-                    let view = cx.new(|cx| {
-                        let mut view = ui::Workspace::new(controller, args.demo, window, cx);
-                        view.configure_settings(settings, settings_path, project_scope, window, cx);
-                        view.configure_local(local_requested, keep_running.clone());
-                        view.set_appearance(appearance, window, cx);
-                        view.open_session(args.session);
-                        view
-                    });
-                    cx.new(|cx| Root::new(view, window, cx))
-                },
-            )
-            .expect("open native window");
-            cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-            cx.activate(true);
-        });
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                let close_preference = keep_running.clone();
+                window.on_window_should_close(cx, move |window, _| {
+                    if close_preference.get() {
+                        window.minimize_window();
+                        false
+                    } else {
+                        true
+                    }
+                });
+                window.set_window_title("Workspacer Native");
+                window.set_app_id("workspacer-native");
+                let view = cx.new(|cx| {
+                    let mut view = ui::Workspace::new(controller, args.demo, window, cx);
+                    view.configure_settings(settings, settings_path, project_scope, window, cx);
+                    view.configure_local(local_requested, keep_running.clone());
+                    view.set_appearance(appearance, window, cx);
+                    view.open_session(args.session);
+                    view
+                });
+                cx.new(|cx| Root::new(view, window, cx))
+            },
+        )
+        .expect("open native window");
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+        cx.activate(true);
+    });
     let mut backend = backend.borrow_mut();
     backend.stop();
     backend.stopped.take().unwrap_or(Ok(()))
