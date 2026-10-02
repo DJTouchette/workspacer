@@ -188,9 +188,9 @@ pub(crate) async fn serve(
     scoped_tokens: Option<std::path::PathBuf>,
     plugins: Option<Router>,
     webapp_dir: Option<std::path::PathBuf>,
-    trusted_hosts: Vec<String>,
+    trusted_hosts: policy::TrustedHosts,
 ) -> anyhow::Result<()> {
-    let policy = policy::Policy::new(listener.local_addr()?.ip(), &trusted_hosts)?;
+    let policy = policy::Policy::shared(listener.local_addr()?.ip(), trusted_hosts);
     let assets = web::router(
         Credentials {
             token: token.clone(),

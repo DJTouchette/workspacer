@@ -125,13 +125,108 @@ impl Command for NativeCommand {
             command.args(args);
             let output = super::owned_process::capture(&mut command, 1024 * 1024, timeout).await?;
             if !output.status.success() {
-                bail!("Tailscale command failed");
+                bail!(
+                    "Tailscale command failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
             }
             Ok(output.stdout)
         })
     }
 }
+/// Names the owner trusted by enabling Tailscale Serve. Launcher-configured
+/// names are never removed; toggled names persist in `file` when provided.
+struct Proxy {
+    hosts: crate::server::policy::TrustedHosts,
+    configured: Vec<String>,
+    file: Option<PathBuf>,
+}
+impl Proxy {
+    fn saved(&self) -> Vec<String> {
+        let Some(file) = &self.file else {
+            return Vec::new();
+        };
+        std::fs::read_to_string(file)
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+    fn load(&self) {
+        for name in self.saved() {
+            if let Err(error) = self.hosts.insert(&name) {
+                eprintln!("ignoring saved trusted host {name:?}: {error:#}");
+            }
+        }
+    }
+    fn save(&self, names: &[String]) -> Result<()> {
+        let Some(file) = &self.file else {
+            return Ok(());
+        };
+        if names.is_empty() {
+            return match std::fs::remove_file(file) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
+                _ => Ok(()),
+            };
+        }
+        let mut text = names.join("\n");
+        text.push('\n');
+        super::config::atomic_bytes(file, text.as_bytes())
+    }
+    /// Serve terminates TLS for `name` and forwards to loopback, which the
+    /// Host/Origin pins otherwise refuse as DNS rebinding.
+    fn trust(&self, name: &str) -> Result<()> {
+        self.hosts.insert(name)?;
+        let mut names = self.saved();
+        if !names.iter().any(|saved| saved.eq_ignore_ascii_case(name)) {
+            names.push(name.to_owned());
+        }
+        self.save(&names)
+    }
+    /// `tailscale serve reset` clears every handler, so every toggled name goes.
+    fn forget(&self, current: Option<&str>) -> Result<()> {
+        for name in self.saved().iter().map(String::as_str).chain(current) {
+            if !self
+                .configured
+                .iter()
+                .any(|configured| configured.eq_ignore_ascii_case(name))
+            {
+                self.hosts.remove(name);
+            }
+        }
+        self.save(&[])
+    }
+}
+/// Turn Serve's stderr into the one-time fix. Only the classification and a
+/// Tailscale login link are returned, never the raw command output.
+fn serve_failure(stderr: &str) -> String {
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("operator") || lower.contains("access denied") || lower.contains("permission")
+    {
+        return "Tailscale Serve needs permission. Run once on this machine: sudo tailscale set --operator=$USER".into();
+    }
+    // The opt-in message embeds an https:// link, so match it before the
+    // certificate branch below.
+    if lower.contains("not enabled") {
+        let link = stderr
+            .split_whitespace()
+            .find(|word| word.starts_with("https://login.tailscale.com/"))
+            .map(|word| word.trim_end_matches(['.', ',', ')', '"', '\'']));
+        return match link {
+            Some(link) => format!("Enable Tailscale Serve for your tailnet once: {link}"),
+            None => "Enable HTTPS certificates and Serve for your tailnet in the Tailscale admin console.".into(),
+        };
+    }
+    if lower.contains("https") || lower.contains("cert") {
+        return "Enable HTTPS certificates for your tailnet in the Tailscale admin console (DNS → HTTPS Certificates).".into();
+    }
+    "Tailscale Serve failed; check the server's Tailscale permissions and HTTPS configuration"
+        .into()
+}
 struct Network {
+    proxy: Option<Proxy>,
     socket: Option<PathBuf>,
     token_file: Option<PathBuf>,
     port: Option<u16>,
@@ -318,7 +413,26 @@ impl Network {
         } else {
             vec!["serve".into(), "reset".into()]
         };
-        self.command.run(args,Duration::from_secs(120)).await.map_err(|_|anyhow!("Tailscale Serve failed; check the server's Tailscale permissions and HTTPS configuration"))?;
+        self.command
+            .run(args, Duration::from_secs(120))
+            .await
+            .map_err(|error| anyhow!(serve_failure(&error.to_string())))?;
+        if let Some(proxy) = &self.proxy {
+            let name = self.info().await.ok().and_then(|info| {
+                info["magicName"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+            });
+            if enabled {
+                let name = name.context(
+                    "Tailscale Serve started, but this node's MagicDNS name is unknown, so the hub cannot trust it",
+                )?;
+                proxy.trust(&name)?;
+            } else {
+                proxy.forget(name.as_deref())?;
+            }
+        }
         Ok(json!({"ok":true}))
     }
     async fn call(&self, caller: &Caller, method: &str, params: &Value) -> Result<Value> {
@@ -362,8 +476,27 @@ impl Network {
         }
     }
 }
-pub(crate) fn install(mut options: Options, port: Option<u16>) -> Options {
+pub(crate) fn install(
+    mut options: Options,
+    port: Option<u16>,
+    hosts: crate::server::policy::TrustedHosts,
+) -> Options {
+    let proxy = port.map(|_| Proxy {
+        hosts,
+        configured: options
+            .trusted_hosts
+            .iter()
+            .flat_map(|raw| raw.split(','))
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .collect(),
+        file: options.trusted_hosts_file.clone(),
+    });
+    if let Some(proxy) = &proxy {
+        proxy.load();
+    }
     let network = Arc::new(Network {
+        proxy,
         socket: options.network_admin_socket.clone(),
         token_file: options.network_admin_token_file.clone(),
         port,
@@ -509,7 +642,7 @@ mod tests {
         let mut options = Options::default();
         options.scoped_tokens = Some(dir.path().join("tokens.json"));
         options.token = "owner".into();
-        let hub = crate::Hub::start(install(options, None)).unwrap();
+        let hub = crate::Hub::start(install(options, None, Default::default())).unwrap();
         hub.ready().await.unwrap();
         let host = crate::client::Client::connect(&hub.handle()).await.unwrap();
         let record = host
@@ -584,6 +717,7 @@ mod tests {
         });
         (
             Network {
+                proxy: None,
                 socket: None,
                 token_file: None,
                 port: Some(4567),
@@ -645,6 +779,95 @@ mod tests {
                 .is_err()
         );
         assert_eq!(service.info().await.unwrap()["available"], false);
+    }
+    fn tailscale_info_replies(fake: &Fake) {
+        fake.replies.lock().unwrap().extend([
+            br#"{"BackendState":"Running","Self":{"DNSName":"Fixture.tailnet.ts.net."}}"#.to_vec(),
+            br#"{}"#.to_vec(),
+            br#"{"OperatorUser":"1234"}"#.to_vec(),
+        ]);
+    }
+    #[tokio::test]
+    async fn serving_trusts_the_magic_name_live_and_reset_forgets_only_toggled_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hub-trusted-hosts");
+        let hosts = crate::server::policy::TrustedHosts::parse(&["proxy.example".into()]).unwrap();
+        let proxy = || Proxy {
+            hosts: hosts.clone(),
+            configured: vec!["proxy.example".into()],
+            file: Some(file.clone()),
+        };
+        let (mut service, fake) = fake();
+        service.proxy = Some(proxy());
+        fake.replies.lock().unwrap().push_back(vec![]);
+        tailscale_info_replies(&fake);
+        service
+            .call(&owner(), "remote.tailscaleServe", &json!({"enabled":true}))
+            .await
+            .unwrap();
+        assert!(hosts.contains("fixture.tailnet.ts.net"));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "Fixture.tailnet.ts.net\n"
+        );
+
+        // A restarted hub reloads the toggled name before serving a request.
+        let restarted = crate::server::policy::TrustedHosts::default();
+        Proxy {
+            hosts: restarted.clone(),
+            configured: vec![],
+            file: Some(file.clone()),
+        }
+        .load();
+        assert!(restarted.contains("fixture.tailnet.ts.net"));
+
+        fake.replies.lock().unwrap().push_back(vec![]);
+        tailscale_info_replies(&fake);
+        service
+            .call(&owner(), "remote.tailscaleServe", &json!({"enabled":false}))
+            .await
+            .unwrap();
+        assert!(!hosts.contains("fixture.tailnet.ts.net"));
+        assert!(hosts.contains("proxy.example"));
+        assert!(!file.exists());
+    }
+    #[test]
+    fn serve_failures_name_the_fix_without_echoing_output() {
+        assert!(
+            serve_failure("Tailscale command failed: Access denied: serve config denied")
+                .contains("--operator")
+        );
+        assert_eq!(
+            serve_failure(
+                "Tailscale command failed: Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=abc123\n"
+            ),
+            "Enable Tailscale Serve for your tailnet once: https://login.tailscale.com/f/serve?node=abc123"
+        );
+        assert!(
+            serve_failure("Tailscale command failed: HTTPS cert unavailable")
+                .contains("HTTPS Certificates")
+        );
+        let generic = serve_failure("Tailscale command failed: secret-ish /home/user detail");
+        assert!(!generic.contains("secret-ish"));
+    }
+    #[tokio::test]
+    async fn failed_serve_trusts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let hosts = crate::server::policy::TrustedHosts::default();
+        let (mut service, _fake) = fake();
+        service.proxy = Some(Proxy {
+            hosts: hosts.clone(),
+            configured: vec![],
+            file: Some(dir.path().join("hub-trusted-hosts")),
+        });
+        assert!(
+            service
+                .call(&owner(), "remote.tailscaleServe", &json!({"enabled":true}))
+                .await
+                .is_err()
+        );
+        assert!(!hosts.contains("fixture.tailnet.ts.net"));
+        assert!(!dir.path().join("hub-trusted-hosts").exists());
     }
     #[cfg(unix)]
     #[tokio::test]

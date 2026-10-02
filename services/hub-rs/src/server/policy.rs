@@ -6,10 +6,52 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use std::{collections::BTreeSet, net::IpAddr};
+use std::{
+    collections::BTreeSet,
+    net::IpAddr,
+    sync::{Arc, RwLock},
+};
+/// Reverse-proxy names shared by every route of one listener. The owner can
+/// add a name at runtime (Tailscale Serve) without rebinding the server.
+#[derive(Clone, Debug, Default)]
+pub struct TrustedHosts(Arc<RwLock<BTreeSet<String>>>);
+impl TrustedHosts {
+    pub fn parse(trusted: &[String]) -> anyhow::Result<Self> {
+        let hosts = Self::default();
+        for raw in trusted {
+            for name in raw
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                hosts.insert(name)?;
+            }
+        }
+        Ok(hosts)
+    }
+    fn normalize(name: &str) -> anyhow::Result<String> {
+        anyhow::ensure!(
+            name != "*" && !name.contains("://"),
+            "trusted host must be an explicit hostname"
+        );
+        let (name, _) = authority(name).ok_or_else(|| anyhow::anyhow!("invalid trusted host"))?;
+        Ok(name)
+    }
+    /// Returns whether the name was newly trusted.
+    pub fn insert(&self, name: &str) -> anyhow::Result<bool> {
+        let name = Self::normalize(name)?;
+        Ok(self.0.write().unwrap().insert(name))
+    }
+    pub fn remove(&self, name: &str) -> bool {
+        Self::normalize(name).is_ok_and(|name| self.0.write().unwrap().remove(&name))
+    }
+    pub fn contains(&self, host: &str) -> bool {
+        self.0.read().unwrap().contains(host)
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Policy {
-    trusted: BTreeSet<String>,
+    trusted: TrustedHosts,
     bound: IpAddr,
 }
 #[derive(Clone, Copy, Debug)]
@@ -42,30 +84,14 @@ fn loopback(host: &str) -> bool {
 }
 impl Policy {
     pub fn new(bound: IpAddr, trusted: &[String]) -> anyhow::Result<Self> {
-        let mut names = BTreeSet::new();
-        for raw in trusted {
-            for name in raw
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
-                anyhow::ensure!(
-                    name != "*" && !name.contains("://"),
-                    "trusted host must be an explicit hostname"
-                );
-                let (name, _) =
-                    authority(name).ok_or_else(|| anyhow::anyhow!("invalid trusted host"))?;
-                names.insert(name);
-            }
-        }
-        Ok(Self {
-            trusted: names,
-            bound,
-        })
+        Ok(Self::shared(bound, TrustedHosts::parse(trusted)?))
+    }
+    pub fn shared(bound: IpAddr, trusted: TrustedHosts) -> Self {
+        Self { trusted, bound }
     }
     pub fn local() -> Self {
         Self {
-            trusted: BTreeSet::new(),
+            trusted: TrustedHosts::default(),
             bound: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
         }
     }
@@ -156,6 +182,18 @@ mod tests {
             h.insert("origin", origin.parse().unwrap());
         }
         h
+    }
+    #[test]
+    fn names_trusted_after_construction_apply_to_the_running_policy() {
+        let hosts = TrustedHosts::default();
+        let p = Policy::shared("127.0.0.1".parse().unwrap(), hosts.clone());
+        let h = headers("node.ts.net", "https://node.ts.net");
+        assert!(!p.browser(&h));
+        assert!(hosts.insert("Node.ts.net").unwrap());
+        assert!(p.browser(&h));
+        assert!(hosts.remove("node.ts.net"));
+        assert!(!p.browser(&h));
+        assert!(hosts.insert("*").is_err());
     }
     #[test]
     fn actual_loopback_socket_refuses_rebound_names_even_under_wildcard_listener() {

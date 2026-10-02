@@ -88,6 +88,9 @@ pub struct Options {
     pub sidecar_node: Option<String>,
     pub plugin_origin: String,
     pub trusted_hosts: Vec<String>,
+    /// Proxy names this hub trusted at its owner's request (Tailscale Serve),
+    /// reloaded at start and rewritten when sharing changes.
+    pub trusted_hosts_file: Option<std::path::PathBuf>,
     pub webapp_dir: Option<std::path::PathBuf>,
     pub push_dir: Option<std::path::PathBuf>,
     pub nodes_file: Option<std::path::PathBuf>,
@@ -166,6 +169,7 @@ impl Default for Options {
             sidecar_node: None,
             plugin_origin: String::new(),
             trusted_hosts: Vec::new(),
+            trusted_hosts_file: None,
             webapp_dir: None,
             push_dir: None,
             nodes_file: None,
@@ -2095,6 +2099,7 @@ async fn run(
         None => None,
     };
     let mcp_address = mcp_listener.as_ref().map(|l| l.local_addr()).transpose()?;
+    let trusted_hosts = crate::server::policy::TrustedHosts::parse(&options.trusted_hosts)?;
     if options.launch_lifecycle.is_none() {
         if let (Some(engine), Some(data), Some(config), Some(home), Some(tokens)) = (
             options.engine.clone(),
@@ -2141,8 +2146,11 @@ async fn run(
         let engine = options.engine.clone();
         options = crate::services::routing::install(options, routing, engine, handle.clone());
     }
-    options =
-        crate::services::remote_admin::install(options, address.map(|address| address.port()));
+    options = crate::services::remote_admin::install(
+        options,
+        address.map(|address| address.port()),
+        trusted_hosts.clone(),
+    );
     options = crate::services::uploads::install_front(options, handle.clone());
     if let Some(directory) = options.data_dir.clone() {
         options = crate::services::install(options, handle.clone(), directory)?;
@@ -2311,7 +2319,7 @@ async fn run(
                     plugin_origin: options.plugin_origin.clone(),
                     examples_dir: options.plugin_examples_dir.clone(),
                 },
-                crate::server::policy::Policy::new(address.unwrap().ip(), &options.trusted_hosts)?,
+                crate::server::policy::Policy::shared(address.unwrap().ip(), trusted_hosts.clone()),
             )
         })
         .transpose()?;
@@ -2377,7 +2385,6 @@ async fn run(
         })
     });
     let webapp_dir = options.webapp_dir.clone();
-    let trusted_hosts = options.trusted_hosts.clone();
     let mut server = listener.map(|listener| {
         let token = options.token.clone();
         let handle = handle.clone();

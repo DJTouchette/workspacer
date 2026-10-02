@@ -56,6 +56,11 @@ pub enum Request {
     DownloadUpdate {
         asset: Value,
     },
+    /// Tailscale sharing and phone pairings on the connected hub.
+    Remote,
+    /// An owner change to sharing; answers with the refreshed `Remote` state.
+    /// Its own key, so a refresh never cancels a half-applied change.
+    RemoteAction(crate::remote::Action),
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +90,8 @@ impl Request {
             Self::Upload { .. } => "upload",
             Self::Updates => "updates",
             Self::DownloadUpdate { .. } => "update-download",
+            Self::Remote => "remote",
+            Self::RemoteAction(_) => "remote-action",
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -133,6 +140,8 @@ impl Request {
                 Ok(json!({"status":status?,"staged":staged?,"unstaged":unstaged?}))
             }
             Self::Recent => backend.call("sessions.recent", json!({})).await,
+            Self::Remote => crate::remote::state(backend).await,
+            Self::RemoteAction(action) => crate::remote::apply(backend, action).await,
             Self::Changes { cwd } => backend.call("git.status", json!({"cwd":cwd})).await,
             Self::Diff {
                 cwd,
@@ -388,6 +397,14 @@ pub fn installed_version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn remote_requests_keep_reads_and_changes_apart() {
+        assert_eq!(Request::Remote.key(), "remote");
+        assert_eq!(
+            Request::RemoteAction(crate::remote::Action::Serve(true)).key(),
+            "remote-action"
+        );
+    }
     #[test]
     fn attachments_are_bounded_and_typed() {
         assert!(validate_attachment("screen.PNG", 100).is_ok());

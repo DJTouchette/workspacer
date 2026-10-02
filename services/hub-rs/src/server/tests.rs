@@ -31,7 +31,7 @@ async fn browser_assets_preserve_public_shell_and_operator_entry_split() {
             Some(tokens),
             None,
             Some(web),
-            vec![],
+            policy::TrustedHosts::default(),
         )
         .await
     });
@@ -143,7 +143,7 @@ async fn wildcard_listener_uses_actual_socket_for_rebinding_and_declared_proxy_e
             None,
             None,
             None,
-            vec!["node.ts.net".into()],
+            policy::TrustedHosts::parse(&["node.ts.net".into()]).unwrap(),
         )
         .await
     });

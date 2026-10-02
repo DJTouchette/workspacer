@@ -5,6 +5,7 @@ mod features;
 mod launch;
 mod markdown;
 mod navigation;
+mod remote;
 mod scroll;
 mod settings;
 mod sidebar;
@@ -382,6 +383,7 @@ pub fn bind_keys(cx: &mut App) {
 pub struct Workspace {
     ui_bus: bus_commands::UiState,
     extras: features::Extras,
+    remote: remote::RemoteUi,
     chat: transcript::ChatUi,
     child_ui: children::ChildUi,
     screen: Screen,
@@ -552,6 +554,7 @@ impl Workspace {
         window.focus(&focus);
         Self {
             extras: features::Extras::new(window, cx),
+            remote: Default::default(),
             chat: transcript::ChatUi::default(),
             child_ui: children::ChildUi::default(),
             ui_bus: Default::default(),
@@ -3176,6 +3179,84 @@ mod tests {
             _ => None,
         });
         assert_eq!(requested, Some(asset));
+    }
+
+    #[gpui::test]
+    fn remote_settings_pair_and_revoke_through_owner_requests(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        // Tall enough that the pairing list is on screen without scrolling.
+        visual.simulate_resize(size(px(1000.), px(1400.)));
+        let remote = |value: serde_json::Value| wks_native::features::RequestState {
+            number: 1,
+            request: wks_native::features::Request::Remote,
+            loading: false,
+            value: Arc::new(value),
+            error: None,
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.show_screen(Screen::Settings, window, cx);
+                this.enter_settings_section(settings::SettingsSection::Remote, cx);
+                let mut next = state("a");
+                next.requests.insert(
+                    "remote",
+                    remote(serde_json::json!({
+                        "tailscale":{"available":true,"magicName":"node.tailnet.ts.net",
+                            "serveActive":true,"canServe":true},
+                        "pairing":{"scope":"operator","canManageTokens":true},
+                        "tokens":[{"token":"t-view","scope":"view",
+                            "label":"Remote Control: view","created":"2026-10-02T10:00:00Z"}]
+                    })),
+                );
+                this.update_view(Arc::new(next), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let sent = |commands: &mut tokio::sync::mpsc::Receiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|c| match c {
+                    Command::Request(request) => Some(request),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            sent(&mut commands)
+                .iter()
+                .any(|r| matches!(r, wks_native::features::Request::Remote)),
+            "opening Remote reads live Tailscale state"
+        );
+        // Triage is the default and has no pairing yet.
+        assert!(visual.debug_bounds("pairing-qr").is_none());
+        let create = visual.debug_bounds("pairing-create").unwrap();
+        visual.simulate_click(create.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(sent(&mut commands).iter().any(|r| matches!(r,
+            wks_native::features::Request::RemoteAction(wks_native::remote::Action::Pair(scope)) if scope == "triage")));
+
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.remote.scope = "view";
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("pairing-qr").is_some());
+        let revoke = visual.debug_bounds("pairing-revoke-0").unwrap();
+        visual.simulate_click(revoke.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.remote.confirm_revoke.as_deref(), Some("t-view"))
+        });
+        assert!(
+            sent(&mut commands).is_empty(),
+            "the first click only asks for confirmation"
+        );
+        let revoke = visual.debug_bounds("pairing-revoke-0").unwrap();
+        visual.simulate_click(revoke.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(sent(&mut commands).iter().any(|r| matches!(r,
+            wks_native::features::Request::RemoteAction(wks_native::remote::Action::Revoke(token)) if token == "t-view")));
     }
 
     #[gpui::test]

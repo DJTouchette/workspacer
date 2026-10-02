@@ -41,6 +41,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 url = "2"
+qrcodegen = "1"
 
 [target.'cfg(windows)'.dependencies]
 arboard = { version = "3", default-features = false, features = ["image-data"] }

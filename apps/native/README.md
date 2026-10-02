@@ -197,7 +197,10 @@ do not start a local engine. `--rust-local-dir` selects another isolated owned
 backend; both local spellings exclude a remote bus or token file.
 
 Local state remains under **Workspacer Native Rust Preview** in the platform's
-local-data directory. The engine, bus and facade use allocated loopback ports.
+local-data directory. The engine, bus and facade use allocated loopback ports;
+the bus keeps the port it first received (saved in `config/hub-port`) so
+Tailscale Serve keeps reaching it after a restart. If that port is busy, the
+bus takes another one for this run and sharing does not reach it.
 Legacy service-bundle/database overrides and nondefault hub/MCP port flags are
 refused; use an isolated directory instead. Cooperating Rust backend owners hold
 an exclusive canonical database lease through joined shutdown. An unconfirmed
@@ -225,6 +228,34 @@ account polling, verifies controller/catalog readiness, joins shutdown, and
 checks the four actual listener receipts are released. `embedded-probe` is an
 alias for this Rust probe and takes the same `--directory` argument. It prints no
 credentials, launches no model provider, and does not verify visible GPU output.
+
+## Remote access over Tailscale
+
+**Settings → Remote** shares the connected hub with your phone over
+[Tailscale](https://tailscale.com/download). Both devices must be signed in to
+the same tailnet; nothing is published to the internet.
+
+1. **Tailscale HTTPS** runs `tailscale serve --bg <hub port>` on the hub's
+   machine, so the hub answers at `https://<node>.ts.net`. HTTPS is what lets
+   the phone client install as an app and receive notifications. The hub
+   trusts the node's name immediately; no restart is needed. Turning it off
+   runs `tailscale serve reset`, which removes **every** Serve handler on that
+   machine, so the app asks first.
+2. **Pair a phone** creates (or reuses) a pairing link for one access level:
+   Read-only, Triage (approve, answer, chat, interrupt) or Full control. Scan
+   the QR code or copy the `https://<node>.ts.net/m?token=…` link.
+3. **Pairing links** lists every link created on that machine. Revoking one
+   disconnects that phone immediately.
+
+Everything runs on the connected hub as its owner. With `--local` that is this
+app. Without it, it is the hub you attached to (for example the desktop app's).
+A hub reached with a pairing token, not the owner token, can't change sharing.
+If Serve can't be changed yet, the panel shows the one-time fix: the Linux
+operator command (`sudo tailscale set --operator=$USER`), or the tailnet opt-in
+link Tailscale printed.
+
+A toggled name is saved in `config/hub-trusted-hosts` and trusted again at the
+next local start, because Serve keeps running across restarts.
 
 ## First slice
 
@@ -586,6 +617,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui.rs` | GPUI views, virtualization, keyboard dispatch, drafts |
 | `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
 | `src/ui/settings.rs` | Categorized, searchable settings |
+| `src/remote.rs` | Tailscale sharing and pairing state, phone links, QR modules |
+| `src/ui/remote.rs` | Settings → Remote panel |
 | `src/navigation.rs` | Project grouping and persistent native preferences |
 | `src/usage.rs` | Account usage windows from `usage.report` |
 | `src/ui/usage.rs` | Sidebar usage strip, hover card and detail modal |

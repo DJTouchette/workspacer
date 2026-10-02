@@ -46,6 +46,12 @@ pub(super) async fn run(
         ..Default::default()
     }));
     let mut hub_options = workspacer_hub::Options::default();
+    // Tailscale Serve forwards to a fixed loopback port and keeps doing so
+    // across restarts, so the bus listener reuses the port it first got.
+    let port_file = options.config_dir.join("hub-port");
+    let saved_port = saved_hub_port(&port_file);
+    hub_options.listen = Some(listen_address(saved_port));
+    hub_options.trusted_hosts_file = Some(options.config_dir.join("hub-trusted-hosts"));
     hub_options.config_dir = Some(options.config_dir);
     hub_options.peers_file = hub_options
         .config_dir
@@ -82,7 +88,12 @@ pub(super) async fn run(
         let (backend,events)=Backend::in_process(&handle).await?;
         let engine=owner.engine_endpoints().context("Owned engine stopped before native readiness")?;
         let mut owned_listeners=vec![engine.api_addr,engine.hook_addr];
-        if let workspacer_hub::Status::Ready{address,mcp_address,..}=handle.status().borrow().clone(){owned_listeners.extend(address);owned_listeners.extend(mcp_address);}
+        if let workspacer_hub::Status::Ready{address,mcp_address,..}=handle.status().borrow().clone(){
+            if let Some(address)=address && saved_port.is_none() && let Err(error)=std::fs::write(&port_file,format!("{}\n",address.port())){
+                eprintln!("could not save the hub port: {error:#}");
+            }
+            owned_listeners.extend(address);owned_listeners.extend(mcp_address);
+        }
         else{anyhow::bail!("Owned hub stopped before native readiness");}
         status.send_replace(Status::Ready(Ready {bus_url:"in-process".into(),engine_api:Some(format!("http://{}",engine.api_addr)),engine_hook:Some(format!("http://{}",engine.hook_addr)),owned_listeners}));
         let mut hub_status=handle.status();
@@ -105,5 +116,53 @@ pub(super) async fn run(
         }
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
         (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn saved_hub_port(path: &std::path::Path) -> Option<u16> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|port| *port != 0)
+}
+
+/// The saved port when it is free, otherwise any port. A busy saved port is
+/// kept on disk so the next launch tries it again.
+fn listen_address(saved: Option<u16>) -> std::net::SocketAddr {
+    let loopback = std::net::Ipv4Addr::LOCALHOST;
+    let port = saved
+        .filter(|port| std::net::TcpListener::bind((loopback, *port)).is_ok())
+        .unwrap_or(0);
+    if saved.is_some_and(|saved| saved != port) {
+        eprintln!(
+            "hub port {} is busy; Tailscale sharing will not reach this session",
+            saved.unwrap()
+        );
+    }
+    (loopback, port).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn saved_port_is_reused_when_free_and_skipped_when_busy() {
+        let dir = std::env::temp_dir().join(format!("wks-native-port-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("hub-port");
+        assert_eq!(saved_hub_port(&file), None);
+        std::fs::write(&file, "0\n").unwrap();
+        assert_eq!(saved_hub_port(&file), None);
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = busy.local_addr().unwrap().port();
+        std::fs::write(&file, format!("{port}\n")).unwrap();
+        assert_eq!(saved_hub_port(&file), Some(port));
+        assert_eq!(listen_address(Some(port)).port(), 0);
+        drop(busy);
+        assert_eq!(listen_address(Some(port)).port(), port);
+        assert_eq!(listen_address(None).port(), 0);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

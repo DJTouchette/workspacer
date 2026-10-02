@@ -12,6 +12,7 @@ pub mod live;
 pub mod model;
 pub mod navigation;
 pub mod reading;
+pub mod remote;
 pub mod transcript;
 
 pub mod timing;

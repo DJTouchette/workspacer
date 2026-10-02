@@ -11,6 +11,7 @@ pub(super) enum SettingsSection {
     Appearance,
     Typography,
     Workspace,
+    Remote,
     Agents,
     Chat,
     Keyboard,
@@ -18,10 +19,11 @@ pub(super) enum SettingsSection {
 }
 
 impl SettingsSection {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 8] = [
         Self::Appearance,
         Self::Typography,
         Self::Workspace,
+        Self::Remote,
         Self::Agents,
         Self::Chat,
         Self::Keyboard,
@@ -33,6 +35,7 @@ impl SettingsSection {
             Self::Appearance => "Appearance",
             Self::Typography => "Typography",
             Self::Workspace => "Workspace",
+            Self::Remote => "Remote",
             Self::Agents => "Agents",
             Self::Chat => "Chat",
             Self::Keyboard => "Keyboard",
@@ -45,6 +48,7 @@ impl SettingsSection {
             Self::Appearance => "Choose the palette for your workspace.",
             Self::Typography => "Fonts and reading size. Saved on this device.",
             Self::Workspace => "How the app fits into your day.",
+            Self::Remote => "Reach this machine from your phone over Tailscale.",
             Self::Agents => "Defaults for new sessions. Existing sessions keep theirs.",
             Self::Chat => "How conversations and tool calls read.",
             Self::Keyboard => "Move around your workspace at your own pace.",
@@ -57,6 +61,7 @@ impl SettingsSection {
             Self::Appearance => IconName::Palette,
             Self::Typography => IconName::CaseSensitive,
             Self::Workspace => IconName::LayoutDashboard,
+            Self::Remote => IconName::Globe,
             Self::Agents => IconName::Bot,
             Self::Chat => IconName::Inbox,
             Self::Keyboard => IconName::SquareTerminal,
@@ -128,7 +133,7 @@ impl Entry {
 
 impl Workspace {
     /// Pill-group choice used for small enumerations (text size, agent).
-    fn segmented<T: Copy + PartialEq + 'static>(
+    pub(super) fn segmented<T: Copy + PartialEq + 'static>(
         &self,
         id: &'static str,
         options: Vec<(T, String)>,
@@ -435,6 +440,34 @@ impl Workspace {
                 .on_click(
                     cx.listener(|this, _, window, cx| this.open_feature(Screen::Setup, window, cx)),
                 ),
+        ));
+
+        entries.push(Entry::new(
+            S::Remote,
+            "tailscale",
+            "Tailscale HTTPS",
+            "Serve Workspacer to devices on your tailnet with Tailscale Serve. Nothing is exposed to the public internet.",
+            "remote phone mobile share tailscale serve https tailnet network",
+            Layout::Block,
+            self.render_remote_sharing(cx),
+        ));
+        entries.push(Entry::new(
+            S::Remote,
+            "pair-phone",
+            "Pair a phone",
+            "Each access level has its own link. Choose the least access you need.",
+            "remote phone mobile pair qr code token scope link",
+            Layout::Block,
+            self.render_phone_pairing(cx),
+        ));
+        entries.push(Entry::new(
+            S::Remote,
+            "paired-devices",
+            "Pairing links",
+            "Links you've created on this machine.",
+            "remote phone devices tokens revoke pairing",
+            Layout::Block,
+            self.render_paired_devices(cx),
         ));
 
         entries.push(Entry::new(
@@ -764,7 +797,7 @@ impl Workspace {
                                 )
                             })
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.settings_section = section;
+                                this.enter_settings_section(section, cx);
                                 this.settings_search
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                                 // Keep Normal-mode keys (j / k, /) live after a click.
@@ -938,8 +971,20 @@ impl Workspace {
             .iter()
             .position(|s| *s == self.settings_section)
             .unwrap_or(0) as isize;
-        self.settings_section = all[(ix + step).rem_euclid(all.len() as isize) as usize];
+        self.enter_settings_section(all[(ix + step).rem_euclid(all.len() as isize) as usize], cx);
         cx.notify();
+    }
+
+    /// Remote reads live Tailscale state each time it is opened.
+    pub(super) fn enter_settings_section(
+        &mut self,
+        section: SettingsSection,
+        cx: &mut Context<Self>,
+    ) {
+        if section == SettingsSection::Remote && self.settings_section != section {
+            self.refresh_remote(cx);
+        }
+        self.settings_section = section;
     }
 }
 
