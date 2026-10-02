@@ -1199,4 +1199,3 @@ mod tests {
         assert_eq!(tool.target(), "review");
     }
 }
-

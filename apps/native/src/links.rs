@@ -201,7 +201,11 @@ fn strip_location(path: &str) -> (&str, Option<u32>, Option<u32>) {
             && !file.is_empty()
             && !drive_only(file)
         {
-            return (file, Some(line).filter(|l| *l > 0), Some(column).filter(|c| *c > 0));
+            return (
+                file,
+                Some(line).filter(|l| *l > 0),
+                Some(column).filter(|c| *c > 0),
+            );
         }
         if let Some(line) = range(last)
             && !head.is_empty()
@@ -435,7 +439,12 @@ mod tests {
     fn relative_files_resolve_against_the_session_cwd_with_line_anchors() {
         assert_eq!(
             classify("/remote/repo", "docs/README.md:12:3"),
-            file("/remote/repo/docs/README.md", Some(12), Some(3), FileKind::Text)
+            file(
+                "/remote/repo/docs/README.md",
+                Some(12),
+                Some(3),
+                FileKind::Text
+            )
         );
         assert_eq!(
             classify("/remote/repo/", "./src/../src/lib.rs:40-52"),
@@ -481,7 +490,10 @@ mod tests {
             classify("/repo", "file:///C:/repo/shot.PNG"),
             file("C:\\repo\\shot.PNG", None, None, FileKind::Image)
         );
-        assert_eq!(normalize("\\\\server\\share\\.\\a\\..\\b"), "\\\\server\\share\\b");
+        assert_eq!(
+            normalize("\\\\server\\share\\.\\a\\..\\b"),
+            "\\\\server\\share\\b"
+        );
     }
 
     #[test]
@@ -496,7 +508,10 @@ mod tests {
         );
         assert!(matches!(
             classify("/repo", "logo.svg"),
-            Link::File(FileTarget { kind: FileKind::Text, .. })
+            Link::File(FileTarget {
+                kind: FileKind::Text,
+                ..
+            })
         ));
     }
 
@@ -552,8 +567,11 @@ mod tests {
         assert!(read_error(&text, "file appears to be binary").contains("UTF-8"));
         assert!(read_error(&text, "file is 6000000 bytes (max 5242880)").contains("1 MiB"));
         assert!(
-            read_error(&image, "choose an unchanged regular file up to 2097152 bytes")
-                .contains("2 MiB")
+            read_error(
+                &image,
+                "choose an unchanged regular file up to 2097152 bytes"
+            )
+            .contains("2 MiB")
         );
         assert!(read_error(&text, "not a regular file: /repo").contains("folder"));
         assert!(read_error(&text, "weird").contains("weird"));

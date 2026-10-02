@@ -98,7 +98,9 @@ impl Request {
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
         match self {
             Self::FilePreview { target, .. } => {
-                let fail = |e: anyhow::Error| anyhow::anyhow!(crate::links::read_error(target, &e.to_string()));
+                let fail = |e: anyhow::Error| {
+                    anyhow::anyhow!(crate::links::read_error(target, &e.to_string()))
+                };
                 match target.kind {
                     crate::links::FileKind::Text => {
                         let value = backend
@@ -532,7 +534,10 @@ mod tests {
             image::load_from_memory(&png).unwrap()
         };
         let small = full_image(encode(300, 200)).unwrap();
-        assert_eq!((small["width"].as_u64(), small["height"].as_u64()), (Some(300), Some(200)));
+        assert_eq!(
+            (small["width"].as_u64(), small["height"].as_u64()),
+            (Some(300), Some(200))
+        );
         assert_eq!(decoded(&small).width(), 300);
         let large = full_image(encode(5120, 1280)).unwrap();
         assert_eq!(large["width"], 5120);

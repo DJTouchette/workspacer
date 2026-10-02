@@ -209,12 +209,7 @@ impl Workspace {
                 .bg(rgb(p.code_block))
                 .text_size(px(self.settings.text_size as f32 - 1.))
                 .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
-                .child(
-                    Input::new(editor)
-                        .disabled(true)
-                        .appearance(false)
-                        .h_full(),
-                )
+                .child(Input::new(editor).disabled(true).appearance(false).h_full())
                 .into_any_element()
         } else if let Some((image, ..)) = &self.chat.viewer.image {
             div()
@@ -373,9 +368,7 @@ fn reveal(editor: WeakEntity<InputState>, position: Position, frames: u8, window
 
 pub(super) fn tool_link(cwd: &str, input: &serde_json::Value, path: &str) -> Link {
     // A Read tool's `offset` is the first line it read.
-    let line = input["offset"]
-        .as_u64()
-        .and_then(|l| u32::try_from(l).ok());
+    let line = input["offset"].as_u64().and_then(|l| u32::try_from(l).ok());
     links::tool_file(cwd, path, line)
 }
 

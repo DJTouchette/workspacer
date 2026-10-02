@@ -1775,7 +1775,10 @@ mod tests {
         };
         visual.update(preview(true, None, 1));
         visual.run_until_parked();
-        assert!(visual.debug_bounds("file-viewer").is_some(), "loading opens the sheet");
+        assert!(
+            visual.debug_bounds("file-viewer").is_some(),
+            "loading opens the sheet"
+        );
         assert!(visual.debug_bounds("file-viewer-text").is_none());
         visual.update(preview(false, None, 1));
         visual.run_until_parked();
@@ -1791,7 +1794,16 @@ mod tests {
         visual.simulate_input("typed");
         visual.run_until_parked();
         workspace.read_with(&visual, |this, cx| {
-            assert_eq!(this.chat.viewer.editor().unwrap().read(cx).value().to_string(), text);
+            assert_eq!(
+                this.chat
+                    .viewer
+                    .editor()
+                    .unwrap()
+                    .read(cx)
+                    .value()
+                    .to_string(),
+                text
+            );
         });
         // Wheel over the sheet never scrolls the conversation underneath.
         let top = |this: &Workspace| {
@@ -1806,24 +1818,28 @@ mod tests {
             ..Default::default()
         });
         visual.run_until_parked();
-        assert_eq!(
-            workspace.read_with(&visual, |this, _| top(this)),
-            before
-        );
+        assert_eq!(workspace.read_with(&visual, |this, _| top(this)), before);
         visual.simulate_keystrokes("escape");
         visual.run_until_parked();
         workspace.read_with(&visual, |this, _| {
             assert!(this.file_viewer().is_none(), "Esc closes the viewer")
         });
         // A failed read stays visible as a message inside the sheet.
-        visual.update(preview(false, Some("No file at this path on the session's machine."), 2));
+        visual.update(preview(
+            false,
+            Some("No file at this path on the session's machine."),
+            2,
+        ));
         visual.run_until_parked();
         assert!(visual.debug_bounds("file-viewer-error").is_some());
         let close = visual.debug_bounds("file-viewer-close").unwrap();
         visual.simulate_click(close.center(), gpui::Modifiers::default());
         visual.run_until_parked();
         workspace.read_with(&visual, |this, _| {
-            assert!(this.file_viewer().is_none(), "close button closes the viewer")
+            assert!(
+                this.file_viewer().is_none(),
+                "close button closes the viewer"
+            )
         });
     }
 
@@ -1886,7 +1902,10 @@ mod tests {
             notice.read_with(visual, |this, _| !this.extras.notice.is_empty())
         });
         workspace.read_with(&visual, |this, _| {
-            assert!(this.extras.notice.contains("mailto"), "refusals are visible")
+            assert!(
+                this.extras.notice.contains("mailto"),
+                "refusals are visible"
+            )
         });
         assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
         assert!(commands.try_recv().is_err());
@@ -1914,11 +1933,18 @@ mod tests {
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 let mut view = (*this.view).clone();
-                view.requests.insert("file-preview", wks_native::features::RequestState {
-                    request: wks_native::features::Request::FilePreview { session, target },
-                    number: 1, loading: false, error: None,
-                    value: Arc::new(serde_json::json!({"png":png,"width":64,"height":32,"size":120})),
-                });
+                view.requests.insert(
+                    "file-preview",
+                    wks_native::features::RequestState {
+                        request: wks_native::features::Request::FilePreview { session, target },
+                        number: 1,
+                        loading: false,
+                        error: None,
+                        value: Arc::new(
+                            serde_json::json!({"png":png,"width":64,"height":32,"size":120}),
+                        ),
+                    },
+                );
                 this.update_view(Arc::new(view), window, cx);
             })
         });
