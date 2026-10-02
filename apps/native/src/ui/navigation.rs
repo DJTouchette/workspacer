@@ -259,19 +259,20 @@ impl Workspace {
 
     pub(super) fn shell(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
+        let viewer = self.file_viewer().is_some();
         div()
             .relative()
             // Deferred, so they paint over the sidebar and content added later.
             .children(self.render_caption(window))
             .children(self.render_usage_modal(cx))
             .children(self.render_file_viewer(window, cx))
-            .key_context(
-                if self.settings.vim_navigation && self.focus.is_focused(window) {
-                    "Workspace VimNormal"
-                } else {
-                    "Workspace"
-                },
-            )
+            .key_context(if viewer {
+                "FileViewer"
+            } else if self.settings.vim_navigation && self.focus.is_focused(window) {
+                "Workspace VimNormal"
+            } else {
+                "Workspace"
+            })
             .track_focus(&self.focus)
             .capture_action(
                 cx.listener(|this, _: &gpui_component::input::Paste, window, cx| {
@@ -292,6 +293,20 @@ impl Workspace {
             .text_color(rgb(p.text))
             .font_family(gpui_component::Theme::global(cx).font_family.clone())
             .text_size(px(self.settings.text_size.clamp(12, 20) as f32))
+            // While the file viewer is open none of the workspace's actions
+            // exist: no binding matches the covered composer, sidebar or
+            // conversation, and only the viewer's own keys work.
+            .map(|shell| {
+                if viewer {
+                    shell.on_action(cx.listener(|_, _: &ViewerTab, _, _| {}))
+                } else {
+                    self.workspace_actions(shell, cx)
+                }
+            })
+    }
+
+    fn workspace_actions(&self, shell: Div, cx: &mut Context<Self>) -> Div {
+        shell
             .on_action(cx.listener(Self::send))
             .on_action(cx.listener(|this, _: &ZoomIn, window, cx| {
                 let next =

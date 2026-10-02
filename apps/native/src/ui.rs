@@ -318,6 +318,7 @@ actions!(
         ZoomIn,
         ZoomOut,
         ZoomReset,
+        ViewerTab,
         Quit
     ]
 );
@@ -375,6 +376,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-l", FocusComposer, Some("Workspace")),
         KeyBinding::new("ctrl-r", Refresh, Some("Workspace")),
         KeyBinding::new("cmd-r", Refresh, Some("Workspace")),
+        // The file viewer is modal: Tab must not walk focus out to the
+        // covered composer or sidebar.
+        KeyBinding::new("tab", ViewerTab, Some("FileViewer")),
+        KeyBinding::new("shift-tab", ViewerTab, Some("FileViewer")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-shift-q", Quit, None),
     ]);
@@ -436,6 +441,10 @@ pub struct Workspace {
     last_spawn_receipt: u64,
     spawn_error: String,
     focus: FocusHandle,
+    /// The open file viewer holds keyboard focus; `viewer_return` is where
+    /// it goes back to when the viewer closes.
+    viewer_focus: FocusHandle,
+    viewer_return: Option<FocusHandle>,
     list: ListState,
     drafts: HashMap<String, String>,
     last_receipt: u64,
@@ -545,6 +554,20 @@ impl Workspace {
         focus_watch.push(cx.on_focus(&focus, window, |_, _, cx| cx.notify()));
         focus_watch.push(cx.on_blur(&focus, window, |_, _, cx| cx.notify()));
         focus_watch.push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+        // A key aimed at something the file viewer covers (focus pulled
+        // behind it) is dropped before any binding or text input sees it.
+        let (this, handle) = (cx.entity().downgrade(), window.window_handle());
+        focus_watch.push(cx.intercept_keystrokes(move |_, window, cx| {
+            if window.window_handle() != handle {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| {
+                if this.file_viewer().is_some() && !this.viewer_has_focus(window, cx) {
+                    this.hold_viewer_focus(window, cx);
+                    cx.stop_propagation();
+                }
+            });
+        }));
         focus_watch.push(cx.on_release(|this, _| {
             if let Some(path) = &this.settings_path
                 && let Err(error) = this.settings.save(path)
@@ -608,6 +631,8 @@ impl Workspace {
             last_spawn_receipt: 0,
             spawn_error: String::new(),
             focus,
+            viewer_focus: cx.focus_handle(),
+            viewer_return: None,
             list,
             drafts: HashMap::new(),
             last_receipt: 0,
@@ -712,6 +737,7 @@ impl Workspace {
                     ..(*self.view).clone()
                 });
                 self.apply_ui_requests(window, cx);
+                self.hold_viewer_focus(window, cx);
                 cx.notify();
                 return;
             }
@@ -876,6 +902,7 @@ impl Workspace {
             }
         }
         self.apply_ui_requests(window, cx);
+        self.hold_viewer_focus(window, cx);
         cx.notify();
     }
 
@@ -914,6 +941,10 @@ impl Workspace {
     }
 
     fn send(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        // Never submit a draft the open viewer covers.
+        if self.file_viewer().is_some() {
+            return;
+        }
         if self.new_session {
             self.create(cx);
             return;
@@ -1961,6 +1992,173 @@ mod tests {
         visual.simulate_click(gpui::point(px(4.), px(4.)), gpui::Modifiers::default());
         visual.run_until_parked();
         workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+    }
+
+    #[gpui::test]
+    fn file_viewer_contains_keys_over_a_nonempty_draft(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("ctrl-l");
+        visual.simulate_input("DRAFT_MUST_NOT_SEND");
+        visual.run_until_parked();
+        let png = {
+            use base64::Engine;
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(32, 16)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            base64::engine::general_purpose::STANDARD.encode(bytes.into_inner())
+        };
+        let open = |path: &str, number: u64, loading: bool, error: Option<&str>| {
+            let wks_native::links::Link::File(target) = wks_native::links::classify("/repo", path)
+            else {
+                panic!("{path} is a file link");
+            };
+            let value = serde_json::json!({
+                "contents": "one\ntwo\n", "size": 8, "png": png, "width": 32, "height": 16,
+            });
+            let (workspace, error) = (workspace.clone(), error.map(str::to_owned));
+            move |window: &mut Window, cx: &mut App| {
+                workspace.update(cx, |this, cx| {
+                    let mut view = (*this.view).clone();
+                    view.requests.insert(
+                        "file-preview",
+                        wks_native::features::RequestState {
+                            request: wks_native::features::Request::FilePreview {
+                                session: "a".into(),
+                                target,
+                            },
+                            number,
+                            loading,
+                            error,
+                            value: Arc::new(value),
+                        },
+                    );
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            }
+        };
+        let untouched = |visual: &mut VisualTestContext,
+                         commands: &mut tokio::sync::mpsc::Receiver<Command>,
+                         keys: &str| {
+            workspace.read_with(visual, |this, cx| {
+                assert!(
+                    this.file_viewer().is_some(),
+                    "{keys} must not close the viewer"
+                );
+                assert_eq!(
+                    this.composer.read(cx).value().as_ref(),
+                    "DRAFT_MUST_NOT_SEND",
+                    "{keys} reached the covered composer"
+                );
+                assert_eq!(this.screen, Screen::Conversation, "{keys} navigated");
+                assert!(!this.new_session, "{keys} started a session");
+                assert_eq!(this.view.selected.as_deref(), Some("a"));
+            });
+            visual.update(|window, cx| {
+                assert!(
+                    workspace.read(cx).viewer_has_focus(window, cx),
+                    "{keys} moved focus out of the viewer"
+                )
+            });
+            assert!(
+                commands.try_recv().is_err(),
+                "{keys} reached the workspace under the viewer"
+            );
+        };
+        let states: [(&str, u64, bool, Option<&str>, &str); 4] = [
+            ("docs/a.md", 1, true, None, "file-viewer"),
+            ("docs/a.md", 2, false, None, "file-viewer-text"),
+            ("shot.png", 3, false, None, "file-viewer-image"),
+            (
+                "gone.md",
+                4,
+                false,
+                Some("No file at this path."),
+                "file-viewer-error",
+            ),
+        ];
+        for (path, number, loading, error, selector) in states {
+            visual.update(open(path, number, loading, error));
+            visual.run_until_parked();
+            assert!(visual.debug_bounds(selector).is_some(), "{selector} shows");
+            for keys in [
+                "ctrl-enter",
+                "cmd-enter",
+                "alt-down",
+                "alt-up",
+                "ctrl-n",
+                "ctrl-p",
+                "ctrl-,",
+                "ctrl-l",
+                "ctrl-r",
+                "ctrl-0",
+                "tab",
+                "shift-tab",
+                "enter",
+                "x",
+                "backspace",
+            ] {
+                visual.simulate_keystrokes(keys);
+                visual.run_until_parked();
+                untouched(&mut visual, &mut commands, keys);
+            }
+            visual.simulate_input("typed");
+            visual.run_until_parked();
+            untouched(&mut visual, &mut commands, "typing");
+            if selector == "file-viewer-text" {
+                // The viewer's own keys still work: select all and copy.
+                visual.simulate_keystrokes("ctrl-a ctrl-c");
+                visual.run_until_parked();
+                let copied = visual.update(|_, cx| cx.read_from_clipboard());
+                assert_eq!(
+                    copied.and_then(|item| item.text()).as_deref(),
+                    Some("one\ntwo\n")
+                );
+                untouched(&mut visual, &mut commands, "ctrl-a ctrl-c");
+            }
+            // Focus pulled behind the sheet (a late receipt, a UI request) is
+            // taken back before a key can reach the composer.
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.composer.read(cx).focus_handle(cx).focus(window)
+                })
+            });
+            visual.simulate_keystrokes("ctrl-enter");
+            visual.simulate_input("z");
+            visual.run_until_parked();
+            untouched(&mut visual, &mut commands, "refocused ctrl-enter");
+            // Dismiss and reopen the next state from the composer again.
+            visual.simulate_keystrokes("escape");
+            visual.run_until_parked();
+            workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+        }
+        // Closed, the same draft and shortcut work normally again.
+        let focused = visual.update(|window, cx| {
+            workspace
+                .read(cx)
+                .composer
+                .read(cx)
+                .focus_handle(cx)
+                .is_focused(window)
+        });
+        assert!(focused, "closing returns focus to the composer");
+        visual.simulate_keystrokes("ctrl-enter");
+        let Command::Act {
+            session,
+            action: Action::Send(text),
+        } = commands.try_recv().expect("send works after closing")
+        else {
+            panic!("wrong action");
+        };
+        assert_eq!(
+            (session.as_str(), text.as_str()),
+            ("a", "DRAFT_MUST_NOT_SEND")
+        );
     }
 
     #[gpui::test]

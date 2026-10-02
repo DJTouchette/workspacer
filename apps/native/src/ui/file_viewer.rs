@@ -40,8 +40,56 @@ impl Workspace {
             // viewer for the dismissed request.
             self.chat.viewer.editor = None;
             self.chat.viewer.image = None;
-            window.focus(&self.focus);
+            self.release_viewer_focus(window, cx);
             cx.notify();
+        }
+    }
+
+    /// The viewer is modal: while any state of it (loading, text, image,
+    /// error) is showing, keyboard focus stays inside the sheet so nothing
+    /// typed or bound reaches the composer, sidebar or conversation behind
+    /// it. Runs after every view update; once the viewer is gone, focus
+    /// goes back to where it was.
+    pub(super) fn hold_viewer_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let inside = self.viewer_has_focus(window, cx);
+        if self.file_viewer().is_none() {
+            if inside {
+                self.release_viewer_focus(window, cx);
+            }
+            return;
+        }
+        if !inside && self.viewer_return.is_none() {
+            self.viewer_return = window.focused(cx);
+        }
+        // Text takes focus once loaded (scrolling, selection, Ctrl+F);
+        // focus already in its search field stays there.
+        if !inside || self.viewer_focus.is_focused(window) {
+            match &self.chat.viewer.editor {
+                Some(editor) => editor.read(cx).focus_handle(cx).focus(window),
+                None => window.focus(&self.viewer_focus),
+            }
+        }
+    }
+
+    /// Focus is on the sheet or inside it. A just-built editor is not in the
+    /// rendered tree yet, so it is checked by identity too.
+    pub(super) fn viewer_has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.viewer_focus.contains_focused(window, cx)
+            || self.chat.viewer.editor.as_ref().is_some_and(|editor| {
+                editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+            })
+    }
+
+    /// Return focus to the composer if it had it, otherwise the workspace.
+    fn release_viewer_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let composer = self.composer.read(cx).focus_handle(cx);
+        if self.viewer_return.take().as_ref() == Some(&composer) {
+            window.focus(&composer);
+        } else {
+            window.focus(&self.focus);
         }
     }
 
@@ -273,6 +321,11 @@ impl Workspace {
             .overflow_hidden()
             .flex()
             .flex_col()
+            // Deferred, the sheet's dispatch path skips the workspace, so
+            // none of its bindings reach here; Tab must not walk focus out.
+            .key_context("FileViewer")
+            .track_focus(&self.viewer_focus)
+            .on_action(cx.listener(|_, _: &ViewerTab, _, _| {}))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
