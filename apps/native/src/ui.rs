@@ -2988,6 +2988,72 @@ mod tests {
     }
 
     #[gpui::test]
+    fn viewer_watch_terminal_states_and_closed_channel_recover(cx: &mut TestAppContext) {
+        use window_destroy::{Event, Watch};
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(1400.), px(800.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        for (index, terminal) in [
+            None,
+            Some(Event::Unidentified),
+            Some(Event::Ambiguous),
+            Some(Event::Failed("connection lost".into())),
+            Some(Event::Destroyed),
+            None,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let number = index as u64 + 1;
+            preview_state(
+                &workspace,
+                &mut visual,
+                "a",
+                file_target("/repo/guide.md"),
+                number,
+                false,
+                None,
+                serde_json::json!({"contents": "# Guide", "size": 7}),
+            );
+            settle(&mut visual);
+            visual.update(|window, cx| workspace.update(cx, |this, cx| this.pop_out(window, cx)));
+            visual.run_until_parked();
+            let (handle, _) = workspace.read_with(&visual, |this, _| this.viewer_popout().unwrap());
+            let (sender, events) = async_channel::bounded(2);
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.watch_popout(handle.window_id(), Watch::Started(events), window, cx)
+                })
+            });
+            if index == 5 {
+                sender.try_send(Event::Attached).unwrap();
+            }
+            if let Some(event) = terminal {
+                sender.try_send(event).unwrap();
+            }
+            // No fake remove_window: GPUI still believes this window is live.
+            assert_eq!(cx.windows().len(), 2);
+            drop(sender);
+            visual.run_until_parked();
+            assert_eq!(
+                cx.windows().len(),
+                1,
+                "terminal state {index} removes logical window"
+            );
+            workspace.read_with(&visual, |this, cx| {
+                assert!(this.viewer_popout().is_none());
+                assert_eq!(this.file_viewer().unwrap().read(cx).state().number, number);
+            });
+            settle(&mut visual);
+            assert!(visual.debug_bounds("file-viewer-panel").is_some());
+        }
+    }
+
+    #[gpui::test]
     fn viewer_pops_out_into_its_own_window_and_docks_back(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         visual.simulate_resize(size(px(1400.), px(800.)));

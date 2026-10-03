@@ -91,6 +91,8 @@ pub(super) struct PreviewPane {
     /// New content arrived; the window should focus it.
     wants_focus: bool,
     focus: FocusHandle,
+    /// Keep the discovery identity fixed until the platform watch attaches.
+    title_ready: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -124,6 +126,7 @@ impl PreviewPane {
             navigation: None,
             wants_focus: true,
             focus: cx.focus_handle(),
+            title_ready: presentation != Presentation::Window,
         };
         pane.load(state, window, cx);
         pane
@@ -200,7 +203,7 @@ impl PreviewPane {
         let Some(target) = self.target().cloned() else {
             return;
         };
-        if self.presentation == Presentation::Window {
+        if self.presentation == Presentation::Window && self.title_ready {
             window.set_window_title(&popout_title(&target));
         }
         match target.kind {
@@ -1121,12 +1124,16 @@ impl Workspace {
     fn popped_out(
         &mut self,
         pane: Entity<PreviewPane>,
-        opened: anyhow::Result<(WindowHandle<Root>, Entity<PreviewPane>)>,
+        opened: anyhow::Result<OpenedPopout>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match opened {
-            Ok((handle, popped)) => {
+            Ok(OpenedPopout {
+                window: handle,
+                pane: popped,
+                watch,
+            }) => {
                 // Superseded meanwhile (closed, or another window): the
                 // newest state wins and this window goes.
                 if self.chat.viewer.pane.as_ref() != Some(&pane) {
@@ -1134,7 +1141,6 @@ impl Workspace {
                     return;
                 }
                 let inside = pane.read(cx).has_focus(window, cx);
-                let title = popped.read(cx).target().map(popout_title);
                 self.chat.viewer.pane = None;
                 self.chat.viewer.popout = Some(Popout {
                     window: handle,
@@ -1143,19 +1149,7 @@ impl Workspace {
                 if inside || self.viewer_return.is_some() {
                     self.release_viewer_focus(window, cx);
                 }
-                if let Some(destroyed) =
-                    title.and_then(|title| super::window_destroy::watch(&title, cx))
-                {
-                    let id = handle.window_id();
-                    cx.spawn_in(window, async move |this, cx| {
-                        if destroyed.recv().await.is_ok() {
-                            let _ = this.update_in(cx, |ws, window, cx| {
-                                ws.popout_destroyed(id, window, cx)
-                            });
-                        }
-                    })
-                    .detach();
-                }
+                self.watch_popout(handle.window_id(), watch, window, cx);
             }
             Err(error) => pane.update(cx, |pane, cx| {
                 pane.notice = Some(format!("Couldn't open a separate window: {error}").into());
@@ -1163,6 +1157,62 @@ impl Workspace {
             }),
         }
         cx.notify();
+    }
+
+    /// Consume the actual watch protocol. Closed channels are terminal too:
+    /// worker startup/panic/connection failures must never strand the viewer.
+    pub(super) fn watch_popout(
+        &mut self,
+        id: gpui::WindowId,
+        watch: super::window_destroy::Watch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use super::window_destroy::{Event, Watch};
+        let Watch::Started(events) = watch else {
+            self.popout_attached(id, cx);
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let event = events.recv().await;
+                let attached = matches!(event, Ok(Event::Attached));
+                if !attached && !matches!(event, Ok(Event::Destroyed)) {
+                    eprintln!("File preview watch ended; docking viewer: {event:?}");
+                }
+                let result = this.update_in(cx, |ws, window, cx| {
+                    if attached {
+                        ws.popout_attached(id, cx);
+                    } else {
+                        ws.popout_destroyed(id, window, cx);
+                    }
+                });
+                if !attached || result.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn popout_attached(&mut self, id: gpui::WindowId, cx: &mut App) {
+        let Some(popout) = self
+            .chat
+            .viewer
+            .popout
+            .as_ref()
+            .filter(|popout| popout.window.window_id() == id)
+        else {
+            return;
+        };
+        let _ = popout.window.update(cx, |_, window, cx| {
+            popout.pane.update(cx, |pane, _| {
+                pane.title_ready = true;
+                if let Some(target) = pane.target() {
+                    window.set_window_title(&popout_title(target));
+                }
+            });
+        });
     }
 
     /// Bring a popped-out viewer back beside the conversation (or as a
@@ -1341,16 +1391,22 @@ impl Workspace {
     }
 }
 
+struct OpenedPopout {
+    window: WindowHandle<Root>,
+    pane: Entity<PreviewPane>,
+    watch: super::window_destroy::Watch,
+}
+
 /// Open the viewer's own window with a pane built from `snapshot`.
 fn open_popout(
     workspace: WeakEntity<Workspace>,
     (state, mode, history): (RequestState, Mode, Vec<FileTarget>),
     cx: &mut App,
-) -> anyhow::Result<(WindowHandle<Root>, Entity<PreviewPane>)> {
+) -> anyhow::Result<OpenedPopout> {
     let Request::FilePreview { target, .. } = &state.request else {
         anyhow::bail!("nothing to show");
     };
-    let title = popout_title(target);
+    let title = super::window_destroy::discovery_title(&popout_title(target), cx);
     let mut created = None;
     let bounds = gpui::Bounds::centered(None, gpui::size(px(880.), px(760.)), cx);
     let handle = cx.open_window(
@@ -1398,7 +1454,12 @@ fn open_popout(
         },
     )?;
     let popped = created.ok_or_else(|| anyhow::anyhow!("no viewer was created"))?;
-    Ok((handle, popped))
+    let watch = super::window_destroy::watch(&title, cx);
+    Ok(OpenedPopout {
+        window: handle,
+        pane: popped,
+        watch,
+    })
 }
 
 fn popout_title(target: &FileTarget) -> String {

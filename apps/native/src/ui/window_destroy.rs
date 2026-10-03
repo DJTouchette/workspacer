@@ -1,71 +1,96 @@
-//! Notice when the window system destroys one of our windows without asking.
+//! Recover GPUI 0.2 windows destroyed directly by another X11 client.
 //!
-//! On X11 any client may destroy any window (`xdotool windowclose`,
-//! `xkill -id`, a window manager tearing down). GPUI 0.2's X11 backend handles
-//! the polite close (WM_DELETE_WINDOW) and UnmapNotify, but not
-//! DestroyNotify: the logical window stays registered and every later update
-//! of its handle succeeds against a window nobody can see.
-//!
-//! The watch is a second X11 connection on a thread of its own. GPUI does not
-//! expose X11 window ids (its `X11Window::window_handle` is
-//! `unimplemented!()`), so the thread finds the window by this process's
-//! `_NET_WM_PID` and the exact `_NET_WM_NAME` it was opened with, both of
-//! which GPUI sets with checked requests before `open_window` returns. It then
-//! selects StructureNotify on that one window (event masks are per client, so
-//! GPUI's own selection is untouched) and blocks until its DestroyNotify.
-//! That also arrives when GPUI closes the window normally, so the thread never
-//! outlives the window; it ends too if the window cannot be identified
-//! unambiguously or the connection fails. Wayland, macOS and Windows do not let
-//! another client destroy a window, so there is nothing to watch there.
+//! GPUI ignores DestroyNotify and its X11 `window_handle()` panics. Discover
+//! through a unique, temporarily fixed title instead. A checked event-mask
+//! request acknowledges attachment; only then may the UI change the title.
+//! Discovery is bounded: not finding a window is *not* evidence that it is
+//! alive. Every failure docks the viewer, including a closed worker channel.
+//! Unsupported platforms keep their ordinary window lifecycle.
 
-/// Resolves once the platform window titled `title` (just opened by this
-/// process) is destroyed, by anyone. `None` when the platform cannot be
-/// watched (not GPUI's X11 backend); the channel closes without a message if
-/// the window cannot be found. Callers keep their ordinary close handling.
-pub(super) fn watch(title: &str, cx: &gpui::App) -> Option<async_channel::Receiver<()>> {
+// The no-X11 build uses Unsupported; keep the receiver protocol shared.
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Event {
+    Attached,
+    Destroyed,
+    /// Never identified: vanished before discovery, or not discoverable.
+    Unidentified,
+    Ambiguous,
+    Failed(String),
+}
+
+#[cfg_attr(not(any(target_os = "linux", target_os = "freebsd")), allow(dead_code))]
+pub(super) enum Watch {
+    Unsupported,
+    Started(async_channel::Receiver<Event>),
+}
+
+pub(super) fn discovery_title(title: &str, cx: &gpui::App) -> String {
+    if supported(cx) {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        format!(
+            "{title} [preview-{}-{}]",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        )
+    } else {
+        title.into()
+    }
+}
+
+fn supported(cx: &gpui::App) -> bool {
+    cfg!(any(target_os = "linux", target_os = "freebsd")) && cx.compositor_name() == "X11"
+}
+
+pub(super) fn watch(title: &str, cx: &gpui::App) -> Watch {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    {
-        // Only GPUI's X11 client has X11 windows.
-        if cx.compositor_name() != "X11" {
-            return None;
-        }
-        let (destroyed, receiver) = async_channel::bounded(1);
-        let title = title.to_owned();
-        std::thread::Builder::new()
-            .name("x11-window-destroy".into())
-            .spawn(move || {
-                if x11::wait_for_destroy(&title).unwrap_or(false) {
-                    let _ = destroyed.try_send(());
-                }
-            })
-            .ok()?;
-        Some(receiver)
+    if supported(cx) {
+        return Watch::Started(x11::start(title.to_owned(), None));
     }
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-    {
-        let _ = (title, cx);
-        None
-    }
+    let _ = (title, cx);
+    Watch::Unsupported
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod x11 {
+    use super::Event;
+    use std::time::{Duration, Instant};
     use x11rb::connection::Connection;
     use x11rb::errors::ReplyError;
     use x11rb::protocol::{
-        ErrorKind, Event,
+        ErrorKind, Event as XEvent,
         xproto::{AtomEnum, ChangeWindowAttributesAux, ConnectionExt, EventMask, Window},
     };
     use x11rb::rust_connection::RustConnection;
 
-    /// Top-level windows sit under the root, or one or two frames deeper
-    /// with a reparenting window manager.
     const DEPTH: usize = 3;
+    const DISCOVERY_BUDGET: Duration = Duration::from_millis(250);
+    const RETRY: Duration = Duration::from_millis(10);
 
-    /// Blocks until the window is destroyed (`true`), or gives up (`false`).
-    pub(super) fn wait_for_destroy(title: &str) -> anyhow::Result<bool> {
-        // The same display GPUI connected to ($DISPLAY).
-        let (connection, screen) = x11rb::connect(None)?;
+    pub(super) fn start(title: String, display: Option<String>) -> async_channel::Receiver<Event> {
+        // Attachment and one terminal result can both arrive before the UI runs.
+        let (sender, receiver) = async_channel::bounded(2);
+        let failure = sender.clone();
+        let spawned = std::thread::Builder::new()
+            .name("x11-window-destroy".into())
+            .spawn(move || {
+                let result = wait_for_destroy(&title, display.as_deref(), &sender)
+                    .unwrap_or_else(|error| Event::Failed(error.to_string()));
+                let _ = sender.try_send(result);
+            });
+        if let Err(error) = spawned {
+            let _ = failure.try_send(Event::Failed(error.to_string()));
+        }
+        receiver
+    }
+
+    fn wait_for_destroy(
+        title: &str,
+        display: Option<&str>,
+        sender: &async_channel::Sender<Event>,
+    ) -> anyhow::Result<Event> {
+        let (connection, screen) = x11rb::connect(display)?;
         let root = connection.setup().roots[screen].root;
         let atom = |name: &str| -> anyhow::Result<u32> {
             Ok(connection
@@ -78,9 +103,19 @@ mod x11 {
             atom("_NET_WM_NAME")?,
             atom("UTF8_STRING")?,
         ];
-        let matches = ours(&connection, root, std::process::id(), title, atoms)?;
-        let [id] = matches[..] else {
-            return Ok(false);
+        let deadline = Instant::now() + DISCOVERY_BUDGET;
+        let id = loop {
+            let matches = ours(&connection, root, std::process::id(), title, atoms)?;
+            match matches[..] {
+                [id] => break id,
+                [] if Instant::now() < deadline && !sender.is_closed() => {
+                    // Only discovery retries. Once attached, block on X events.
+                    // Reparenting/property registration can be in flight.
+                    std::thread::sleep(RETRY);
+                }
+                [] => return Ok(Event::Unidentified),
+                _ => return Ok(Event::Ambiguous),
+            }
         };
         let selected = connection
             .change_window_attributes(
@@ -90,22 +125,31 @@ mod x11 {
             .check();
         match selected {
             Ok(()) => {}
-            // Already gone before the watch began.
             Err(ReplyError::X11Error(error)) if error.error_kind == ErrorKind::Window => {
-                return Ok(true);
+                return Ok(Event::Destroyed);
             }
             Err(error) => return Err(error.into()),
         }
+        // Checked selection is a server round-trip, not just a queued request.
+        // Destruction from now on is observed by XID, regardless of title.
+        if sender.try_send(Event::Attached).is_err() {
+            return Ok(Event::Unidentified);
+        }
         loop {
-            if let Event::DestroyNotify(event) = connection.wait_for_event()?
+            if let XEvent::DestroyNotify(event) = connection.wait_for_event()?
                 && event.window == id
             {
-                return Ok(true);
+                return Ok(Event::Destroyed);
             }
         }
     }
 
-    /// This process's windows named `title`.
+    fn missing(error: &ReplyError) -> bool {
+        matches!(error, ReplyError::X11Error(error) if error.error_kind == ErrorKind::Window)
+    }
+
+    /// PID + unique fixed title, under the root or reparenting WM frames.
+    /// Ignore only BadWindow (a concurrent destroy), not connection failures.
     fn ours(
         connection: &RustConnection,
         root: Window,
@@ -118,24 +162,32 @@ mod x11 {
         for _ in 0..DEPTH {
             let mut next = vec![];
             for parent in level {
-                // Windows can vanish mid-walk; skip them.
-                let Ok(tree) = connection.query_tree(parent)?.reply() else {
-                    continue;
+                let tree = match connection.query_tree(parent)?.reply() {
+                    Ok(tree) => tree,
+                    Err(error) if missing(&error) => continue,
+                    Err(error) => return Err(error.into()),
                 };
                 for window in tree.children {
                     next.push(window);
-                    let owner = connection
+                    let owner = match connection
                         .get_property(false, window, pid, AtomEnum::CARDINAL, 0, 1)?
                         .reply()
-                        .ok()
-                        .and_then(|p| p.value32().and_then(|mut v| v.next()));
+                    {
+                        Ok(p) => p.value32().and_then(|mut v| v.next()),
+                        Err(error) if missing(&error) => continue,
+                        Err(error) => return Err(error.into()),
+                    };
                     if owner != Some(process) {
                         continue;
                     }
-                    let named = connection
+                    let named = match connection
                         .get_property(false, window, name, utf8, 0, 1024)?
                         .reply()
-                        .is_ok_and(|p| p.value == title.as_bytes());
+                    {
+                        Ok(p) => p.value == title.as_bytes(),
+                        Err(error) if missing(&error) => continue,
+                        Err(error) => return Err(error.into()),
+                    };
                     if named {
                         found.push(window);
                     }
@@ -144,5 +196,119 @@ mod x11 {
             level = next;
         }
         Ok(found)
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
+mod tests {
+    use super::*;
+    use x11rb::{
+        connection::Connection,
+        protocol::xproto::{AtomEnum, ConnectionExt, CreateWindowAux, PropMode, WindowClass},
+        wrapper::ConnectionExt as _,
+    };
+
+    fn receive(receiver: &async_channel::Receiver<Event>) -> Event {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            match receiver.try_recv() {
+                Ok(event) => return event,
+                Err(async_channel::TryRecvError::Closed) => {
+                    panic!("watch closed without terminal event")
+                }
+                Err(_) => assert!(std::time::Instant::now() < deadline, "watch timed out"),
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    /// Explicit private display only: never connect tests to the user desktop.
+    #[test]
+    #[ignore = "requires WKS_TEST_X11_DISPLAY pointing at an owned private X server"]
+    fn x11_discovery_registration_rename_destroy_and_failure() -> anyhow::Result<()> {
+        let display = std::env::var("WKS_TEST_X11_DISPLAY")?;
+        let (connection, screen) = x11rb::connect(Some(&display))?;
+        let root = connection.setup().roots[screen].root;
+        let atom = |s: &str| -> anyhow::Result<u32> {
+            Ok(connection.intern_atom(false, s.as_bytes())?.reply()?.atom)
+        };
+        let pid = atom("_NET_WM_PID")?;
+        let name = atom("_NET_WM_NAME")?;
+        let utf8 = atom("UTF8_STRING")?;
+        let title = format!("watch-test-{}", std::process::id());
+        let create = || -> anyhow::Result<u32> {
+            let id = connection.generate_id()?;
+            connection
+                .create_window(
+                    x11rb::COPY_DEPTH_FROM_PARENT,
+                    id,
+                    root,
+                    0,
+                    0,
+                    80,
+                    80,
+                    0,
+                    WindowClass::INPUT_OUTPUT,
+                    0,
+                    &CreateWindowAux::new(),
+                )?
+                .check()?;
+            connection
+                .change_property32(
+                    PropMode::REPLACE,
+                    id,
+                    pid,
+                    AtomEnum::CARDINAL,
+                    &[std::process::id()],
+                )?
+                .check()?;
+            connection
+                .change_property8(PropMode::REPLACE, id, name, utf8, title.as_bytes())?
+                .check()?;
+            connection.map_window(id)?.check()?;
+            Ok(id)
+        };
+        // The real window was mapped and destroyed before the watcher exists.
+        // The old production code closed its channel silently here.
+        for _ in 0..3 {
+            let id = create()?;
+            connection.destroy_window(id)?.check()?;
+            let events = x11::start(title.clone(), Some(display.clone()));
+            assert_eq!(receive(&events), Event::Unidentified);
+        }
+        // Delayed property registration: discovery is retried, not abandoned.
+        let id = create()?;
+        connection.delete_property(id, name)?.check()?;
+        let events = x11::start(title.clone(), Some(display.clone()));
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        assert!(events.try_recv().is_err());
+        connection
+            .change_property8(PropMode::REPLACE, id, name, utf8, title.as_bytes())?
+            .check()?;
+        assert_eq!(receive(&events), Event::Attached);
+        // Renaming after acknowledgement cannot lose the destruction event.
+        connection
+            .change_property8(PropMode::REPLACE, id, name, utf8, b"new file title")?
+            .check()?;
+        connection.destroy_window(id)?.check()?;
+        assert_eq!(receive(&events), Event::Destroyed);
+        // An unexpected external rename before attachment fails closed.
+        let id = create()?;
+        connection
+            .change_property8(PropMode::REPLACE, id, name, utf8, b"external rename")?
+            .check()?;
+        let events = x11::start(title.clone(), Some(display.clone()));
+        assert_eq!(receive(&events), Event::Unidentified);
+        connection.destroy_window(id)?.check()?;
+        // Never attach to an arbitrary one of two matching windows.
+        let a = create()?;
+        let b = create()?;
+        let events = x11::start(title, Some(display));
+        assert_eq!(receive(&events), Event::Ambiguous);
+        connection.destroy_window(a)?.check()?;
+        connection.destroy_window(b)?.check()?;
+        let events = x11::start("unused".into(), Some("invalid-display".into()));
+        assert!(matches!(receive(&events), Event::Failed(_)));
+        Ok(())
     }
 }
