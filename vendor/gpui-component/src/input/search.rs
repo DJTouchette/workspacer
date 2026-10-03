@@ -4,8 +4,8 @@ use std::{ops::Range, rc::Rc};
 
 use gpui::{
     App, AppContext as _, Context, Empty, Entity, FocusHandle, Focusable, Half,
-    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Pixels, Render, Styled,
-    Subscription, Window, actions, canvas, div, prelude::FluentBuilder as _,
+    InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Pixels, Render,
+    SharedString, Styled, Subscription, Window, actions, canvas, div, prelude::FluentBuilder as _,
 };
 use ropey::Rope;
 
@@ -178,6 +178,20 @@ pub(super) struct SearchPanel {
 }
 
 impl InputState {
+    /// Workspacer: open (or refocus) the search panel, exactly as the
+    /// `Search` action does. Unlike dispatching the action this does not
+    /// need the input to be in the window's rendered dispatch tree yet, so a
+    /// caller can show the input and its search in the same update.
+    pub fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_action_search(&Search, window, cx);
+    }
+
+    /// Workspacer: the open search panel's query, `None` while it is closed.
+    pub fn search_query(&self, cx: &App) -> Option<SharedString> {
+        let panel = self.search_panel.as_ref()?.read(cx);
+        panel.open.then(|| panel.search_input.read(cx).value())
+    }
+
     /// Update the search matcher when text changes.
     pub(super) fn update_search(&mut self, cx: &mut App) {
         let Some(search_panel) = self.search_panel.as_ref() else {

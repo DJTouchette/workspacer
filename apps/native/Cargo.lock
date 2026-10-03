@@ -10056,6 +10056,7 @@ dependencies = [
  "shell-words",
  "tokio",
  "tokio-tungstenite",
+ "unicode-general-category",
  "url",
  "workspacer-hub",
 ]

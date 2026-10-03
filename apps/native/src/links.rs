@@ -119,10 +119,14 @@ fn same_document(fragment: &str) -> DocumentLink {
     }
 }
 
-/// GitHub's heading anchors: lowercase, punctuation dropped, spaces become
-/// hyphens, and repeats get `-1`, `-2`… in document order.
+/// GitHub's heading anchors (github-slugger): lowercase, everything but
+/// letters, marks, numbers, connector punctuation, hyphens and spaces
+/// dropped, spaces become hyphens. Repeats get `-1`, `-2`… in document order,
+/// and every emitted id is reserved, so a literal "Foo 1" heading and a
+/// generated `foo-1` never share an anchor.
 pub fn heading_slugs<'a>(headings: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut seen = std::collections::BTreeMap::<String, usize>::new();
+    use unicode_general_category::{GeneralCategory as G, get_general_category};
+    let mut used = std::collections::HashMap::<String, usize>::new();
     headings
         .into_iter()
         .map(|text| {
@@ -132,18 +136,31 @@ pub fn heading_slugs<'a>(headings: impl IntoIterator<Item = &'a str>) -> Vec<Str
                 .chars()
                 .filter_map(|c| match c {
                     ' ' => Some('-'),
-                    '-' | '_' => Some(c),
-                    c if c.is_alphanumeric() => Some(c),
-                    _ => None,
+                    '-' => Some(c),
+                    c => match get_general_category(c) {
+                        G::UppercaseLetter
+                        | G::LowercaseLetter
+                        | G::TitlecaseLetter
+                        | G::ModifierLetter
+                        | G::OtherLetter
+                        | G::NonspacingMark
+                        | G::SpacingMark
+                        | G::EnclosingMark
+                        | G::DecimalNumber
+                        | G::LetterNumber
+                        | G::OtherNumber
+                        | G::ConnectorPunctuation => Some(c),
+                        _ => None,
+                    },
                 })
                 .collect();
-            let count = seen.entry(base.clone()).or_insert(0);
-            let slug = if *count == 0 {
-                base.clone()
-            } else {
-                format!("{base}-{count}")
-            };
-            *count += 1;
+            let mut slug = base.clone();
+            while used.contains_key(&slug) {
+                let count = used.entry(base.clone()).or_insert(0);
+                *count += 1;
+                slug = format!("{base}-{count}");
+            }
+            used.insert(slug.clone(), 0);
             slug
         })
         .collect()
@@ -825,6 +842,46 @@ mod tests {
                 "snake_case-and-dash"
             ]
         );
+    }
+
+    #[test]
+    fn heading_slugs_never_reuse_an_anchor() {
+        // github-slugger's own results for these orders.
+        assert_eq!(
+            heading_slugs(["Foo", "Foo", "Foo-1"]),
+            ["foo", "foo-1", "foo-1-1"]
+        );
+        assert_eq!(
+            heading_slugs(["Foo", "Foo-1", "Foo"]),
+            ["foo", "foo-1", "foo-2"]
+        );
+        assert_eq!(
+            heading_slugs(["Foo-1", "Foo", "Foo"]),
+            ["foo-1", "foo", "foo-2"]
+        );
+        assert_eq!(
+            heading_slugs(["Foo 1", "Foo", "Foo", "Foo-1"]),
+            ["foo-1", "foo", "foo-2", "foo-1-1"]
+        );
+        assert_eq!(heading_slugs(["", "", "!!!"]), ["", "-1", "-2"]);
+        assert_eq!(
+            heading_slugs(["a.b", "a...b", "ab"]),
+            ["ab", "ab-1", "ab-2"]
+        );
+        // Decomposed "café" keeps its combining acute (a mark), like GitHub.
+        assert_eq!(
+            heading_slugs(["cafe\u{301}", "Ⅻ ²_x"]),
+            ["cafe\u{301}", "ⅻ-²_x"]
+        );
+        for order in [
+            ["Foo", "Foo", "Foo-1", "Foo-1", "Foo-2"],
+            ["Foo-2", "Foo-1", "Foo", "Foo", "Foo"],
+            ["Foo-1", "Foo-1", "Foo", "Foo", "Foo-1-1"],
+        ] {
+            let slugs = heading_slugs(order);
+            let unique: std::collections::HashSet<_> = slugs.iter().collect();
+            assert_eq!(unique.len(), slugs.len(), "{order:?} -> {slugs:?}");
+        }
     }
 
     #[test]

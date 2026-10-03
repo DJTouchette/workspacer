@@ -317,15 +317,15 @@ impl PreviewPane {
 
     /// Ctrl+F from the document: search its source.
     fn find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editor.is_none() {
+        let Some(editor) = self.editor.clone() else {
             return;
-        }
+        };
         self.set_mode(Mode::Source, window, cx);
-        self.focus_content(window, cx);
-        // The editor handles Search once it is in the rendered tree.
-        window.on_next_frame(|window, cx| {
-            window.dispatch_action(Box::new(gpui_component::input::Search), cx)
-        });
+        // Opened directly, not by dispatching `Search`: the source editor is
+        // not in the rendered dispatch tree until the next frame, and an
+        // action dispatched before then never reaches it. Search focuses
+        // its own query field.
+        editor.update(cx, |editor, cx| editor.open_search(window, cx));
     }
 
     /// A link clicked inside the rendered document.

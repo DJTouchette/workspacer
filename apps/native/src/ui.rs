@@ -2318,7 +2318,7 @@ mod tests {
         ## Usage\n\n- one\n- two\n\n1. first\n2. second\n\n- [x] done\n- [ ] todo\n\n\
         > A quoted note.\n\n| Name | Value |\n| --- | --- |\n| a | 1 |\n\n\
         ```rust\nfn main() {}\n```\n\n![Diagram](img/diagram.png)\n\n---\n\n\
-        ## Usage\n\nSecond usage.\n\n\
+        ## Usage\n\nSecond usage.\n\n## Usage-1\n\nA literal heading that collides.\n\n\
         Filler 1.\n\nFiller 2.\n\nFiller 3.\n\nFiller 4.\n\nFiller 5.\n\nFiller 6.\n\n\
         Filler 7.\n\nFiller 8.\n\nFiller 9.\n\nFiller 10.\n\nFiller 11.\n\nFiller 12.\n\n\
         Filler 13.\n\nFiller 14.\n\nFiller 15.\n\nFiller 16.\n\nFiller 17.\n\nFiller 18.\n\n\
@@ -2461,7 +2461,8 @@ mod tests {
                 [
                     (1, "Guide".into()),
                     (2, "Usage".into()),
-                    (2, "Usage".into())
+                    (2, "Usage".into()),
+                    (2, "Usage-1".into())
                 ]
             );
         });
@@ -2510,6 +2511,18 @@ mod tests {
             usage_again,
             "#usage-1 is the second Usage"
         );
+        // A literal "Usage-1" heading never shares the generated anchor.
+        let literal = visual.update(|_, cx| pane.read(cx).document().unwrap().headings(cx)[3].0);
+        assert!(literal > usage_again);
+        follow(&mut visual, "#usage-1-1");
+        assert_eq!(
+            top(&mut visual),
+            literal,
+            "#usage-1-1 is the literal Usage-1"
+        );
+        visual.update(|_, cx| assert!(pane.read(cx).notice().is_none()));
+        follow(&mut visual, "#usage-1");
+        assert_eq!(top(&mut visual), usage_again);
         follow(&mut visual, "#");
         assert_eq!(top(&mut visual), 0);
         follow(&mut visual, "Guide.MD#usage-1");
@@ -2601,6 +2614,83 @@ mod tests {
         visual.run_until_parked();
         let (_, again) = preview_request(&mut commands).expect("Back re-reads the document");
         assert_eq!(again.path, "/repo/docs/Guide.MD");
+    }
+
+    #[gpui::test]
+    fn one_ctrl_f_from_the_preview_opens_source_search(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer
+                    .update(cx, |c, cx| c.set_value("KEEP_DRAFT", window, cx));
+            })
+        });
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/docs/Guide.MD"),
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": GUIDE, "size": GUIDE.len()}),
+        );
+        settle(&mut visual);
+        let pane = pane_of(&workspace, &visual);
+        let query = |visual: &mut VisualTestContext| {
+            visual.update(|_, cx| {
+                let editor = pane.read(cx).editor().unwrap().read(cx);
+                editor.search_query(cx).map(|q| q.to_string())
+            })
+        };
+        visual.update(|window, cx| {
+            assert_eq!(pane.read(cx).mode(), file_viewer::Mode::Preview);
+            assert!(workspace.read(cx).viewer_has_focus(window, cx));
+        });
+        assert_eq!(query(&mut visual), None);
+        // One press: the source shows with its search open and focused.
+        visual.simulate_keystrokes("ctrl-f");
+        visual.run_until_parked();
+        assert_eq!(query(&mut visual).as_deref(), Some(""));
+        visual.update(|window, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.mode(), file_viewer::Mode::Source);
+            assert!(
+                !pane.editor().unwrap().focus_handle(cx).is_focused(window),
+                "the query field, not the read-only source, has the keyboard"
+            );
+            assert!(workspace.read(cx).viewer_has_focus(window, cx));
+        });
+        // Typing goes into the query, and Enter finds the next match.
+        visual.simulate_input("Second usage");
+        visual.run_until_parked();
+        assert_eq!(query(&mut visual).as_deref(), Some("Second usage"));
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        assert_eq!(query(&mut visual).as_deref(), Some("Second usage"));
+        // Esc closes the search, back to the source; a second Esc the viewer.
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        assert_eq!(query(&mut visual), None);
+        visual.update(|window, cx| {
+            assert!(
+                pane.read(cx)
+                    .editor()
+                    .unwrap()
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            assert!(workspace.read(cx).file_viewer().is_some());
+        });
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.file_viewer().is_none());
+            assert_eq!(this.composer.read(cx).value().as_ref(), "KEEP_DRAFT");
+        });
+        // Nothing typed into the viewer reached the hub.
+        assert!(commands.try_recv().is_err());
     }
 
     #[gpui::test]

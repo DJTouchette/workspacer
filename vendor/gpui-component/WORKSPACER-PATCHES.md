@@ -61,5 +61,11 @@ Native interaction polish also patches:
   replacing an accidental hardcoded red foreground.
 - `src/styled.rs`: focus rings use 80 percent of the theme ring color so keyboard
   focus remains visible. The native client supplies its palette accent as ring.
+- `src/input/search.rs`: `InputState::open_search` (the `Search` action's
+  handler, made callable) and `InputState::search_query` (the open panel's
+  query). The native file viewer's Ctrl+F switches a rendered Markdown
+  document to its source and opens search in one key press; dispatching the
+  `Search` action could not, because the source input is not in the
+  rendered dispatch tree until the next frame. Search behavior is unchanged.
 
 Reapply these interaction changes explicitly when upgrading the component.
