@@ -185,9 +185,11 @@ impl Workspace {
         let resume = self.extras.resume.is_some();
         // Two columns only where both stay readable beside the sidebar.
         let wide = window.viewport_size().width >= px(1100.);
+        // Short windows give the form, not the heading, the height.
+        let short = window.viewport_size().height < px(620.);
         let card = || {
             div()
-                .p_4()
+                .p(px(if short { 12. } else { 16. }))
                 .rounded(px(p.panel_radius))
                 .bg(rgb(p.surface))
                 .border_1()
@@ -217,7 +219,7 @@ impl Workspace {
                     .child(
                         div()
                             .debug_selector(|| "launch-title".into())
-                            .text_size(px(22.))
+                            .text_size(px(if short { 17. } else { 22. }))
                             .font_weight(FontWeight::BOLD)
                             .child(if resume {
                                 "Pick up where you left off"
@@ -324,7 +326,7 @@ impl Workspace {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p_5()
+                    .p(px(if short { 12. } else { 20. }))
                     .child(content),
             )
             .child(
@@ -335,6 +337,10 @@ impl Workspace {
                     .bg(rgb(p.base))
                     .border_t_1()
                     .border_color(rgb(p.border))
+                    // A flex row gives the footer a definite width, so a long
+                    // error wraps instead of widening it.
+                    .flex()
+                    .justify_center()
                     .child(self.render_launch_footer(busy, can_create, wide, cx)),
             )
     }
@@ -569,12 +575,19 @@ impl Workspace {
                 .map(|p| p.title().to_owned())
                 .unwrap_or_else(|| wks_native::projects::basename(&self.projects.cwd).to_owned())
         });
+        // Short validation fits the footer line; a hub/launch error is shown
+        // whole above it, since its wording says what may have happened.
+        let detailed = self.spawn_error.chars().count() > 72;
         let (icon, color, status): (Option<IconName>, u32, String) = if !self.spawn_error.is_empty()
         {
             (
                 Some(IconName::TriangleAlert),
                 p.warning,
-                self.spawn_error.clone(),
+                if detailed {
+                    "Couldn't start the agent".into()
+                } else {
+                    self.spawn_error.clone()
+                },
             )
         } else if busy {
             (
@@ -596,10 +609,8 @@ impl Workspace {
         } else {
             (None, p.muted, "Choose a project to start".into())
         };
-        div()
+        let row = div()
             .w_full()
-            .max_w(px(if wide { 980. } else { 720. }))
-            .mx_auto()
             .flex()
             .items_center()
             .justify_between()
@@ -658,7 +669,47 @@ impl Workspace {
                             d.on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))
                         }),
                     ),
-            )
+            );
+        div()
+            .flex_1()
+            .min_w_0()
+            .max_w(px(if wide { 980. } else { 720. }))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .when(detailed, |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "launch-error".into())
+                        .w_full()
+                        // Definite height: wrapped text is measured after the
+                        // footer's height is settled, so it must not grow it.
+                        .h(px(70.))
+                        .overflow_hidden()
+                        .p_2()
+                        .rounded(px(p.control_radius))
+                        .border_1()
+                        .border_color(rgb(p.warning))
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .text_size(px(12.))
+                        .text_color(rgb(p.warning))
+                        .child(
+                            Icon::new(IconName::TriangleAlert)
+                                .size(px(13.))
+                                .flex_shrink_0(),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .line_clamp(3)
+                                .child(self.spawn_error.clone()),
+                        ),
+                )
+            })
+            .child(row)
     }
 
     fn catalog_key(&self, _cx: &App) -> CatalogKey {
