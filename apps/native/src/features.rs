@@ -315,11 +315,15 @@ impl Request {
 
 /// Read, patch and write back the shared registry, then confirm the hub kept
 /// the change: `config.save` answers a skipped write with the old config.
+/// The whole round holds the hub's project-write lock, so a pin and a launch
+/// touch (separate request keys, separate receipts) cannot both read the same
+/// map and have the later wholesale save erase the earlier change.
 async fn save_project(
     backend: &Backend,
     path: &str,
     change: &crate::projects::Patch,
 ) -> Result<Value> {
+    let _turn = backend.project_write().await;
     let current = backend.call("config.get", json!({})).await?;
     let partial = crate::projects::patch(&current, path, change)?;
     let saved = backend.call("config.save", partial).await?;

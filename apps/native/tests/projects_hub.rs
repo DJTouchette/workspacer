@@ -186,6 +186,79 @@ async fn projects_round_trip_through_the_hubs_shared_config() {
             .all(|p| !projects::same_dir(&p.path, &plain_path))
     );
 
+    // An older desktop's legacy-only pin/recent, then a pin and a launch
+    // touch accepted together: one serialized round each, so neither
+    // wholesale save erases the other.
+    let legacy = "/elsewhere/legacy-only";
+    let mut disk: Value =
+        serde_json::from_str(&serde_json::to_string(&removed.value["projects"]).unwrap()).unwrap();
+    disk["/elsewhere/desktop-project"]["label"] = "Desktop".into();
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(
+        &config_file,
+        serde_json::to_string(&serde_json::json!({
+            "projects": disk,
+            "directories": {"favourites": [legacy], "recent": [legacy, "/elsewhere/old"]}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let view = controller.views.borrow().clone();
+    let (save_before, touch_before) = (
+        view.requests["project-save"].number,
+        view.requests["project-touch"].number,
+    );
+    controller
+        .command(Command::Request(Request::SaveProject {
+            path: plain_path.clone(),
+            change: Patch::Pin(true),
+        }))
+        .unwrap();
+    controller
+        .command(Command::Request(Request::TouchProject {
+            path: repo_path.clone(),
+            at: 1_800_000_000_000,
+        }))
+        .unwrap();
+    let pinned = settle(&controller, "project-save", save_before).await;
+    let touched = settle(&controller, "project-touch", touch_before).await;
+    assert!(pinned.error.is_none(), "{:?}", pinned.error);
+    assert!(touched.error.is_none(), "{:?}", touched.error);
+    let reread = run(&controller, Request::Projects).await;
+    let map = &reread.value["projects"];
+    assert_eq!(
+        map[projects::project_key(&plain_path).as_str()]["favourite"],
+        true
+    );
+    assert_eq!(
+        map[key.as_str()]["lastOpened"].as_f64(),
+        Some(1_800_000_000_000.)
+    );
+    assert_eq!(map[key.as_str()]["favourite"], true);
+    assert_eq!(map["/elsewhere/desktop-project"]["label"], "Desktop");
+
+    let forgotten = run(
+        &controller,
+        Request::SaveProject {
+            path: legacy.into(),
+            change: Patch::Remove,
+        },
+    )
+    .await;
+    assert!(forgotten.error.is_none(), "{:?}", forgotten.error);
+    assert_eq!(forgotten.value["favourites"], serde_json::json!([]));
+    assert_eq!(
+        forgotten.value["recent"],
+        serde_json::json!(["/elsewhere/old"])
+    );
+    assert!(
+        projects::list(Some(&forgotten.value), &[], &[])
+            .iter()
+            .all(|p| p.path != legacy)
+    );
+    let text = std::fs::read_to_string(&config_file).unwrap();
+    assert!(!text.contains("legacy-only") && text.contains("desktop-project"));
+
     // What the hub reports about folders before a launch.
     let inspect = |path: String| {
         let controller = controller.clone();

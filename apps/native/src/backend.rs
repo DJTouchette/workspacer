@@ -7,11 +7,37 @@ use crate::{
 };
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, time::Duration};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::{Arc, LazyLock, Mutex, Weak},
+    time::Duration,
+};
 
 #[derive(Clone)]
 pub struct Backend {
     hub: HubClient,
+    project_writes: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// One project-write lock per hub this process talks to. Every window shares
+/// the host's controller, but a second controller (another host or fixture)
+/// on the same bus URL must still queue behind the first: each write replaces
+/// `config.projects` wholesale, so two overlapping read-patch-save rounds
+/// would silently drop one change. Weak entries free a lock with its last
+/// backend. Other processes are outside this lock (see `crate::projects`).
+static PROJECT_WRITES: LazyLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Default::default);
+
+fn project_writes_for(url: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let key = url::Url::parse(url).map_or_else(|_| url.to_owned(), |u| u.to_string());
+    let mut locks = PROJECT_WRITES.lock().unwrap_or_else(|e| e.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
 }
 
 #[derive(Clone)]
@@ -75,11 +101,20 @@ impl Backend {
         );
         Ok(value)
     }
+    /// Serializes one complete project transaction (fresh `config.get`,
+    /// patch, `config.save`, readback) against every other on this hub. FIFO,
+    /// so writes land in the order they were accepted. Waiting happens on the
+    /// backend runtime, never the UI thread; a dropped job releases its turn.
+    pub async fn project_write(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.project_writes.clone().lock_owned().await
+    }
     pub fn connect(config: Config) -> (Self, async_channel::Receiver<Event>) {
+        let project_writes = project_writes_for(&config.url);
         let (hub, events) = Client::start(config);
         (
             Self {
                 hub: HubClient::Remote(hub),
+                project_writes,
             },
             events,
         )
@@ -132,6 +167,8 @@ impl Backend {
         Ok((
             Self {
                 hub: HubClient::Embedded(client),
+                // An owned hub has exactly one in-process backend.
+                project_writes: Default::default(),
             },
             events,
         ))

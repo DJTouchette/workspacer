@@ -41,35 +41,24 @@ impl Drop for Hub {
 }
 impl Hub {
     async fn new() -> Self {
+        Self::serving(false).await
+    }
+    /// Serves every accepted client at once, for several controllers on one hub.
+    async fn shared() -> Self {
+        Self::serving(true).await
+    }
+    async fn serving(concurrent: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let config =
             Config::new(format!("ws://{}/bus", listener.local_addr().unwrap()), None).unwrap();
         let (send, frames) = mpsc::channel(128);
         let task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                let Ok(mut socket) = accept_async(stream).await else {
-                    continue;
-                };
-                socket
-                    .send(Message::Text(json!({"op":"hello"}).to_string()))
-                    .await
-                    .unwrap();
-                let (tx, mut rx) = mpsc::channel(128);
-                loop {
-                    tokio::select! {
-                        message = socket.next() => match message {
-                            Some(Ok(Message::Text(text))) => {
-                                let value = serde_json::from_str(&text).unwrap();
-                                if send.send(Frame {value, send:tx.clone()}).await.is_err() { return; }
-                            }
-                            Some(Ok(Message::Ping(p))) => { let _ = socket.send(Message::Pong(p)).await; }
-                            _ => break,
-                        },
-                        Some(message) = rx.recv() => {
-                            let close = matches!(message, Message::Close(_));
-                            if socket.send(message).await.is_err() || close { break; }
-                        }
-                    }
+                let connection = serve_connection(stream, send.clone());
+                if concurrent {
+                    tokio::spawn(connection);
+                } else {
+                    connection.await;
                 }
             }
         });
@@ -93,6 +82,33 @@ impl Hub {
         })
         .await
         .expect("expected protocol frame")
+    }
+}
+
+async fn serve_connection(stream: tokio::net::TcpStream, send: mpsc::Sender<Frame>) {
+    let Ok(mut socket) = accept_async(stream).await else {
+        return;
+    };
+    socket
+        .send(Message::Text(json!({"op":"hello"}).to_string()))
+        .await
+        .unwrap();
+    let (tx, mut rx) = mpsc::channel(128);
+    loop {
+        tokio::select! {
+            message = socket.next() => match message {
+                Some(Ok(Message::Text(text))) => {
+                    let value = serde_json::from_str(&text).unwrap();
+                    if send.send(Frame {value, send:tx.clone()}).await.is_err() { return; }
+                }
+                Some(Ok(Message::Ping(p))) => { let _ = socket.send(Message::Pong(p)).await; }
+                _ => break,
+            },
+            Some(message) = rx.recv() => {
+                let close = matches!(message, Message::Close(_));
+                if socket.send(message).await.is_err() || close { break; }
+            }
+        }
     }
 }
 
@@ -1762,4 +1778,171 @@ async fn chat_file_links_read_on_the_session_hub_with_visible_errors() {
         (Some(40), Some(20))
     );
     assert!(state.value["png"].as_str().is_some_and(|s| !s.is_empty()));
+}
+
+/// The hub's `config.save` contract as far as projects need it: a deep merge,
+/// except that `projects` is replaced wholesale (hub-rs `merge_patch`).
+fn save_config(state: &mut Value, patch: &Value) {
+    fn merge(into: &mut Value, patch: &Value) {
+        match (into.as_object_mut(), patch.as_object()) {
+            (Some(into), Some(patch)) => {
+                for (key, value) in patch {
+                    merge(into.entry(key.clone()).or_insert(Value::Null), value);
+                }
+            }
+            _ => *into = patch.clone(),
+        }
+    }
+    for (key, value) in patch.as_object().unwrap() {
+        if key == "projects" {
+            state[key] = value.clone();
+        } else {
+            merge(&mut state[key], value);
+        }
+    }
+}
+
+/// A pin (window A), a launch's recency touch (window A) and a legacy-only
+/// removal (a second controller on the same hub) all accepted before the
+/// hub answers anything. Without one serialized read→save→readback round,
+/// every `config.get` reads the same map and each wholesale save erases the
+/// others while all three report success.
+#[tokio::test]
+async fn overlapping_project_writes_queue_and_every_change_survives() {
+    use wks_native::{features::Request, projects::Patch};
+    let mut hub = Hub::shared().await;
+    let a = Controller::start(hub.config.clone());
+    let b = Controller::start(hub.config.clone());
+    for _ in 0..2 {
+        hub.frame("call", Some("sessions.snapshots"))
+            .await
+            .result(json!([]))
+            .await;
+    }
+    view(&a, |v| v.connected).await;
+    view(&b, |v| v.connected).await;
+
+    let mut state = json!({
+        "projects": {"/keep": {"label": "Retain", "color": "#336699"}},
+        "directories": {"favourites": ["/legacy"], "recent": ["/legacy", "/old"]},
+        "plugins": {"other": "untouched"}
+    });
+    a.command(Command::Request(Request::SaveProject {
+        path: "/pin".into(),
+        change: Patch::Pin(true),
+    }))
+    .unwrap();
+    let first = hub.frame("call", Some("config.get")).await;
+    a.command(Command::Request(Request::TouchProject {
+        path: "/launch".into(),
+        at: 100,
+    }))
+    .unwrap();
+    b.command(Command::Request(Request::SaveProject {
+        path: "/legacy".into(),
+        change: Patch::Remove,
+    }))
+    .unwrap();
+    // Give the unserialized ordering every chance to send its reads first.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    first.result(state.clone()).await;
+
+    let mut log = vec!["get"];
+    let mut saves = 0;
+    while saves < 3 {
+        let frame = timeout(DEADLINE, async {
+            loop {
+                let frame = hub.frame("call", None).await;
+                let method = frame.value["method"].as_str().unwrap_or_default();
+                if method.starts_with("config.") {
+                    return frame;
+                }
+            }
+        })
+        .await
+        .expect("project write round");
+        match frame.value["method"].as_str().unwrap() {
+            "config.get" => {
+                log.push("get");
+                frame.result(state.clone()).await;
+            }
+            "config.save" => {
+                log.push("save");
+                saves += 1;
+                save_config(&mut state, &frame.value["params"]);
+                frame.result(state.clone()).await;
+            }
+            other => panic!("unexpected {other}"),
+        }
+    }
+    let done = |keys: &'static [&'static str]| {
+        move |v: &View| {
+            keys.iter()
+                .all(|k| v.requests.get(k).is_some_and(|s| !s.loading))
+        }
+    };
+    let a_view = view(&a, done(&["project-save", "project-touch"])).await;
+    let b_view = view(&b, done(&["project-save"])).await;
+    for (view, key) in [
+        (&a_view, "project-save"),
+        (&a_view, "project-touch"),
+        (&b_view, "project-save"),
+    ] {
+        let receipt = &view.requests[key];
+        assert!(receipt.error.is_none(), "{key}: {:?}", receipt.error);
+    }
+    assert!(matches!(
+        a_view.requests["project-touch"].request,
+        Request::TouchProject { .. }
+    ));
+    assert_eq!(state["projects"]["/pin"]["favourite"], true);
+    assert_eq!(state["projects"]["/launch"]["lastOpened"], 100);
+    assert_eq!(state["projects"]["/keep"]["label"], "Retain");
+    assert_eq!(state["directories"]["favourites"], json!([]));
+    assert_eq!(state["directories"]["recent"], json!(["/old"]));
+    assert_eq!(state["plugins"]["other"], "untouched");
+    assert_eq!(
+        log,
+        ["get", "save", "get", "save", "get", "save"],
+        "each round reads only after the previous save answered"
+    );
+}
+
+/// A save the hub skipped answers with the unchanged config. For a project
+/// known only from the legacy arrays that config still lists it, so the
+/// removal is reported as refused, not as "Removed".
+#[tokio::test]
+async fn skipped_legacy_only_removal_is_reported_as_refused() {
+    use wks_native::{features::Request, projects::Patch};
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    let unchanged =
+        json!({"projects": {}, "directories": {"favourites": ["/legacy"], "recent": ["/legacy"]}});
+    controller
+        .command(Command::Request(Request::SaveProject {
+            path: "/legacy".into(),
+            change: Patch::Remove,
+        }))
+        .unwrap();
+    hub.frame("call", Some("config.get"))
+        .await
+        .result(unchanged.clone())
+        .await;
+    let save = hub.frame("call", Some("config.save")).await;
+    assert_eq!(save.value["params"]["directories"]["favourites"], json!([]));
+    save.result(unchanged).await;
+    let done = view(&controller, |v| {
+        v.requests.get("project-save").is_some_and(|s| !s.loading)
+    })
+    .await;
+    let error = done.requests["project-save"]
+        .error
+        .clone()
+        .unwrap_or_default();
+    assert!(error.contains("did not save"), "{error}");
 }

@@ -17,7 +17,10 @@
 //! `services/hub-rs/src/services/config.rs` merge_patch), so every write is
 //! built from a fresh `config.get` and checked against what the hub returns:
 //! a save that could not take the config lock returns the old config rather
-//! than an error, and must not be reported as saved.
+//! than an error, and must not be reported as saved. Within this process the
+//! fresh-read → save → readback round is serialized per hub (see
+//! `Backend::project_write`); another process writing the same config between
+//! our read and save is the shared, pre-existing config read/save race.
 use anyhow::{Result, bail, ensure};
 use serde_json::{Map, Value, json};
 
@@ -389,7 +392,14 @@ pub fn verify(saved: &Value, dir: &str, change: &Patch) -> Result<()> {
     let held = match change {
         Patch::Pin(pinned) => entry.is_some_and(|e| e["favourite"].as_bool() == Some(*pinned)),
         Patch::Touch(now) => entry.is_some_and(|e| e["lastOpened"].as_f64() == Some(*now as f64)),
-        Patch::Remove => entry.is_none(),
+        // A legacy-only pin or recent never had a `projects` entry, so the
+        // map alone would accept an unchanged config after a skipped save.
+        Patch::Remove => {
+            entry.is_none()
+                && ["favourites", "recent"]
+                    .iter()
+                    .all(|list| strings(&saved["directories"][*list]).all(|p| !same_dir(p, &key)))
+        }
     };
     ensure!(
         held,
@@ -635,6 +645,11 @@ mod tests {
         assert!(verify(&after, "/a/", &change).is_ok());
         assert!(verify(&after, "/a", &Patch::Remove).is_err());
         assert!(verify(&before, "/a", &Patch::Remove).is_ok());
+        // A legacy trace (any spelling) still lists the project: not removed.
+        for list in ["favourites", "recent"] {
+            let legacy = json!({"projects": {}, "directories": {list: ["/a/"]}});
+            assert!(verify(&legacy, "/a", &Patch::Remove).is_err(), "{list}");
+        }
         assert!(
             verify(
                 &json!({"projects":{"/a":{"lastOpened":7.0}}}),
@@ -643,6 +658,54 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    /// The hub answers a save it skipped with the unchanged config. A
+    /// legacy-only project has no map entry even then, so absence from the
+    /// map alone is no proof; the project must be gone from what it lists.
+    #[test]
+    fn legacy_only_removal_is_verified_against_every_legacy_trace() {
+        let config = json!({
+            "projects": {"/keep": {"label": "Keep", "favourite": true}},
+            "directories": {"favourites": ["/legacy", "/keep"], "recent": ["/legacy/", "/other"]},
+            "plugins": {"x": 1}
+        });
+        let listed = |c: &Value| {
+            list(Some(&registry(c)), &[], &[])
+                .iter()
+                .any(|p| p.path == "/legacy")
+        };
+        assert!(listed(&config));
+        let partial = patch(&config, "/legacy", &Patch::Remove).unwrap();
+        assert_eq!(partial["directories"]["favourites"], json!(["/keep"]));
+        assert_eq!(partial["directories"]["recent"], json!(["/other"]));
+        assert_eq!(partial["projects"]["/keep"], config["projects"]["/keep"]);
+
+        // Skipped save: the hub returns the config it already had.
+        let refused = verify(&config, "/legacy", &Patch::Remove).unwrap_err();
+        assert!(refused.to_string().contains("did not save"), "{refused}");
+
+        // Applied save, as the hub's merge_patch would leave it.
+        let mut saved = config.clone();
+        saved["projects"] = partial["projects"].clone();
+        saved["directories"] = partial["directories"].clone();
+        assert!(verify(&saved, "/legacy", &Patch::Remove).is_ok());
+        assert!(!listed(&saved));
+        assert_eq!(saved["projects"]["/keep"]["label"], "Keep");
+        assert_eq!(saved["plugins"], config["plugins"]);
+
+        // A half-applied save (map written, a legacy array not) is refused too.
+        let mut partial_save = saved.clone();
+        partial_save["directories"]["recent"] = json!(["/legacy"]);
+        assert!(verify(&partial_save, "/legacy", &Patch::Remove).is_err());
+
+        // Configured metadata is never forgotten from here, legacy or not.
+        let protected = json!({
+            "projects": {},
+            "directories": {"favourites": ["/scripted"]},
+            "scripts": {"/scripted": {"build": "make"}}
+        });
+        assert!(patch(&protected, "/scripted", &Patch::Remove).is_err());
     }
 
     #[test]
