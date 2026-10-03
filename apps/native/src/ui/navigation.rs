@@ -478,7 +478,7 @@ impl Workspace {
                                 cx.stop_propagation();
                                 this.forget_project(&forget, cx);
                             }))))
-                        .child(this.icon_button(SharedString::from(format!("pin-project-{ix}")), if pinned { "Unpin project" } else { "Pin project" }, if pinned { IconName::Star } else { IconName::StarOff }, can_write)
+                        .child(this.icon_button(SharedString::from(format!("pin-project-{ix}")), if pinned { "Unpin project" } else { "Pin project" }, IconName::Star, can_write)
                             .when(pinned, |d| d.text_color(rgb(p.accent)))
                             .when(can_write, |d| d.on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();

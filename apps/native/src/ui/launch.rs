@@ -5,6 +5,8 @@ use gpui_component::select::SelectItem;
 pub(super) struct PickerItem {
     id: String,
     label: String,
+    /// Test selector prefix: `model-option` or `effort-option`.
+    kind: &'static str,
 }
 impl SelectItem for PickerItem {
     type Value = String;
@@ -15,9 +17,9 @@ impl SelectItem for PickerItem {
         &self.id
     }
     fn render(&self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let id = self.id.clone();
+        let (id, kind) = (self.id.clone(), self.kind);
         div()
-            .debug_selector(move || format!("model-option-{id}"))
+            .debug_selector(move || format!("{kind}-{id}"))
             .child(self.title())
     }
     fn matches(&self, query: &str) -> bool {
@@ -34,14 +36,35 @@ pub(super) fn model_items(models: &[ModelChoice]) -> Vec<PickerItem> {
             .find(|m| m.is_default)
             .map(|m| format!("Provider default · {}", m.label))
             .unwrap_or_else(|| "Provider default".into()),
+        kind: "model-option",
     })
     .chain(models.iter().map(|m| PickerItem {
         id: m.id.clone(),
         label: m.picker_label(),
+        kind: "model-option",
     }))
     .chain(std::iter::once(PickerItem {
         id: "__custom".into(),
         label: "Custom model…".into(),
+        kind: "model-option",
+    }))
+    .collect()
+}
+
+/// "Default" first (naming the level it resolves to when the catalog says),
+/// then each level the chosen model accepts.
+pub(super) fn effort_items(levels: &[String], default: Option<&str>) -> Vec<PickerItem> {
+    std::iter::once(PickerItem {
+        id: String::new(),
+        label: default
+            .map(|d| format!("Default · {}", wks_native::launch::effort_label(d)))
+            .unwrap_or_else(|| "Default".into()),
+        kind: "effort-option",
+    })
+    .chain(levels.iter().map(|id| PickerItem {
+        id: id.clone(),
+        label: wks_native::launch::effort_label(id),
+        kind: "effort-option",
     }))
     .collect()
 }
@@ -68,7 +91,70 @@ impl Workspace {
         if self.model_choice == "__custom" {
             self.model.update(cx, |input, cx| input.focus(window, cx));
         }
+        self.reconcile_effort(window, cx);
         cx.notify();
+    }
+
+    pub(super) fn on_effort_pick(
+        &mut self,
+        _: &Entity<SelectState<SearchableVec<PickerItem>>>,
+        event: &SelectEvent<SearchableVec<PickerItem>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(value) = event;
+        if self.spawn_pending || self.view.creating {
+            return;
+        }
+        self.effort = value.clone().unwrap_or_default();
+        cx.notify();
+    }
+
+    /// The levels the current provider/model accepts and the default it
+    /// resolves to, when the catalog reports one.
+    pub(super) fn effort_options(&self) -> (Vec<String>, Option<String>) {
+        let model = self
+            .catalog_models
+            .iter()
+            .find(|m| m.id == self.model_choice);
+        let resolved = model.or_else(|| {
+            (self.model_choice.is_empty())
+                .then(|| self.catalog_models.iter().find(|m| m.is_default))
+                .flatten()
+        });
+        (
+            wks_native::launch::effort_levels(self.provider, model, &self.catalog_models),
+            resolved.and_then(|m| m.default_effort.clone()),
+        )
+    }
+
+    /// Keep the effort valid for the chosen model: a level it does not accept
+    /// returns to Default rather than being sent and rejected, and the menu
+    /// lists exactly what the model offers.
+    pub(super) fn reconcile_effort(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (levels, default) = self.effort_options();
+        if !self.effort.is_empty() && !levels.contains(&self.effort) {
+            self.effort.clear();
+        }
+        let key = format!(
+            "{}|{}|{}",
+            levels.join(","),
+            default.as_deref().unwrap_or(""),
+            self.effort
+        );
+        if key == self.effort_key {
+            return;
+        }
+        self.effort_key = key;
+        let items = effort_items(&levels, default.as_deref());
+        let choice = self.effort.clone();
+        let picker = cx.new(|cx| {
+            let mut picker = SelectState::new(SearchableVec::new(items), None, window, cx);
+            picker.set_selected_value(&choice, window, cx);
+            picker
+        });
+        self.effort_picker_subscription = cx.subscribe_in(&picker, window, Self::on_effort_pick);
+        self.effort_picker = picker;
     }
 
     /// A new launch/provider gets a fresh query and scroll state, not the old
@@ -156,7 +242,7 @@ impl Workspace {
         let agent = card()
             .child(projects::section_label("Agent", p))
             .child(self.render_provider_choice(busy, cx))
-            .child(self.render_model_select(busy, cx));
+            .child(self.render_model_select(busy, true, cx));
         let task =
             card()
                 .child(
@@ -174,12 +260,19 @@ impl Workspace {
                         )),
                 )
                 .child(
-                    div().debug_selector(|| "launch-prompt".into()).child(
-                        Input::new(&self.prompt)
-                            .appearance(false)
-                            .h(px(96.))
-                            .disabled(busy),
-                    ),
+                    div()
+                        .debug_selector(|| "launch-prompt".into())
+                        .flex_1()
+                        .min_h(px(96.))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            Input::new(&self.prompt)
+                                .appearance(false)
+                                .flex_1()
+                                .min_h(px(96.))
+                                .disabled(busy),
+                        ),
                 );
         let content = div()
             .max_w(px(if wide { 980. } else { 720. }))
@@ -195,7 +288,6 @@ impl Workspace {
                     d.child(
                         div()
                             .flex()
-                            .items_start()
                             .gap_4()
                             .child(agent.w(px(380.)).flex_shrink_0())
                             .child(task.flex_1().min_w_0()),
@@ -464,6 +556,14 @@ impl Workspace {
         } else {
             "Claude"
         };
+        let model = if self.effort.is_empty() {
+            model
+        } else {
+            format!(
+                "{model} · {} effort",
+                wks_native::launch::effort_label(&self.effort)
+            )
+        };
         let project = (!self.projects.cwd.is_empty()).then(|| {
             self.known_project(&self.projects.cwd)
                 .map(|p| p.title().to_owned())
@@ -597,12 +697,15 @@ impl Workspace {
         self.provider = provider;
         self.model_choice.clear();
         self.context_window = None;
+        // Ladders differ per provider; a level chosen for one is not carried.
+        self.effort.clear();
         self.permission = self.settings.default_access(provider);
         self.catalog_models.clear();
         self.model
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.reset_model_picker(window, cx);
         self.sync_models(window, cx);
+        self.reconcile_effort(window, cx);
         cx.notify();
     }
 
@@ -632,11 +735,19 @@ impl Workspace {
             picker.set_items(SearchableVec::new(items), window, cx);
             picker.set_selected_value(&self.model_choice, window, cx);
         });
+        self.reconcile_effort(window, cx);
     }
 
     /// Model choice with the catalog's live state; the exact ID is entered
     /// here when Custom is chosen, so it is never hidden behind the fold.
-    pub(super) fn render_model_select(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+    /// `with_effort` places the effort menu beside the model (New Agent); the
+    /// live Model screen switches model only, so it leaves effort out.
+    pub(super) fn render_model_select(
+        &self,
+        busy: bool,
+        with_effort: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.appearance.palette();
         let catalog = &self.view.catalog;
         let current = catalog.key == self.catalog_key(cx);
@@ -676,12 +787,15 @@ impl Workspace {
                 p.muted,
             )
         };
-        div()
+        let model = div()
+            .flex_1()
+            .min_w(px(180.))
             .flex()
             .flex_col()
             .gap_2()
             .child(
                 div()
+                    .h(px(24.))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -693,6 +807,7 @@ impl Workspace {
                             IconName::Redo,
                             can_reload,
                         )
+                        .py(px(2.))
                         .when(can_reload, |d| {
                             d.on_click(cx.listener(|this, _, _, cx| this.load_models(true, cx)))
                         }),
@@ -704,6 +819,40 @@ impl Workspace {
                         .disabled(busy)
                         .search_placeholder("Find a model…"),
                 ),
+            );
+        let effort = with_effort.then(|| {
+            div()
+                .w(px(150.))
+                .flex_grow()
+                .max_w(px(220.))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .h(px(24.))
+                        .flex()
+                        .items_center()
+                        .child(projects::section_label("Effort", p)),
+                )
+                .child(
+                    div()
+                        .debug_selector(|| "launch-effort-picker".into())
+                        .child(Select::new(&self.effort_picker).disabled(busy)),
+                )
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            // Side by side, wrapping to stacked when the card is narrow.
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(model)
+                    .children(effort),
             )
             .when(self.model_choice == "__custom", |d| {
                 d.child(
@@ -787,7 +936,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .child(self.render_model_select(busy, cx))
+            .child(self.render_model_select(busy, false, cx))
             .child(self.render_context_choice(busy, cx))
     }
 

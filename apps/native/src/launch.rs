@@ -73,6 +73,54 @@ pub struct ModelChoice {
     pub label: String,
     pub windows: Vec<u64>,
     pub is_default: bool,
+    /// Reasoning-effort ids this model accepts, as its provider reports them
+    /// (Codex `model/list`); empty when the catalog does not say.
+    pub efforts: Vec<String>,
+    /// The level a launch runs at when no effort is sent, when reported.
+    pub default_effort: Option<String>,
+}
+
+/// Claude Code's `--effort` ladder. Claude reports no per-model list; this is
+/// the launch flag's vocabulary (the desktop's `CLAUDE_EFFORT_LEVELS`), not the
+/// wider `/effort` command's, so a launch never sends a level the flag rejects.
+pub const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// Codex's ladder until the live catalog says what the chosen model accepts.
+pub const CODEX_FALLBACK_EFFORTS: [&str; 4] = ["low", "medium", "high", "xhigh"];
+
+/// The effort levels a launch may request for this provider and model choice.
+/// `model` is the catalog row for the chosen ID; `None` for Provider default
+/// or a custom ID. Provider default uses the catalog's default model when one
+/// is marked, since that is the model the launch will actually run.
+pub fn effort_levels(
+    provider: &str,
+    model: Option<&ModelChoice>,
+    catalog: &[ModelChoice],
+) -> Vec<String> {
+    if provider == "claude" {
+        return CLAUDE_EFFORTS.iter().map(|s| (*s).to_owned()).collect();
+    }
+    let row = model.or_else(|| catalog.iter().find(|m| m.is_default));
+    match row {
+        Some(row) if !row.efforts.is_empty() => row.efforts.clone(),
+        _ => CODEX_FALLBACK_EFFORTS
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect(),
+    }
+}
+
+pub fn effort_label(id: &str) -> String {
+    match id {
+        "none" => "None".into(),
+        "minimal" => "Minimal".into(),
+        "low" => "Low".into(),
+        "medium" => "Medium".into(),
+        "high" => "High".into(),
+        "xhigh" => "Extra high".into(),
+        "max" => "Max".into(),
+        "ultra" => "Ultra".into(),
+        other => other.to_owned(),
+    }
 }
 
 impl ModelChoice {
@@ -102,6 +150,15 @@ pub struct Catalog {
     pub loading: bool,
     pub models: Vec<ModelChoice>,
     pub error: Option<String>,
+}
+
+/// Effort ids are short ASCII words; anything else is not sent to a provider.
+pub fn valid_effort(effort: &str) -> bool {
+    !effort.is_empty()
+        && effort.len() <= 32
+        && effort
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 pub fn parse_models(provider: &str, value: Value) -> Result<Vec<ModelChoice>> {
@@ -158,11 +215,24 @@ pub fn parse_models(provider: &str, value: Value) -> Result<Vec<ModelChoice>> {
                 .unwrap_or(id)
                 .to_owned()
         };
+        let efforts = row["effortLevels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|e| valid_effort(e))
+            .map(str::to_owned)
+            .collect();
         models.push(ModelChoice {
             id: id.into(),
             label,
             windows: window.into_iter().collect(),
             is_default: row["default"].as_bool().unwrap_or(false),
+            efforts,
+            default_effort: row["defaultEffort"]
+                .as_str()
+                .filter(|e| valid_effort(e))
+                .map(Into::into),
         });
     }
     for model in &mut models {
@@ -197,6 +267,7 @@ mod tests {
                 label: "Opus".into(),
                 windows: vec![200000, 1000000],
                 is_default: false,
+                ..Default::default()
             }
         );
         assert_eq!(models[1].id, "sonnet");
@@ -268,6 +339,54 @@ mod tests {
             }
         }
         assert!(Permission::Plan.wire("codex").is_err());
+        assert!(Permission::AcceptEdits.wire("claude").is_ok());
+    }
+
+    #[test]
+    fn effort_follows_the_model_catalog_and_reaches_spawn_only_when_chosen() {
+        let models = parse_models(
+            "codex",
+            json!([
+                {"id":"sol","label":"Sol","default":true,"effortLevels":["low","medium","high","xhigh"],"defaultEffort":"medium"},
+                {"id":"mini","label":"Mini","effortLevels":["minimal","low","bad effort!"],"defaultEffort":"low"},
+                {"id":"plain","label":"Plain"}
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            models[1].efforts,
+            ["minimal", "low"],
+            "malformed ids are dropped"
+        );
+        assert_eq!(models[0].default_effort.as_deref(), Some("medium"));
+        assert_eq!(
+            effort_levels("codex", Some(&models[1]), &models),
+            ["minimal", "low"]
+        );
+        assert_eq!(
+            effort_levels("codex", None, &models),
+            ["low", "medium", "high", "xhigh"],
+            "provider default runs the catalog's default model"
+        );
+        assert_eq!(
+            effort_levels("codex", Some(&models[2]), &models),
+            CODEX_FALLBACK_EFFORTS
+        );
+        assert_eq!(effort_levels("claude", None, &[]), CLAUDE_EFFORTS);
+        use crate::controller::NewSession;
+        let mut request = NewSession {
+            provider: "codex".into(),
+            cwd: "/project".into(),
+            ..Default::default()
+        };
+        assert!(
+            request.params().unwrap().get("effort").is_none(),
+            "default sends nothing"
+        );
+        request.effort = "xhigh".into();
+        assert_eq!(request.params().unwrap()["effort"], "xhigh");
+        request.effort = "x; rm".into();
+        assert!(request.params().is_err());
         assert!(Permission::AcceptEdits.wire("codex").is_err());
     }
 }

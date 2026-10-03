@@ -570,7 +570,7 @@ impl Workspace {
                     )
                     .child(
                         div()
-                            .min_w_0()
+                            .w_full()
                             .truncate()
                             .font_family(mono_font())
                             .text_size(px(11.))
@@ -580,10 +580,10 @@ impl Workspace {
                     .child(
                         div()
                             .debug_selector(|| "launch-project-status".into())
+                            .w_full()
                             .flex()
                             .items_center()
                             .gap_1()
-                            .min_w_0()
                             .text_size(px(11.))
                             .text_color(rgb(status_color))
                             .child(Icon::new(status_icon).size(px(11.)).flex_shrink_0())
@@ -598,11 +598,7 @@ impl Workspace {
                     } else {
                         "Pin to projects"
                     },
-                    if pinned {
-                        IconName::Star
-                    } else {
-                        IconName::StarOff
-                    },
+                    IconName::Star,
                     can_pin,
                 )
                 .debug_selector(|| "launch-project-pin".into())
@@ -821,6 +817,7 @@ impl Workspace {
         let base =
             chrome::interactive_control(div().id(("launch-project-row", ix)), p, enabled)
                 .debug_selector(move || format!("launch-project-row-{ix}"))
+                .w_full()
                 .h(px(ROW_HEIGHT - 4.))
                 .mb(px(4.))
                 .px_2()
@@ -949,15 +946,12 @@ impl Workspace {
                             } else {
                                 "Pin to projects"
                             },
-                            if pinned {
-                                IconName::Star
-                            } else {
-                                IconName::StarOff
-                            },
+                            IconName::Star,
                             can_pin,
                         )
                         .debug_selector(move || format!("launch-project-pin-{ix}"))
                         .when(pinned, |d| d.text_color(rgb(p.accent)))
+                        .when(!pinned && !highlighted, |d| d.opacity(0.45))
                         .when(can_pin, |d| {
                             d.on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();

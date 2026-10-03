@@ -80,6 +80,8 @@ pub struct NewSession {
     pub message: String,
     pub context_window: Option<u64>,
     pub permission: Permission,
+    /// Reasoning effort id; empty = the provider's default for the model.
+    pub effort: String,
     pub resume_session_id: Option<String>,
 }
 
@@ -110,6 +112,14 @@ impl NewSession {
                 "Choose a model for the context window"
             );
             params["contextWindow"] = json!(window);
+        }
+        let effort = self.effort.trim();
+        if !effort.is_empty() {
+            anyhow::ensure!(
+                crate::launch::valid_effort(effort),
+                "Choose an effort level from the list"
+            );
+            params["effort"] = json!(effort);
         }
         for (key, value) in [
             ("label", &self.label),

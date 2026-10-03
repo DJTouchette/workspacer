@@ -450,6 +450,12 @@ pub struct Workspace {
     model_picker: Entity<SelectState<SearchableVec<PickerItem>>>,
     model_picker_subscription: gpui::Subscription,
     model_choice: String,
+    /// Reasoning effort for the next launch; empty = the model's default.
+    effort: String,
+    effort_picker: Entity<SelectState<SearchableVec<PickerItem>>>,
+    effort_picker_subscription: gpui::Subscription,
+    /// Levels/default/selection the effort menu was last built for.
+    effort_key: String,
     context_window: Option<u64>,
     permission: Permission,
     catalog_models: Vec<ModelChoice>,
@@ -536,6 +542,16 @@ impl Workspace {
             },
         ));
         let model_picker_subscription = cx.subscribe_in(&model_picker, window, Self::on_model_pick);
+        let effort_picker = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(launch::effort_items(&[], None)),
+                Some(gpui_component::IndexPath::new(0)),
+                window,
+                cx,
+            )
+        });
+        let effort_picker_subscription =
+            cx.subscribe_in(&effort_picker, window, Self::on_effort_pick);
         focus_watch.push(cx.subscribe_in(
             &project_query,
             window,
@@ -648,6 +664,10 @@ impl Workspace {
             model_picker,
             model_picker_subscription,
             model_choice: String::new(),
+            effort: String::new(),
+            effort_picker,
+            effort_picker_subscription,
+            effort_key: String::new(),
             context_window: None,
             permission: Permission::Ask,
             catalog_models: Vec::new(),
@@ -1058,9 +1078,11 @@ impl Workspace {
             self.permission = self.settings.default_access(self.provider);
             self.model_choice.clear();
             self.context_window = None;
+            self.effort.clear();
             self.model
                 .update(cx, |input, cx| input.set_value("", window, cx));
             self.reset_model_picker(window, cx);
+            self.reconcile_effort(window, cx);
             self.spawn_error.clear();
             self.projects.notice.clear();
             self.projects.fallback = None;
@@ -1132,6 +1154,7 @@ impl Workspace {
             },
             context_window: self.context_window,
             permission: self.permission,
+            effort: self.effort.clone(),
             message: self.prompt.read(cx).value().to_string(),
             resume_session_id: self.extras.resume.clone(),
         };
@@ -6259,6 +6282,7 @@ mod tests {
                             label: id.into(),
                             windows: vec![],
                             is_default: false,
+                            ..Default::default()
                         })
                         .collect(),
                     ..Default::default()
@@ -6338,6 +6362,7 @@ mod tests {
                         label: "Opus".into(),
                         windows: vec![200000],
                         is_default: false,
+                        ..Default::default()
                     }],
                     ..Default::default()
                 };
@@ -6382,6 +6407,7 @@ mod tests {
                         label: "Opus".into(),
                         windows: vec![200000],
                         is_default: false,
+                        ..Default::default()
                     }],
                     ..Default::default()
                 };
@@ -6421,6 +6447,7 @@ mod tests {
                         label: "Opus".into(),
                         windows: vec![200000, 1000000],
                         is_default: false,
+                        ..Default::default()
                     }],
                     ..Default::default()
                 };
@@ -6464,6 +6491,120 @@ mod tests {
         assert_eq!(params["permissionMode"], "plan");
         assert_eq!(params["skipPermissions"], false);
     }
+    #[gpui::test]
+    fn effort_sits_beside_the_model_and_follows_what_the_model_accepts(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let catalog = |view: &mut View| {
+            view.catalog = wks_native::launch::Catalog {
+                key: CatalogKey {
+                    provider: "codex".into(),
+                    cwd: "/work/project".into(),
+                },
+                models: wks_native::launch::parse_models(
+                    "codex",
+                    serde_json::json!([
+                        {"id":"sol","label":"Sol","default":true,
+                         "effortLevels":["low","medium","high","xhigh"],"defaultEffort":"medium"},
+                        {"id":"mini","label":"Mini","effortLevels":["minimal","low"],"defaultEffort":"low"}
+                    ]),
+                )
+                .unwrap(),
+                ..Default::default()
+            };
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.settings.default_provider = Provider::Codex;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_new_session(window, cx);
+                this.select_project("/work/project", window, cx);
+                let mut loaded = state("a");
+                catalog(&mut loaded);
+                this.update_view(Arc::new(loaded), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        // Visible without opening Options, on the model's row.
+        let model = visual.debug_bounds("launch-model-picker").unwrap();
+        let effort = visual.debug_bounds("launch-effort-picker").unwrap();
+        assert!(visual.debug_bounds("launch-details").is_none());
+        assert_eq!(model.top(), effort.top());
+        assert!(effort.left() > model.right());
+        let focus = |picker: fn(&Workspace) -> Entity<SelectState<SearchableVec<PickerItem>>>| {
+            let workspace = workspace.clone();
+            move |window: &mut Window, cx: &mut App| {
+                let picker = picker(workspace.read(cx));
+                picker.update(cx, |p, cx| p.focus(window, cx));
+            }
+        };
+        // The menu lists exactly what Sol accepts.
+        visual.update(focus(|this| this.effort_picker.clone()));
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("effort-option-xhigh").is_some());
+        assert!(
+            visual.debug_bounds("effort-option-max").is_none(),
+            "Codex Sol has no max"
+        );
+        visual.simulate_keystrokes("down down down down enter");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.effort, "xhigh"));
+        // A model that does not accept the level returns effort to Default.
+        visual.update(focus(|this| this.model_picker.clone()));
+        visual.simulate_keystrokes("enter down down enter");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.model_choice, "mini");
+            assert!(
+                this.effort.is_empty(),
+                "stale xhigh must not be sent to Mini"
+            );
+            assert_eq!(this.effort_options().0, ["minimal", "low"]);
+        });
+        visual.update(focus(|this| this.effort_picker.clone()));
+        visual.simulate_keystrokes("enter down enter");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.effort, "minimal"));
+        visual.simulate_keystrokes("ctrl-enter");
+        let Some(Command::Create(request)) = next_effect(&mut commands) else {
+            panic!("expected launch")
+        };
+        let params = request.params().unwrap();
+        assert_eq!(
+            (params["model"].as_str(), params["effort"].as_str()),
+            (Some("mini"), Some("minimal"))
+        );
+        // Claude has its own ladder; nothing chosen for Codex carries over.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.spawn_pending = false;
+                this.choose_provider("claude", window, cx);
+                assert!(this.effort.is_empty());
+                assert_eq!(
+                    this.effort_options().0,
+                    wks_native::launch::CLAUDE_EFFORTS.map(String::from)
+                );
+                this.create(window, cx);
+            })
+        });
+        let Some(Command::Create(request)) = next_effect(&mut commands) else {
+            panic!("expected launch")
+        };
+        assert!(
+            request.params().unwrap().get("effort").is_none(),
+            "Default sends no effort"
+        );
+        // Still on screen at the minimum window size.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.spawn_pending = false;
+                this.show_new_session(window, cx);
+            })
+        });
+        visual.simulate_resize(size(px(720.), px(480.)));
+        visual.run_until_parked();
+        let effort = visual.debug_bounds("launch-effort-picker").unwrap();
+        assert!(effort.right() <= px(720.));
+    }
+
     #[gpui::test]
     fn secondary_views_preserve_drafts_and_only_request_reads(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
