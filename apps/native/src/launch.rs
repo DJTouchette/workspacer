@@ -161,6 +161,22 @@ pub fn valid_effort(effort: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// Whether a launch error says the agent may have started anyway: the hub's
+/// "launch admission may have executed … inspect its outcome before retrying"
+/// and "do not retry blindly", or this client's own outcome-unknown receipts.
+/// Such a failure is not a clean refusal; starting again could launch twice.
+pub fn uncertain_outcome(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "may have executed",
+        "outcome unknown",
+        "outcome is unknown",
+        "do not retry",
+    ]
+    .iter()
+    .any(|phrase| error.contains(phrase))
+}
+
 pub fn parse_models(provider: &str, value: Value) -> Result<Vec<ModelChoice>> {
     let rows = if provider == "claude" {
         value.get("aliases")
@@ -245,6 +261,25 @@ pub fn parse_models(provider: &str, value: Value) -> Result<Vec<ModelChoice>> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn uncertain_outcomes_are_told_apart_from_clean_refusals() {
+        for error in [
+            "launch admission may have executed for session s: daemon returned 503; inspect its outcome before retrying",
+            "spawn failed; launch admission may have executed for session s; reservation retained, do not retry blindly",
+            "Disconnected; outcome unknown",
+            "Spawn returned no session ID; outcome unknown. Refresh sessions before retrying",
+        ] {
+            assert!(uncertain_outcome(error), "{error}");
+        }
+        for error in [
+            "Choose a project folder first.",
+            "provider executable not found",
+            "",
+        ] {
+            assert!(!uncertain_outcome(error), "{error}");
+        }
+    }
 
     #[test]
     fn claude_families_group_windows_without_inventing_versions_from_history() {

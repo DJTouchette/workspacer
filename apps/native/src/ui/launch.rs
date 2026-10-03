@@ -1,5 +1,5 @@
 use super::*;
-use gpui_component::select::SelectItem;
+use gpui_component::{scroll::ScrollableElement, select::SelectItem};
 
 #[derive(Clone)]
 pub(super) struct PickerItem {
@@ -341,7 +341,7 @@ impl Workspace {
                     // error wraps instead of widening it.
                     .flex()
                     .justify_center()
-                    .child(self.render_launch_footer(busy, can_create, wide, cx)),
+                    .child(self.render_launch_footer(busy, can_create, wide, short, cx)),
             )
     }
 
@@ -534,6 +534,7 @@ impl Workspace {
         busy: bool,
         can_create: bool,
         wide: bool,
+        short: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = self.appearance.palette();
@@ -577,13 +578,16 @@ impl Workspace {
         });
         // Short validation fits the footer line; a hub/launch error is shown
         // whole above it, since its wording says what may have happened.
-        let detailed = self.spawn_error.chars().count() > 72;
+        let uncertain = wks_native::launch::uncertain_outcome(&self.spawn_error);
+        let detailed = uncertain || self.spawn_error.chars().count() > 72;
         let (icon, color, status): (Option<IconName>, u32, String) = if !self.spawn_error.is_empty()
         {
             (
                 Some(IconName::TriangleAlert),
                 p.warning,
-                if detailed {
+                if uncertain {
+                    "Outcome unknown".into()
+                } else if detailed {
                     "Couldn't start the agent".into()
                 } else {
                     self.spawn_error.clone()
@@ -653,6 +657,10 @@ impl Workspace {
                             "create-session",
                             if busy {
                                 "Starting…"
+                            } else if uncertain {
+                                // Still allowed: the hub keeps no retry block, and
+                                // the user may have checked. The label says so.
+                                "Start anyway"
                             } else if self.extras.resume.is_some() {
                                 "Continue"
                             } else {
@@ -678,38 +686,87 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .when(detailed, |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "launch-error".into())
-                        .w_full()
-                        // Definite height: wrapped text is measured after the
-                        // footer's height is settled, so it must not grow it.
-                        .h(px(70.))
-                        .overflow_hidden()
-                        .p_2()
-                        .rounded(px(p.control_radius))
-                        .border_1()
-                        .border_color(rgb(p.warning))
-                        .flex()
-                        .items_start()
-                        .gap_2()
-                        .text_size(px(12.))
-                        .text_color(rgb(p.warning))
-                        .child(
-                            Icon::new(IconName::TriangleAlert)
-                                .size(px(13.))
-                                .flex_shrink_0(),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .line_clamp(3)
-                                .child(self.spawn_error.clone()),
-                        ),
-                )
+                d.child(self.render_launch_error(uncertain, short))
             })
             .child(row)
+    }
+
+    /// A launch failure in full. The recovery step is its own unclipped line;
+    /// the hub's wording follows in a bounded, scrollable region, so a long
+    /// error never pushes the Start button off a small window and never hides
+    /// what it says about the outcome.
+    fn render_launch_error(&self, uncertain: bool, short: bool) -> Div {
+        let p = self.appearance.palette();
+        // Only an outcome-unknown failure gets a recovery step; for anything
+        // else the hub's own wording is the explanation, unembellished.
+        let (headline, guidance) = if uncertain {
+            (
+                "The agent may already be running",
+                Some("Check the session list before starting again, or it may run twice."),
+            )
+        } else {
+            ("Couldn't start the agent", None)
+        };
+        div()
+            .debug_selector(|| "launch-error".into())
+            .w_full()
+            .p_2()
+            .rounded(px(p.control_radius))
+            .border_1()
+            .border_color(rgb(p.warning))
+            .flex()
+            .items_start()
+            .gap_2()
+            .text_size(px(12.))
+            .child(
+                Icon::new(IconName::TriangleAlert)
+                    .size(px(13.))
+                    .flex_shrink_0()
+                    .text_color(rgb(p.warning)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .debug_selector(|| "launch-error-headline".into())
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(rgb(p.warning))
+                            .child(headline),
+                    )
+                    .when_some(guidance, |d, guidance| {
+                        d.child(
+                            div()
+                                .debug_selector(|| "launch-error-guidance".into())
+                                .text_color(rgb(p.text))
+                                .child(guidance),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id("launch-error-details")
+                            .debug_selector(|| "launch-error-details".into())
+                            .relative()
+                            .w_full()
+                            .mt_1()
+                            .pr_2()
+                            .max_h(px(if short { 52. } else { 96. }))
+                            .overflow_y_scroll()
+                            .track_scroll(&self.launch_error_scroll)
+                            .vertical_scrollbar(&self.launch_error_scroll)
+                            .child(
+                                div()
+                                    .debug_selector(|| "launch-error-text".into())
+                                    .w_full()
+                                    .text_color(rgb(p.muted))
+                                    .child(self.spawn_error.clone()),
+                            ),
+                    ),
+            )
     }
 
     fn catalog_key(&self, _cx: &App) -> CatalogKey {

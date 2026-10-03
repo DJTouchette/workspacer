@@ -442,6 +442,7 @@ pub struct Workspace {
     project_query: Entity<InputState>,
     projects: projects::ProjectUi,
     project_list_scroll: gpui::UniformListScrollHandle,
+    launch_error_scroll: gpui::ScrollHandle,
     /// The directory of the launch in flight, recorded as recently used on
     /// the hub once the launch is acknowledged.
     launched_cwd: String,
@@ -658,6 +659,7 @@ impl Workspace {
             project_query,
             projects: Default::default(),
             project_list_scroll: gpui::UniformListScrollHandle::new(),
+            launch_error_scroll: gpui::ScrollHandle::new(),
             launched_cwd: String::new(),
             label,
             model,
@@ -736,6 +738,9 @@ impl Workspace {
             self.last_spawn_receipt = receipt.number;
             self.spawn_pending = false;
             self.spawn_error = receipt.error.clone().unwrap_or_default();
+            // A new failure is read from its first line, not where the last
+            // one was left scrolled.
+            self.launch_error_scroll.set_offset(gpui::Point::default());
             if let Some(id) = &receipt.session {
                 // Like opening a project on the desktop: the hub's registry
                 // records it as recently used. Best effort; never blocks.
@@ -3981,6 +3986,116 @@ mod tests {
         assert_eq!(request.cwd, "/work/beta");
         assert_eq!(request.label, "Test repair");
         assert_eq!(request.message, "Fix the tests");
+        assert!(commands.try_recv().is_err());
+    }
+
+    /// The hub's outcome-unknown launch failure at the smallest supported
+    /// window: the recovery step is a whole, unclipped line above a visible
+    /// Start action, and every word of the hub's text can be scrolled to.
+    #[gpui::test]
+    fn uncertain_launch_error_keeps_recovery_and_full_text_reachable(cx: &mut TestAppContext) {
+        const ERROR: &str = "launch admission may have executed for session 480e8332-3423-44e7-9c18-2b7e274ea3f9: daemon returned 503 Service Unavailable: execution engine unavailable: provider executable not found or not executable; execution outcome is unknown; inspect its outcome before retrying; cleanup: daemon returned 404 Not Found: no wrapper attached";
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(720.), px(480.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_new_session(window, cx);
+                this.projects.cwd = "/work/api".into();
+                let mut failed = state("a");
+                failed.spawn_receipt = Some(wks_native::controller::SpawnReceipt {
+                    number: 1,
+                    session: None,
+                    error: Some(ERROR.into()),
+                    unsent_message: None,
+                });
+                this.update_view(Arc::new(failed), window, cx);
+            });
+        });
+        visual.run_until_parked();
+        let window = gpui::Bounds::new(gpui::point(px(0.), px(0.)), size(px(720.), px(480.)));
+        let inside = |b: gpui::Bounds<gpui::Pixels>| {
+            b.top() >= window.top()
+                && b.bottom() <= window.bottom()
+                && b.left() >= window.left()
+                && b.right() <= window.right()
+        };
+        let card = visual.debug_bounds("launch-error").unwrap();
+        let headline = visual.debug_bounds("launch-error-headline").unwrap();
+        let guidance = visual.debug_bounds("launch-error-guidance").unwrap();
+        let start = visual.debug_bounds("launch-start").unwrap();
+        for (name, b) in [
+            ("card", card),
+            ("headline", headline),
+            ("guidance", guidance),
+            ("start", start),
+        ] {
+            assert!(inside(b), "{name} {b:?} leaves the window");
+        }
+        // The guidance may wrap; its own box holds every line, and the card
+        // encloses it rather than clipping it.
+        assert!(guidance.bottom() <= card.bottom() && card.bottom() <= start.top());
+        // The hub's wording is longer than its region; scrolling reaches the end.
+        let region = visual.debug_bounds("launch-error-details").unwrap();
+        let text = visual.debug_bounds("launch-error-text").unwrap();
+        assert!(inside(region), "{region:?}");
+        // Every wrapped line of the whole string is laid out: the box is as
+        // tall as GPUI's own unclamped wrap of it at that width.
+        let (lines, line_height) = visual.update(|window, _| {
+            let mut style = window.text_style();
+            style.font_size = px(12.).into();
+            let shaped = window
+                .text_system()
+                .shape_text(
+                    ERROR.into(),
+                    px(12.),
+                    &[style.to_run(ERROR.len())],
+                    Some(text.size.width),
+                    None,
+                )
+                .unwrap();
+            let lines: usize = shaped.iter().map(|l| l.wrap_boundaries().len() + 1).sum();
+            (lines, style.line_height_in_pixels(window.rem_size()))
+        });
+        assert!(
+            lines > 3,
+            "a long error wraps past any small clamp: {lines}"
+        );
+        assert!(
+            text.size.height >= line_height * (lines as f32 - 0.5),
+            "{text:?} shows fewer than {lines} lines of {line_height:?}"
+        );
+        assert!(
+            text.size.height > region.size.height,
+            "{text:?} in {region:?}"
+        );
+        assert!(
+            text.bottom() > region.bottom(),
+            "the end starts out of view"
+        );
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: region.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-400.))),
+            ..Default::default()
+        });
+        visual.run_until_parked();
+        let scrolled = visual.debug_bounds("launch-error-text").unwrap();
+        assert!(
+            scrolled.bottom() <= region.bottom() + px(1.) && scrolled.bottom() > region.top(),
+            "end of {scrolled:?} reachable in {region:?}"
+        );
+        assert_eq!(visual.debug_bounds("launch-start").unwrap(), start);
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.spawn_error, ERROR, "nothing is truncated in state");
+            assert!(wks_native::launch::uncertain_outcome(&this.spawn_error));
+        });
+        // Still allowed after checking: one click is one launch.
+        visual.simulate_click(start.center(), gpui::Modifiers::default());
+        let Some(Command::Create(request)) = next_effect(&mut commands) else {
+            panic!("expected one create command")
+        };
+        assert_eq!(request.cwd, "/work/api");
         assert!(commands.try_recv().is_err());
     }
 
