@@ -193,6 +193,8 @@ impl Workspace {
         theme.mono_font_size = px((self.settings.text_size.clamp(12, 20) as f32 - 2.).max(12.));
         self.list.splice(0..count, count);
         self.list.scroll_to(anchor);
+        // A popped-out viewer draws in its own window from these settings.
+        self.refresh_popout(cx);
         cx.notify();
     }
 }

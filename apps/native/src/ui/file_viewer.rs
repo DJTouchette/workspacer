@@ -1159,6 +1159,13 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Redraw a popped-out viewer after appearance or text settings change.
+    pub(super) fn refresh_popout(&self, cx: &mut App) {
+        if let Some(popout) = &self.chat.viewer.popout {
+            let _ = popout.window.update(cx, |_, window, _| window.refresh());
+        }
+    }
+
     /// Close a popped-out window with its owner (main window closing).
     pub(super) fn close_popout_window(&mut self, cx: &mut App) {
         if let Some(popout) = self.chat.viewer.popout.take() {

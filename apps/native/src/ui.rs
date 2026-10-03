@@ -2933,6 +2933,14 @@ mod tests {
                 "the new window focuses its content"
             );
         });
+        // Appearance changes redraw the separate window too.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.set_appearance(Appearance::Light, window, cx)
+            })
+        });
+        window.run_until_parked();
+        assert!(window.debug_bounds("file-viewer-text").is_some());
         // The window's keys are its own: nothing reaches the workspace.
         for keys in ["ctrl-enter", "ctrl-n", "escape", "x"] {
             window.simulate_keystrokes(keys);
