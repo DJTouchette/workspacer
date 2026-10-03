@@ -56,15 +56,15 @@ pub fn same_dir(a: &str, b: &str) -> bool {
     a == b || (windows_shaped(&a) && a.eq_ignore_ascii_case(&b))
 }
 
-/// The existing key for `cwd`, honouring an entry that differs only by case
-/// on a Windows-shaped path, so a write lands on the entry already there.
+/// Prefer the canonical key, otherwise an equivalent imported spelling.
+/// This never renames keys or merges potentially conflicting metadata.
 pub fn resolve_key(map: &Map<String, Value>, cwd: &str) -> String {
     let key = project_key(cwd);
-    if map.contains_key(&key) || !windows_shaped(&key) {
+    if map.contains_key(&key) {
         return key;
     }
     map.keys()
-        .find(|existing| existing.eq_ignore_ascii_case(&key))
+        .find(|existing| same_dir(existing, &key))
         .cloned()
         .unwrap_or(key)
 }
@@ -246,20 +246,27 @@ pub fn list(
             }
             let ix = upsert(&mut rows, key, Source::Hub);
             let row = &mut rows[ix];
-            row.label = entry["label"]
-                .as_str()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(Into::into);
-            row.color = parse_color(&entry["color"]);
-            row.icon = entry["icon"].as_str().map(Into::into);
-            row.favourite = entry["favourite"]
+            row.label = row.label.clone().or_else(|| {
+                entry["label"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(Into::into)
+            });
+            row.color = row.color.or_else(|| parse_color(&entry["color"]));
+            row.icon = row
+                .icon
+                .clone()
+                .or_else(|| entry["icon"].as_str().map(Into::into));
+            row.favourite |= entry["favourite"]
                 .as_bool()
                 .unwrap_or_else(|| legacy_favourites.iter().any(|f| same_dir(f, key)));
-            row.last_opened = entry["lastOpened"].as_f64().map(|ms| ms as i64);
-            row.configured = entry
+            row.last_opened = row
+                .last_opened
+                .max(entry["lastOpened"].as_f64().map(|ms| ms as i64));
+            row.configured |= entry
                 .as_object()
-                .is_some_and(|m| m.keys().any(|k| !IDENTITY_ONLY.contains(&k.as_str())))
+                .is_none_or(|m| m.keys().any(|k| !IDENTITY_ONLY.contains(&k.as_str())))
                 || configured.iter().any(|c| same_dir(c, key));
         }
         for path in &legacy_favourites {
@@ -328,40 +335,53 @@ pub fn patch(config: &Value, dir: &str, change: &Patch) -> Result<Value> {
     let key = resolve_key(&projects, dir);
     let mut partial = json!({});
     match change {
-        Patch::Pin(pinned) => {
-            let entry = projects.entry(key).or_insert_with(|| json!({}));
-            ensure!(
-                entry.is_object(),
-                "The hub's entry for this project is not editable"
-            );
-            entry["favourite"] = json!(pinned);
-        }
-        Patch::Touch(now) => {
-            let entry = projects.entry(key).or_insert_with(|| json!({}));
-            ensure!(
-                entry.is_object(),
-                "The hub's entry for this project is not editable"
-            );
-            entry["lastOpened"] = json!(now);
+        Patch::Pin(_) | Patch::Touch(_) => {
+            // Keep every imported alias and its metadata; update only the
+            // identity field on all aliases so list/readback cannot disagree.
+            let mut keys: Vec<String> = projects
+                .keys()
+                .filter(|k| same_dir(k, dir))
+                .cloned()
+                .collect();
+            if keys.is_empty() {
+                keys.push(key.clone());
+            }
+            let latest = keys
+                .iter()
+                .filter_map(|k| projects.get(k).and_then(|e| e["lastOpened"].as_i64()))
+                .max();
+            for key in keys {
+                let entry = projects.entry(key).or_insert_with(|| json!({}));
+                ensure!(
+                    entry.is_object(),
+                    "The hub's entry for this project is not editable"
+                );
+                match change {
+                    Patch::Pin(pinned) => entry["favourite"] = json!(pinned),
+                    Patch::Touch(now) => {
+                        entry["lastOpened"] = json!(latest.unwrap_or(*now).max(*now))
+                    }
+                    Patch::Remove => unreachable!(),
+                }
+            }
         }
         Patch::Remove => {
             let registry = registry(config);
-            let configured = strings(&registry["configured"]).any(|c| same_dir(c, &key));
-            if let Some(entry) = projects.get(&key) {
-                let extra = entry
-                    .as_object()
-                    .is_none_or(|m| m.keys().any(|k| !IDENTITY_ONLY.contains(&k.as_str())));
-                if extra || configured {
-                    bail!(
-                        "This project has settings on the hub; manage it in Workspacer Settings → Projects"
-                    );
-                }
-            } else if configured {
+            let configured = strings(&registry["configured"]).any(|c| same_dir(c, dir));
+            let protected = projects
+                .iter()
+                .filter(|(k, _)| same_dir(k, dir))
+                .any(|(_, entry)| {
+                    entry
+                        .as_object()
+                        .is_none_or(|m| m.keys().any(|k| !IDENTITY_ONLY.contains(&k.as_str())))
+                });
+            if configured || protected {
                 bail!(
                     "This project has settings on the hub; manage it in Workspacer Settings → Projects"
                 );
             }
-            projects.remove(&key);
+            projects.retain(|k, _| !same_dir(k, dir));
             // A forgotten directory would otherwise reappear from the legacy
             // arrays, which are the one thing a removal must still rewrite.
             for list in ["recent", "favourites"] {
@@ -387,18 +407,30 @@ pub fn patch(config: &Value, dir: &str, change: &Patch) -> Result<Value> {
 /// config, so success is read back rather than assumed.
 pub fn verify(saved: &Value, dir: &str, change: &Patch) -> Result<()> {
     let projects = saved["projects"].as_object().cloned().unwrap_or_default();
-    let key = resolve_key(&projects, dir);
-    let entry = projects.get(&key);
+    let entries: Vec<&Value> = projects
+        .iter()
+        .filter(|(k, _)| same_dir(k, dir))
+        .map(|(_, v)| v)
+        .collect();
     let held = match change {
-        Patch::Pin(pinned) => entry.is_some_and(|e| e["favourite"].as_bool() == Some(*pinned)),
-        Patch::Touch(now) => entry.is_some_and(|e| e["lastOpened"].as_f64() == Some(*now as f64)),
-        // A legacy-only pin or recent never had a `projects` entry, so the
-        // map alone would accept an unchanged config after a skipped save.
+        Patch::Pin(pinned) => {
+            !entries.is_empty()
+                && entries
+                    .iter()
+                    .all(|e| e["favourite"].as_bool() == Some(*pinned))
+        }
+        Patch::Touch(now) => {
+            !entries.is_empty()
+                && entries
+                    .iter()
+                    .all(|e| e["lastOpened"].as_f64().is_some_and(|at| at >= *now as f64))
+        }
+        // Every normalized map alias and legacy trace must be absent.
         Patch::Remove => {
-            entry.is_none()
+            entries.is_empty()
                 && ["favourites", "recent"]
                     .iter()
-                    .all(|list| strings(&saved["directories"][*list]).all(|p| !same_dir(p, &key)))
+                    .all(|list| strings(&saved["directories"][*list]).all(|p| !same_dir(p, dir)))
         }
     };
     ensure!(
@@ -706,6 +738,72 @@ mod tests {
             "scripts": {"/scripted": {"build": "make"}}
         });
         assert!(patch(&protected, "/scripted", &Patch::Remove).is_err());
+    }
+
+    #[test]
+    fn imported_aliases_remove_every_trace_and_verify_skipped_saves() {
+        for (path, aliases) in [
+            ("/a", vec!["/a", "/a/", "/a//"]),
+            (
+                "c:/work/app",
+                vec!["C:\\Work\\App\\", "c:/work/app/", "C:/WORK/App"],
+            ),
+            (
+                "//host/share/app",
+                vec!["\\\\HOST\\share\\app\\", "//host/share/app/"],
+            ),
+        ] {
+            let mut config = json!({"projects":{"/keep":{"label":"Keep"}},
+                "directories":{"recent":aliases,"favourites":aliases}});
+            for alias in &aliases {
+                config["projects"][*alias] = json!({"lastOpened":5});
+            }
+            assert!(verify(&config, path, &Patch::Remove).is_err());
+            let removed = patch(&config, path, &Patch::Remove).unwrap();
+            assert_eq!(removed["projects"], json!({"/keep":{"label":"Keep"}}));
+            assert!(verify(&removed, path, &Patch::Remove).is_ok());
+            let mut half = removed.clone();
+            half["projects"][aliases[0]] = json!({});
+            assert!(verify(&half, path, &Patch::Remove).is_err());
+        }
+    }
+
+    #[test]
+    fn alias_identity_updates_preserve_conflicting_metadata_and_protection() {
+        let config = json!({"projects": {
+            "/a":{"label":"Canonical","lastOpened":100},
+            "/a/":{"label":"Imported","workflowId":"wf","lastOpened":200},
+            "/a//":{"favourite":true}
+        }});
+        let rows = list(Some(&registry(&config)), &[], &[]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title(), "Canonical");
+        assert!(rows[0].configured && !rows[0].removable());
+        assert_eq!(rows[0].last_opened, Some(200));
+        assert!(patch(&config, "/a", &Patch::Remove).is_err());
+        let unpin = patch(&config, "/a", &Patch::Pin(false)).unwrap();
+        assert!(verify(&unpin, "/a", &Patch::Pin(false)).is_ok());
+        assert!(!list(Some(&registry(&unpin)), &[], &[])[0].favourite);
+        let touch = patch(&unpin, "/a", &Patch::Touch(50)).unwrap();
+        assert!(verify(&touch, "/a", &Patch::Touch(50)).is_ok());
+        for alias in ["/a", "/a/", "/a//"] {
+            assert_eq!(touch["projects"][alias]["lastOpened"], 200);
+        }
+        assert_eq!(touch["projects"]["/a"]["label"], "Canonical");
+        assert_eq!(touch["projects"]["/a/"]["label"], "Imported");
+        assert_eq!(touch["projects"]["/a/"]["workflowId"], "wf");
+        for field in ["scripts", "widgets"] {
+            let protected = json!({"projects":{"/a/":{}},field:{"/a//":{}}});
+            assert!(patch(&protected, "/a", &Patch::Remove).is_err());
+        }
+        assert!(
+            patch(
+                &json!({"projects":{"/a":{},"/a/":null}}),
+                "/a",
+                &Patch::Remove
+            )
+            .is_err()
+        );
     }
 
     #[test]
