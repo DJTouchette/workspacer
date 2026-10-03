@@ -512,7 +512,7 @@ impl Workspace {
             &self.composer,
             &self.search,
             &self.project_path,
-            &self.project,
+            &self.project_query,
             &self.label,
             &self.model,
             &self.prompt,

@@ -66,15 +66,12 @@ impl Workspace {
         cx.notify();
     }
 
-    pub(super) fn project_rows(&self, cx: &App) -> Vec<Project> {
-        let query = self.search.read(cx).value().to_lowercase();
-        projects(
-            &self.view.sessions,
-            self.settings.bookmarks(&self.project_scope),
-        )
-        .into_iter()
-        .filter(|p| p.path.to_lowercase().contains(&query))
-        .collect()
+    pub(super) fn project_rows(&self, cx: &App) -> Vec<KnownProject> {
+        let query = self.search.read(cx).value().to_owned();
+        self.known_projects()
+            .into_iter()
+            .filter(|p| p.matches(&query))
+            .collect()
     }
 
     pub(super) fn visible_sessions(&self, cx: &App) -> Vec<usize> {
@@ -89,7 +86,7 @@ impl Workspace {
                     && self
                         .project_filter
                         .as_ref()
-                        .is_none_or(|path| &s.cwd == path)
+                        .is_none_or(|path| wks_native::projects::same_dir(&s.cwd, path))
                     && (self.session_title(s).to_lowercase().contains(&query)
                         || s.cwd.to_lowercase().contains(&query))
             })
@@ -112,17 +109,19 @@ impl Workspace {
         }
         if screen == Screen::Conversation
             && self.project_filter.as_ref().is_some_and(|path| {
-                !self
-                    .view
-                    .sessions
-                    .iter()
-                    .any(|s| Some(&s.id) == self.view.selected.as_ref() && &s.cwd == path)
+                !self.view.sessions.iter().any(|s| {
+                    Some(&s.id) == self.view.selected.as_ref()
+                        && wks_native::projects::same_dir(&s.cwd, path)
+                })
             })
         {
             self.project_filter = None;
         }
         self.screen = screen;
         self.new_session = false;
+        if screen == Screen::Projects {
+            self.load_projects(cx);
+        }
         window.focus(&self.focus);
         cx.notify();
     }
@@ -135,6 +134,10 @@ impl Workspace {
         if self.usage_open {
             self.usage_open = false;
             cx.notify();
+            return;
+        }
+        // Esc leaves an open project list for the project already chosen.
+        if self.new_session && self.close_project_picker(window, cx) {
             return;
         }
         if self.focus.is_focused(window) {
@@ -152,7 +155,12 @@ impl Workspace {
 
     fn focus_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.new_session {
-            self.project.update(cx, |input, cx| input.focus(window, cx));
+            if self.projects.picker_open {
+                self.project_query
+                    .update(cx, |input, cx| input.focus(window, cx));
+            } else {
+                self.prompt.update(cx, |input, cx| input.focus(window, cx));
+            }
         } else if self.screen == Screen::Projects {
             self.project_path
                 .update(cx, |input, cx| input.focus(window, cx));
@@ -174,7 +182,12 @@ impl Workspace {
         self.project_filter = Some(path.clone());
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
-        if let Some(session) = self.view.sessions.iter().find(|s| s.cwd == path) {
+        if let Some(session) = self
+            .view
+            .sessions
+            .iter()
+            .find(|s| wks_native::projects::same_dir(&s.cwd, &path))
+        {
             let id = session.id.clone();
             self.show_screen(Screen::Conversation, window, cx);
             self.project_filter = Some(path);
@@ -195,26 +208,25 @@ impl Workspace {
         }
     }
 
+    /// Save a typed path as a pinned project in the hub's shared registry.
+    /// Nothing is created on disk and no agent starts.
     pub(super) fn add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let path = self.project_path.read(cx).value().to_string();
-        match self.settings.add_project(&self.project_scope, &path) {
-            Ok(()) => {
-                self.save_settings(cx);
-                self.project_path
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.search
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.project_cursor = self
-                    .project_rows(cx)
-                    .iter()
-                    .position(|p| p.path == path.trim())
-                    .unwrap_or(0);
-                self.projects_scroll
-                    .scroll_to_item(self.project_cursor, gpui::ScrollStrategy::Center);
-                window.focus(&self.focus);
-            }
-            Err(e) => self.settings_error = e.to_string(),
+        let path = self.project_path.read(cx).value().trim().to_owned();
+        if !wks_native::launch::absolute_directory(&path) {
+            self.settings_error = "Enter an absolute project directory on the hub's machine".into();
+            cx.notify();
+            return;
         }
+        self.settings_error.clear();
+        self.set_project_pin(wks_native::projects::project_key(&path), true, cx);
+        self.project_path
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.project_cursor = 0;
+        self.projects_scroll
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        window.focus(&self.focus);
         cx.notify();
     }
 
@@ -410,39 +422,70 @@ impl Workspace {
         let p = self.appearance.palette();
         let rows = self.project_rows(cx);
         let count = rows.len();
+        let saving = self
+            .view
+            .requests
+            .get("project-save")
+            .is_some_and(|s| s.loading);
+        let can_write = self.view.connected && !self.demo && !saving;
         div().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
             .child(div().p_5().flex().flex_col().gap_2()
                 .child(overline("WORKSPACE", p))
                 .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Projects"))
-                .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Your sessions, organized by directory. Save a path to start something new."))
-                .child(div().flex().flex_wrap().gap_2().child(Input::new(&self.project_path))
+                .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Pinned and recent projects from the connected hub, plus folders your sessions run in."))
+                .child(div().flex().flex_wrap().gap_2().child(div().flex_1().min_w(px(220.)).child(Input::new(&self.project_path)))
                     .when(self.extras.local_paths, |d| d.child(self.button("browse-bookmark", "Browse…", true).on_click(cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)))))
-                    .child(self.button("save-project", "Save project", true).flex_shrink_0()
-                        .on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx)))))
-                .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Saving a path does not create a directory or launch an agent."))
-                .when(!self.settings_error.is_empty(), |d| d.child(div().text_color(rgb(p.warning)).child(self.settings_error.clone()))))
-            .when(count == 0, |d| d.child(div().p_5().text_color(rgb(p.muted)).child("No matching projects. Save a directory above or clear the sidebar filter.")))
+                    .child(self.button("save-project", "Pin project", can_write).flex_shrink_0()
+                        .when(can_write, |d| d.on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx))))))
+                .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent."))
+                .when(!self.settings_error.is_empty(), |d| d.child(div().text_color(rgb(p.warning)).child(self.settings_error.clone())))
+                .when(!self.projects.notice.is_empty(), |d| d.child(div().flex().items_center().gap_2().text_size(px(12.))
+                    .text_color(rgb(if self.projects.fallback.is_some() { p.warning } else { p.muted }))
+                    .child(self.projects.notice.clone())
+                    .when(self.projects.fallback.is_some(), |d| d.child(self.quiet_button("keep-on-device-projects", "Keep on this device", IconName::Check, true).debug_selector(|| "keep-on-device-projects".into())
+                        .on_click(cx.listener(|this, _, _, cx| this.keep_project_on_device(cx)))))))
+                .when_some(self.projects.registry_error.clone(), |d, error| d.child(div().text_size(px(12.)).text_color(rgb(p.warning))
+                    .child(format!("Couldn't read the hub's projects ({error}). Showing this device's projects and active folders.")))))
+            .when(count == 0, |d| d.child(div().p_5().text_color(rgb(p.muted)).child(
+                if self.view.requests.get("projects").is_some_and(|s| s.loading) && self.projects.registry.is_none() { "Loading projects…" }
+                else { "No matching projects. Pin a directory above or clear the sidebar filter." })))
             .child(uniform_list("project-list", count, cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range.map(|ix| {
-                    let project = &rows[ix];
+                    let project = rows[ix].clone();
                     let path = project.path.clone();
-                    let forget = path.clone();
-                    div().h(px(100.)).px_5().pb_2().child(chrome::interactive_control(div().id(("project", ix)), p, true).h_full().p_3().rounded(px(p.panel_radius))
+                    let pin_path = path.clone();
+                    let forget = project.clone();
+                    let pinned = project.favourite;
+                    let sessions = match (project.live_sessions, project.sessions) {
+                        (0, 0) => "No sessions yet · open to start one".to_owned(),
+                        (0, n) => format!("{n} ended · open project"),
+                        (live, n) => format!("{live} running of {n} · open project"),
+                    };
+                    div().h(px(84.)).px_5().pb_2().child(chrome::interactive_control(div().id(("project", ix)), p, true).h_full().p_3().rounded(px(p.panel_radius))
                         .bg(rgb(if ix == this.project_cursor { p.selected } else { p.surface }))
                         .cursor_pointer().hover(|style| style.bg(rgb(p.selected)))
                         .on_click(cx.listener(move |this, _, window, cx| this.open_project_path(path.clone(), window, cx)))
-                        .child(div().flex().justify_between().items_center()
-                            .child(div().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(project.title().to_owned()))
-                            .when(project.saved, |d| d.child(this.button("forget-project", "Unsave", true)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    if let Some(paths) = this.settings.projects.get_mut(&this.project_scope) { paths.retain(|path| path != &forget); }
-                                    this.save_settings(cx);
-                                })))))
-                        .child(div().truncate().text_size(px(12.)).text_color(rgb(p.muted)).child(project.path.clone()))
-                        .child(div().text_size(px(11.)).text_color(rgb(p.accent)).child(format!("{} sessions · {}", project.sessions, if project.sessions == 0 { "Open to start a session" } else { "Open project" }))))
+                        .flex().items_center().gap_3()
+                        .child(this.project_mark(Some(&project), &project.path, 36.))
+                        .child(div().flex_1().min_w_0().flex().flex_col().gap(px(2.))
+                            .child(div().flex().items_center().gap_2().min_w_0()
+                                .child(div().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(project.title().to_owned()))
+                                .when(project.source == wks_native::projects::Source::Device, |d| d.child(div().flex_shrink_0().text_size(px(10.)).text_color(rgb(p.muted)).child("this device"))))
+                            .child(div().truncate().font_family(mono_font()).text_size(px(11.)).text_color(rgb(p.muted)).child(project.path.clone()))
+                            .child(div().text_size(px(11.)).text_color(rgb(if project.live_sessions > 0 { p.busy } else { p.accent })).child(sessions)))
+                        .when(project.removable(), |d| d.child(this.button(SharedString::from(format!("forget-project-{ix}")), "Forget", project.source == wks_native::projects::Source::Device || can_write)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.forget_project(&forget, cx);
+                            }))))
+                        .child(this.icon_button(SharedString::from(format!("pin-project-{ix}")), if pinned { "Unpin project" } else { "Pin project" }, if pinned { IconName::Star } else { IconName::StarOff }, can_write)
+                            .when(pinned, |d| d.text_color(rgb(p.accent)))
+                            .when(can_write, |d| d.on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.set_project_pin(pin_path.clone(), !pinned, cx);
+                            })))))
                 }).collect::<Vec<_>>()
             })).track_scroll(self.projects_scroll.clone()).flex_1().min_h_0())
-            .child(div().px_5().py_3().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · / filter · i add · Ctrl Enter save" } else { "Click a project to open it · Ctrl Enter to save a path" }))
+            .child(div().px_5().py_3().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · / filter · i add · Ctrl Enter pin" } else { "Click a project to open it · Ctrl Enter to pin a path" }))
     }
 }

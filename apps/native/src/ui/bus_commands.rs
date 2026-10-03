@@ -105,8 +105,10 @@ impl Workspace {
                         self.choose_provider("claude", window, cx);
                     }
                     if !cwd.is_empty() {
-                        self.project
-                            .update(cx, |input, cx| input.set_value(cwd, window, cx));
+                        self.seed_project(&cwd, cx);
+                        if !self.projects.picker_open {
+                            self.prompt.update(cx, |input, cx| input.focus(window, cx));
+                        }
                         self.load_models(false, cx);
                     }
                 }

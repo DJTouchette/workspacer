@@ -86,63 +86,42 @@ impl Workspace {
         self.model_picker = picker;
     }
 
-    pub(super) fn render_new_session(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+    /// The New Agent screen: project first, then who does the work and what
+    /// it should do, with consequential options summarized above their fold.
+    pub(super) fn render_new_session(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let p = self.appearance.palette();
         let busy = self.spawn_pending || self.view.creating;
-        let can_create = self.view.connected && !busy;
-        let cwd = self.project.read(cx).value().trim().to_owned();
-        let suggestions = projects(
-            &self.view.sessions,
-            self.settings.bookmarks(&self.project_scope),
-        )
-        .into_iter()
-        .filter(|project| wks_native::launch::absolute_directory(&project.path))
-        .take(3)
-        .collect::<Vec<_>>();
-        let model = if self.model_choice == "__custom" {
-            self.model.read(cx).value().to_string()
-        } else {
-            self.catalog_models
-                .iter()
-                .find(|model| model.id == self.model_choice)
-                .map(|model| model.label.clone())
-                .unwrap_or_else(|| {
-                    if self.model_choice.is_empty() {
-                        "Provider default".into()
-                    } else {
-                        self.model_choice.clone()
-                    }
-                })
+        let can_create = self.view.connected && !busy && !self.demo;
+        let resume = self.extras.resume.is_some();
+        // Two columns only where both stay readable beside the sidebar.
+        let wide = window.viewport_size().width >= px(1100.);
+        let card = || {
+            div()
+                .p_4()
+                .rounded(px(p.panel_radius))
+                .bg(rgb(p.surface))
+                .border_1()
+                .border_color(rgb(p.border))
+                .flex()
+                .flex_col()
+                .gap_3()
         };
-        let context = self
-            .context_window
-            .map(|tokens| format!(" · {}K context", tokens / 1000))
-            .unwrap_or_default();
-        let summary = format!(
-            "{}{} · {}",
-            if model.is_empty() {
-                "Custom model"
-            } else {
-                &model
-            },
-            context,
-            self.permission.label()
-        );
-
-        let content = div()
-            .max_w(px(640.))
-            .mx_auto()
-            .py_2()
+        let header = div()
             .flex()
-            .flex_col()
-            .gap_4()
+            .items_start()
+            .justify_between()
+            .gap_3()
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .justify_between()
+                    .flex_col()
+                    .gap_1()
                     .child(overline(
-                        if self.extras.resume.is_some() {
+                        if resume {
                             "CONTINUE A CONVERSATION"
                         } else {
                             "NEW AGENT"
@@ -150,352 +129,96 @@ impl Workspace {
                         p,
                     ))
                     .child(
-                        self.icon_button(
-                            "cancel-create",
-                            "Back to conversation",
-                            IconName::Close,
-                            !busy,
-                        )
-                        .when(!busy, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| {
-                                this.show_screen(Screen::Conversation, window, cx)
-                            }))
-                        }),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
                         div()
-                            .text_size(px(28.))
+                            .debug_selector(|| "launch-title".into())
+                            .text_size(px(22.))
                             .font_weight(FontWeight::BOLD)
-                            .child(if self.extras.resume.is_some() {
+                            .child(if resume {
                                 "Pick up where you left off"
                             } else {
-                                "What are we working on?"
+                                "Start an agent"
                             }),
-                    )
-                    .child(div().text_size(px(13.)).text_color(rgb(p.muted)).child(
-                        "Pick your agent, choose a workspace, and give it a starting point.",
-                    )),
-            )
-            .child(
-                div().flex().gap_3().children(
-                    [
-                        ("claude", "Claude", "Claude Code", IconName::Bot),
-                        ("codex", "Codex", "OpenAI Codex", IconName::SquareTerminal),
-                    ]
-                    .into_iter()
-                    .map(|(provider, name, subtitle, icon)| {
-                        let selected = self.provider == provider;
-                        chrome::interactive_control(div().id(provider), p, !busy)
-                            .debug_selector(move || format!("launch-provider-{provider}"))
-                            .flex_1()
-                            .min_w_0()
-                            .p_3()
-                            .rounded(px(p.panel_radius))
-                            .bg(rgb(if selected { p.selected } else { p.surface }))
-                            .border_color(rgb(if selected { p.accent } else { p.border }))
-                            .flex()
-                            .flex_col()
-                            .gap_3()
-                            .when(!busy, |d| {
-                                d.hover(|s| s.bg(rgb(p.selected))).on_click(cx.listener(
-                                    move |this, _, window, cx| {
-                                        this.choose_provider(provider, window, cx);
-                                        this.load_models(false, cx);
-                                        cx.notify();
-                                    },
-                                ))
-                            })
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        Icon::new(icon).size(px(22.)).text_color(rgb(
-                                            if selected { p.accent } else { p.muted },
-                                        )),
-                                    )
-                                    .when(selected, |d| {
-                                        d.child(
-                                            Icon::new(IconName::Check)
-                                                .size(px(14.))
-                                                .text_color(rgb(p.accent)),
-                                        )
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_size(px(16.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(name),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(rgb(p.muted))
-                                            .child(subtitle),
-                                    ),
-                            )
-                    }),
-                ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("Where should it work?"),
-                            )
-                            .when(self.extras.local_paths, |d| {
-                                d.child(
-                                    self.quiet_button(
-                                        "browse-project",
-                                        "Choose folder",
-                                        IconName::FolderOpen,
-                                        !busy,
-                                    )
-                                    .when(!busy, |d| {
-                                        d.on_click(cx.listener(|this, _, window, cx| {
-                                            this.pick_folder(false, window, cx)
-                                        }))
-                                    }),
-                                )
-                            }),
-                    )
-                    .when(!suggestions.is_empty(), |d| {
-                        d.child(div().flex().flex_wrap().gap_2().children(
-                            suggestions.into_iter().enumerate().map(|(index, project)| {
-                                let title = project.title().to_owned();
-                                let path = project.path;
-                                let tooltip = path.clone();
-                                self.button("workspace-pick", title, !busy)
-                                    .id(("workspace-pick", index))
-                                    .debug_selector(move || format!("launch-workspace-{index}"))
-                                    .max_w_full()
-                                    .truncate()
-                                    .rounded_full()
-                                    .bg(rgb(if cwd == path { p.selected } else { p.surface }))
-                                    .tooltip(move |window, cx| {
-                                        gpui_component::tooltip::Tooltip::new(tooltip.clone())
-                                            .build(window, cx)
-                                    })
-                                    .when(!busy, |d| {
-                                        d.on_click(cx.listener(move |this, _, window, cx| {
-                                            this.project.update(cx, |input, cx| {
-                                                input.set_value(path.clone(), window, cx)
-                                            });
-                                            this.load_models(false, cx);
-                                            cx.notify();
-                                        }))
-                                    })
-                            }),
-                        ))
-                    })
-                    .child(Input::new(&self.project).disabled(busy))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(rgb(p.muted))
-                            .child("Choose an existing folder on the connected hub."),
                     ),
             )
-            .child(self.render_model_options(busy, cx))
             .child(
-                div()
-                    .p_4()
-                    .rounded(px(p.panel_radius))
-                    .bg(rgb(p.surface))
-                    .border_1()
-                    .border_color(rgb(p.border))
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Icon::new(IconName::Bot)
-                                    .size(px(16.))
-                                    .text_color(rgb(p.accent)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("Give it a starting point"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(p.muted))
-                                    .child("Optional"),
-                            ),
-                    )
-                    .child(
-                        Input::new(&self.prompt)
-                            .appearance(false)
-                            .h(px(90.))
-                            .disabled(busy),
-                    ),
-            )
-            .when(self.extras.resume.is_some(), |d| {
-                d.child(
-                    div().text_size(px(12.)).text_color(rgb(p.accent)).child(
-                        "Your previous conversation will be resumed with the choices below.",
-                    ),
+                self.icon_button(
+                    "cancel-create",
+                    "Back to conversation",
+                    IconName::Close,
+                    !busy,
                 )
-            })
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                self.quiet_button(
-                                    "launch-customize",
-                                    if self.launch_details_open {
-                                        "Hide options"
-                                    } else {
-                                        "Customize"
-                                    },
-                                    IconName::Settings2,
-                                    !busy,
-                                )
-                                .debug_selector(|| "launch-customize".into())
-                                .when(!busy, |d| {
-                                    d.on_click(cx.listener(|this, _, window, cx| {
-                                        if this.launch_details_open {
-                                            this.project
-                                                .update(cx, |input, cx| input.focus(window, cx));
-                                        }
-                                        this.launch_details_open = !this.launch_details_open;
-                                        cx.notify();
-                                    }))
-                                }),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(rgb(if self.permission == Permission::FullAccess {
-                                        p.warning
-                                    } else {
-                                        p.muted
-                                    }))
-                                    .child(summary),
-                            ),
-                    )
-                    .when(self.launch_details_open, |d| {
-                        d.child(
-                            div()
-                                .debug_selector(|| "launch-details".into())
-                                .p_4()
-                                .rounded(px(p.panel_radius))
-                                .bg(rgb(p.surface))
-                                .flex()
-                                .flex_col()
-                                .gap_3()
-                                .child(self.render_access_options(busy, cx))
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(rgb(p.muted))
-                                        .child("Name this session (optional)"),
-                                )
-                                .child(Input::new(&self.label).disabled(busy))
-                                .child(
-                                    self.quiet_button(
-                                        "launch-setup",
-                                        "Agent setup",
-                                        IconName::Settings2,
-                                        !busy,
-                                    )
-                                    .when(!busy, |d| {
-                                        d.on_click(cx.listener(|this, _, window, cx| {
-                                            this.open_feature(Screen::Setup, window, cx)
-                                        }))
-                                    }),
-                                ),
-                        )
-                    }),
-            )
-            .when(!self.spawn_error.is_empty(), |d| {
-                d.child(
-                    div()
-                        .text_color(rgb(p.warning))
-                        .child(self.spawn_error.clone()),
-                )
-            })
-            .when(!self.view.connected, |d| {
-                d.child(
-                    div()
-                        .text_color(rgb(p.warning))
-                        .child("Waiting for the hub connection…"),
-                )
-            });
-        let footer = div()
-            .w_full()
-            .max_w(px(640.))
-            .mx_auto()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
-                if cfg!(target_os = "macos") {
-                    "⌘ Enter to start"
-                } else {
-                    "Ctrl Enter to start"
-                },
-            ))
-            .child(
-                self.primary_button(
-                    "create-session",
-                    if busy {
-                        "Starting…"
-                    } else if self.extras.resume.is_some() {
-                        "Continue conversation"
-                    } else {
-                        "Start working"
-                    },
-                    can_create,
-                )
-                .debug_selector(|| "launch-start".into())
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(Icon::new(IconName::ArrowRight).size(px(14.)))
-                .when(can_create, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| this.create(cx)))
+                .when(!busy, |d| {
+                    d.on_click(cx.listener(|this, _, window, cx| {
+                        this.show_screen(Screen::Conversation, window, cx)
+                    }))
                 }),
             );
+        let agent = card()
+            .child(projects::section_label("Agent", p))
+            .child(self.render_provider_choice(busy, cx))
+            .child(self.render_model_select(busy, cx));
+        let task =
+            card()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(projects::section_label("Task", p))
+                        .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
+                            if resume {
+                                "Optional · sent after the conversation resumes"
+                            } else {
+                                "Optional · you can also start empty"
+                            },
+                        )),
+                )
+                .child(
+                    div().debug_selector(|| "launch-prompt".into()).child(
+                        Input::new(&self.prompt)
+                            .appearance(false)
+                            .h(px(96.))
+                            .disabled(busy),
+                    ),
+                );
+        let content = div()
+            .max_w(px(if wide { 980. } else { 720. }))
+            .mx_auto()
+            .py_2()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(header)
+            .child(card().child(self.render_project_section(busy, cx)))
+            .map(|d| {
+                if wide {
+                    d.child(
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap_4()
+                            .child(agent.w(px(380.)).flex_shrink_0())
+                            .child(task.flex_1().min_w_0()),
+                    )
+                } else {
+                    d.child(agent).child(task)
+                }
+            })
+            .child(self.render_launch_disclosure(busy, cx))
+            .when(resume, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(12.))
+                        .text_color(rgb(p.accent))
+                        .child(Icon::new(IconName::Info).size(px(12.)))
+                        .child(
+                            "Your previous conversation will be resumed with the choices above.",
+                        ),
+                )
+            });
         div()
             .id("new-session-form")
             .flex_1()
@@ -520,17 +243,331 @@ impl Workspace {
                     .bg(rgb(p.base))
                     .border_t_1()
                     .border_color(rgb(p.border))
-                    .child(footer),
+                    .child(self.render_launch_footer(busy, can_create, wide, cx)),
             )
     }
 
-    fn catalog_key(&self, cx: &App) -> CatalogKey {
+    fn render_provider_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        div().flex().gap_2().children(
+            [
+                ("claude", "Claude", "Claude Code", IconName::Bot),
+                ("codex", "Codex", "OpenAI Codex", IconName::SquareTerminal),
+            ]
+            .into_iter()
+            .map(|(provider, name, subtitle, icon)| {
+                let selected = self.provider == provider;
+                chrome::interactive_control(div().id(provider), p, !busy)
+                    .debug_selector(move || format!("launch-provider-{provider}"))
+                    .flex_1()
+                    .min_w_0()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(p.control_radius))
+                    .bg(rgb(if selected { p.selected } else { p.chat }))
+                    .border_color(rgb(if selected { p.accent } else { p.border }))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when(!busy, |d| {
+                        d.hover(|s| s.bg(rgb(p.selected))).on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.choose_provider(provider, window, cx);
+                                this.load_models(false, cx);
+                                cx.notify();
+                            },
+                        ))
+                    })
+                    .child(
+                        Icon::new(icon)
+                            .size(px(18.))
+                            .flex_shrink_0()
+                            .text_color(rgb(if selected { p.accent } else { p.muted })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(p.muted))
+                                    .child(subtitle),
+                            ),
+                    )
+                    .when(selected, |d| {
+                        d.child(
+                            Icon::new(IconName::Check)
+                                .size(px(14.))
+                                .text_color(rgb(p.accent)),
+                        )
+                    })
+            }),
+        )
+    }
+
+    /// Non-default options, readable without opening the fold.
+    fn launch_option_chips(&self, cx: &App) -> Vec<(String, u32)> {
+        let p = self.appearance.palette();
+        let mut chips = Vec::new();
+        let default_access = self.settings.default_access(self.provider);
+        chips.push((
+            self.permission.label().to_owned(),
+            if self.permission == Permission::FullAccess {
+                p.warning
+            } else if self.permission != default_access {
+                p.accent
+            } else {
+                p.muted
+            },
+        ));
+        if let Some(tokens) = self.context_window {
+            chips.push((format!("{} context", context_label(tokens)), p.accent));
+        }
+        let label = self.label.read(cx).value().trim().to_owned();
+        if !label.is_empty() {
+            chips.push((format!("Named “{label}”"), p.accent));
+        }
+        chips
+    }
+
+    fn render_launch_disclosure(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let open = self.launch_details_open;
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        self.quiet_button(
+                            "launch-customize",
+                            "Options",
+                            if open {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            },
+                            !busy,
+                        )
+                        .debug_selector(|| "launch-customize".into())
+                        .when(!busy, |d| {
+                            d.on_click(cx.listener(|this, _, window, cx| {
+                                if this.launch_details_open {
+                                    window.focus(&this.focus);
+                                }
+                                this.launch_details_open = !this.launch_details_open;
+                                cx.notify();
+                            }))
+                        }),
+                    )
+                    .children(self.launch_option_chips(cx).into_iter().enumerate().map(
+                        |(ix, (text, color))| {
+                            div()
+                                .debug_selector(move || format!("launch-chip-{ix}"))
+                                .px_2()
+                                .py(px(2.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(rgb(p.border))
+                                .text_size(px(11.))
+                                .text_color(rgb(color))
+                                .child(text)
+                        },
+                    )),
+            )
+            .when(open, |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "launch-details".into())
+                        .p_4()
+                        .rounded(px(p.panel_radius))
+                        .bg(rgb(p.surface))
+                        .border_1()
+                        .border_color(rgb(p.border))
+                        .flex()
+                        .flex_col()
+                        .gap_4()
+                        .child(self.render_access_options(busy, cx))
+                        .child(self.render_context_choice(busy, cx))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(projects::section_label("Session name", p))
+                                .child(Input::new(&self.label).disabled(busy)),
+                        )
+                        .child(
+                            div().flex().flex_wrap().gap_2().child(
+                                self.quiet_button(
+                                    "launch-setup",
+                                    "Agent setup",
+                                    IconName::Settings2,
+                                    !busy,
+                                )
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_feature(Screen::Setup, window, cx)
+                                    }))
+                                }),
+                            ),
+                        ),
+                )
+            })
+    }
+
+    fn render_launch_footer(
+        &self,
+        busy: bool,
+        can_create: bool,
+        wide: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let model = if self.model_choice == "__custom" {
+            let custom = self.model.read(cx).value().trim().to_owned();
+            if custom.is_empty() {
+                "Custom model".to_owned()
+            } else {
+                custom
+            }
+        } else {
+            self.catalog_models
+                .iter()
+                .find(|model| model.id == self.model_choice)
+                .map(|model| model.label.clone())
+                .unwrap_or_else(|| {
+                    if self.model_choice.is_empty() {
+                        "Provider default".into()
+                    } else {
+                        self.model_choice.clone()
+                    }
+                })
+        };
+        let provider = if self.provider == "codex" {
+            "Codex"
+        } else {
+            "Claude"
+        };
+        let project = (!self.projects.cwd.is_empty()).then(|| {
+            self.known_project(&self.projects.cwd)
+                .map(|p| p.title().to_owned())
+                .unwrap_or_else(|| wks_native::projects::basename(&self.projects.cwd).to_owned())
+        });
+        let (icon, color, status): (Option<IconName>, u32, String) = if !self.spawn_error.is_empty()
+        {
+            (
+                Some(IconName::TriangleAlert),
+                p.warning,
+                self.spawn_error.clone(),
+            )
+        } else if busy {
+            (
+                None,
+                p.muted,
+                format!(
+                    "Starting {provider} in {}…",
+                    project.clone().unwrap_or_default()
+                ),
+            )
+        } else if !self.view.connected {
+            (
+                Some(IconName::TriangleAlert),
+                p.warning,
+                "Waiting for the hub connection…".into(),
+            )
+        } else if let Some(project) = &project {
+            (None, p.muted, format!("{provider} · {model} · {project}"))
+        } else {
+            (None, p.muted, "Choose a project to start".into())
+        };
+        div()
+            .w_full()
+            .max_w(px(if wide { 980. } else { 720. }))
+            .mx_auto()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .id("launch-status")
+                    .debug_selector(|| "launch-status".into())
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .text_color(rgb(color))
+                    .when_some(icon, |d, icon| {
+                        d.child(Icon::new(icon).size(px(13.)).flex_shrink_0())
+                    })
+                    .when(busy, |d| {
+                        d.child(work::spinner("launch-spinner".into(), 13.))
+                    })
+                    .child(div().min_w_0().truncate().child(status)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .flex_shrink_0()
+                    .child(keycap(
+                        if cfg!(target_os = "macos") {
+                            "⌘ Enter"
+                        } else {
+                            "Ctrl Enter"
+                        },
+                        p,
+                    ))
+                    .child(
+                        self.primary_button(
+                            "create-session",
+                            if busy {
+                                "Starting…"
+                            } else if self.extras.resume.is_some() {
+                                "Continue"
+                            } else {
+                                "Start agent"
+                            },
+                            can_create,
+                        )
+                        .debug_selector(|| "launch-start".into())
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(Icon::new(IconName::ArrowRight).size(px(14.)))
+                        .when(can_create, |d| {
+                            d.on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))
+                        }),
+                    ),
+            )
+    }
+
+    fn catalog_key(&self, _cx: &App) -> CatalogKey {
         CatalogKey {
             provider: self.provider.into(),
             cwd: if self.provider == "claude" {
                 String::new()
             } else {
-                self.project.read(cx).value().trim().to_owned()
+                self.projects.cwd.clone()
             },
         }
     }
@@ -597,46 +634,161 @@ impl Workspace {
         });
     }
 
-    pub(super) fn render_model_options(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+    /// Model choice with the catalog's live state; the exact ID is entered
+    /// here when Custom is chosen, so it is never hidden behind the fold.
+    pub(super) fn render_model_select(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         let catalog = &self.view.catalog;
         let current = catalog.key == self.catalog_key(cx);
         let loading = current && catalog.loading;
+        let can_reload = !busy && !loading && self.view.connected;
+        let (status, status_color) = if loading {
+            ("Loading models…".to_owned(), p.muted)
+        } else if current && catalog.error.is_some() {
+            (catalog.error.clone().unwrap_or_default(), p.warning)
+        } else if current && catalog.models.is_empty() {
+            (
+                "No models were returned. Use Provider default or enter a custom model ID."
+                    .to_owned(),
+                p.warning,
+            )
+        } else if !current && self.provider != "claude" && self.projects.cwd.is_empty() {
+            (
+                "Codex lists models for the chosen project.".to_owned(),
+                p.muted,
+            )
+        } else if self.catalog_models.is_empty() {
+            (
+                "Provider default and Custom model are available.".to_owned(),
+                p.muted,
+            )
+        } else if self.provider == "claude" {
+            (
+                format!(
+                    "{} model families from your installed Claude CLI",
+                    self.catalog_models.len()
+                ),
+                p.muted,
+            )
+        } else {
+            (
+                format!("{} models from Codex on the hub", self.catalog_models.len()),
+                p.muted,
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(projects::section_label("Model", p))
+                    .child(
+                        self.quiet_button(
+                            "reload-models",
+                            if loading { "Loading…" } else { "Refresh" },
+                            IconName::Redo,
+                            can_reload,
+                        )
+                        .when(can_reload, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| this.load_models(true, cx)))
+                        }),
+                    ),
+            )
+            .child(
+                div().debug_selector(|| "launch-model-picker".into()).child(
+                    Select::new(&self.model_picker)
+                        .disabled(busy)
+                        .search_placeholder("Find a model…"),
+                ),
+            )
+            .when(self.model_choice == "__custom", |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "launch-custom-model".into())
+                        .child(Input::new(&self.model).disabled(busy)),
+                )
+            })
+            .child(
+                div()
+                    .debug_selector(|| "launch-model-status".into())
+                    .text_size(px(11.))
+                    .text_color(rgb(status_color))
+                    .child(status),
+            )
+    }
+
+    /// Context windows the chosen model offers; Default only for a custom ID,
+    /// whose windows the client cannot know.
+    pub(super) fn render_context_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
         let windows = self
             .catalog_models
             .iter()
             .find(|m| m.id == self.model_choice)
             .map(|m| m.windows.clone())
             .unwrap_or_else(|| self.context_window.into_iter().collect());
-        div().flex().flex_col().gap_3()
-            .child(div().flex().items_center().justify_between()
-                .child("Model")
-                .child(self.button("reload-models", if loading { "Loading…" } else { "Refresh models" }, !busy && !loading && self.view.connected)
-                    .when(!busy && !loading && self.view.connected, |d| d.on_click(cx.listener(|this, _, _, cx| this.load_models(true, cx))))))
-            .child(div().debug_selector(|| "launch-model-picker".into()).child(Select::new(&self.model_picker).disabled(busy).search_placeholder("Find a model…")))
-            .when(!loading, |d| d.child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(
-                if self.catalog_models.is_empty() { "No model catalog loaded yet. Provider default and Custom model are still available.".to_owned() }
-                else { format!("{} models available", self.catalog_models.len()) })))
-            .when(self.model_choice == "__custom", |d| d.child(Input::new(&self.model).disabled(busy)))
-            .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child(if self.provider == "claude" {
-                "Claude family aliases follow your installed CLI. Custom model accepts an exact ID."
-            } else { "Models are queried from Codex on the connected hub." }))
-            .when(current && catalog.error.is_some(), |d| d.child(div().text_size(px(12.)).text_color(rgb(p.warning))
-                .child(catalog.error.clone().unwrap_or_default())))
-            .when(current && !loading && catalog.error.is_none() && catalog.models.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(rgb(p.warning))
-                .child("No models were returned. Refresh models, use Provider default, or enter a custom model ID.")))
-            .when(!current && self.provider != "claude", |d| d.child(div().text_size(px(12.)).text_color(rgb(p.muted))
-                .child("Models will load for the entered project directory.")))
-            .when(!windows.is_empty(), |d| d.child(div().flex().flex_wrap().items_center().gap_2()
-                .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Context"))
-                .when(self.model_choice == "__custom", |d| d.child(self.button("default-context", "Default", !busy)
-                    .when(!busy, |d| d.on_click(cx.listener(|this, _, _, cx| { this.context_window = None; cx.notify(); })))))
-                .children(windows.into_iter().map(|tokens| {
-                    let label = if tokens >= 1_000_000 { format!("{}M", tokens / 1_000_000) } else { format!("{}K", tokens / 1000) };
-                    self.button("context", "", !busy).id(("context", tokens as usize)).child(label)
-                        .when(self.context_window == Some(tokens), |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
-                        .when(!busy, |d| d.on_click(cx.listener(move |this, _, _, cx| { this.context_window = Some(tokens); cx.notify(); })))
-                }))))
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(projects::section_label("Context window", p))
+            .when(windows.is_empty(), |d| {
+                d.child(
+                    div().text_size(px(12.)).text_color(rgb(p.muted)).child(
+                        "The model's default. Models with a choice of windows list them here.",
+                    ),
+                )
+            })
+            .when(!windows.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .when(self.model_choice == "__custom", |d| {
+                            d.child(
+                                self.button("default-context", "Default", !busy)
+                                    .when(self.context_window.is_none(), |d| {
+                                        d.bg(rgb(p.selected)).text_color(rgb(p.accent))
+                                    })
+                                    .when(!busy, |d| {
+                                        d.on_click(cx.listener(|this, _, _, cx| {
+                                            this.context_window = None;
+                                            cx.notify();
+                                        }))
+                                    }),
+                            )
+                        })
+                        .children(windows.into_iter().map(|tokens| {
+                            self.button("context", "", !busy)
+                                .id(("context", tokens as usize))
+                                .child(context_label(tokens))
+                                .when(self.context_window == Some(tokens), |d| {
+                                    d.bg(rgb(p.selected)).text_color(rgb(p.accent))
+                                })
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(move |this, _, _, cx| {
+                                        this.context_window = Some(tokens);
+                                        cx.notify();
+                                    }))
+                                })
+                        })),
+                )
+            })
+    }
+
+    pub(super) fn render_model_options(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(self.render_model_select(busy, cx))
+            .child(self.render_context_choice(busy, cx))
     }
 
     pub(super) fn render_access_options(&self, busy: bool, cx: &mut Context<Self>) -> Div {
@@ -645,7 +797,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .child("Access mode")
+            .child(projects::section_label("Access", p))
             .child(
                 div().flex().flex_wrap().gap_2().children(
                     Permission::choices(self.provider)
@@ -682,5 +834,14 @@ impl Workspace {
             .when(self.screen != Screen::Model, |d| {
                 d.child(self.render_access_options(busy, cx))
             })
+    }
+}
+
+/// `200K`, `1M`.
+pub(super) fn context_label(tokens: u64) -> String {
+    if tokens >= 1_000_000 && tokens % 1_000_000 == 0 {
+        format!("{}M", tokens / 1_000_000)
+    } else {
+        format!("{}K", tokens / 1000)
     }
 }

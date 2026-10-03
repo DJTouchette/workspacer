@@ -6,6 +6,7 @@ mod file_viewer;
 mod launch;
 mod markdown;
 mod navigation;
+mod projects;
 mod remote;
 mod scroll;
 mod settings;
@@ -72,7 +73,8 @@ use wks_native::appearance::{Appearance, Palette, preference_path};
 use wks_native::controller::{Action, Command, Controller, NewSession, View};
 use wks_native::launch::{CatalogKey, ModelChoice, Permission};
 use wks_native::model::Session;
-use wks_native::navigation::{Project, Provider, Settings, projects};
+use wks_native::navigation::{Provider, Settings};
+use wks_native::projects::KnownProject;
 use wks_native::timing::{self, TurnClock};
 
 const CHAT_WIDTH: f32 = 900.;
@@ -435,7 +437,14 @@ pub struct Workspace {
     new_session: bool,
     launch_details_open: bool,
     provider: &'static str,
-    project: Entity<InputState>,
+    /// Search field and path entry of the project chooser; the chosen
+    /// directory itself is `projects.cwd`.
+    project_query: Entity<InputState>,
+    projects: projects::ProjectUi,
+    project_list_scroll: gpui::UniformListScrollHandle,
+    /// The directory of the launch in flight, recorded as recently used on
+    /// the hub once the launch is acknowledged.
+    launched_cwd: String,
     label: Entity<InputState>,
     model: Entity<InputState>,
     model_picker: Entity<SelectState<SearchableVec<PickerItem>>>,
@@ -444,7 +453,6 @@ pub struct Workspace {
     context_window: Option<u64>,
     permission: Permission,
     catalog_models: Vec<ModelChoice>,
-    model_reload: Option<Task<()>>,
     prompt: Entity<InputState>,
     spawn_pending: bool,
     last_spawn_receipt: u64,
@@ -480,8 +488,9 @@ impl Workspace {
                 .auto_grow(1, 4)
                 .placeholder("Ask anything, or describe a task…")
         });
-        let project =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Absolute project directory"));
+        let project_query = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Search projects or paste a folder path")
+        });
         let label = cx.new(|cx| InputState::new(window, cx).placeholder("Optional session name"));
         let model = cx.new(|cx| InputState::new(window, cx).placeholder("Exact model ID or alias"));
         let model_picker = cx.new(|cx| {
@@ -528,18 +537,21 @@ impl Workspace {
         ));
         let model_picker_subscription = cx.subscribe_in(&model_picker, window, Self::on_model_pick);
         focus_watch.push(cx.subscribe_in(
-            &project,
+            &project_query,
             window,
-            |this, _, event: &gpui_component::input::InputEvent, window, cx| {
-                if matches!(event, gpui_component::input::InputEvent::Change) && this.new_session {
-                    this.model_reload = Some(cx.spawn_in(window, async move |this, cx| {
-                        cx.background_executor()
-                            .timer(std::time::Duration::from_millis(400))
-                            .await;
-                        let _ = this.update_in(cx, |this, _, cx| this.load_models(false, cx));
-                    }));
+            |this, _, event: &gpui_component::input::InputEvent, window, cx| match event {
+                gpui_component::input::InputEvent::Change => {
+                    this.projects.cursor = 0;
+                    this.project_list_scroll
+                        .scroll_to_item(0, gpui::ScrollStrategy::Top);
                     cx.notify();
                 }
+                gpui_component::input::InputEvent::PressEnter { secondary: false }
+                    if this.new_session =>
+                {
+                    this.confirm_project_cursor(window, cx)
+                }
+                _ => {}
             },
         ));
         let mut incoming = controller.views.clone();
@@ -627,7 +639,10 @@ impl Workspace {
             new_session: false,
             launch_details_open: false,
             provider: "claude",
-            project,
+            project_query,
+            projects: Default::default(),
+            project_list_scroll: gpui::UniformListScrollHandle::new(),
+            launched_cwd: String::new(),
             label,
             model,
             model_picker,
@@ -636,7 +651,6 @@ impl Workspace {
             context_window: None,
             permission: Permission::Ask,
             catalog_models: Vec::new(),
-            model_reload: None,
             prompt,
             spawn_pending: false,
             last_spawn_receipt: 0,
@@ -703,6 +717,17 @@ impl Workspace {
             self.spawn_pending = false;
             self.spawn_error = receipt.error.clone().unwrap_or_default();
             if let Some(id) = &receipt.session {
+                // Like opening a project on the desktop: the hub's registry
+                // records it as recently used. Best effort; never blocks.
+                let launched = std::mem::take(&mut self.launched_cwd);
+                if !self.demo && wks_native::launch::absolute_directory(&launched) {
+                    let at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_millis() as i64);
+                    let _ = self.controller.command(Command::Request(
+                        wks_native::features::Request::TouchProject { path: launched, at },
+                    ));
+                }
                 self.new_session = false;
                 self.screen = Screen::Conversation;
                 if let Some(message) = &receipt.unsent_message {
@@ -903,6 +928,7 @@ impl Workspace {
             .and_then(|id| self.turn_clocks.get(id))
             .map(|clock| clock.message_labels(&view.transcript))
             .unwrap_or_default();
+        self.sync_projects(&view);
         self.view = view;
         self.hand_off_update(cx);
         self.land_on_latest();
@@ -910,6 +936,12 @@ impl Workspace {
             self.sync_models(window, cx);
             if reconnected {
                 self.load_models(true, cx);
+            }
+        }
+        if reconnected && (self.new_session || self.screen == Screen::Projects) {
+            self.load_projects(cx);
+            if self.new_session {
+                self.refresh_project_inspection(cx);
             }
         }
         self.apply_ui_requests(window, cx);
@@ -957,7 +989,7 @@ impl Workspace {
             return;
         }
         if self.new_session {
-            self.create(cx);
+            self.create(window, cx);
             return;
         }
         if self.screen == Screen::Projects {
@@ -1006,7 +1038,7 @@ impl Workspace {
     }
 
     fn show_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.extras.resume = None;
+        let resumed = self.extras.resume.take().is_some();
         self.extras.return_launch = false;
         if self.demo {
             return;
@@ -1019,7 +1051,8 @@ impl Workspace {
             self.local_notice.clear();
             self.command(Command::Refresh, cx);
         }
-        if !self.new_session {
+        let fresh = !self.new_session;
+        if fresh {
             self.launch_details_open = false;
             self.choose_provider(self.settings.default_provider.id(), window, cx);
             self.permission = self.settings.default_access(self.provider);
@@ -1028,31 +1061,51 @@ impl Workspace {
             self.model
                 .update(cx, |input, cx| input.set_value("", window, cx));
             self.reset_model_picker(window, cx);
+            self.spawn_error.clear();
+            self.projects.notice.clear();
+            self.projects.fallback = None;
+            self.project_query
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            // A resumed conversation's name and task are not this agent's.
+            // A plain draft the user typed earlier is kept.
+            if resumed {
+                self.label
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.prompt
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+            }
+            // Start where the user is looking: the filtered project, else the
+            // open conversation's folder, else the last choice.
+            let here = self.project_filter.clone().or_else(|| {
+                self.view
+                    .sessions
+                    .iter()
+                    .find(|s| Some(&s.id) == self.view.selected.as_ref())
+                    .map(|s| s.cwd.clone())
+                    .filter(|cwd| !cwd.is_empty())
+            });
+            let path = here.unwrap_or_else(|| self.projects.cwd.clone());
+            if !self.seed_project(&path, cx) {
+                self.refresh_project_inspection(cx);
+            }
+        } else if let Some(path) = self.project_filter.clone() {
+            self.seed_project(&path, cx);
         }
         self.new_session = true;
         self.screen = Screen::Conversation;
-        if let Some(path) = self.project_filter.clone() {
-            self.project
-                .update(cx, |input, cx| input.set_value(path, window, cx));
+        self.load_projects(cx);
+        if self.projects.picker_open {
+            self.project_query
+                .update(cx, |input, cx| input.focus(window, cx));
+        } else {
+            self.prompt.update(cx, |input, cx| input.focus(window, cx));
         }
-        if self.project.read(cx).value().is_empty() {
-            let cwd = self
-                .view
-                .sessions
-                .iter()
-                .find(|s| Some(&s.id) == self.view.selected.as_ref())
-                .map(|s| s.cwd.clone())
-                .unwrap_or_default();
-            self.project
-                .update(cx, |input, cx| input.set_value(cwd, window, cx));
-        }
-        self.project.update(cx, |input, cx| input.focus(window, cx));
         self.sync_models(window, cx);
         self.load_models(false, cx);
         cx.notify();
     }
 
-    fn create(&mut self, cx: &mut Context<Self>) {
+    fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.demo
             || self.requested_session.is_some()
             || self.spawn_pending
@@ -1061,9 +1114,16 @@ impl Workspace {
         {
             return;
         }
+        self.adopt_typed_project(window, cx);
+        self.spawn_error.clear();
+        if self.projects.cwd.is_empty() {
+            self.spawn_error = "Choose a project folder first.".into();
+            self.open_project_picker(window, cx);
+            return;
+        }
         let request = NewSession {
             provider: self.provider.into(),
-            cwd: self.project.read(cx).value().to_string(),
+            cwd: self.projects.cwd.clone(),
             label: self.label.read(cx).value().to_string(),
             model: if self.model_choice == "__custom" {
                 self.model.read(cx).value().to_string()
@@ -1075,18 +1135,21 @@ impl Workspace {
             message: self.prompt.read(cx).value().to_string(),
             resume_session_id: self.extras.resume.clone(),
         };
-        self.spawn_error.clear();
         if self.model_choice == "__custom" && request.model.trim().is_empty() {
-            self.launch_details_open = true;
             self.spawn_error = "Enter a custom model or choose Provider default.".into();
+            self.model.update(cx, |input, cx| input.focus(window, cx));
             cx.notify();
             return;
         }
+        let cwd = request.cwd.clone();
         match request
             .params()
             .and_then(|_| self.controller.command(Command::Create(request)))
         {
-            Ok(()) => self.spawn_pending = true,
+            Ok(()) => {
+                self.spawn_pending = true;
+                self.launched_cwd = cwd;
+            }
             Err(error) => self.spawn_error = error.to_string(),
         }
         cx.notify();
@@ -1283,7 +1346,7 @@ impl Render for Workspace {
             .child(self.render_sidebar(narrow, compact, window, cx));
 
         if self.new_session {
-            let content = self.render_new_session(cx);
+            let content = self.render_new_session(window, cx);
             return self
                 .shell(window, cx)
                 .child(sidebar)
@@ -1569,6 +1632,26 @@ mod tests {
         let visual = VisualTestContext::from_window(window.into(), cx);
         visual.simulate_resize(size(px(1000.), px(700.)));
         (workspace.unwrap(), visual, commands, updates)
+    }
+
+    /// Reads the launch form and project list issue on their own; none of
+    /// them launches, selects or writes anything.
+    fn project_read(command: &Command) -> bool {
+        use wks_native::features::Request;
+        matches!(
+            command,
+            Command::LoadModels { .. }
+                | Command::Request(
+                    Request::Projects
+                        | Request::InspectProject { .. }
+                        | Request::BrowseFolders { .. }
+                )
+        )
+    }
+
+    /// The next command that is not one of those reads.
+    fn next_effect(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> Option<Command> {
+        std::iter::from_fn(|| commands.try_recv().ok()).find(|c| !project_read(c))
     }
 
     fn state(id: &str) -> View {
@@ -3492,27 +3575,25 @@ mod tests {
             })
         });
         visual.simulate_keystrokes("g p j enter");
-        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "b"));
+        assert!(matches!(next_effect(&mut commands).unwrap(), Command::Select(id) if id == "b"));
         workspace.read_with(&visual, |this, cx| {
             assert_eq!(this.project_filter.as_deref(), Some("/two/app"));
             assert_eq!(this.visible_sessions(cx), vec![1]);
         });
         visual.simulate_keystrokes("n");
-        workspace.read_with(&visual, |this, cx| {
+        workspace.read_with(&visual, |this, _| {
             assert!(this.new_session);
             assert_eq!(this.provider, "codex");
-            assert_eq!(this.project.read(cx).value().as_ref(), "/two/app");
+            assert_eq!(this.projects.cwd.as_str(), "/two/app");
         });
         visual.simulate_input("jkgn");
         workspace.read_with(&visual, |this, cx| {
-            assert!(this.project.read(cx).value().ends_with("jkgn"))
+            assert!(this.prompt.read(cx).value().ends_with("jkgn"))
         });
-        while let Ok(command) = commands.try_recv() {
-            assert!(
-                matches!(command, Command::LoadModels { .. }),
-                "typing in form must not launch or select agents"
-            );
-        }
+        assert!(
+            next_effect(&mut commands).is_none(),
+            "typing in form must not launch or select agents"
+        );
     }
 
     #[gpui::test]
@@ -3603,15 +3684,96 @@ mod tests {
 
     #[gpui::test]
     fn project_bookmark_can_be_saved_without_launching_an_agent(cx: &mut TestAppContext) {
+        use wks_native::features::{Request, RequestState};
+        use wks_native::projects::Patch;
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+            })
+        });
         visual.simulate_keystrokes("g p i");
-        visual.simulate_input("/work/jk-project");
+        visual.simulate_input("/work/jk-project/");
         visual.simulate_keystrokes("ctrl-enter");
         workspace.read_with(&visual, |this, cx| {
-            assert_eq!(this.settings.bookmarks("test"), ["/work/jk-project"]);
             assert!(this.project_path.read(cx).value().is_empty());
+            assert!(
+                this.settings.bookmarks("test").is_empty(),
+                "the hub is asked first"
+            );
         });
-        assert!(commands.try_recv().is_err());
+        let Some(Command::Request(Request::SaveProject { path, change })) =
+            next_effect(&mut commands)
+        else {
+            panic!("pinning asks the hub's registry")
+        };
+        assert_eq!(
+            (path.as_str(), &change),
+            ("/work/jk-project", &Patch::Pin(true))
+        );
+        assert!(next_effect(&mut commands).is_none(), "nothing launches");
+        let receipt = |number: u64, error: Option<&str>, value: serde_json::Value| {
+            let (path, change, error) = (path.clone(), change.clone(), error.map(str::to_owned));
+            let workspace = workspace.clone();
+            move |window: &mut Window, cx: &mut App| {
+                workspace.update(cx, |this, cx| {
+                    let mut view = (*this.view).clone();
+                    view.requests.insert(
+                        "project-save",
+                        RequestState {
+                            number,
+                            request: Request::SaveProject { path, change },
+                            loading: false,
+                            value: Arc::new(value),
+                            error,
+                        },
+                    );
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            }
+        };
+        // A refused write is never shown as saved; the device keeps it on request.
+        visual.update(receipt(
+            7,
+            Some("operator scope required"),
+            serde_json::Value::Null,
+        ));
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.projects.notice.contains("operator scope required"));
+            assert_eq!(this.projects.fallback.as_deref(), Some("/work/jk-project"));
+            assert!(
+                !this
+                    .known_projects()
+                    .iter()
+                    .any(|p| p.path == "/work/jk-project")
+            );
+        });
+        let keep = visual.debug_bounds("keep-on-device-projects").unwrap();
+        visual.simulate_click(keep.center(), gpui::Modifiers::default());
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.settings.bookmarks("test"), ["/work/jk-project"]);
+            assert!(
+                this.known_projects()
+                    .iter()
+                    .any(|p| p.path == "/work/jk-project")
+            );
+        });
+        // A verified hub save becomes the registry the list is drawn from.
+        visual.update(receipt(
+            8,
+            None,
+            serde_json::json!({"projects":{"/work/hub-only":{"favourite":true}},"favourites":[],"recent":[],"configured":[]}),
+        ));
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.projects.notice, "Pinned.");
+            let first = &this.known_projects()[0];
+            assert_eq!(
+                (first.path.as_str(), first.favourite),
+                ("/work/hub-only", true)
+            );
+        });
     }
 
     #[gpui::test]
@@ -3688,14 +3850,14 @@ mod tests {
         let button = visual.debug_bounds("new-session-button").unwrap();
         visual.simulate_click(button.center(), gpui::Modifiers::default());
         visual.run_until_parked();
-        workspace.read_with(&visual, |this, cx| {
+        workspace.read_with(&visual, |this, _| {
             assert!(this.new_session);
             assert!(this.requested_session.is_none());
-            assert_eq!(this.project.read(cx).value().as_ref(), "/work/project");
+            assert_eq!(this.projects.cwd.as_str(), "/work/project");
         });
         while let Ok(command) = commands.try_recv() {
             assert!(
-                matches!(command, Command::Refresh | Command::LoadModels { .. }),
+                matches!(command, Command::Refresh) || project_read(&command),
                 "opening the form must not launch anything"
             );
         }
@@ -3720,6 +3882,15 @@ mod tests {
                 assert!(this.requested_session.is_none());
             })
         });
+        // The acknowledged launch marks its project recently used on the hub,
+        // exactly once, and does nothing else.
+        let Ok(Command::Request(wks_native::features::Request::TouchProject { path, at })) =
+            commands.try_recv()
+        else {
+            panic!("an acknowledged launch records its project")
+        };
+        assert_eq!(path, "/work/project");
+        assert!(at > 0);
         assert!(commands.try_recv().is_err());
     }
 
@@ -3755,19 +3926,25 @@ mod tests {
         visual.simulate_click(customize.center(), gpui::Modifiers::default());
         let provider = visual.debug_bounds("launch-provider-codex").unwrap();
         visual.simulate_click(provider.center(), gpui::Modifiers::default());
-        let project = visual.debug_bounds("launch-workspace-1").unwrap();
+        // The open conversation's folder is preselected; Change swaps it.
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.projects.cwd, "/work/alpha")
+        });
+        visual.run_until_parked();
+        let change = visual.debug_bounds("launch-project-change").unwrap();
+        visual.simulate_click(change.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let project = visual.debug_bounds("launch-project-row-1").unwrap();
         visual.simulate_click(project.center(), gpui::Modifiers::default());
         workspace.read_with(&visual, |this, cx| {
             assert!(!this.launch_details_open);
             assert_eq!(this.permission, Permission::Ask);
             assert_eq!(this.provider, "codex");
-            assert_eq!(this.project.read(cx).value().as_str(), "/work/beta");
+            assert_eq!(this.projects.cwd.as_str(), "/work/beta");
             assert_eq!(this.label.read(cx).value().as_str(), "Test repair");
             assert_eq!(this.prompt.read(cx).value().as_str(), "Fix the tests");
         });
-        while let Ok(command) = commands.try_recv() {
-            assert!(matches!(command, Command::LoadModels { .. }));
-        }
+        assert!(next_effect(&mut commands).is_none());
         visual.simulate_resize(size(px(720.), px(480.)));
         visual.run_until_parked();
         let start = visual.debug_bounds("launch-start").unwrap();
@@ -3805,12 +3982,8 @@ mod tests {
         });
         visual.simulate_keystrokes("ctrl-enter");
         visual.simulate_keystrokes("ctrl-enter");
-        let request = loop {
-            match commands.try_recv().expect("create command") {
-                Command::Create(request) => break request,
-                Command::LoadModels { .. } => {}
-                _ => panic!("wrong command"),
-            }
+        let Some(Command::Create(request)) = next_effect(&mut commands) else {
+            panic!("expected one create command")
         };
         assert_eq!(request.cwd, "/work/project");
         assert_eq!(request.provider, "codex");
@@ -3829,7 +4002,7 @@ mod tests {
                 assert!(this.new_session);
                 assert!(!this.spawn_pending);
                 assert_eq!(this.prompt.read(cx).value().as_ref(), "Hello");
-                assert_eq!(this.project.read(cx).value().as_ref(), "/work/project");
+                assert_eq!(this.projects.cwd.as_str(), "/work/project");
                 assert_eq!(this.spawn_error, "Launch failed");
                 let mut success = state("b");
                 success.spawn_receipt = Some(wks_native::controller::SpawnReceipt {
@@ -6053,17 +6226,12 @@ mod tests {
                 );
                 this.choose_provider("claude", window, cx);
                 assert_eq!(this.permission, Permission::FullAccess);
-                this.project
-                    .update(cx, |input, cx| input.set_value("/work/project", window, cx));
-                this.create(cx);
+                this.select_project("/work/project", window, cx);
+                this.create(window, cx);
             });
         });
-        let request = loop {
-            match commands.try_recv().unwrap() {
-                Command::Create(request) => break request,
-                Command::LoadModels { .. } => {}
-                _ => panic!("unexpected command"),
-            }
+        let Some(Command::Create(request)) = next_effect(&mut commands) else {
+            panic!("expected create")
         };
         assert_eq!(request.permission, Permission::FullAccess);
         assert_eq!(
@@ -6241,8 +6409,7 @@ mod tests {
                 this.demo = false;
                 this.update_view(Arc::new(state("a")), window, cx);
                 this.show_new_session(window, cx);
-                this.project
-                    .update(cx, |input, cx| input.set_value("/work/project", window, cx));
+                this.select_project("/work/project", window, cx);
                 let mut loaded = state("a");
                 loaded.catalog = wks_native::launch::Catalog {
                     key: CatalogKey {
@@ -6272,7 +6439,7 @@ mod tests {
             workspace.update(cx, |this, cx| {
                 this.context_window = Some(1000000);
                 this.permission = Permission::Plan;
-                this.create(cx);
+                this.create(window, cx);
                 this.spawn_pending = false;
                 this.choose_provider("codex", window, cx);
                 assert!(this.model_choice.is_empty());
@@ -6280,7 +6447,7 @@ mod tests {
                 assert_eq!(this.permission, Permission::Ask);
                 assert!(this.catalog_models.is_empty());
                 this.model_choice = "__custom".into();
-                this.create(cx);
+                this.create(window, cx);
                 assert!(this.spawn_error.contains("Enter a custom model"));
             });
         });
@@ -6480,7 +6647,7 @@ mod tests {
                 this.back_from_feature(window, cx);
                 assert!(this.new_session);
                 assert_eq!(this.extras.resume.as_deref(), Some("past"));
-                this.create(cx);
+                this.create(window, cx);
                 this.spawn_pending = false;
                 this.new_session = false;
                 this.open_feature(Screen::Model, window, cx);
@@ -6615,7 +6782,7 @@ mod tests {
                 });
                 this.update_view(Arc::new(next), window, cx);
                 assert!(this.new_session);
-                assert_eq!(this.project.read(cx).value().as_ref(), "/requested/project");
+                assert_eq!(this.projects.cwd.as_str(), "/requested/project");
                 let mut next = state("a");
                 next.ui_requests.push(wks_native::ui_requests::Request {
                     number: 2,
@@ -6630,10 +6797,7 @@ mod tests {
             })
         });
         while let Ok(command) = commands.try_recv() {
-            assert!(matches!(
-                command,
-                Command::ConsumeUiRequest(_) | Command::LoadModels { .. }
-            ));
+            assert!(matches!(command, Command::ConsumeUiRequest(_)) || project_read(&command));
         }
     }
     #[gpui::test]

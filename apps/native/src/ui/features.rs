@@ -160,8 +160,8 @@ impl Workspace {
                         "claude"
                     };
                     self.choose_provider(provider, window, cx);
-                    self.project
-                        .update(cx, |input, cx| input.set_value(s.cwd, window, cx));
+                    // The catalog is scoped to the session's own folder.
+                    self.projects.cwd = s.cwd.clone();
                     self.model_choice = "__custom".into();
                     self.model_picker.update(cx, |picker, cx| {
                         picker.set_selected_value(&String::from("__custom"), window, cx)
@@ -181,7 +181,12 @@ impl Workspace {
             self.extras.return_launch = false;
             self.screen = Screen::Conversation;
             self.new_session = true;
-            self.project.update(cx, |input, cx| input.focus(window, cx));
+            if self.projects.picker_open {
+                self.project_query
+                    .update(cx, |input, cx| input.focus(window, cx));
+            } else {
+                self.prompt.update(cx, |input, cx| input.focus(window, cx));
+            }
             self.load_models(false, cx);
             cx.notify();
         } else {
@@ -338,14 +343,13 @@ impl Workspace {
                 match result {
                     Ok(Ok(Some(paths))) => {
                         if let Some(path) = paths.first() {
-                            let input = if bookmark {
-                                &this.project_path
+                            let path = path.to_string_lossy().into_owned();
+                            if bookmark {
+                                this.project_path
+                                    .update(cx, |input, cx| input.set_value(path, window, cx));
                             } else {
-                                &this.project
-                            };
-                            input.update(cx, |input, cx| {
-                                input.set_value(path.to_string_lossy().into_owned(), window, cx)
-                            });
+                                this.select_project(&path, window, cx);
+                            }
                         }
                     }
                     Ok(Ok(None)) => {}
@@ -645,9 +649,7 @@ impl Workspace {
             window,
             cx,
         );
-        self.project.update(cx, |input, cx| {
-            input.set_value(session.cwd.clone(), window, cx)
-        });
+        self.seed_project(&session.cwd, cx);
         self.label.update(cx, |input, cx| {
             input.set_value(session.title().to_owned(), window, cx)
         });

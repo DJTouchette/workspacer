@@ -21,7 +21,7 @@ fn category_icon(tool: &Tool) -> IconName {
     }
 }
 
-fn spinner(id: String, size: f32) -> AnyElement {
+pub(super) fn spinner(id: String, size: f32) -> AnyElement {
     Icon::new(IconName::LoaderCircle)
         .size(px(size))
         .with_animation(
