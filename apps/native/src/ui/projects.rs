@@ -11,13 +11,16 @@ use wks_native::projects::{self, Inspection, KnownProject, Patch, Source};
 pub(super) enum PickRow {
     /// The query is an absolute path that is not already a project.
     Typed(String),
+    /// The chosen folder, when it is not one of the listed projects, so
+    /// reopening the list never hides what is selected.
+    Current(String),
     Project(KnownProject),
 }
 
 impl PickRow {
     fn path(&self) -> &str {
         match self {
-            Self::Typed(path) => path,
+            Self::Typed(path) | Self::Current(path) => path,
             Self::Project(project) => &project.path,
         }
     }
@@ -70,6 +73,14 @@ impl Workspace {
             && !known.iter().any(|p| projects::same_dir(&p.path, &query))
         {
             rows.push(PickRow::Typed(projects::project_key(&query)));
+        }
+        if query.is_empty()
+            && !self.projects.cwd.is_empty()
+            && !known
+                .iter()
+                .any(|p| projects::same_dir(&p.path, &self.projects.cwd))
+        {
+            rows.push(PickRow::Current(self.projects.cwd.clone()));
         }
         let absolute = wks_native::launch::absolute_directory(&query);
         rows.extend(
@@ -156,6 +167,9 @@ impl Workspace {
         self.projects.picker_open = self.projects.cwd.is_empty();
         self.projects.browsing = false;
         self.spawn_error.clear();
+        if self.projects.fallback.is_none() {
+            self.projects.notice.clear();
+        }
         self.project_query
             .update(cx, |input, cx| input.set_value("", window, cx));
         if changed {
@@ -625,6 +639,7 @@ impl Workspace {
     pub(super) fn render_project_picker(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         let rows = self.pick_rows(cx);
+        let has_rows = !rows.is_empty();
         let query = self.project_query.read(cx).value().trim().to_owned();
         let registry_loading = self
             .view
@@ -789,7 +804,7 @@ impl Workspace {
                 )
             })
             .child(body)
-            .when(!self.projects.browsing, |d| {
+            .when(!self.projects.browsing && has_rows, |d| {
                 d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
                     "↑ ↓ to move · Enter to choose · paths belong to the connected hub",
                 ))
@@ -832,7 +847,7 @@ impl Workspace {
                     ))
                 });
         match row {
-            PickRow::Typed(path) => base
+            PickRow::Typed(path) | PickRow::Current(path) => base
                 .child(
                     div()
                         .size(px(32.))
@@ -858,7 +873,11 @@ impl Workspace {
                             div()
                                 .text_size(px(13.))
                                 .font_weight(FontWeight::MEDIUM)
-                                .child("Use this folder"),
+                                .child(if matches!(row, PickRow::Current(_)) {
+                                    "Current folder"
+                                } else {
+                                    "Use this folder"
+                                }),
                         )
                         .child(
                             div()

@@ -353,6 +353,14 @@ impl Workspace {
                         }
                     }
                     Ok(Ok(None)) => {}
+                    _ if !bookmark && this.new_session => {
+                        // The hub is on this machine, so its listing is the
+                        // same filesystem the system dialog would have shown.
+                        this.projects.notice =
+                            "The system folder picker is unavailable; browsing folders on the hub instead.".into();
+                        let start = this.projects.cwd.clone();
+                        this.browse_to(start, cx);
+                    }
                     _ => {
                         this.extras.notice =
                             "Could not open the folder picker. You can enter the path instead."

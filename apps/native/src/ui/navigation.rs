@@ -122,6 +122,11 @@ impl Workspace {
         if screen == Screen::Projects {
             self.load_projects(cx);
         }
+        // An outcome belongs to the screen it happened on; a pending
+        // keep-on-device offer stays until it is answered.
+        if self.projects.fallback.is_none() {
+            self.projects.notice.clear();
+        }
         window.focus(&self.focus);
         cx.notify();
     }
