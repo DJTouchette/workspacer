@@ -45,9 +45,8 @@ unicode-general-category = "1.1"
 qrcodegen = "1"
 
 # Watching a popped-out window for X11 DestroyNotify (src/ui/window_destroy.rs);
-# both are already in the tree through GPUI.
+# already in the tree through GPUI.
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-raw-window-handle = "0.6"
 x11rb = "0.13"
 
 [target.'cfg(windows)'.dependencies]

@@ -1134,6 +1134,7 @@ impl Workspace {
                     return;
                 }
                 let inside = pane.read(cx).has_focus(window, cx);
+                let title = popped.read(cx).target().map(popout_title);
                 self.chat.viewer.pane = None;
                 self.chat.viewer.popout = Some(Popout {
                     window: handle,
@@ -1142,11 +1143,9 @@ impl Workspace {
                 if inside || self.viewer_return.is_some() {
                     self.release_viewer_focus(window, cx);
                 }
-                let destroyed = handle
-                    .update(cx, |_, window, cx| super::window_destroy::watch(window, cx))
-                    .ok()
-                    .flatten();
-                if let Some(destroyed) = destroyed {
+                if let Some(destroyed) =
+                    title.and_then(|title| super::window_destroy::watch(&title, cx))
+                {
                     let id = handle.window_id();
                     cx.spawn_in(window, async move |this, cx| {
                         if destroyed.recv().await.is_ok() {

@@ -10049,7 +10049,6 @@ dependencies = [
  "markup5ever_rcdom",
  "notify-rust",
  "qrcodegen",
- "raw-window-handle",
  "reqwest",
  "serde",
  "serde_json",
