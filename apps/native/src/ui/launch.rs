@@ -1039,7 +1039,7 @@ impl Workspace {
 
 /// `200K`, `1M`.
 pub(super) fn context_label(tokens: u64) -> String {
-    if tokens >= 1_000_000 && tokens % 1_000_000 == 0 {
+    if tokens >= 1_000_000 && tokens.is_multiple_of(1_000_000) {
         format!("{}M", tokens / 1_000_000)
     } else {
         format!("{}K", tokens / 1000)

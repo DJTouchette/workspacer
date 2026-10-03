@@ -78,13 +78,21 @@ make run-native     # build and launch the release GUI against an existing hub
 make test-native    # native UI/protocol and embedded-engine lifecycle tests
 ```
 
-Use **New session** (`Ctrl/Cmd+N`), choose the Claude or Codex card, and pick a
-known workspace or enter an existing absolute directory on the connected hub.
-Choose a model from the searchable picker on the main screen, then add an optional
-starting message. **Customize** reveals access mode and an optional session name;
-current choices remain visible in a summary when collapsed. Keep Provider default
-or choose a model.
-Custom model accepts an exact ID or alias. **Start working** opens the real agent
+Use **New session** (`Ctrl/Cmd+N`). The form starts from a **project**: the
+open conversation's folder (or the filtered project) is preselected; otherwise
+the chooser opens with its search focused. It lists the hub's pinned and recent
+projects, this device's older bookmarks and folders your sessions run in; type
+to filter by name or path, use `↑`/`↓` and `Enter`, or paste an absolute folder
+path. **Choose folder…** opens the system dialog for a local hub and browses the
+hub's own filesystem for a remote one (or when the dialog is unavailable). The
+chosen project shows its folder and what the hub reports about it: branch and
+uncommitted changes, a plain folder, or a folder that does not exist. **Change**
+reopens the chooser; `Esc` keeps the current choice. The star pins a project.
+Then choose Claude or Codex, a model and its **effort** (side by side), and an
+optional task. **Options** holds access mode, context window and an optional
+session name; non-default choices stay visible as chips beside it, and the
+footer reads back what will launch.
+Custom model accepts an exact ID or alias. **Start agent** opens the real agent
 conversation. **Settings → Agents** saves separate default access modes for
 Claude and Codex, initially Ask to approve. Claude also offers Accept
 edits, Plan mode, and Full access; Codex offers Ask to approve and Full access.
@@ -400,12 +408,17 @@ not supported by this picker yet.
 
 ## Projects, settings, and keyboard navigation
 
-**Projects** groups the connected hub's sessions by their exact directory paths.
-Full paths distinguish projects with the same folder name. Save an absolute path
-for a project without sessions; opening it pre-fills New Session, without launching
-an agent until you submit the form. Paths are interpreted on the hub, not checked
-against the client's filesystem. **Unsave** removes only the bookmark; projects
-with live sessions stay listed. Bookmarks are scoped to the hub endpoint.
+**Projects** are the connected hub's shared project registry (`config.yaml`
+`projects`, the same list the desktop app uses): pinned projects first, then by
+when they were last used, plus folders your sessions run in and any older
+device-only bookmarks. **Pin project** saves an absolute path to that registry
+without creating a folder or launching an agent; pinning needs an operator
+connection, and when the hub refuses it you can keep the path on this device
+instead. A launch that the hub acknowledges marks its project recently used.
+**Forget** removes only projects that hold nothing but a pin or recency stamp;
+projects with names, scripts or workflows are managed in Workspacer Settings →
+Projects. Paths are interpreted on the hub, not checked against the client's
+filesystem. Sessions belong to a project by their working directory.
 
 Opening a project filters the session sidebar; **All** clears the project filter.
 The sidebar search matches session names/paths and project paths. Keyboard
@@ -415,7 +428,7 @@ navigation follows the filtered list and keeps the highlighted row in view.
 Chat, Keyboard, About) beside grouped cards, and a search box (`/`) that filters
 every preference across categories by title, description and keywords; `j` / `k`
 step through categories in Normal mode. Keyboard preferences, default
-provider, and project bookmarks persist in `workspacer/native-settings.json`
+provider, and older device-only project bookmarks persist in `workspacer/native-settings.json`
 next to `native-theme.json`. These are local client preferences; the shared hub
 configuration and running agents are unaffected. Missing settings use defaults;
 invalid files produce a startup diagnostic. Save errors are shown in the view.
@@ -429,7 +442,7 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Esc` | Leave a text field; press again to return to the conversation |
 | `j` / `k` | Next / previous session, project or settings category |
 | `gg` / `G` | First / last session or project |
-| `i` | Focus composer, new-session project field, or saved-project path field |
+| `i` | Focus composer, the New Agent project search (or task), or saved-project path field |
 | `/` | Focus the sidebar filter, or settings search in Settings |
 | `g p` / `h` | Projects |
 | `Enter` / `l` | Open the highlighted project |
@@ -440,7 +453,7 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `t` / `v` / `a` in Settings | Cycle theme / toggle Vim / switch default agent |
 | `Ctrl/Cmd+P` | Projects, including with Vim disabled |
 | `Ctrl/Cmd+,` | Settings, including with Vim disabled |
-| `Ctrl/Cmd+Enter` | Send, create a session, or save the focused project-path field |
+| `Ctrl/Cmd+Enter` | Send, start the agent, or pin the focused project-path field |
 
 The existing `Ctrl/Cmd+N`, `Ctrl/Cmd+L`, `Ctrl/Cmd+R`, and `Alt+Up/Down` shortcuts
 remain available. Settings and Projects never send a hidden composer draft.

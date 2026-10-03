@@ -6605,6 +6605,208 @@ mod tests {
         assert!(effort.right() <= px(720.));
     }
 
+    /// A hub registry reply, as the controller would publish it.
+    fn with_registry(view: &mut View, number: u64, registry: serde_json::Value) {
+        view.requests.insert(
+            "projects",
+            wks_native::features::RequestState {
+                number,
+                request: wks_native::features::Request::Projects,
+                loading: false,
+                value: Arc::new(registry),
+                error: None,
+            },
+        );
+    }
+
+    #[gpui::test]
+    fn project_chooser_is_keyboard_first_and_never_launches_without_a_folder(
+        cx: &mut TestAppContext,
+    ) {
+        use wks_native::features::Request;
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut view = state("a");
+                with_registry(
+                    &mut view,
+                    1,
+                    serde_json::json!({"projects":{
+                        "/work/api":{"label":"API Server","lastOpened":20},
+                        "/work/web":{"favourite":true},
+                        "/work/old":{"lastOpened":10}
+                    },"favourites":[],"recent":[],"configured":[]}),
+                );
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        // No folder yet: the form opens on the chooser with the search focused.
+        visual.simulate_keystrokes("ctrl-n");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.projects.picker_open && this.projects.cwd.is_empty());
+            let rows: Vec<_> = this
+                .pick_rows(cx)
+                .iter()
+                .map(|r| match r {
+                    projects::PickRow::Project(p) => p.path.clone(),
+                    other => panic!("unexpected {other:?}"),
+                })
+                .collect();
+            assert_eq!(
+                rows,
+                ["/work/web", "/work/api", "/work/old"],
+                "pinned, then recent"
+            );
+        });
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .any(|c| matches!(c, Command::Request(Request::Projects))),
+            "opening the form reads the hub's registry"
+        );
+        // Launching without a folder explains itself and does not create.
+        visual.simulate_keystrokes("ctrl-enter");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.spawn_error, "Choose a project folder first.");
+            assert!(this.projects.picker_open);
+        });
+        assert!(next_effect(&mut commands).is_none());
+        // Search by label, move, choose with Enter.
+        visual.simulate_input("server");
+        visual.simulate_keystrokes("enter");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.projects.cwd, "/work/api");
+            assert!(!this.projects.picker_open);
+            assert!(this.spawn_error.is_empty());
+        });
+        let inspected = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(Request::InspectProject { path }) => Some(path),
+            _ => None,
+        });
+        assert_eq!(
+            inspected.as_deref(),
+            Some("/work/api"),
+            "the hub checks the chosen folder"
+        );
+        // Change, arrow down, Esc keeps the original choice.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.open_project_picker(window, cx))
+        });
+        visual.simulate_keystrokes("down");
+        visual.simulate_keystrokes("escape");
+        workspace.read_with(&visual, |this, _| {
+            assert!(!this.projects.picker_open);
+            assert_eq!(this.projects.cwd, "/work/api");
+        });
+        // A pasted path that is not a project: offered first, kept visible
+        // as the current folder when the list reopens, and launched into.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.open_project_picker(window, cx))
+        });
+        visual.simulate_input("/srv/fresh/");
+        workspace.read_with(&visual, |this, cx| {
+            assert!(
+                matches!(&this.pick_rows(cx)[0], projects::PickRow::Typed(p) if p == "/srv/fresh")
+            );
+        });
+        visual.simulate_keystrokes("ctrl-enter");
+        let Some(Command::Create(request)) = next_effect(&mut commands) else {
+            panic!("ctrl-enter launches into the pasted folder")
+        };
+        assert_eq!(request.cwd, "/srv/fresh");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.spawn_pending = false;
+                this.open_project_picker(window, cx);
+                assert!(matches!(&this.pick_rows(cx)[0], projects::PickRow::Current(p) if p == "/srv/fresh"));
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn fresh_forms_drop_resumed_context_and_stale_folder_checks(cx: &mut TestAppContext) {
+        use wks_native::features::{Request, RequestState};
+        use wks_native::projects::Inspection;
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/work/alpha".into();
+                Arc::make_mut(&mut view.sessions)[1].cwd = "/work/beta".into();
+                this.update_view(Arc::new(view), window, cx);
+                let old = Session {
+                    id: "past".into(),
+                    label: "Old work".into(),
+                    provider: "claude".into(),
+                    cwd: "/work/beta".into(),
+                    state: "stopped".into(),
+                    ..Default::default()
+                };
+                this.resume_session(&old, window, cx);
+                assert_eq!(this.projects.cwd, "/work/beta");
+                assert_eq!(this.label.read(cx).value().as_ref(), "Old work");
+                this.prompt
+                    .update(cx, |i, cx| i.set_value("continue please", window, cx));
+                this.effort = "high".into();
+                this.show_screen(Screen::Conversation, window, cx);
+                // A fresh New Agent is not the resumed conversation.
+                this.show_new_session(window, cx);
+                assert!(this.extras.resume.is_none());
+                assert!(this.label.read(cx).value().is_empty());
+                assert!(this.prompt.read(cx).value().is_empty());
+                assert!(this.effort.is_empty());
+                assert_eq!(
+                    this.projects.cwd, "/work/alpha",
+                    "starts where the user is looking"
+                );
+                // A plain draft survives leaving and reopening the form.
+                this.prompt
+                    .update(cx, |i, cx| i.set_value("my draft", window, cx));
+                this.show_screen(Screen::Conversation, window, cx);
+                this.show_new_session(window, cx);
+                assert_eq!(this.prompt.read(cx).value().as_ref(), "my draft");
+                // A check for a folder that is no longer chosen is not shown.
+                let mut view = (*this.view).clone();
+                view.requests.insert(
+                    "project-inspect",
+                    RequestState {
+                        number: 50,
+                        request: Request::InspectProject {
+                            path: "/work/beta".into(),
+                        },
+                        loading: false,
+                        value: Arc::new(serde_json::json!({"exists":false,"error":"gone"})),
+                        error: None,
+                    },
+                );
+                this.update_view(Arc::new(view), window, cx);
+                assert!(this.inspection().is_none());
+                let mut view = (*this.view).clone();
+                view.requests.insert(
+                    "project-inspect",
+                    RequestState {
+                        number: 51,
+                        request: Request::InspectProject {
+                            path: "/work/alpha".into(),
+                        },
+                        loading: false,
+                        value: Arc::new(serde_json::json!({"exists":false,"error":"gone"})),
+                        error: None,
+                    },
+                );
+                this.update_view(Arc::new(view), window, cx);
+                assert_eq!(
+                    this.inspection(),
+                    Some(Ok(Inspection::Missing("gone".into())))
+                );
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("launch-project-status").is_some());
+    }
+
     #[gpui::test]
     fn secondary_views_preserve_drafts_and_only_request_reads(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
