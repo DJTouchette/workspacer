@@ -498,8 +498,10 @@ impl Workspace {
                     (Some(b), 0) => format!("{b} · clean"),
                     (Some(b), 1) => format!("{b} · 1 uncommitted change"),
                     (Some(b), n) => format!("{b} · {n} uncommitted changes"),
-                    (None, 0) => "Detached HEAD · clean".into(),
-                    (None, n) => format!("Detached HEAD · {n} uncommitted changes"),
+                    // Detached, or a repository with no commits yet.
+                    (None, 0) => "Git repository · clean".into(),
+                    (None, 1) => "Git repository · 1 uncommitted change".into(),
+                    (None, n) => format!("Git repository · {n} uncommitted changes"),
                 },
             ),
             Some(Ok(Inspection::NotRepository)) => (
