@@ -37,6 +37,12 @@ tables and code, and its asynchronous parse cache:
   parser surrounds each code span with thin spaces (U+2009) for margin; those
   are stripped from copied selections (`format/markdown.rs`, `text_view.rs`).
 
+- `TextView::handle()` returns a `TextViewHandle` over the view's state:
+  top-level heading text with block indices (`Node::heading` in `node.rs`),
+  and scrolling of the `scrollable` virtual list. The native file viewer uses
+  it for keyboard scrolling and same-document `#heading` links in rendered
+  Markdown files. It reads parsed state only; parsing is unchanged.
+
 Two upstream bug fixes in the same files:
 
 - A non-list root passed `is_last = true` to every block, so chat Markdown had

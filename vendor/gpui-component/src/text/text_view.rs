@@ -67,6 +67,64 @@ impl RenderOnce for TextViewElement {
     }
 }
 
+/// Application handle to a [`TextView`]'s parsed blocks and, in
+/// `scrollable` mode, its virtual list: keyboard scrolling and heading links
+/// for a document reader (workspacer patch).
+#[derive(Clone)]
+pub struct TextViewHandle(Entity<TextViewState>);
+
+impl TextViewHandle {
+    /// Whether the content has been parsed at least once.
+    pub fn parsed(&self, cx: &App) -> bool {
+        matches!(self.0.read(cx).parsed_result, Some(Ok(_)))
+    }
+
+    /// `(block index, level, plain text)` of every top-level heading. In
+    /// `scrollable` mode a block index is its list item.
+    pub fn headings(&self, cx: &App) -> Vec<(usize, u8, String)> {
+        let Some(Ok(content)) = &self.0.read(cx).parsed_result else {
+            return vec![];
+        };
+        let node::Node::Root { children } = &content.root_node else {
+            return vec![];
+        };
+        children
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, node)| node.heading().map(|(level, text)| (ix, level, text)))
+            .collect()
+    }
+
+    /// Put block `ix` at the top of a `scrollable` view.
+    pub fn scroll_to_block(&self, ix: usize, cx: &App) {
+        self.0.read(cx).list_state.scroll_to(gpui::ListOffset {
+            item_ix: ix,
+            offset_in_item: px(0.),
+        });
+    }
+
+    /// Scroll a `scrollable` view by `distance` (positive is down).
+    pub fn scroll_by(&self, distance: Pixels, cx: &App) {
+        self.0.read(cx).list_state.scroll_by(distance);
+    }
+
+    /// The first visible block and how far into it the view is scrolled.
+    pub fn scroll_top(&self, cx: &App) -> (usize, Pixels) {
+        let top = self.0.read(cx).list_state.logical_scroll_top();
+        (top.item_ix, top.offset_in_item)
+    }
+
+    /// Height of the visible area of a `scrollable` view.
+    pub fn viewport_height(&self, cx: &App) -> Pixels {
+        self.0.read(cx).list_state.viewport_bounds().size.height
+    }
+
+    /// The view's own focus handle (it receives focus when clicked).
+    pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        self.0.read(cx).focus_handle.clone()
+    }
+}
+
 /// Type for code block actions generator function.
 pub(crate) type CodeBlockActionsFn =
     dyn Fn(&CodeBlock, &mut Window, &mut App) -> AnyElement + Send + Sync;
@@ -495,6 +553,11 @@ impl TextView {
             }
         }
         self
+    }
+
+    /// Handle for application scrolling and heading lookup (workspacer patch).
+    pub fn handle(&self) -> TextViewHandle {
+        TextViewHandle(self.state.clone())
     }
 
     /// Set the text view to be selectable, default is false.

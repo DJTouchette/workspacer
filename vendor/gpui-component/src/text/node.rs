@@ -1322,6 +1322,23 @@ impl Node {
         )
     }
 
+    /// Level and plain text of a heading block, for application heading
+    /// navigation (workspacer patch). Inline-code thin spaces are dropped.
+    pub(crate) fn heading(&self) -> Option<(u8, String)> {
+        match self {
+            Node::Heading { level, children } => Some((
+                *level,
+                children
+                    .children
+                    .iter()
+                    .map(|node| node.text.as_ref())
+                    .collect::<String>()
+                    .replace('\u{2009}', ""),
+            )),
+            _ => None,
+        }
+    }
+
     pub(super) fn render_root(
         &self,
         list_state: Option<ListState>,

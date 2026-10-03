@@ -14,6 +14,9 @@ pub const MAX_TEXT_LINES: usize = 50_000;
 pub const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 /// Displayed images are re-encoded no larger than this on either side.
 pub const MAX_IMAGE_SIDE: u32 = 2560;
+/// Markdown renders up to this size; larger documents open as source, since
+/// the first parse runs on the UI thread.
+pub const MAX_RENDERED_MARKDOWN_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Link {
@@ -54,6 +57,97 @@ impl FileTarget {
     pub fn language(&self) -> &'static str {
         language(&self.path)
     }
+    /// Text the viewer renders as a Markdown document before its source.
+    pub fn markdown(&self) -> bool {
+        self.kind == FileKind::Text && markdown(&self.path)
+    }
+}
+
+/// Markdown documents open rendered: `.md` and `.markdown`, any case.
+pub fn markdown(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    name.rsplit_once('.').is_some_and(|(stem, ext)| {
+        !stem.is_empty()
+            && (ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
+    })
+}
+
+/// The folder holding `path` on the session's machine: what a previewed
+/// document's own relative links and images are written against.
+pub fn parent(path: &str) -> String {
+    let path = normalize(path);
+    match path.rfind(['/', '\\']) {
+        // `/a.md` → `/`, `C:\a.md` → `C:\`, `\\server\share\a.md` keeps its share.
+        Some(i) if path[..i].is_empty() || path[..i].ends_with(':') => path[..=i].into(),
+        Some(i) => path[..i].into(),
+        None => path,
+    }
+}
+
+/// Where a link inside a previewed Markdown document goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DocumentLink {
+    /// A heading of the same document by GitHub slug; empty is the top.
+    Heading(String),
+    /// A line (and column) of the same document's source.
+    Line(u32, Option<u32>),
+    /// Anything else, resolved against the document's folder.
+    Other(Link),
+}
+
+/// Classify a link clicked in the document at `document` (absolute, on the
+/// session's machine). Relative paths resolve against the document's folder,
+/// never the session cwd; links back into the same file stay in the viewer
+/// instead of re-reading it.
+pub fn classify_in_document(document: &str, raw: &str) -> DocumentLink {
+    let trimmed = raw.trim().trim_matches(['<', '>']).trim();
+    if let Some(fragment) = trimmed.strip_prefix('#') {
+        return same_document(fragment);
+    }
+    match classify(&parent(document), raw) {
+        Link::File(target) if target.path == normalize(document) => match target.line {
+            Some(line) => DocumentLink::Line(line, target.column),
+            None => same_document(trimmed.split_once('#').map_or("", |(_, f)| f)),
+        },
+        link => DocumentLink::Other(link),
+    }
+}
+
+fn same_document(fragment: &str) -> DocumentLink {
+    match fragment_location(fragment) {
+        Some((line, column)) => DocumentLink::Line(line, column),
+        None => DocumentLink::Heading(percent_decode(fragment).to_lowercase()),
+    }
+}
+
+/// GitHub's heading anchors: lowercase, punctuation dropped, spaces become
+/// hyphens, and repeats get `-1`, `-2`… in document order.
+pub fn heading_slugs<'a>(headings: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut seen = std::collections::BTreeMap::<String, usize>::new();
+    headings
+        .into_iter()
+        .map(|text| {
+            let base: String = text
+                .trim()
+                .to_lowercase()
+                .chars()
+                .filter_map(|c| match c {
+                    ' ' => Some('-'),
+                    '-' | '_' => Some(c),
+                    c if c.is_alphanumeric() => Some(c),
+                    _ => None,
+                })
+                .collect();
+            let count = seen.entry(base.clone()).or_insert(0);
+            let slug = if *count == 0 {
+                base.clone()
+            } else {
+                format!("{base}-{count}")
+            };
+            *count += 1;
+            slug
+        })
+        .collect()
 }
 
 /// Classify a Markdown/HTML link target written by an agent in `cwd`.
@@ -575,6 +669,154 @@ mod tests {
         );
         assert!(read_error(&text, "not a regular file: /repo").contains("folder"));
         assert!(read_error(&text, "weird").contains("weird"));
+    }
+
+    #[test]
+    fn markdown_documents_are_md_and_markdown_in_any_case() {
+        for path in [
+            "/r/README.md",
+            "/r/notes.MD",
+            "C:\\r\\Guide.Markdown",
+            "/r/a.b.md",
+        ] {
+            assert!(markdown(path), "{path} renders");
+        }
+        for path in ["/r/a.mdx", "/r/md", "/r/.md", "/r/readme.md.txt", "/r/x.mkd"] {
+            assert!(!markdown(path), "{path} stays source");
+        }
+        let Link::File(target) = classify("/repo", "docs/GUIDE.MD:4") else {
+            panic!("markdown path is a file");
+        };
+        assert!(target.markdown());
+        let Link::File(image) = classify("/repo", "docs/shot.png") else {
+            panic!("image path is a file");
+        };
+        assert!(!image.markdown());
+    }
+
+    #[test]
+    fn document_links_resolve_against_the_document_folder() {
+        assert_eq!(parent("/remote/repo/docs/guide.md"), "/remote/repo/docs");
+        assert_eq!(parent("/guide.md"), "/");
+        assert_eq!(parent("C:\\repo\\guide.md"), "C:\\repo");
+        assert_eq!(parent("C:\\guide.md"), "C:\\");
+        let doc = "/remote/repo/docs/guide.md";
+        assert_eq!(
+            classify_in_document(doc, "../src/lib.rs:12"),
+            DocumentLink::Other(file(
+                "/remote/repo/src/lib.rs",
+                Some(12),
+                None,
+                FileKind::Text
+            ))
+        );
+        assert_eq!(
+            classify_in_document(doc, "img/diagram.png"),
+            DocumentLink::Other(file(
+                "/remote/repo/docs/img/diagram.png",
+                None,
+                None,
+                FileKind::Image
+            ))
+        );
+        assert_eq!(
+            classify_in_document(doc, "other.md#setup"),
+            DocumentLink::Other(file(
+                "/remote/repo/docs/other.md",
+                None,
+                None,
+                FileKind::Text
+            ))
+        );
+        assert_eq!(
+            classify_in_document("C:\\repo\\docs\\guide.md", "img\\a.png"),
+            DocumentLink::Other(file(
+                "C:\\repo\\docs\\img\\a.png",
+                None,
+                None,
+                FileKind::Image
+            ))
+        );
+        // Absolute paths and web links keep their own meaning.
+        assert_eq!(
+            classify_in_document(doc, "/etc/motd"),
+            DocumentLink::Other(file("/etc/motd", None, None, FileKind::Text))
+        );
+        assert_eq!(
+            classify_in_document(doc, "https://example.com/x"),
+            DocumentLink::Other(Link::Web("https://example.com/x".into()))
+        );
+    }
+
+    #[test]
+    fn same_document_links_never_reread_the_file() {
+        let doc = "/repo/docs/guide.md";
+        assert_eq!(
+            classify_in_document(doc, "#Getting%20Started"),
+            DocumentLink::Heading("getting started".into())
+        );
+        assert_eq!(classify_in_document(doc, "#"), DocumentLink::Heading("".into()));
+        assert_eq!(
+            classify_in_document(doc, "#L40"),
+            DocumentLink::Line(40, None)
+        );
+        assert_eq!(
+            classify_in_document(doc, "guide.md#usage"),
+            DocumentLink::Heading("usage".into())
+        );
+        assert_eq!(
+            classify_in_document(doc, "./guide.md"),
+            DocumentLink::Heading("".into())
+        );
+        assert_eq!(
+            classify_in_document(doc, "../docs/guide.md:7:3"),
+            DocumentLink::Line(7, Some(3))
+        );
+        assert_eq!(
+            classify_in_document(doc, "file:///repo/docs/guide.md#L9"),
+            DocumentLink::Line(9, None)
+        );
+    }
+
+    #[test]
+    fn document_links_refuse_unsafe_destinations() {
+        let doc = "/repo/docs/guide.md";
+        for raw in [
+            "javascript:alert(1)",
+            "mailto:a@b.c",
+            "data:text/html,x",
+            "vscode://file/a",
+            "file://other-host/a.md",
+            "~/secret.md",
+        ] {
+            assert!(
+                matches!(
+                    classify_in_document(doc, raw),
+                    DocumentLink::Other(Link::Refused(_))
+                ),
+                "{raw} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn heading_slugs_follow_github() {
+        assert_eq!(
+            heading_slugs([
+                "Getting Started",
+                "API: `open()` & close!",
+                "Getting Started",
+                "  Ünïcode  héading ",
+                "snake_case-and-dash",
+            ]),
+            [
+                "getting-started",
+                "api-open--close",
+                "getting-started-1",
+                "ünïcode--héading",
+                "snake_case-and-dash"
+            ]
+        );
     }
 
     #[test]
