@@ -163,7 +163,7 @@ pub fn classify(cwd: &str, raw: &str) -> Link {
             "http" | "https" => web(raw),
             "file" => file_url(cwd, raw),
             other => Link::Refused(format!(
-                "{other}: links are not opened from chat. Only web links (http, https) and files open."
+                "{other}: links are not opened here. Only web links (http, https) and files open."
             )),
         };
     }

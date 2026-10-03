@@ -1032,6 +1032,15 @@ impl Workspace {
             .requests
             .get(KEY)
             .filter(|s| s.number > dismissed && matches!(s.request, Request::FilePreview { .. }));
+        // A popped-out window destroyed without a close request (killed by
+        // the window system) docks its content back instead of swallowing
+        // every later file.
+        if let Some(popout) = &self.chat.viewer.popout {
+            let id = popout.window.window_id();
+            if !cx.windows().iter().any(|w| w.window_id() == id) {
+                self.dock_closing_popout(window, cx);
+            }
+        }
         let showing = match &self.chat.viewer.popout {
             Some(popout) => Some((popout.pane.clone(), Some(popout.window))),
             None => self.chat.viewer.pane.clone().map(|pane| (pane, None)),

@@ -3046,6 +3046,32 @@ mod tests {
             assert!(this.viewer_popout().is_none());
             assert_eq!(this.file_viewer().unwrap().read(cx).state().number, 2);
         });
+        // A window destroyed without a close request (no should-close
+        // callback) docks back on the next update instead of swallowing files.
+        settle(&mut visual);
+        let popout = visual.debug_bounds("file-viewer-popout").unwrap();
+        visual.simulate_click(popout.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let (handle, _) = workspace.read_with(&visual, |this, _| this.viewer_popout().unwrap());
+        let mut window = VisualTestContext::from_window(handle.into(), cx);
+        window.update(|window, _| window.remove_window());
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/docs/after.md"),
+            7,
+            false,
+            None,
+            serde_json::json!({"contents": "# After\n", "size": 8}),
+        );
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.viewer_popout().is_none());
+            assert_eq!(this.file_viewer().unwrap().read(cx).state().number, 7);
+        });
+        assert!(visual.debug_bounds("file-viewer-panel").is_some());
         // Its ✕ closes the viewer entirely.
         settle(&mut visual);
         let popout = visual.debug_bounds("file-viewer-popout").unwrap();
@@ -3069,7 +3095,7 @@ mod tests {
                 &mut visual,
                 "a",
                 file_target("/repo/docs/last.md"),
-                3,
+                8,
                 false,
                 None,
                 serde_json::json!({"contents": "# Last\n", "size": 7}),
