@@ -62,6 +62,28 @@ pub enum Request {
     /// An owner change to sharing; answers with the refreshed `Remote` state.
     /// Its own key, so a refresh never cancels a half-applied change.
     RemoteAction(crate::remote::Action),
+    /// The hub's shared project registry (`config.projects` and its legacy
+    /// arrays); see [`crate::projects`].
+    Projects,
+    /// A user-initiated pin/unpin/forget, verified against the hub's reply.
+    SaveProject {
+        path: String,
+        change: crate::projects::Patch,
+    },
+    /// Record a launch's project as recently used. Its own key, so it never
+    /// supersedes a user's save.
+    TouchProject {
+        path: String,
+        at: i64,
+    },
+    /// Whether a directory exists on the hub and what git says about it.
+    InspectProject {
+        path: String,
+    },
+    /// One level of the hub's filesystem, for choosing a remote folder.
+    BrowseFolders {
+        path: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +115,11 @@ impl Request {
             Self::DownloadUpdate { .. } => "update-download",
             Self::Remote => "remote",
             Self::RemoteAction(_) => "remote-action",
+            Self::Projects => "projects",
+            Self::SaveProject { .. } => "project-save",
+            Self::TouchProject { .. } => "project-touch",
+            Self::InspectProject { .. } => "project-inspect",
+            Self::BrowseFolders { .. } => "project-browse",
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -158,6 +185,15 @@ impl Request {
                 Ok(json!({"status":status?,"staged":staged?,"unstaged":unstaged?}))
             }
             Self::Recent => backend.call("sessions.recent", json!({})).await,
+            Self::Projects => Ok(crate::projects::registry(
+                &backend.call("config.get", json!({})).await?,
+            )),
+            Self::SaveProject { path, change } => save_project(backend, path, change).await,
+            Self::TouchProject { path, at } => {
+                save_project(backend, path, &crate::projects::Patch::Touch(*at)).await
+            }
+            Self::InspectProject { path } => inspect_project(backend, path).await,
+            Self::BrowseFolders { path } => backend.call("fs.listDir", json!({"path":path})).await,
             Self::Remote => crate::remote::state(backend).await,
             Self::RemoteAction(action) => crate::remote::apply(backend, action).await,
             Self::Changes { cwd } => backend.call("git.status", json!({"cwd":cwd})).await,
@@ -275,6 +311,37 @@ impl Request {
             }
         }
     }
+}
+
+/// Read, patch and write back the shared registry, then confirm the hub kept
+/// the change: `config.save` answers a skipped write with the old config.
+async fn save_project(
+    backend: &Backend,
+    path: &str,
+    change: &crate::projects::Patch,
+) -> Result<Value> {
+    let current = backend.call("config.get", json!({})).await?;
+    let partial = crate::projects::patch(&current, path, change)?;
+    let saved = backend.call("config.save", partial).await?;
+    crate::projects::verify(&saved, path, change)?;
+    Ok(crate::projects::registry(&saved))
+}
+
+/// `exists` comes from listing the folder; `git` from `git.status`, whose
+/// failure on an existing folder is reported, not treated as a missing one.
+async fn inspect_project(backend: &Backend, path: &str) -> Result<Value> {
+    if let Err(error) = backend.call("fs.listDir", json!({"path":path})).await {
+        return Ok(json!({"path":path,"exists":false,"error":error.to_string()}));
+    }
+    Ok(
+        match backend.call("git.status", json!({"cwd":path})).await {
+            Ok(status) => json!({"path":path,"exists":true,"git":{
+                "branch":status["branch"],
+                "changes":status["files"].as_array().map_or(0, Vec::len)
+            }}),
+            Err(error) => json!({"path":path,"exists":true,"gitError":error.to_string()}),
+        },
+    )
 }
 
 /// A viewer-sized image, decoded under the same limits as thumbnails and

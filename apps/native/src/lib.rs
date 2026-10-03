@@ -12,6 +12,7 @@ pub mod links;
 pub mod live;
 pub mod model;
 pub mod navigation;
+pub mod projects;
 pub mod reading;
 pub mod remote;
 pub mod transcript;

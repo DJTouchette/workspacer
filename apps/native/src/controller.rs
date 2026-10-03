@@ -504,7 +504,11 @@ impl Worker {
             return;
         }
         let key = request.key();
-        if key == "upload" && self.view.requests.get(key).is_some_and(|s| s.loading) {
+        // A write already on its way cannot be recalled: superseding it would
+        // report "superseded" for a change the hub may still apply.
+        if matches!(key, "upload" | "project-save" | "project-touch")
+            && self.view.requests.get(key).is_some_and(|s| s.loading)
+        {
             return;
         }
         self.action_number += 1;
