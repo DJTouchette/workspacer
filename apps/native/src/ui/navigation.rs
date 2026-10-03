@@ -128,7 +128,7 @@ impl Workspace {
     }
 
     fn normal_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.file_viewer().is_some() {
+        if self.viewer_modal(window) {
             self.close_file_viewer(window, cx);
             return;
         }
@@ -259,7 +259,7 @@ impl Workspace {
 
     pub(super) fn shell(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
-        let viewer = self.file_viewer().is_some();
+        let viewer = self.viewer_owns_keys(window, cx);
         div()
             .relative()
             // Deferred, so they paint over the sidebar and content added later.
@@ -293,9 +293,9 @@ impl Workspace {
             .text_color(rgb(p.text))
             .font_family(gpui_component::Theme::global(cx).font_family.clone())
             .text_size(px(self.settings.text_size.clamp(12, 20) as f32))
-            // While the file viewer is open none of the workspace's actions
-            // exist: no binding matches the covered composer, sidebar or
-            // conversation, and only the viewer's own keys work.
+            // While the file viewer is modal or has focus none of the
+            // workspace's actions exist: no binding matches the composer,
+            // sidebar or conversation, and only the viewer's own keys work.
             .map(|shell| {
                 if viewer {
                     shell

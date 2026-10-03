@@ -67,8 +67,7 @@ impl FileTarget {
 pub fn markdown(path: &str) -> bool {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     name.rsplit_once('.').is_some_and(|(stem, ext)| {
-        !stem.is_empty()
-            && (ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
+        !stem.is_empty() && (ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
     })
 }
 
@@ -681,7 +680,13 @@ mod tests {
         ] {
             assert!(markdown(path), "{path} renders");
         }
-        for path in ["/r/a.mdx", "/r/md", "/r/.md", "/r/readme.md.txt", "/r/x.mkd"] {
+        for path in [
+            "/r/a.mdx",
+            "/r/md",
+            "/r/.md",
+            "/r/readme.md.txt",
+            "/r/x.mkd",
+        ] {
             assert!(!markdown(path), "{path} stays source");
         }
         let Link::File(target) = classify("/repo", "docs/GUIDE.MD:4") else {
@@ -755,7 +760,10 @@ mod tests {
             classify_in_document(doc, "#Getting%20Started"),
             DocumentLink::Heading("getting started".into())
         );
-        assert_eq!(classify_in_document(doc, "#"), DocumentLink::Heading("".into()));
+        assert_eq!(
+            classify_in_document(doc, "#"),
+            DocumentLink::Heading("".into())
+        );
         assert_eq!(
             classify_in_document(doc, "#L40"),
             DocumentLink::Line(40, None)

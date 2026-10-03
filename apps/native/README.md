@@ -292,19 +292,16 @@ Transcript rendering is described below.
   the system browser; any other scheme is refused with a visible notice. File
   links (Markdown, HTML cards, tool file targets, image thumbnails) resolve
   relative paths against the session's cwd, keep `:line[:col]`, `:a-b` and
-  `#L12` anchors, and open a read-only sheet: syntax-highlighted, selectable,
-  searchable (Ctrl+F) source with line numbers (≤1 MiB, ≤50,000 lines), or the
-  image (≤2 MiB source, shown at ≤2560 px). Files are read by the connected hub
-  on the machine that runs the session, never from this client's disk, so a
-  remote hub's paths are never opened locally; `~`, foreign `file://` hosts and
-  relative paths without a cwd are refused. Markdown images render as labels,
-  not client-side loads. HTML cards keep only `a href` web/file destinations
-  and `img src` session image files (a label, never loaded); other schemes,
-  remote images and every other attribute are dropped by the sanitizer. The
-  sheet is modal for the keyboard in every state (loading, text, image,
-  error): focus stays inside it, workspace shortcuts such as Ctrl+Enter send
-  and session navigation are inert, and keys aimed behind it are dropped.
-  Esc, ✕ or the backdrop close the sheet and return focus to the composer.
+  `#L12` anchors, and open the read-only file viewer: syntax-highlighted,
+  selectable, searchable (Ctrl+F) source with line numbers (≤1 MiB, ≤50,000
+  lines), or the image (≤2 MiB source, shown at ≤2560 px). Files are read by
+  the connected hub on the machine that runs the session, never from this
+  client's disk, so a remote hub's paths are never opened locally; `~`,
+  foreign `file://` hosts and relative paths without a cwd are refused.
+  Markdown images render as labels, not client-side loads. HTML cards keep
+  only `a href` web/file destinations and `img src` session image files (a
+  label, never loaded); other schemes, remote images and every other
+  attribute are dropped by the sanitizer.
   Markdown follows the desktop chat (`components/markdown.tsx`): bold/italic in
   the bright text color over dimmer body copy, accent inline code in the mono
   font, accent bullets, underlined h1/h2, and bordered code blocks with a
@@ -312,6 +309,44 @@ Transcript rendering is described below.
   and a Nord palette under Nord, and recolors when the appearance changes.
   Image attachment markers and mentioned image paths load host-backed thumbnails.
   Missing/unsupported previews leave the original text visible.
+- The file viewer (`src/ui/file_viewer.rs`) is one pane per window shown
+  three ways, identically for source, images and Markdown and in its
+  loading/error states. When the window leaves the conversation at least
+  400 px beside it, the viewer slides in from the right as a docked panel and
+  the chat stays usable: keys follow focus, so with the viewer focused no
+  workspace shortcut (Ctrl+Enter send, session navigation, Ctrl+L) acts and
+  typing never reaches the composer, while a focused composer sends normally.
+  Content arriving while a draft is being typed does not take the keyboard;
+  otherwise new content takes focus. Esc inside the viewer, or ✕, closes it.
+  Narrower windows show it as a modal sheet sliding over the conversation:
+  focus stays inside it, workspace shortcuts are inert, and keys aimed behind
+  it are dropped. Esc, ✕ or the backdrop close it and return focus.
+  **Pop out** moves the viewer, with its file, mode and Back history, into a
+  separate resizable window that owns its own keyboard and focus (Esc there
+  stays with the editor's search). New file links then open in that window,
+  which survives switching sessions; its links still read through the owning
+  session on the connected hub. **Dock** (or the window's own close button)
+  brings it back beside the chat; ✕ closes it. Closing the main window quits
+  as before and closes a popped-out viewer with it.
+- `.md`/`.markdown` files (any case) open as a rendered document with a
+  **Preview / Source** toggle (Ctrl+Shift+V). The preview uses the chat's
+  Markdown renderer at a 760 px reading measure: headings, paragraphs, lists,
+  task lists, quotes, tables, syntax-highlighted fences and inline formatting,
+  virtualized for scrolling, selectable, with arrow/Page/Home/End/Space
+  scrolling. Ctrl+F in the preview switches to the source and searches it. A
+  line-anchored link (`README.md:40`, `#L40`) opens the source at that line;
+  the toggle still offers the preview. Links inside the document go through
+  the same classifier against the *document's* folder on the session's
+  machine (not the session cwd): files and images open in the viewer (with
+  Back), web links open the browser, other schemes show a notice in the
+  viewer, `#heading` links (GitHub slugs, including `name.md#heading` for the
+  same file) scroll to the heading, and same-file line links switch to the
+  source without re-reading. Documents over 256 KiB open as source with a
+  notice, because the renderer's first parse runs on the UI thread.
+  Limitations: images inside documents are labels that open the image viewer,
+  not inline pictures; raw HTML renders through the component's limited HTML
+  subset; footnotes, math, Mermaid and front matter are not specially
+  rendered; a `#heading` on a link to another file opens that file at the top.
 - Sent messages remain visibly provisional until a new authoritative user turn
   acknowledges them. Messages sent during work say **Queued**. Failed or uncertain
   sends preserve the existing draft behavior; acceptance alone does not remove
@@ -633,7 +668,7 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui.rs` | GPUI views, virtualization, keyboard dispatch, drafts |
 | `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
 | `src/links.rs` | Chat link classification, path/line resolution, preview bounds and errors |
-| `src/ui/file_viewer.rs` | Link routing and the read-only file/image viewer sheet |
+| `src/ui/file_viewer.rs` | Link routing and the read-only file/image/Markdown viewer (docked, sheet, popped-out window) |
 | `src/ui/settings.rs` | Categorized, searchable settings |
 | `src/remote.rs` | Tailscale sharing and pairing state, phone links, QR modules |
 | `src/ui/remote.rs` | Settings → Remote panel |

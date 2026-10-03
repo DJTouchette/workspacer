@@ -95,6 +95,17 @@ impl TextViewHandle {
             .collect()
     }
 
+    /// The kind of every top-level block (see `Node::kind_name`).
+    pub fn block_kinds(&self, cx: &App) -> Vec<&'static str> {
+        match &self.0.read(cx).parsed_result {
+            Some(Ok(content)) => match &content.root_node {
+                node::Node::Root { children } => children.iter().map(|n| n.kind_name()).collect(),
+                other => vec![other.kind_name()],
+            },
+            _ => vec![],
+        }
+    }
+
     /// Put block `ix` at the top of a `scrollable` view.
     pub fn scroll_to_block(&self, ix: usize, cx: &App) {
         self.0.read(cx).list_state.scroll_to(gpui::ListOffset {
@@ -116,7 +127,12 @@ impl TextViewHandle {
 
     /// Height of the visible area of a `scrollable` view.
     pub fn viewport_height(&self, cx: &App) -> Pixels {
-        self.0.read(cx).list_state.viewport_bounds().size.height
+        self.viewport_bounds(cx).size.height
+    }
+
+    /// Window bounds of the visible area of a `scrollable` view.
+    pub fn viewport_bounds(&self, cx: &App) -> Bounds<Pixels> {
+        self.0.read(cx).list_state.viewport_bounds()
     }
 
     /// The view's own focus handle (it receives focus when clicked).

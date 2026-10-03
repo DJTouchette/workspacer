@@ -14,39 +14,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = self.appearance.palette();
-        let style = TextViewStyle {
-            on_link_click: Some(self.link_handler(cx)),
-            unordered_list_marker: Some("• ".into()),
-            // Desktop chat parity (components/markdown.tsx): bright emphasis,
-            // accent inline code, accent bullets, labeled bordered fences.
-            prose: Some(ProseColors {
-                strong: rgb(p.text).into(),
-                code: rgb(p.accent).into(),
-                code_background: rgb(p.code_inline).into(),
-                marker: rgb(p.accent).into(),
-                muted: rgb(p.muted).into(),
-                rule: rgb(p.border).into(),
-                border: rgb(p.border).into(),
-                code_header: rgb(p.code_header).into(),
-            }),
-            paragraph_gap: gpui::rems(0.5),
-            heading_base_font_size: px(self.settings.text_size as f32),
-            heading_font_size: Some(Arc::new(|level, base| {
-                base + px(match level {
-                    1 => 9.,
-                    2 => 5.,
-                    3 => 2.,
-                    _ => 0.,
-                })
-            })),
-            highlight_theme: cx.theme().highlight_theme.clone(),
-            is_dark: self.appearance != Appearance::Light,
-            code_block: div()
-                .rounded(px(p.control_radius))
-                .bg(rgb(p.code_block))
-                .style()
-                .clone(),
-        };
+        let style = self.markdown_style(self.link_handler(cx), false, cx);
         let key = key.to_owned();
         let debug_key = key.clone();
         div()
@@ -66,6 +34,64 @@ impl Workspace {
                 .style(style)
                 .selectable(true),
             )
+    }
+}
+
+impl Workspace {
+    /// The chat's Markdown look, shared by the file viewer's document
+    /// preview. `document` scales headings up for long-form reading.
+    pub(super) fn markdown_style(
+        &self,
+        on_link_click: Arc<gpui_component::text::LinkClickFn>,
+        document: bool,
+        cx: &App,
+    ) -> TextViewStyle {
+        let p = self.appearance.palette();
+        TextViewStyle {
+            on_link_click: Some(on_link_click),
+            unordered_list_marker: Some("• ".into()),
+            // Desktop chat parity (components/markdown.tsx): bright emphasis,
+            // accent inline code, accent bullets, labeled bordered fences.
+            prose: Some(ProseColors {
+                strong: rgb(p.text).into(),
+                code: rgb(p.accent).into(),
+                code_background: rgb(p.code_inline).into(),
+                marker: rgb(p.accent).into(),
+                muted: rgb(p.muted).into(),
+                rule: rgb(p.border).into(),
+                border: rgb(p.border).into(),
+                code_header: rgb(p.code_header).into(),
+            }),
+            paragraph_gap: gpui::rems(if document { 0.75 } else { 0.5 }),
+            heading_base_font_size: px(self.settings.text_size as f32),
+            heading_font_size: Some(if document {
+                Arc::new(|level, base| {
+                    base + px(match level {
+                        1 => 14.,
+                        2 => 8.,
+                        3 => 4.,
+                        4 => 2.,
+                        _ => 0.,
+                    })
+                })
+            } else {
+                Arc::new(|level, base| {
+                    base + px(match level {
+                        1 => 9.,
+                        2 => 5.,
+                        3 => 2.,
+                        _ => 0.,
+                    })
+                })
+            }),
+            highlight_theme: cx.theme().highlight_theme.clone(),
+            is_dark: self.appearance != Appearance::Light,
+            code_block: div()
+                .rounded(px(p.control_radius))
+                .bg(rgb(p.code_block))
+                .style()
+                .clone(),
+        }
     }
 }
 

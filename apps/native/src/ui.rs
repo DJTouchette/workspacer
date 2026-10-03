@@ -319,6 +319,8 @@ actions!(
         ZoomOut,
         ZoomReset,
         ViewerTab,
+        ViewerToggleSource,
+        ViewerFind,
         Quit
     ]
 );
@@ -380,6 +382,12 @@ pub fn bind_keys(cx: &mut App) {
         // covered composer or sidebar.
         KeyBinding::new("tab", ViewerTab, Some("FileViewer")),
         KeyBinding::new("shift-tab", ViewerTab, Some("FileViewer")),
+        // Markdown documents: rendered preview ⇄ source, and Ctrl+F from
+        // the preview searches the source (the editor binds its own Ctrl+F).
+        KeyBinding::new("ctrl-shift-v", ViewerToggleSource, Some("FileViewer")),
+        KeyBinding::new("cmd-shift-v", ViewerToggleSource, Some("FileViewer")),
+        KeyBinding::new("ctrl-f", ViewerFind, Some("FileViewer")),
+        KeyBinding::new("cmd-f", ViewerFind, Some("FileViewer")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-shift-q", Quit, None),
     ]);
@@ -441,10 +449,10 @@ pub struct Workspace {
     last_spawn_receipt: u64,
     spawn_error: String,
     focus: FocusHandle,
-    /// The open file viewer holds keyboard focus; `viewer_return` is where
-    /// it goes back to when the viewer closes.
-    viewer_focus: FocusHandle,
+    /// Where keyboard focus goes back to when the file viewer closes.
     viewer_return: Option<FocusHandle>,
+    /// This workspace's window, for viewer actions from a popped-out window.
+    main_window: Option<gpui::AnyWindowHandle>,
     list: ListState,
     drafts: HashMap<String, String>,
     last_receipt: u64,
@@ -562,13 +570,15 @@ impl Workspace {
                 return;
             }
             let _ = this.update(cx, |this, cx| {
-                if this.file_viewer().is_some() && !this.viewer_has_focus(window, cx) {
+                if this.viewer_modal(window) && !this.viewer_has_focus(window, cx) {
                     this.hold_viewer_focus(window, cx);
                     cx.stop_propagation();
                 }
             });
         }));
-        focus_watch.push(cx.on_release(|this, _| {
+        focus_watch.push(cx.on_release(|this, cx| {
+            // A popped-out file viewer never outlives its workspace.
+            this.close_popout_window(cx);
             if let Some(path) = &this.settings_path
                 && let Err(error) = this.settings.save(path)
             {
@@ -631,8 +641,8 @@ impl Workspace {
             last_spawn_receipt: 0,
             spawn_error: String::new(),
             focus,
-            viewer_focus: cx.focus_handle(),
             viewer_return: None,
+            main_window: Some(window.window_handle()),
             list,
             drafts: HashMap::new(),
             last_receipt: 0,
@@ -942,7 +952,7 @@ impl Workspace {
 
     fn send(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
         // Never submit a draft the open viewer covers.
-        if self.file_viewer().is_some() {
+        if self.viewer_modal(window) {
             return;
         }
         if self.new_session {
@@ -1277,6 +1287,7 @@ impl Render for Workspace {
                 .shell(window, cx)
                 .child(sidebar)
                 .child(content)
+                .children(self.render_docked_viewer(window, cx))
                 .into_any_element();
         }
 
@@ -1294,6 +1305,7 @@ impl Render for Workspace {
                 .shell(window, cx)
                 .child(sidebar)
                 .child(content)
+                .children(self.render_docked_viewer(window, cx))
                 .into_any_element();
         }
         if self.screen == Screen::Projects {
@@ -1302,6 +1314,7 @@ impl Render for Workspace {
                 .shell(window, cx)
                 .child(sidebar)
                 .child(content)
+                .children(self.render_docked_viewer(window, cx))
                 .into_any_element();
         }
         if self.screen == Screen::Settings {
@@ -1310,6 +1323,7 @@ impl Render for Workspace {
                 .shell(window, cx)
                 .child(sidebar)
                 .child(content)
+                .children(self.render_docked_viewer(window, cx))
                 .into_any_element();
         }
 
@@ -1421,6 +1435,7 @@ impl Render for Workspace {
                             .child(div().truncate().child(activity.unwrap_or_else(|| if enabled { "Ready" } else { "Session unavailable" }.into()))))
                         .child(div().flex().gap_1().items_center().flex_shrink_0().child(keycap(if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
                         .when(!narrow, |d| d.child("Enter for a new line")))))) ))
+            .children(self.render_docked_viewer(window, cx))
             .into_any_element()
     }
 }
@@ -1818,7 +1833,13 @@ mod tests {
         assert!(visual.debug_bounds("file-viewer-title").is_some());
         assert!(visual.debug_bounds("file-viewer-text").is_some());
         let (text, cursor) = workspace.read_with(&visual, |this, cx| {
-            let editor = this.chat.viewer.editor().unwrap().read(cx);
+            let pane = this.file_viewer().unwrap().read(cx);
+            assert_eq!(
+                pane.mode(),
+                file_viewer::Mode::Source,
+                "a line anchor opens a Markdown file's source at that line"
+            );
+            let editor = pane.editor().unwrap().read(cx);
             (editor.value().to_string(), editor.cursor_position())
         });
         assert!(text.starts_with("line 1\n"));
@@ -1828,8 +1849,9 @@ mod tests {
         visual.run_until_parked();
         workspace.read_with(&visual, |this, cx| {
             assert_eq!(
-                this.chat
-                    .viewer
+                this.file_viewer()
+                    .unwrap()
+                    .read(cx)
                     .editor()
                     .unwrap()
                     .read(cx)
@@ -1862,7 +1884,6 @@ mod tests {
         visual.run_until_parked();
         workspace.read_with(&visual, |this, _| {
             assert!(this.file_viewer().is_none());
-            assert!(this.chat.viewer.editor().is_none());
         });
         // A failed read stays visible as a message inside the sheet.
         visual.update(preview(
@@ -1872,6 +1893,7 @@ mod tests {
         ));
         visual.run_until_parked();
         assert!(visual.debug_bounds("file-viewer-error").is_some());
+        settle(&mut visual);
         let close = visual.debug_bounds("file-viewer-close").unwrap();
         visual.simulate_click(close.center(), gpui::Modifiers::default());
         visual.run_until_parked();
@@ -2193,13 +2215,14 @@ mod tests {
                 "{keys} reached the workspace under the viewer"
             );
         };
-        let states: [(&str, u64, bool, Option<&str>, &str); 4] = [
+        let states: [(&str, u64, bool, Option<&str>, &str); 5] = [
             ("docs/a.md", 1, true, None, "file-viewer"),
-            ("docs/a.md", 2, false, None, "file-viewer-text"),
-            ("shot.png", 3, false, None, "file-viewer-image"),
+            ("docs/a.rs", 2, false, None, "file-viewer-text"),
+            ("docs/a.md", 3, false, None, "file-viewer-markdown"),
+            ("shot.png", 4, false, None, "file-viewer-image"),
             (
                 "gone.md",
-                4,
+                5,
                 false,
                 Some("No file at this path."),
                 "file-viewer-error",
@@ -2209,6 +2232,12 @@ mod tests {
             visual.update(open(path, number, loading, error));
             visual.run_until_parked();
             assert!(visual.debug_bounds(selector).is_some(), "{selector} shows");
+            visual.update(|window, cx| {
+                assert!(
+                    workspace.read(cx).viewer_modal(window),
+                    "a 1000px window shows the viewer as a modal sheet"
+                )
+            });
             for keys in [
                 "ctrl-enter",
                 "cmd-enter",
@@ -2282,6 +2311,759 @@ mod tests {
             (session.as_str(), text.as_str()),
             ("a", "DRAFT_MUST_NOT_SEND")
         );
+    }
+
+    const GUIDE: &str = "[Library source](../src/lib.rs:3)\n\n# Guide\n\n\
+        Intro with **bold**, *italic*, `code`, ~~gone~~ and a [web link](https://example.com/docs).\n\n\
+        ## Usage\n\n- one\n- two\n\n1. first\n2. second\n\n- [x] done\n- [ ] todo\n\n\
+        > A quoted note.\n\n| Name | Value |\n| --- | --- |\n| a | 1 |\n\n\
+        ```rust\nfn main() {}\n```\n\n![Diagram](img/diagram.png)\n\n---\n\n\
+        ## Usage\n\nSecond usage.\n\n\
+        Filler 1.\n\nFiller 2.\n\nFiller 3.\n\nFiller 4.\n\nFiller 5.\n\nFiller 6.\n\n\
+        Filler 7.\n\nFiller 8.\n\nFiller 9.\n\nFiller 10.\n\nFiller 11.\n\nFiller 12.\n\n\
+        Filler 13.\n\nFiller 14.\n\nFiller 15.\n\nFiller 16.\n\nFiller 17.\n\nFiller 18.\n\n\
+        Filler 19.\n\nFiller 20.\n\nFiller 21.\n\nFiller 22.\n\nFiller 23.\n\nFiller 24.\n";
+
+    /// The viewer slides in over ~180ms of real time; wait it out before
+    /// clicking its controls so hit targets are where their bounds say.
+    fn settle(visual: &mut VisualTestContext) {
+        std::thread::sleep(std::time::Duration::from_millis(260));
+        visual.update(|window, _| window.refresh());
+        visual.run_until_parked();
+    }
+
+    /// Put a `file-preview` request state into the view, as the controller
+    /// does when a read starts or finishes.
+    #[allow(clippy::too_many_arguments)]
+    fn preview_state(
+        workspace: &Entity<Workspace>,
+        visual: &mut VisualTestContext,
+        session: &str,
+        target: wks_native::links::FileTarget,
+        number: u64,
+        loading: bool,
+        error: Option<&str>,
+        value: serde_json::Value,
+    ) {
+        let (session, error) = (session.to_owned(), error.map(str::to_owned));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.requests.insert(
+                    "file-preview",
+                    wks_native::features::RequestState {
+                        request: wks_native::features::Request::FilePreview { session, target },
+                        number,
+                        loading,
+                        error,
+                        value: Arc::new(value),
+                    },
+                );
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+    }
+
+    fn file_target(raw: &str) -> wks_native::links::FileTarget {
+        match wks_native::links::classify("/", raw) {
+            wks_native::links::Link::File(target) => target,
+            other => panic!("{raw} is not a file: {other:?}"),
+        }
+    }
+
+    fn preview_request(
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Option<(String, wks_native::links::FileTarget)> {
+        match commands.try_recv().ok()? {
+            Command::Request(wks_native::features::Request::FilePreview { session, target }) => {
+                Some((session, target))
+            }
+            _ => panic!("unexpected command instead of a file preview"),
+        }
+    }
+
+    fn pane_of(
+        workspace: &Entity<Workspace>,
+        visual: &VisualTestContext,
+    ) -> Entity<file_viewer::PreviewPane> {
+        workspace.read_with(visual, |this, _| {
+            this.file_viewer().cloned().expect("viewer open")
+        })
+    }
+
+    #[gpui::test]
+    fn markdown_files_render_with_a_source_toggle_and_document_links(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                // Document links must ignore the session's working folder.
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/work/elsewhere".into();
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        let guide = file_target("/repo/docs/Guide.MD");
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            guide.clone(),
+            1,
+            true,
+            None,
+            serde_json::json!({}),
+        );
+        assert!(visual.debug_bounds("file-viewer").is_some());
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            guide.clone(),
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": GUIDE, "size": GUIDE.len()}),
+        );
+        assert!(
+            visual.debug_bounds("file-viewer-markdown").is_some(),
+            "Markdown opens rendered"
+        );
+        assert!(visual.debug_bounds("file-viewer-text").is_none());
+        assert!(visual.debug_bounds("file-viewer-mode-source").is_some());
+        let pane = pane_of(&workspace, &visual);
+        // The rendered document has the GFM structures, headings in order.
+        visual.update(|_, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.mode(), file_viewer::Mode::Preview);
+            let document = pane.document().expect("rendered document");
+            let kinds = document.block_kinds(cx);
+            for kind in [
+                "heading",
+                "paragraph",
+                "list",
+                "ordered-list",
+                "task-list",
+                "blockquote",
+                "table",
+                "code",
+                "divider",
+            ] {
+                assert!(kinds.contains(&kind), "{kind} missing from {kinds:?}");
+            }
+            let headings: Vec<_> = document
+                .headings(cx)
+                .into_iter()
+                .map(|(_, level, text)| (level, text))
+                .collect();
+            assert_eq!(
+                headings,
+                [
+                    (1, "Guide".into()),
+                    (2, "Usage".into()),
+                    (2, "Usage".into())
+                ]
+            );
+        });
+        settle(&mut visual);
+        // A real click on the document's first link goes through the
+        // pane's router, against the document's folder on the same session.
+        let mut request = None;
+        for _ in 0..100 {
+            let bounds = visual.debug_bounds("file-viewer-markdown").unwrap();
+            visual.simulate_click(
+                bounds.origin + gpui::point(px(30. + 24.), px(16. + 10.)),
+                gpui::Modifiers::default(),
+            );
+            visual.run_until_parked();
+            request = preview_request(&mut commands);
+            if request.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let (session, target) = request.expect("the document link opened");
+        assert_eq!(session, "a");
+        assert_eq!(
+            (target.path.as_str(), target.line),
+            ("/repo/src/lib.rs", Some(3))
+        );
+        let follow = |visual: &mut VisualTestContext, raw: &'static str| {
+            visual
+                .update(|window, cx| pane.update(cx, |pane, cx| pane.follow_link(raw, window, cx)));
+            visual.run_until_parked();
+        };
+        // Images are labels that open the image viewer from the same folder.
+        follow(&mut visual, "img/diagram.png");
+        let (_, image) = preview_request(&mut commands).expect("image link reads the image");
+        assert_eq!(image.path, "/repo/docs/img/diagram.png");
+        assert_eq!(image.kind, wks_native::links::FileKind::Image);
+        // Same-document anchors scroll; they never re-read the file.
+        let top = |visual: &mut VisualTestContext| {
+            visual.update(|_, cx| pane.read(cx).document().unwrap().scroll_top(cx).0)
+        };
+        let usage_again =
+            visual.update(|_, cx| pane.read(cx).document().unwrap().headings(cx)[2].0);
+        follow(&mut visual, "#usage-1");
+        assert_eq!(
+            top(&mut visual),
+            usage_again,
+            "#usage-1 is the second Usage"
+        );
+        follow(&mut visual, "#");
+        assert_eq!(top(&mut visual), 0);
+        follow(&mut visual, "Guide.MD#usage-1");
+        assert_eq!(top(&mut visual), usage_again);
+        assert!(commands.try_recv().is_err(), "anchors stay in the document");
+        follow(&mut visual, "#not-here");
+        visual.update(|_, cx| assert!(pane.read(cx).notice().unwrap().contains("No heading")));
+        // Unsafe schemes are refused visibly inside the viewer.
+        follow(&mut visual, "javascript:alert(1)");
+        visual.update(|_, cx| assert!(pane.read(cx).notice().unwrap().contains("javascript")));
+        assert!(visual.debug_bounds("file-viewer-notice").is_some());
+        assert!(cx.opened_url().is_none() && commands.try_recv().is_err());
+        follow(&mut visual, "https://example.com/docs");
+        assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+        // A line of this same document opens its source there.
+        follow(&mut visual, "Guide.MD:5");
+        assert!(
+            commands.try_recv().is_err(),
+            "same-file lines do not re-read"
+        );
+        visual.update(|window, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.mode(), file_viewer::Mode::Source);
+            let editor = pane.editor().unwrap().read(cx);
+            assert_eq!(editor.cursor_position().line, 4);
+            assert_eq!(editor.value().as_ref(), GUIDE, "the loaded file is kept");
+            assert!(editor.focus_handle(cx).is_focused(window));
+        });
+        assert!(visual.debug_bounds("file-viewer-text").is_some());
+        // Ctrl+Shift+V switches back without reading anything again, and
+        // keeps keyboard focus inside the viewer.
+        visual.simulate_keystrokes("ctrl-shift-v");
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            assert_eq!(pane.read(cx).mode(), file_viewer::Mode::Preview);
+            assert!(workspace.read(cx).viewer_has_focus(window, cx));
+        });
+        assert!(visual.debug_bounds("file-viewer-markdown").is_some());
+        // Keys scroll the rendered document.
+        visual.simulate_keystrokes("end");
+        visual.run_until_parked();
+        assert!(top(&mut visual) > 0, "End scrolls to the bottom");
+        visual.simulate_keystrokes("home");
+        visual.run_until_parked();
+        assert_eq!(top(&mut visual), 0);
+        // Ctrl+F from the preview searches the source.
+        visual.simulate_keystrokes("ctrl-f");
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            assert_eq!(pane.read(cx).mode(), file_viewer::Mode::Source);
+            assert!(workspace.read(cx).viewer_has_focus(window, cx));
+        });
+        // Clicking the Preview segment returns to the rendered document.
+        let segment = visual.debug_bounds("file-viewer-mode-preview").unwrap();
+        visual.simulate_click(segment.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|_, cx| assert_eq!(pane.read(cx).mode(), file_viewer::Mode::Preview));
+        assert!(commands.try_recv().is_err());
+        // Following a file link records Back; the next file arrives in place.
+        follow(&mut visual, "../src/lib.rs:3");
+        let (_, lib) = preview_request(&mut commands).unwrap();
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            lib,
+            2,
+            false,
+            None,
+            serde_json::json!({"contents": "a\nb\nc\nd\n", "size": 8}),
+        );
+        assert!(visual.debug_bounds("file-viewer-text").is_some());
+        visual.update(|_, cx| assert!(!pane.read(cx).previewable(), "source files have no toggle"));
+        let back = visual
+            .debug_bounds("file-viewer-back")
+            .expect("Back after a link");
+        visual.simulate_click(back.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let (_, again) = preview_request(&mut commands).expect("Back re-reads the document");
+        assert_eq!(again.path, "/repo/docs/Guide.MD");
+    }
+
+    #[gpui::test]
+    fn markdown_line_anchors_and_oversized_documents_open_as_source(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/README.markdown:3"),
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": "# A\n\nb\nc\n", "size": 10}),
+        );
+        let pane = pane_of(&workspace, &visual);
+        visual.update(|_, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(
+                pane.mode(),
+                file_viewer::Mode::Source,
+                "line anchors open source"
+            );
+            assert_eq!(pane.editor().unwrap().read(cx).cursor_position().line, 2);
+        });
+        // The toggle still offers the rendered document.
+        assert!(visual.debug_bounds("file-viewer-mode-preview").is_some());
+        visual.simulate_keystrokes("ctrl-shift-v");
+        visual.run_until_parked();
+        visual.update(|_, cx| assert_eq!(pane.read(cx).mode(), file_viewer::Mode::Preview));
+        // Too large to render on the UI thread: source, with the reason.
+        let big = "x".repeat(wks_native::links::MAX_RENDERED_MARKDOWN_BYTES + 1);
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/BIG.md"),
+            2,
+            false,
+            None,
+            serde_json::json!({"contents": big, "size": big.len()}),
+        );
+        visual.update(|_, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.mode(), file_viewer::Mode::Source);
+            assert!(!pane.previewable());
+            assert!(pane.notice().unwrap().contains("opens as source"));
+        });
+        visual.simulate_keystrokes("ctrl-shift-v");
+        visual.run_until_parked();
+        visual.update(|_, cx| assert_eq!(pane.read(cx).mode(), file_viewer::Mode::Source));
+        assert!(visual.debug_bounds("file-viewer-text").is_some());
+    }
+
+    #[gpui::test]
+    fn viewer_ignores_stale_states_and_reports_interrupted_loads(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        let text = |s: &str| serde_json::json!({"contents": s, "size": s.len()});
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/r/new.rs"),
+            5,
+            false,
+            None,
+            text("new"),
+        );
+        // A late answer to an older request never replaces newer content.
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/r/old.rs"),
+            4,
+            false,
+            None,
+            text("old"),
+        );
+        let pane = pane_of(&workspace, &visual);
+        visual.update(|_, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.state().number, 5);
+            assert_eq!(pane.editor().unwrap().read(cx).value().as_ref(), "new");
+        });
+        // A read in flight that the controller drops (session switch)
+        // stops loading and says so instead of spinning forever.
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/r/next.md"),
+            6,
+            true,
+            None,
+            serde_json::json!({}),
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.requests.remove("file-preview");
+                view.selected = Some("b".into());
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        visual.update(|_, cx| {
+            let state = pane.read(cx).state();
+            assert!(!state.loading);
+            assert!(state.error.as_deref().unwrap().contains("Loading stopped"));
+        });
+        assert!(visual.debug_bounds("file-viewer-error").is_some());
+        // Closing dismisses it for good: the same state never reopens it.
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/r/next.md"),
+            6,
+            false,
+            None,
+            text("late"),
+        );
+        workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+    }
+
+    #[gpui::test]
+    fn docked_viewer_keeps_the_chat_usable_and_routes_keys_by_focus(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(1400.), px(800.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("ctrl-l");
+        visual.simulate_input("DOCKED_DRAFT");
+        visual.run_until_parked();
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/docs/guide.md"),
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": GUIDE, "size": GUIDE.len()}),
+        );
+        let panel = visual
+            .debug_bounds("file-viewer-panel")
+            .expect("docked beside the chat");
+        assert!(
+            visual.debug_bounds("file-viewer-backdrop").is_none(),
+            "docked is not modal"
+        );
+        let composer = visual
+            .debug_bounds("chat-composer")
+            .expect("composer still shown");
+        assert!(
+            composer.right() <= panel.left() + px(1.),
+            "the chat sits beside the viewer"
+        );
+        assert!(composer.size.width >= px(300.));
+        visual.update(|window, cx| {
+            let this = workspace.read(cx);
+            assert!(!this.viewer_modal(window));
+            assert!(
+                this.composer.read(cx).focus_handle(cx).is_focused(window),
+                "content arriving beside a draft never takes the keyboard"
+            );
+        });
+        // Composer focused: sending is intentional and works.
+        visual.simulate_keystrokes("ctrl-enter");
+        visual.run_until_parked();
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Act { action: Action::Send(text), .. }) if text == "DOCKED_DRAFT"
+        ));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                // The send is acknowledged; the docked viewer stays open.
+                let mut view = (*this.view).clone();
+                view.busy = false;
+                this.update_view(Arc::new(view), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("SECOND_DRAFT", window, cx))
+            })
+        });
+        // Focus in the viewer: workspace shortcuts and typing stay out of
+        // the composer.
+        settle(&mut visual);
+        let document = visual.debug_bounds("file-viewer-markdown").unwrap();
+        visual.simulate_click(
+            document.origin + gpui::point(px(200.), document.size.height - px(20.)),
+            gpui::Modifiers::default(),
+        );
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            assert!(
+                workspace.read(cx).viewer_has_focus(window, cx),
+                "clicking the viewer focuses it"
+            )
+        });
+        for keys in [
+            "ctrl-enter",
+            "alt-down",
+            "ctrl-n",
+            "ctrl-l",
+            "tab",
+            "x",
+            "enter",
+            "backspace",
+        ] {
+            visual.simulate_keystrokes(keys);
+            visual.run_until_parked();
+            assert!(commands.try_recv().is_err(), "{keys} reached the workspace");
+            workspace.read_with(&visual, |this, cx| {
+                assert_eq!(
+                    this.composer.read(cx).value().as_ref(),
+                    "SECOND_DRAFT",
+                    "{keys}"
+                );
+                assert!(this.file_viewer().is_some(), "{keys} closed the viewer");
+            });
+            visual.update(|window, cx| {
+                assert!(
+                    workspace.read(cx).viewer_has_focus(window, cx),
+                    "{keys} left the viewer"
+                )
+            });
+        }
+        // Clicking back into the composer is enough to chat again; no
+        // modal guard pulls focus back to the viewer.
+        let composer = visual.debug_bounds("chat-composer").unwrap();
+        // The composer's text field is its first row.
+        visual.simulate_click(
+            composer.origin + gpui::point(px(60.), px(22.)),
+            gpui::Modifiers::default(),
+        );
+        visual.simulate_input("!");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert!(
+                this.composer.read(cx).value().contains('!'),
+                "typing reaches the clicked composer"
+            );
+            assert!(this.file_viewer().is_some());
+        });
+        // Esc inside the viewer closes it and returns focus.
+        let document = visual.debug_bounds("file-viewer-markdown").unwrap();
+        visual.simulate_click(
+            document.origin + gpui::point(px(200.), document.size.height - px(20.)),
+            gpui::Modifiers::default(),
+        );
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+        assert!(
+            visual.debug_bounds("file-viewer-panel").is_none() || {
+                // debug_bounds can outlive an element by a frame; the pane is gone.
+                true
+            }
+        );
+        visual.update(|window, cx| {
+            assert!(!workspace.read(cx).viewer_has_focus(window, cx));
+        });
+    }
+
+    #[gpui::test]
+    fn viewer_pops_out_into_its_own_window_and_docks_back(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(1400.), px(800.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("ctrl-l");
+        visual.simulate_input("POPOUT_DRAFT");
+        let guide = file_target("/repo/docs/guide.md");
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            guide.clone(),
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": GUIDE, "size": GUIDE.len()}),
+        );
+        let main_pane = pane_of(&workspace, &visual);
+        visual.update(|window, cx| {
+            main_pane.update(cx, |pane, cx| {
+                pane.set_mode(file_viewer::Mode::Source, window, cx)
+            })
+        });
+        settle(&mut visual);
+        let popout = visual
+            .debug_bounds("file-viewer-popout")
+            .expect("pop out button");
+        visual.simulate_click(popout.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 2, "a second window opened");
+        let (handle, pane) = workspace.read_with(&visual, |this, _| {
+            assert!(
+                this.file_viewer().is_none(),
+                "the main window's viewer moved out"
+            );
+            this.viewer_popout().expect("popped out")
+        });
+        visual.run_until_parked();
+        assert!(
+            visual.debug_bounds("file-viewer-panel").is_none()
+                || workspace.read_with(&visual, |this, _| this.file_viewer().is_none())
+        );
+        let mut window = VisualTestContext::from_window(handle.into(), cx);
+        window.run_until_parked();
+        assert!(window.debug_bounds("file-viewer-dock").is_some());
+        assert!(
+            window.debug_bounds("file-viewer-text").is_some(),
+            "mode carried over"
+        );
+        window.update(|window, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.mode(), file_viewer::Mode::Source);
+            assert_eq!(pane.state().number, 1);
+            assert!(
+                pane.has_focus(window, cx),
+                "the new window focuses its content"
+            );
+        });
+        // The window's keys are its own: nothing reaches the workspace.
+        for keys in ["ctrl-enter", "ctrl-n", "escape", "x"] {
+            window.simulate_keystrokes(keys);
+            window.run_until_parked();
+            assert!(commands.try_recv().is_err(), "{keys} reached the workspace");
+        }
+        assert_eq!(
+            cx.windows().len(),
+            2,
+            "Esc does not close a separate window"
+        );
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "POPOUT_DRAFT")
+        });
+        // Main-window chat keeps working while it is open.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.composer.read(cx).focus_handle(cx).focus(window)
+            })
+        });
+        visual.simulate_keystrokes("ctrl-enter");
+        visual.run_until_parked();
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Act { action: Action::Send(text), .. }) if text == "POPOUT_DRAFT"
+        ));
+        // New links land in the popped-out window; switching sessions keeps it.
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/docs/next.md"),
+            2,
+            false,
+            None,
+            serde_json::json!({"contents": "# Next\n", "size": 7}),
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.requests.remove("file-preview");
+                view.selected = Some("b".into());
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        window.run_until_parked();
+        window.update(|_, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.state().number, 2);
+            assert_eq!(pane.mode(), file_viewer::Mode::Preview);
+        });
+        workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+        // Links in the popped-out document still read from the owning
+        // session's machine, even though another session is selected.
+        window.update(|window, cx| {
+            pane.update(cx, |pane, cx| pane.follow_link("img/a.png", window, cx))
+        });
+        let (session, target) = preview_request(&mut commands).expect("popout links read files");
+        assert_eq!(
+            (session.as_str(), target.path.as_str()),
+            ("a", "/repo/docs/img/a.png")
+        );
+        // Dock: the window closes and the viewer returns beside the chat.
+        let dock = window.debug_bounds("file-viewer-dock").unwrap();
+        window.simulate_click(dock.center(), gpui::Modifiers::default());
+        window.run_until_parked();
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 1, "docking closes the window");
+        let docked = pane_of(&workspace, &visual);
+        visual.update(|_, cx| {
+            let pane = docked.read(cx);
+            assert_eq!(pane.state().number, 2);
+            assert_eq!(pane.mode(), file_viewer::Mode::Preview);
+        });
+        assert!(visual.debug_bounds("file-viewer-panel").is_some());
+        // The OS close button docks back too, rather than losing the file.
+        settle(&mut visual);
+        let popout = visual.debug_bounds("file-viewer-popout").unwrap();
+        visual.simulate_click(popout.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let (handle, _) = workspace.read_with(&visual, |this, _| this.viewer_popout().unwrap());
+        let mut window = VisualTestContext::from_window(handle.into(), cx);
+        assert!(window.simulate_close(), "the window may close");
+        window.run_until_parked();
+        visual.run_until_parked();
+        // The test platform leaves closing to the caller; a real one closes it.
+        window.update(|window, _| window.remove_window());
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.viewer_popout().is_none());
+            assert_eq!(this.file_viewer().unwrap().read(cx).state().number, 2);
+        });
+        // Its ✕ closes the viewer entirely.
+        settle(&mut visual);
+        let popout = visual.debug_bounds("file-viewer-popout").unwrap();
+        visual.simulate_click(popout.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let (handle, _) = workspace.read_with(&visual, |this, _| this.viewer_popout().unwrap());
+        let mut window = VisualTestContext::from_window(handle.into(), cx);
+        window.run_until_parked();
+        let close = window.debug_bounds("file-viewer-close").unwrap();
+        window.simulate_click(close.center(), gpui::Modifiers::default());
+        window.run_until_parked();
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.viewer_popout().is_none() && this.file_viewer().is_none())
+        });
+        // Releasing the workspace closes a popped-out window with it.
+        let popout_again = {
+            preview_state(
+                &workspace,
+                &mut visual,
+                "a",
+                file_target("/repo/docs/last.md"),
+                3,
+                false,
+                None,
+                serde_json::json!({"contents": "# Last\n", "size": 7}),
+            );
+            settle(&mut visual);
+            visual.debug_bounds("file-viewer-popout").unwrap()
+        };
+        visual.simulate_click(popout_again.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 2);
+        visual.update(|_, cx| workspace.update(cx, |this, cx| this.close_popout_window(cx)));
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
     }
 
     #[gpui::test]

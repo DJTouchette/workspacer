@@ -39,7 +39,8 @@ tables and code, and its asynchronous parse cache:
 
 - `TextView::handle()` returns a `TextViewHandle` over the view's state:
   top-level heading text with block indices (`Node::heading` in `node.rs`),
-  and scrolling of the `scrollable` virtual list. The native file viewer uses
+  top-level block kinds (`Node::kind_name`, used by native UI tests), and
+  scrolling of the `scrollable` virtual list. The native file viewer uses
   it for keyboard scrolling and same-document `#heading` links in rendered
   Markdown files. It reads parsed state only; parsing is unchanged.
 

@@ -1322,6 +1322,36 @@ impl Node {
         )
     }
 
+    /// A short name for a block's kind; task lists are `task-list` and
+    /// ordered lists `ordered-list` (workspacer patch, for app tests).
+    pub(crate) fn kind_name(&self) -> &'static str {
+        match self {
+            Node::Root { .. } => "root",
+            Node::Paragraph(_) => "paragraph",
+            Node::Heading { .. } => "heading",
+            Node::Blockquote { .. } => "blockquote",
+            Node::List { children, ordered } => {
+                if children
+                    .iter()
+                    .any(|item| matches!(item, Node::ListItem { checked: Some(_), .. }))
+                {
+                    "task-list"
+                } else if *ordered {
+                    "ordered-list"
+                } else {
+                    "list"
+                }
+            }
+            Node::ListItem { .. } => "list-item",
+            Node::CodeBlock(_) => "code",
+            Node::Table(_) => "table",
+            Node::Break { .. } => "break",
+            Node::Divider => "divider",
+            Node::Definition { .. } => "definition",
+            Node::Unknown => "unknown",
+        }
+    }
+
     /// Level and plain text of a heading block, for application heading
     /// navigation (workspacer patch). Inline-code thin spaces are dropped.
     pub(crate) fn heading(&self) -> Option<(u8, String)> {

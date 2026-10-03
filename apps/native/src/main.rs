@@ -222,46 +222,52 @@ fn main() -> Result<()> {
         ui::configure_theme(appearance, None, cx);
         ui::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(720.), px(480.))),
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("Workspacer Native".into()),
-                    // Windows: no system caption; the app draws its buttons
-                    // and drag regions (see `chrome::render_caption`).
-                    appears_transparent: ui::custom_caption(),
+        let main = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    window_min_size: Some(size(px(720.), px(480.))),
+                    titlebar: Some(gpui::TitlebarOptions {
+                        title: Some("Workspacer Native".into()),
+                        // Windows: no system caption; the app draws its buttons
+                        // and drag regions (see `chrome::render_caption`).
+                        appears_transparent: ui::custom_caption(),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |window, cx| {
-                let close_preference = keep_running.clone();
-                window.on_window_should_close(cx, move |window, _| {
-                    if close_preference.get() {
-                        window.minimize_window();
-                        false
-                    } else {
-                        true
-                    }
-                });
-                window.set_window_title("Workspacer Native");
-                window.set_app_id("workspacer-native");
-                let view = cx.new(|cx| {
-                    let mut view = ui::Workspace::new(controller, args.demo, window, cx);
-                    view.configure_settings(settings, settings_path, project_scope, window, cx);
-                    view.configure_local(local_requested, keep_running.clone());
-                    view.set_appearance(appearance, window, cx);
-                    view.open_session(args.session);
-                    view.start_update_checks(cx);
-                    view
-                });
-                cx.new(|cx| Root::new(view, window, cx))
-            },
-        )
-        .expect("open native window");
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
+                },
+                |window, cx| {
+                    let close_preference = keep_running.clone();
+                    window.on_window_should_close(cx, move |window, _| {
+                        if close_preference.get() {
+                            window.minimize_window();
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    window.set_window_title("Workspacer Native");
+                    window.set_app_id("workspacer-native");
+                    let view = cx.new(|cx| {
+                        let mut view = ui::Workspace::new(controller, args.demo, window, cx);
+                        view.configure_settings(settings, settings_path, project_scope, window, cx);
+                        view.configure_local(local_requested, keep_running.clone());
+                        view.set_appearance(appearance, window, cx);
+                        view.open_session(args.session);
+                        view.start_update_checks(cx);
+                        view
+                    });
+                    cx.new(|cx| Root::new(view, window, cx))
+                },
+            )
+            .expect("open native window");
+        // A popped-out file viewer never keeps the app running on its own.
+        cx.on_window_closed(move |cx| {
+            if !cx
+                .windows()
+                .iter()
+                .any(|w| w.window_id() == main.window_id())
+            {
                 cx.quit();
             }
         })

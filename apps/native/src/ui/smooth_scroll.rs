@@ -93,7 +93,7 @@ impl Workspace {
                             let over_chat = this.list.viewport_bounds().contains(&event.position)
                                 && !this.composer_dock_bounds.contains(&event.position)
                                 && !this.usage_open
-                                && this.file_viewer().is_none()
+                                && !this.viewer_modal(window)
                                 && this.screen == Screen::Conversation
                                 && !this.new_session;
                             if over_chat {
