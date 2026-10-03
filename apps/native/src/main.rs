@@ -268,7 +268,13 @@ fn main() -> Result<()> {
                 .iter()
                 .any(|w| w.window_id() == main.window_id())
             {
-                cx.quit();
+                // Quit from the event loop, not from inside the platform's
+                // close callback: GPUI's X11 client is still borrowed there
+                // and quitting borrows it again (a panic on every close).
+                cx.spawn(async move |cx| {
+                    let _ = cx.update(|cx| cx.quit());
+                })
+                .detach();
             }
         })
         .detach();
