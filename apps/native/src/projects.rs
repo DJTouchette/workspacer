@@ -348,7 +348,12 @@ pub fn patch(config: &Value, dir: &str, change: &Patch) -> Result<Value> {
             }
             let latest = keys
                 .iter()
-                .filter_map(|k| projects.get(k).and_then(|e| e["lastOpened"].as_i64()))
+                .filter_map(|k| {
+                    projects
+                        .get(k)
+                        .and_then(|e| e["lastOpened"].as_f64())
+                        .map(|ms| ms as i64)
+                })
                 .max();
             for key in keys {
                 let entry = projects.entry(key).or_insert_with(|| json!({}));
@@ -792,6 +797,9 @@ mod tests {
         assert_eq!(touch["projects"]["/a"]["label"], "Canonical");
         assert_eq!(touch["projects"]["/a/"]["label"], "Imported");
         assert_eq!(touch["projects"]["/a/"]["workflowId"], "wf");
+        let float_stamp = json!({"projects":{"/a/":{"lastOpened":900.0}}});
+        let touched = patch(&float_stamp, "/a", &Patch::Touch(700)).unwrap();
+        assert_eq!(touched["projects"]["/a/"]["lastOpened"], 900);
         for field in ["scripts", "widgets"] {
             let protected = json!({"projects":{"/a/":{}},field:{"/a//":{}}});
             assert!(patch(&protected, "/a", &Patch::Remove).is_err());

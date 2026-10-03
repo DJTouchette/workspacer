@@ -1946,3 +1946,223 @@ async fn skipped_legacy_only_removal_is_reported_as_refused() {
         .unwrap_or_default();
     assert!(error.contains("did not save"), "{error}");
 }
+
+/// The newer-number refresh must not read pre-save data while a write is
+/// pending. Exercise each visible mutation, including imported-key removal.
+#[tokio::test]
+async fn registry_refresh_waits_for_pin_unpin_and_remove_transactions() {
+    use wks_native::{features::Request, projects::Patch};
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    let mut state =
+        json!({"projects":{"/web/":{"lastOpened":10},"/keep":{"label":"Keep","workflowId":"wf"}}});
+    let mut revision = 0;
+    for change in [Patch::Pin(true), Patch::Pin(false), Patch::Remove] {
+        controller
+            .command(Command::Request(Request::SaveProject {
+                path: "/web".into(),
+                change: change.clone(),
+            }))
+            .unwrap();
+        hub.frame("call", Some("config.get"))
+            .await
+            .result(state.clone())
+            .await;
+        let save = hub.frame("call", Some("config.save")).await;
+        controller
+            .command(Command::Request(Request::Projects))
+            .unwrap();
+        view(&controller, |v| {
+            v.requests.get("projects").is_some_and(|s| s.loading)
+        })
+        .await;
+        // Old code sends this read immediately, returning the pre-save map.
+        assert!(
+            timeout(
+                Duration::from_millis(150),
+                hub.frame("call", Some("config.get"))
+            )
+            .await
+            .is_err(),
+            "a newer request read stale config during an acknowledged write transaction"
+        );
+        save_config(&mut state, &save.value["params"]);
+        save.result(state.clone()).await;
+        hub.frame("call", Some("config.get"))
+            .await
+            .result(state.clone())
+            .await;
+        let done = view(&controller, |v| {
+            ["projects", "project-save"]
+                .iter()
+                .all(|k| v.requests.get(k).is_some_and(|s| !s.loading))
+        })
+        .await;
+        let written = &done.requests["project-save"];
+        let refreshed = &done.requests["projects"];
+        assert!(written.error.is_none() && refreshed.error.is_none());
+        assert!(refreshed.number > written.number);
+        let write_revision = written.value["revision"].as_u64().unwrap();
+        let read_revision = refreshed.value["revision"].as_u64().unwrap();
+        assert!(revision < write_revision && write_revision < read_revision);
+        revision = read_revision;
+        assert_eq!(
+            done.project_registry.as_ref().unwrap()["projects"],
+            state["projects"]
+        );
+        assert_eq!(state["projects"]["/keep"]["workflowId"], "wf");
+        wks_native::projects::verify(&state, "/web", &change).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn rapid_touches_keep_every_receipt_and_maximum_recency_across_writes() {
+    use wks_native::{features::Request, projects::Patch};
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([]))
+        .await;
+    view(&controller, |v| v.connected).await;
+    let mut state =
+        json!({"projects":{"/a/":{"label":"A","lastOpened":50},"/gone/":{"lastOpened":1}}});
+    controller
+        .command(Command::Request(Request::TouchProject {
+            path: "/a".into(),
+            at: 200,
+        }))
+        .unwrap();
+    let first = hub.frame("call", Some("config.get")).await;
+    for (path, at) in [("/b", 300), ("/a", 100), ("/b", 400), ("/refused", 500)] {
+        controller
+            .command(Command::Request(Request::TouchProject {
+                path: path.into(),
+                at,
+            }))
+            .unwrap();
+    }
+    controller
+        .command(Command::Request(Request::SaveProject {
+            path: "/b".into(),
+            change: Patch::Pin(true),
+        }))
+        .unwrap();
+    controller
+        .command(Command::Request(Request::Projects))
+        .unwrap();
+    // Wait until the later request has been accepted, before the first reply.
+    view(&controller, |v| {
+        v.requests.get("projects").is_some_and(|s| s.loading)
+    })
+    .await;
+    first.result(state.clone()).await;
+    let mut saves = 0;
+    let mut reads = 1;
+    while saves < 6 || reads < 7 {
+        let frame = hub.frame("call", None).await;
+        match frame.value["method"].as_str().unwrap_or_default() {
+            "config.get" => {
+                reads += 1;
+                frame.result(state.clone()).await;
+            }
+            "config.save" => {
+                saves += 1;
+                // One refusal must stay attached to /refused, not the next touch.
+                if frame.value["params"]["projects"].get("/refused").is_none() {
+                    save_config(&mut state, &frame.value["params"]);
+                }
+                frame.result(state.clone()).await;
+            }
+            _ => {}
+        }
+    }
+    let done = view(&controller, |v| {
+        v.project_touch_receipts.len() == 5
+            && v.requests.get("projects").is_some_and(|s| !s.loading)
+    })
+    .await;
+    let receipts: Vec<_> = done
+        .project_touch_receipts
+        .iter()
+        .map(|r| (r.path.as_str(), r.at, r.error.is_some()))
+        .collect();
+    assert_eq!(
+        receipts,
+        [
+            ("/a", 200, false),
+            ("/b", 300, false),
+            ("/a", 100, false),
+            ("/b", 400, false),
+            ("/refused", 500, true)
+        ]
+    );
+    assert!(
+        done.project_touch_receipts
+            .iter()
+            .map(|r| r.number)
+            .collect::<Vec<_>>()
+            .windows(2)
+            .all(|w| w[0] < w[1])
+    );
+    assert_eq!(state["projects"]["/a/"]["lastOpened"], 200);
+    assert_eq!(state["projects"]["/a/"]["label"], "A");
+    assert_eq!(state["projects"]["/b"]["lastOpened"], 400);
+    assert_eq!(state["projects"]["/b"]["favourite"], true);
+    assert_eq!(
+        done.project_registry.as_ref().unwrap()["projects"],
+        state["projects"]
+    );
+    // Removal queued after a touch must remove its alias, without resurrecting
+    // it from an older read. Neither operation starts or retries an agent.
+    controller
+        .command(Command::Request(Request::TouchProject {
+            path: "/gone".into(),
+            at: 600,
+        }))
+        .unwrap();
+    let first = hub.frame("call", Some("config.get")).await;
+    controller
+        .command(Command::Request(Request::SaveProject {
+            path: "/gone".into(),
+            change: Patch::Remove,
+        }))
+        .unwrap();
+    first.result(state.clone()).await;
+    for i in 0..2 {
+        if i == 1 {
+            hub.frame("call", Some("config.get"))
+                .await
+                .result(state.clone())
+                .await;
+        }
+        let save = hub.frame("call", Some("config.save")).await;
+        save_config(&mut state, &save.value["params"]);
+        save.result(state.clone()).await;
+    }
+    let done = view(&controller, |v| {
+        v.project_touch_receipts.len() == 6
+            && v.requests.get("project-save").is_some_and(|s| {
+                !s.loading
+                    && matches!(
+                        s.request,
+                        Request::SaveProject {
+                            change: Patch::Remove,
+                            ..
+                        }
+                    )
+            })
+    })
+    .await;
+    assert!(done.requests["project-save"].error.is_none());
+    assert!(state["projects"].get("/gone/").is_none());
+    assert_eq!(
+        done.project_registry.as_ref().unwrap()["projects"],
+        state["projects"]
+    );
+}

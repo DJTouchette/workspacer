@@ -34,7 +34,8 @@ pub(super) struct ProjectUi {
     pub cursor: usize,
     /// The newest registry the hub returned, from a read or a verified write.
     pub registry: Option<Arc<serde_json::Value>>,
-    pub registry_number: u64,
+    pub registry_revision: u64,
+    pub read_receipt: u64,
     pub registry_error: Option<String>,
     pub save_receipt: u64,
     /// Outcome of the user's last pin/forget, shown beside the list.
@@ -385,20 +386,29 @@ impl Workspace {
     /// Fold registry reads and verified writes into the newest registry, and
     /// surface the outcome of the user's own saves.
     pub(super) fn sync_projects(&mut self, next: &View) {
-        for key in ["projects", "project-save", "project-touch"] {
-            let Some(state) = next.requests.get(key) else {
-                continue;
-            };
-            if state.loading || state.number <= self.projects.registry_number {
-                continue;
-            }
-            if state.error.is_none() && state.value.is_object() {
-                self.projects.registry = Some(state.value.clone());
-                self.projects.registry_number = state.number;
+        if let Some(state) = next.requests.get("projects")
+            && !state.loading
+            && state.number > self.projects.read_receipt
+        {
+            self.projects.read_receipt = state.number;
+            self.projects.registry_error = state.error.clone();
+        }
+        // Request numbers describe start order, not snapshot freshness. Reads
+        // and writes carry revisions assigned inside the same per-hub barrier.
+        // The controller's retained snapshot also survives queued touch slots.
+        let snapshots = next.project_registry.iter().chain(
+            ["projects", "project-save", "project-touch"]
+                .into_iter()
+                .filter_map(|key| next.requests.get(key))
+                .filter(|s| !s.loading && s.error.is_none())
+                .map(|s| &s.value),
+        );
+        for value in snapshots {
+            let revision = value["revision"].as_u64().unwrap_or(0);
+            if revision > self.projects.registry_revision {
+                self.projects.registry = Some(value.clone());
+                self.projects.registry_revision = revision;
                 self.projects.registry_error = None;
-            } else if key == "projects" {
-                self.projects.registry_number = state.number;
-                self.projects.registry_error = state.error.clone();
             }
         }
         if let Some(state) = next.requests.get("project-save")

@@ -185,9 +185,11 @@ impl Request {
                 Ok(json!({"status":status?,"staged":staged?,"unstaged":unstaged?}))
             }
             Self::Recent => backend.call("sessions.recent", json!({})).await,
-            Self::Projects => Ok(crate::projects::registry(
-                &backend.call("config.get", json!({})).await?,
-            )),
+            Self::Projects => {
+                let mut revision = backend.project_write().await;
+                let config = backend.call("config.get", json!({})).await?;
+                Ok(project_snapshot(&config, &mut revision))
+            }
             Self::SaveProject { path, change } => save_project(backend, path, change).await,
             Self::TouchProject { path, at } => {
                 save_project(backend, path, &crate::projects::Patch::Touch(*at)).await
@@ -313,6 +315,15 @@ impl Request {
     }
 }
 
+/// Local projection metadata only, never sent to config.save. Allocate while
+/// holding the hub transaction guard, before another read/write can begin.
+fn project_snapshot(config: &Value, revision: &mut u64) -> Value {
+    *revision += 1;
+    let mut snapshot = crate::projects::registry(config);
+    snapshot["revision"] = json!(*revision);
+    snapshot
+}
+
 /// Read, patch and write back the shared registry, then confirm the hub kept
 /// the change: `config.save` answers a skipped write with the old config.
 /// The whole round holds the hub's project-write lock, so a pin and a launch
@@ -323,12 +334,12 @@ async fn save_project(
     path: &str,
     change: &crate::projects::Patch,
 ) -> Result<Value> {
-    let _turn = backend.project_write().await;
+    let mut revision = backend.project_write().await;
     let current = backend.call("config.get", json!({})).await?;
     let partial = crate::projects::patch(&current, path, change)?;
     let saved = backend.call("config.save", partial).await?;
     crate::projects::verify(&saved, path, change)?;
-    Ok(crate::projects::registry(&saved))
+    Ok(project_snapshot(&saved, &mut revision))
 }
 
 /// `exists` comes from listing the folder; `git` from `git.status`, whose

@@ -8,7 +8,7 @@ use futures_util::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
     time::Duration,
 };
@@ -194,12 +194,26 @@ pub struct PendingMessage {
     pub before: Option<crate::reading::Anchor>,
 }
 
+/// Recent completed recency updates, including failures, attributed to the
+/// accepted launch's project and timestamp (not a later request in the slot).
+#[derive(Clone, Debug)]
+pub struct ProjectTouchReceipt {
+    pub number: u64,
+    pub path: String,
+    pub at: i64,
+    pub error: Option<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct View {
     pub ui_requests: Vec<crate::ui_requests::Request>,
     pub ui_request_warning: String,
     pub catalog: Catalog,
     pub requests: BTreeMap<&'static str, crate::features::RequestState>,
+    /// Latest successful snapshot survives replacement/loading of request slots.
+    pub project_registry: Option<Arc<Value>>,
+    /// Last 128 completed touches; pending touches are never evicted or coalesced.
+    pub project_touch_receipts: VecDeque<ProjectTouchReceipt>,
     pub connected: bool,
     pub power_paused: bool,
     pub power_pause_generation: u64,
@@ -516,18 +530,25 @@ impl Worker {
         let key = request.key();
         // A write already on its way cannot be recalled: superseding it would
         // report "superseded" for a change the hub may still apply.
-        if matches!(key, "upload" | "project-save" | "project-touch")
+        if matches!(key, "upload" | "project-save")
             && self.view.requests.get(key).is_some_and(|s| s.loading)
         {
             return;
         }
         self.action_number += 1;
         let number = self.action_number;
-        if let Some(abort) = self.request_aborts.remove(key) {
+        // Each accepted touch keeps its own job. Jobs queue on the shared
+        // per-hub FIFO transaction lock; never cancel an acknowledged launch's
+        // recency update merely because another launch used the same slot.
+        if key != "project-touch"
+            && let Some(abort) = self.request_aborts.remove(key)
+        {
             abort.abort();
         }
         let (abort, registration) = AbortHandle::new_pair();
-        self.request_aborts.insert(key, abort);
+        if key != "project-touch" {
+            self.request_aborts.insert(key, abort);
+        }
         self.view.requests.insert(
             key,
             crate::features::RequestState {
@@ -1082,11 +1103,12 @@ impl Worker {
             Completion::Request(epoch, number, request, result) => {
                 let key = request.key();
                 if epoch != self.epoch
-                    || self
-                        .view
-                        .requests
-                        .get(key)
-                        .is_none_or(|s| s.number != number)
+                    || (key != "project-touch"
+                        && self
+                            .view
+                            .requests
+                            .get(key)
+                            .is_none_or(|s| s.number != number))
                 {
                     return;
                 }
@@ -1094,13 +1116,39 @@ impl Worker {
                     Ok(v) => (v, None),
                     Err(e) => (Value::Null, Some(e.to_string())),
                 };
+                let value = Arc::new(value);
+                if matches!(key, "projects" | "project-save" | "project-touch")
+                    && error.is_none()
+                    && value["revision"].as_u64().unwrap_or(0)
+                        > self
+                            .view
+                            .project_registry
+                            .as_ref()
+                            .and_then(|v| v["revision"].as_u64())
+                            .unwrap_or(0)
+                {
+                    self.view.project_registry = Some(value.clone());
+                }
+                if let crate::features::Request::TouchProject { path, at } = &request {
+                    self.view
+                        .project_touch_receipts
+                        .push_back(ProjectTouchReceipt {
+                            number,
+                            path: path.clone(),
+                            at: *at,
+                            error: error.clone(),
+                        });
+                    if self.view.project_touch_receipts.len() > 128 {
+                        self.view.project_touch_receipts.pop_front();
+                    }
+                }
                 self.view.requests.insert(
                     key,
                     crate::features::RequestState {
                         number,
                         request,
                         loading: false,
-                        value: Arc::new(value),
+                        value,
                         error,
                     },
                 );

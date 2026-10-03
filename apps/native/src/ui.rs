@@ -3792,7 +3792,7 @@ mod tests {
         visual.update(receipt(
             8,
             None,
-            serde_json::json!({"projects":{"/work/hub-only":{"favourite":true}},"favourites":[],"recent":[],"configured":[]}),
+            serde_json::json!({"revision":1,"projects":{"/work/hub-only":{"favourite":true}},"favourites":[],"recent":[],"configured":[]}),
         ));
         workspace.read_with(&visual, |this, _| {
             assert_eq!(this.projects.notice, "Pinned.");
@@ -6721,7 +6721,8 @@ mod tests {
     }
 
     /// A hub registry reply, as the controller would publish it.
-    fn with_registry(view: &mut View, number: u64, registry: serde_json::Value) {
+    fn with_registry(view: &mut View, number: u64, mut registry: serde_json::Value) {
+        registry["revision"] = serde_json::json!(number);
         view.requests.insert(
             "projects",
             wks_native::features::RequestState {
@@ -6732,6 +6733,131 @@ mod tests {
                 error: None,
             },
         );
+    }
+
+    #[gpui::test]
+    fn project_snapshot_revisions_beat_request_order_in_every_window(cx: &mut TestAppContext) {
+        use wks_native::{
+            features::{Request, RequestState},
+            projects::Patch,
+        };
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let (other, mut second, _commands2, _updates2) = fixture(cx);
+        let snapshot = |revision, pinned| {
+            Arc::new(serde_json::json!({
+                "revision":revision,"projects":{"/work/web":{"favourite":pinned,"lastOpened":10}},
+                "favourites":[],"recent":[],"configured":[]
+            }))
+        };
+        let read = |value| RequestState {
+            number: 9,
+            request: Request::Projects,
+            loading: false,
+            value,
+            error: None,
+        };
+        let save = |number, change, value| RequestState {
+            number,
+            request: Request::SaveProject {
+                path: "/work/web".into(),
+                change,
+            },
+            loading: false,
+            value,
+            error: None,
+        };
+        let mut next = state("a");
+        // Newer request 9 returned pre-save state; acknowledged save 6 is
+        // authoritative. This is the review's Pinned + empty-star regression.
+        next.requests.insert("projects", read(snapshot(1, false)));
+        next.requests
+            .insert("project-save", save(6, Patch::Pin(true), snapshot(2, true)));
+        for (entity, visual) in [(&workspace, &mut visual), (&other, &mut second)] {
+            visual.update(|window, cx| {
+                entity.update(cx, |this, cx| {
+                    this.demo = false;
+                    this.show_new_session(window, cx);
+                    this.select_project("/work/web", window, cx);
+                    this.update_view(Arc::new(next.clone()), window, cx);
+                    assert!(this.known_project("/work/web").unwrap().favourite);
+                    assert_eq!(this.projects.notice, "Pinned.");
+                })
+            });
+        }
+        visual.run_until_parked();
+        while commands.try_recv().is_ok() {}
+        let pin = visual.debug_bounds("launch-project-pin").unwrap();
+        visual.simulate_click(pin.center(), gpui::Modifiers::default());
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                Command::Request(Request::SaveProject {
+                    change: Patch::Pin(false),
+                    ..
+                })
+            )),
+            "the selected summary offers Unpin after the acknowledged pin"
+        );
+        // A late old read cannot replace that acknowledged pin either.
+        next.requests.remove("project-save");
+        next.requests.insert(
+            "projects",
+            RequestState {
+                number: 12,
+                ..read(snapshot(1, false))
+            },
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(next.clone()), window, cx);
+                assert!(this.known_project("/work/web").unwrap().favourite);
+            })
+        });
+        // A later touch includes the unpin and must outlive an older save.
+        let touched = snapshot(4, false);
+        next.project_registry = Some(touched);
+        next.requests.insert(
+            "project-save",
+            save(10, Patch::Pin(false), snapshot(3, false)),
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(next.clone()), window, cx);
+                assert!(!this.known_project("/work/web").unwrap().favourite);
+                assert_eq!(this.projects.notice, "Unpinned.");
+                assert_eq!(this.projects.registry_revision, 4);
+            })
+        });
+        next.requests.insert(
+            "project-save",
+            save(
+                11,
+                Patch::Remove,
+                Arc::new(serde_json::json!({"revision":5,"projects":{}})),
+            ),
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(next.clone()), window, cx);
+                assert!(this.known_project("/work/web").is_none());
+                assert_eq!(this.projects.notice, "Removed from projects.");
+            })
+        });
+        next.requests.insert(
+            "project-save",
+            RequestState {
+                error: Some("refused".into()),
+                ..save(13, Patch::Pin(true), Arc::new(serde_json::Value::Null))
+            },
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(next.clone()), window, cx);
+                assert!(this.projects.notice.contains("refused"));
+                assert_eq!(this.projects.fallback.as_deref(), Some("/work/web"));
+                assert!(this.known_project("/work/web").is_none());
+            })
+        });
     }
 
     #[gpui::test]

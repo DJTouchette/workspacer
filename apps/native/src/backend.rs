@@ -16,26 +16,26 @@ use std::{
 #[derive(Clone)]
 pub struct Backend {
     hub: HubClient,
-    project_writes: Arc<tokio::sync::Mutex<()>>,
+    project_writes: Arc<tokio::sync::Mutex<u64>>,
 }
 
-/// One project-write lock per hub this process talks to. Every window shares
-/// the host's controller, but a second controller (another host or fixture)
+/// One project transaction lock and snapshot revision per hub in this process.
+/// Every window shares the host's controller, but a second controller (another host or fixture)
 /// on the same bus URL must still queue behind the first: each write replaces
 /// `config.projects` wholesale, so two overlapping read-patch-save rounds
 /// would silently drop one change. Weak entries free a lock with its last
 /// backend. Other processes are outside this lock (see `crate::projects`).
-static PROJECT_WRITES: LazyLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> =
+static PROJECT_WRITES: LazyLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<u64>>>>> =
     LazyLock::new(Default::default);
 
-fn project_writes_for(url: &str) -> Arc<tokio::sync::Mutex<()>> {
+fn project_writes_for(url: &str) -> Arc<tokio::sync::Mutex<u64>> {
     let key = url::Url::parse(url).map_or_else(|_| url.to_owned(), |u| u.to_string());
     let mut locks = PROJECT_WRITES.lock().unwrap_or_else(|e| e.into_inner());
     locks.retain(|_, lock| lock.strong_count() > 0);
     if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
         return lock;
     }
-    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    let lock = Arc::new(tokio::sync::Mutex::new(0));
     locks.insert(key, Arc::downgrade(&lock));
     lock
 }
@@ -103,9 +103,11 @@ impl Backend {
     }
     /// Serializes one complete project transaction (fresh `config.get`,
     /// patch, `config.save`, readback) against every other on this hub. FIFO,
-    /// so writes land in the order they were accepted. Waiting happens on the
-    /// backend runtime, never the UI thread; a dropped job releases its turn.
-    pub async fn project_write(&self) -> tokio::sync::OwnedMutexGuard<()> {
+    /// shared with registry reads. The guarded counter orders snapshots by
+    /// transaction completion, independently of request-start numbers. Waiting
+    /// happens on the backend runtime, never the UI thread; a dropped job
+    /// releases its turn.
+    pub async fn project_write(&self) -> tokio::sync::OwnedMutexGuard<u64> {
         self.project_writes.clone().lock_owned().await
     }
     pub fn connect(config: Config) -> (Self, async_channel::Receiver<Event>) {

@@ -259,6 +259,76 @@ async fn projects_round_trip_through_the_hubs_shared_config() {
     let text = std::fs::read_to_string(&config_file).unwrap();
     assert!(!text.contains("legacy-only") && text.contains("desktop-project"));
 
+    // Imported aliases survive config loading, but all must be removed and
+    // metadata on other aliases must survive queued recency writes on disk.
+    let mut imported = forgotten.value["projects"].clone();
+    imported["/imported/"] = serde_json::json!({"lastOpened":1});
+    imported["/imported//"] = serde_json::json!({"favourite":true});
+    imported["/protected/"] = serde_json::json!({"label":"Keep alias","workflowId":"wf"});
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(
+        &config_file,
+        serde_json::to_string(&serde_json::json!({
+            "projects":imported,"directories":{"recent":["/imported/"],"favourites":["/imported"]}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let before = controller.views.borrow().project_touch_receipts.len();
+    for (path, at) in [
+        ("/protected", 900),
+        ("/queued-other", 800),
+        ("/protected", 700),
+    ] {
+        controller
+            .command(Command::Request(Request::TouchProject {
+                path: path.into(),
+                at,
+            }))
+            .unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let mut views = controller.views.clone();
+        while views.borrow_and_update().project_touch_receipts.len() < before + 3 {
+            views.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let receipts = controller.views.borrow().project_touch_receipts.clone();
+    assert!(receipts.iter().skip(before).all(|r| r.error.is_none()));
+    let protected = run(
+        &controller,
+        Request::SaveProject {
+            path: "/protected".into(),
+            change: Patch::Remove,
+        },
+    )
+    .await;
+    assert!(protected.error.as_deref().unwrap().contains("settings"));
+    let removed = run(
+        &controller,
+        Request::SaveProject {
+            path: "/imported".into(),
+            change: Patch::Remove,
+        },
+    )
+    .await;
+    assert!(removed.error.is_none(), "{:?}", removed.error);
+    assert_eq!(
+        removed.value["projects"]["/protected/"]["label"],
+        "Keep alias"
+    );
+    assert_eq!(removed.value["projects"]["/protected/"]["workflowId"], "wf");
+    assert_eq!(removed.value["projects"]["/protected/"]["lastOpened"], 900);
+    assert_eq!(
+        removed.value["projects"]["/queued-other"]["lastOpened"],
+        800
+    );
+    let text = std::fs::read_to_string(&config_file).unwrap();
+    assert!(!text.contains("/imported"));
+    assert!(text.contains("Keep alias") && text.contains("900"));
+
     // What the hub reports about folders before a launch.
     let inspect = |path: String| {
         let controller = controller.clone();
