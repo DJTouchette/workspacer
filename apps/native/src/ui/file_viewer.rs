@@ -1134,6 +1134,21 @@ impl Workspace {
                 if inside || self.viewer_return.is_some() {
                     self.release_viewer_focus(window, cx);
                 }
+                let destroyed = handle
+                    .update(cx, |_, window, cx| super::window_destroy::watch(window, cx))
+                    .ok()
+                    .flatten();
+                if let Some(destroyed) = destroyed {
+                    let id = handle.window_id();
+                    cx.spawn_in(window, async move |this, cx| {
+                        if destroyed.recv().await.is_ok() {
+                            let _ = this.update_in(cx, |ws, window, cx| {
+                                ws.popout_destroyed(id, window, cx)
+                            });
+                        }
+                    })
+                    .detach();
+                }
             }
             Err(error) => pane.update(cx, |pane, cx| {
                 pane.notice = Some(format!("Couldn't open a separate window: {error}").into());
@@ -1151,6 +1166,31 @@ impl Workspace {
             let _ = handle.update(cx, |_, window, _| window.remove_window());
         }
         self.dock_closing_popout(window, cx);
+    }
+
+    /// The window system destroyed the popped-out window without a close
+    /// request (see `window_destroy`). GPUI still holds it, so updates to it
+    /// keep succeeding invisibly: dock its viewer back and drop the dead
+    /// window. Its normal closes (Dock, its close button, the app quitting)
+    /// have already replaced or cleared `popout` by then and are ignored.
+    pub(super) fn popout_destroyed(
+        &mut self,
+        id: gpui::WindowId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(handle) = self
+            .chat
+            .viewer
+            .popout
+            .as_ref()
+            .map(|popout| popout.window)
+            .filter(|handle| handle.window_id() == id)
+        else {
+            return;
+        };
+        self.dock_closing_popout(window, cx);
+        let _ = handle.update(cx, |_, window, _| window.remove_window());
     }
 
     /// Dock back from a window the platform is already closing.

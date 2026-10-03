@@ -18,6 +18,7 @@ mod transcript;
 mod typography;
 mod updater;
 mod usage;
+mod window_destroy;
 mod work;
 use chrome::ControlTextStyle;
 pub(crate) use chrome::custom_caption;
@@ -3162,6 +3163,62 @@ mod tests {
             assert_eq!(this.file_viewer().unwrap().read(cx).state().number, 7);
         });
         assert!(visual.debug_bounds("file-viewer-panel").is_some());
+        // The X11 server destroying the window behind GPUI's back leaves it
+        // registered (GPUI 0.2 ignores DestroyNotify), so the cx.windows()
+        // check above cannot see it. The platform watch reports it instead:
+        // the viewer docks back with its mode and the dead window goes.
+        settle(&mut visual);
+        let popout = visual.debug_bounds("file-viewer-popout").unwrap();
+        visual.simulate_click(popout.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        let (handle, popped) =
+            workspace.read_with(&visual, |this, _| this.viewer_popout().unwrap());
+        let mut window = VisualTestContext::from_window(handle.into(), cx);
+        window.update(|window, cx| {
+            popped.update(cx, |pane, cx| {
+                pane.set_mode(file_viewer::Mode::Source, window, cx)
+            })
+        });
+        assert_eq!(cx.windows().len(), 2, "still registered, as on X11");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.popout_destroyed(handle.window_id(), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 1, "the dead window is dropped");
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.viewer_popout().is_none());
+            let pane = this.file_viewer().unwrap().read(cx);
+            assert_eq!(pane.state().number, 7);
+            assert_eq!(pane.mode(), file_viewer::Mode::Source);
+        });
+        visual.update(|window, cx| assert!(workspace.read(cx).viewer_has_focus(window, cx)));
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/docs/destroyed.md"),
+            8,
+            false,
+            None,
+            serde_json::json!({"contents": "# Destroyed\n", "size": 12}),
+        );
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.viewer_popout().is_none());
+            assert_eq!(this.file_viewer().unwrap().read(cx).state().number, 8);
+        });
+        assert!(visual.debug_bounds("file-viewer-panel").is_some());
+        // A destroy reported after the window closed normally changes nothing.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.popout_destroyed(handle.window_id(), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.file_viewer().unwrap().read(cx).state().number, 8)
+        });
         // Its ✕ closes the viewer entirely.
         settle(&mut visual);
         let popout = visual.debug_bounds("file-viewer-popout").unwrap();
@@ -3185,7 +3242,7 @@ mod tests {
                 &mut visual,
                 "a",
                 file_target("/repo/docs/last.md"),
-                8,
+                9,
                 false,
                 None,
                 serde_json::json!({"contents": "# Last\n", "size": 7}),
