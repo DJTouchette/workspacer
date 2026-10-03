@@ -2325,7 +2325,7 @@ mod tests {
         Filler 13.\n\nFiller 14.\n\nFiller 15.\n\nFiller 16.\n\nFiller 17.\n\nFiller 18.\n\n\
         Filler 19.\n\nFiller 20.\n\nFiller 21.\n\nFiller 22.\n\nFiller 23.\n\nFiller 24.\n";
 
-    /// The viewer slides in over ~180ms of real time; wait it out before
+    /// The viewer slides in over ~240ms of real time; wait it out before
     /// clicking its controls so hit targets are where their bounds say.
     fn settle(visual: &mut VisualTestContext) {
         std::thread::sleep(std::time::Duration::from_millis(260));
@@ -2842,6 +2842,7 @@ mod tests {
         visual.simulate_keystrokes("ctrl-l");
         visual.simulate_input("DOCKED_DRAFT");
         visual.run_until_parked();
+        let opened_at = std::time::Instant::now();
         preview_state(
             &workspace,
             &mut visual,
@@ -2855,6 +2856,7 @@ mod tests {
         let panel = visual
             .debug_bounds("file-viewer-panel")
             .expect("docked beside the chat");
+        let opening = opened_at.elapsed();
         assert!(
             visual.debug_bounds("file-viewer-backdrop").is_none(),
             "docked is not modal"
@@ -2867,6 +2869,19 @@ mod tests {
             "the chat sits beside the viewer"
         );
         assert!(composer.size.width >= px(300.));
+        // It slides in from the right: its first frame is still narrow, and
+        // it reaches its full width once the slide is over.
+        settle(&mut visual);
+        let full = visual.debug_bounds("file-viewer-panel").unwrap();
+        assert!(full.size.width > px(300.));
+        assert_eq!(full.right(), panel.right(), "anchored to the right edge");
+        assert!(
+            panel.size.width < full.size.width - px(1.)
+                || opening >= std::time::Duration::from_millis(240),
+            "first frame {:?} of {:?} after {opening:?}",
+            panel.size.width,
+            full.size.width
+        );
         visual.update(|window, cx| {
             let this = workspace.read(cx);
             assert!(!this.viewer_modal(window));

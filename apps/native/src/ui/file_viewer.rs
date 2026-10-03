@@ -22,6 +22,14 @@ const KEY: &str = "file-preview";
 const MIN_CHAT_BESIDE: f32 = 400.;
 /// Rendered documents keep a comfortable reading measure.
 const READING_WIDTH: f32 = 760.;
+/// How long the viewer takes to slide in from the right.
+const SLIDE: std::time::Duration = std::time::Duration::from_millis(240);
+
+/// Fast start, gentle stop, without ease-out-quint's front-loading (most of
+/// its travel lands in the first frame or two, which reads as a pop).
+fn ease_out_cubic(t: f32) -> f32 {
+    1. - (1. - t).powi(3)
+}
 
 /// How a pane is shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1248,6 +1256,9 @@ impl Workspace {
             pane.presentation = Presentation::Docked;
             pane.width = width - px(8.);
         });
+        // The slot grows from the window's right edge while the pane keeps
+        // its full width, pinned to the slot's left edge: the viewer slides
+        // in from the right and the conversation narrows with it.
         Some(
             div()
                 .id("file-viewer-panel")
@@ -1256,14 +1267,22 @@ impl Workspace {
                 .h_full()
                 .w(width)
                 .flex_shrink_0()
-                .py_2()
-                .pr_2()
-                .child(pane)
+                .overflow_hidden()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .h_full()
+                        .w(width)
+                        .py_2()
+                        .pr_2()
+                        .child(pane),
+                )
                 .with_animation(
                     ("file-viewer-slide", self.chat.viewer.opened),
-                    Animation::new(std::time::Duration::from_millis(180))
-                        .with_easing(gpui::ease_out_quint()),
-                    |panel, progress| panel.left(px(36. * (1. - progress))).opacity(progress),
+                    Animation::new(SLIDE).with_easing(ease_out_cubic),
+                    move |panel, progress| panel.w(width * progress),
                 )
                 .into_any_element(),
         )
@@ -1313,9 +1332,8 @@ impl Workspace {
                             .child(pane)
                             .with_animation(
                                 ("file-viewer-sheet-slide", self.chat.viewer.opened),
-                                Animation::new(std::time::Duration::from_millis(180))
-                                    .with_easing(gpui::ease_out_quint()),
-                                |sheet, progress| sheet.left(px(48. * (1. - progress))),
+                                Animation::new(SLIDE).with_easing(ease_out_cubic),
+                                move |sheet, progress| sheet.left(width * (1. - progress)),
                             ),
                     ),
             )
