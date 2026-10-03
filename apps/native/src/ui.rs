@@ -2551,7 +2551,18 @@ mod tests {
         // Keys scroll the rendered document.
         visual.simulate_keystrokes("end");
         visual.run_until_parked();
-        assert!(top(&mut visual) > 0, "End scrolls to the bottom");
+        let bottom = top(&mut visual);
+        assert!(bottom > 0, "End scrolls to the bottom");
+        // A round trip through the source keeps the reading position.
+        visual.simulate_keystrokes("ctrl-shift-v");
+        visual.run_until_parked();
+        visual.simulate_keystrokes("ctrl-shift-v");
+        visual.run_until_parked();
+        assert_eq!(
+            top(&mut visual),
+            bottom,
+            "Preview → Source → Preview keeps the scroll"
+        );
         visual.simulate_keystrokes("home");
         visual.run_until_parked();
         assert_eq!(top(&mut visual), 0);

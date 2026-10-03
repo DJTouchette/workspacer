@@ -506,6 +506,10 @@ impl PreviewPane {
             .scrollable(true);
             let document = view.handle();
             self.document = Some(document.clone());
+            if self.mode == Mode::Source {
+                // Not drawn; constructing it each frame keeps its state.
+                return self.render_source(p, text_size, cx);
+            }
             let margin = ((self.width - px(READING_WIDTH)) / 2.).max(px(20.));
             return div()
                 .id("file-viewer-markdown")
@@ -528,17 +532,8 @@ impl PreviewPane {
                 .child(view.px(margin).pt_4())
                 .into_any_element();
         }
-        if let Some(editor) = &self.editor {
-            return div()
-                .id("file-viewer-text")
-                .debug_selector(|| "file-viewer-text".into())
-                .flex_1()
-                .min_h_0()
-                .bg(rgb(p.code_block))
-                .text_size(px(text_size - 1.))
-                .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
-                .child(Input::new(editor).disabled(true).appearance(false).h_full())
-                .into_any_element();
+        if self.editor.is_some() {
+            return self.render_source(p, text_size, cx);
         }
         if let Some((image, ..)) = &self.image {
             return div()
@@ -562,6 +557,22 @@ impl PreviewPane {
             .p_6()
             .text_color(rgb(p.warning))
             .child("This preview could not be displayed.")
+            .into_any_element()
+    }
+
+    fn render_source(&self, p: Palette, text_size: f32, cx: &App) -> AnyElement {
+        let Some(editor) = &self.editor else {
+            return div().into_any_element();
+        };
+        div()
+            .id("file-viewer-text")
+            .debug_selector(|| "file-viewer-text".into())
+            .flex_1()
+            .min_h_0()
+            .bg(rgb(p.code_block))
+            .text_size(px(text_size - 1.))
+            .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
+            .child(Input::new(editor).disabled(true).appearance(false).h_full())
             .into_any_element()
     }
 
@@ -644,8 +655,9 @@ impl Render for PreviewPane {
         if self.presentation == Presentation::Window {
             self.width = window.viewport_size().width;
         }
-        let previewing = self.mode == Mode::Preview
-            && self.previewable()
+        // Built in Source mode too: the document's keyed state (parse,
+        // scroll position) then survives a round trip through the source.
+        let previewing = self.previewable()
             && !self.state.loading
             && self.state.error.is_none()
             && self.state.number == self.shown;
