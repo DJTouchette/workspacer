@@ -853,3 +853,43 @@ had no uncommitted changes. This branch touches the shared `ui.rs`, `chrome.rs`,
 `sidebar.rs`, validation notes and Rivet learnings, so recheck overlap before
 integration. Main was read only; no merge, push, application restart, or fleet
 mutation was performed.
+
+## Wide Markdown tables scroll instead of clipping (2026-10-03)
+
+Review of acb28484 (P2): the whole-word column minimums in `render_prose_table`
+could add up to more than the available width. The frame hid the overflow, so
+at 720×480 the fourth column of an ordinary table (Component / Implementation /
+Validation / Observation) was at x666–778.5, past the window and unreachable.
+
+UX choice (desktop parity, `overflow-x: auto`): a table whose whole-word
+minimums fit fills the width and wraps between words, with no scroll
+affordance. A table whose minimums cannot fit (many columns, narrow chat or
+preview, large interface size) keeps them and scrolls sideways inside its fixed
+frame. Words are not broken and columns are not clipped. Scrolling uses the
+trackpad, Shift+wheel, an always-visible draggable scrollbar strip under the
+rows, or Left/Right after clicking or tabbing to the table. The table is a tab
+stop only while it scrolls, and a plain vertical wheel still scrolls the page.
+Minimums are now shaped in the cell's own font: semibold header, bold/italic
+marks, and monospace code with its thin-space margins. They are capped at 12em,
+so URLs and long tokens still wrap inside their column; that is the only
+remaining mid-word break. Chat and the Markdown file preview share this
+renderer (sheet, docked and popped-out window).
+
+- New UI tests: narrow chat at 720 (selector-free geometry that fails on
+  acb28484 with the review's x666–778.5 cell; wheel, keyboard, Tab and
+  scrollbar drag to the last column; vertical wheel leaves the table alone),
+  tables that fit, 2/3/5/6/8 columns with URLs, inline code, a 38-character
+  word and left/center/right alignment, inline code at column minimum (fails
+  without the margin fix), two tables with independent scroll, a larger
+  interface size, and the Markdown preview as a sheet, docked, and a 420px
+  popped-out window. Each column must be seen whole inside the viewport, and
+  header cells stay one line.
+- Native serialized suite **291 passed, 1 ignored** (132 library, 115 UI,
+  3 background, 1 project, 37 protocol, 3 Rust hub) on 6ee3cfea; parallel UI
+  binary 115 passed, 1 ignored; strict Clippy, rustfmt and `git diff --check`
+  passed. Rustfmt on the vendored `node.rs` reports only three older hunks.
+- Private Xvfb/Openbox/lavapipe captures at 720×480 (chat, caption preview,
+  sidebar docked), the 720 preview sheet, the 1400×800 docked preview and a
+  520×480 popped-out preview. They used a temporary harness copy serving the
+  table and a Markdown file; production source was unchanged. Linux only: no
+  Windows/macOS, hardware GPU or screen-reader verification.
