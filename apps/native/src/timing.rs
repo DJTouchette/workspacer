@@ -47,8 +47,11 @@ pub fn duration_label(milliseconds: i64) -> String {
     let seconds = milliseconds / 1000;
     if seconds < 60 {
         format!("{seconds}s")
-    } else {
+    } else if seconds < 3600 {
         format!("{}m {:02}s", seconds / 60, seconds % 60)
+    } else {
+        // Hours keep long-lived agents readable ("64h 42m", not "3882m 11s").
+        format!("{}h {:02}m", seconds / 3600, seconds % 3600 / 60)
     }
 }
 
@@ -300,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn timestamps_parse_offsets_and_durations_use_minutes_seconds() {
+    fn timestamps_parse_offsets_and_durations_scale_to_hours() {
         assert_eq!(
             parse_timestamp("2026-09-27T06:00:00-06:00"),
             parse_timestamp("2026-09-27T12:00:00Z")
@@ -318,7 +321,9 @@ mod tests {
         assert!(!timestamp_label(Some(now), now, false).contains("AM"));
         assert!(timestamp_label(Some(now - 172_800_000), now, true).contains(" · "));
         assert_eq!(timestamp_label(None, now, true), "Time unavailable");
-        assert_eq!(duration_label(3_661_000), "61m 01s");
+        assert_eq!(duration_label(3_599_000), "59m 59s");
+        assert_eq!(duration_label(3_661_000), "1h 01m");
+        assert_eq!(duration_label(232_931_000), "64h 42m");
     }
 
     #[test]

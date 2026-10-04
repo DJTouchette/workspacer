@@ -1015,22 +1015,79 @@ impl Workspace {
                             ),
                         );
                     }
-                    for (i, action) in card.actions.into_iter().enumerate() {
-                        let owner = session.clone();
-                        let enabled = namespace != "child-history"
-                            && self.selected_session().is_some_and(|s| !s.stopped())
-                            && self.view.connected;
-                        card_body = card_body.child(
-                            self.button(
-                                SharedString::from(format!("{block_key}-action-{i}")),
-                                action.label(),
+                    // Trusted actions sit in their own footer row, as on the
+                    // desktop card: small outlined buttons that wrap, with an
+                    // icon and a tooltip naming what the host will actually do.
+                    let enabled = namespace != "child-history"
+                        && self.selected_session().is_some_and(|s| !s.stopped())
+                        && self.view.connected;
+                    let actions = card
+                        .actions
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, action)| {
+                            let owner = session.clone();
+                            let (icon, effect) = match &action {
+                                wks_native::transcript::CardAction::OpenWorker { .. } => (
+                                    "lucide/user-round.svg",
+                                    "Opens that agent's conversation.",
+                                ),
+                                wks_native::transcript::CardAction::ViewDiff { .. } => (
+                                    "lucide/file-diff.svg",
+                                    "Shows the file's changes inside this project.",
+                                ),
+                                wks_native::transcript::CardAction::FillComposer { .. } => (
+                                    "lucide/message-square-plus.svg",
+                                    "Puts this text in the composer for you to read and send. Nothing is sent.",
+                                ),
+                            };
+                            let selector = format!("card-action-{block_key}-{i}");
+                            chrome::interactive_control(
+                                div().id(SharedString::from(format!("{block_key}-action-{i}"))),
+                                p,
                                 enabled,
                             )
+                            .debug_selector(move || selector)
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .px_2()
+                            .py_1()
+                            .border_1()
+                            .border_color(rgb(p.border))
+                            .rounded(px(p.control_radius))
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(rgb(if enabled { p.text } else { p.disabled }))
+                            .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(effect).build(window, cx))
+                            .child(
+                                gpui::svg()
+                                    .path(icon)
+                                    .size(px(12.))
+                                    .flex_shrink_0()
+                                    .text_color(rgb(if enabled { p.muted } else { p.disabled })),
+                            )
+                            .child(action.label())
                             .when(enabled, |d| {
-                                d.on_click(cx.listener(move |this, _, window, cx| {
-                                    this.card_action(&owner, &action, window, cx)
-                                }))
-                            }),
+                                d.hover(|s| s.bg(rgb(p.selected))).on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.card_action(&owner, &action, window, cx)
+                                    },
+                                ))
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !actions.is_empty() {
+                        card_body = card_body.child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap(px(6.))
+                                .pt_2()
+                                .border_t_1()
+                                .border_color(rgb(p.border))
+                                .children(actions),
                         );
                     }
                     body = body.child(card_body);

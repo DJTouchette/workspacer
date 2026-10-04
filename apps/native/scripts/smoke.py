@@ -96,11 +96,20 @@ def main():
     parser.add_argument("--hover", help="Hover a window point x,y before capture (for control styling checks)")
     parser.add_argument("--keys", nargs="+", help="Additional X11 keys before capture, for example Escape Tab")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
+    parser.add_argument("--setting", action="append", default=[], metavar="KEY=JSON",
+                        help="Seed native-settings.json, for example merge_turn_tools=true; repeatable")
     args = parser.parse_args()
     if args.width < 720 or args.height < 480:
         parser.error("The native minimum window size is 720 × 480")
     if args.new_session and not args.bus:
         parser.error("--new-session requires a fixture --bus; creation is disabled in demo mode")
+    seeded = {}
+    for setting in args.setting:
+        key, _, value = setting.partition("=")
+        try:
+            seeded[key] = json.loads(value)
+        except ValueError:
+            parser.error("--setting requires KEY=JSON, for example merge_turn_tools=true")
     animation_region = None
     clicks = []
     for click in args.click or []:
@@ -136,6 +145,8 @@ def main():
     config = Path(settings.name) / "workspacer"
     config.mkdir()
     (config / "native-theme.json").write_text(json.dumps(args.theme))
+    if seeded:
+        (config / "native-settings.json").write_text(json.dumps(seeded))
     environment = dict(os.environ, XDG_CONFIG_HOME=settings.name)
     process = subprocess.Popen(command, stdout=subprocess.DEVNULL, env=environment)
     try:

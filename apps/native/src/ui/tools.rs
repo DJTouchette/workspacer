@@ -153,8 +153,10 @@ pub(super) fn card(
         .hover(|s| s.bg(rgb(p.selected)))
         .child(lead)
         .child(
+            // Shrinks before the status badge: a long title truncates at
+            // narrow widths instead of pushing "Running" off the card.
             div()
-                .flex_shrink_0()
+                .min_w_0()
                 .max_w(px(320.))
                 .truncate()
                 .text_size(px(12.))

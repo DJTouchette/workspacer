@@ -50,6 +50,12 @@ tables and code, and its asynchronous parse cache:
   per visual line instead of square text-run backgrounds, and the Markdown
   parser surrounds each code span with thin spaces (U+2009) for margin; those
   are stripped from copied selections (`format/markdown.rs`, `text_view.rs`).
+  `inline_code_family` (optional, prose mode) replaces the theme mono font for
+  inline code spans and for their table-width measurement. GPUI shapes a line
+  at one size, so Workspacer passes a JetBrains Mono twin whose glyphs are
+  drawn at 90% to match the desktop's 0.9em inline code. `None` keeps the
+  theme mono font. It takes part in style equality, so changing it reparses.
+
   GPUI's `TextLayout::position_for_index` ignores text alignment while line
   painting applies it, so in right/center-aligned text (table cells) the
   quads are shifted by the same per-line alignment offset.

@@ -47,6 +47,11 @@ pub struct TextViewStyle {
     /// The style refinement for code blocks.
     pub code_block: StyleRefinement,
     pub is_dark: bool,
+    /// Prose mode only: the font family for inline code spans and their
+    /// table-width measurement. `None` uses the theme mono font. GPUI shapes a
+    /// line at one size, so a smaller-looking inline code font is a family
+    /// whose glyphs are drawn smaller (Workspacer patch).
+    pub inline_code_family: Option<SharedString>,
 }
 
 impl PartialEq for TextViewStyle {
@@ -56,6 +61,7 @@ impl PartialEq for TextViewStyle {
             && self.prose == other.prose
             && self.heading_base_font_size == other.heading_base_font_size
             && self.highlight_theme == other.highlight_theme
+            && self.inline_code_family == other.inline_code_family
     }
 }
 
@@ -71,6 +77,7 @@ impl Default for TextViewStyle {
             highlight_theme: HighlightTheme::default_light().clone(),
             code_block: StyleRefinement::default(),
             is_dark: false,
+            inline_code_family: None,
         }
     }
 }

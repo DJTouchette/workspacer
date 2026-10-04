@@ -664,10 +664,13 @@ impl Paragraph {
         let mut highlights: Vec<(Range<usize>, HighlightStyle)> = vec![];
         let mut links: Vec<(Range<usize>, LinkMark)> = vec![];
         let mut code_ranges: Vec<Range<usize>> = vec![];
-        let mono = node_cx
-            .style
-            .prose
-            .map(|_| cx.theme().mono_font_family.clone());
+        let mono = node_cx.style.prose.map(|_| {
+            node_cx
+                .style
+                .inline_code_family
+                .clone()
+                .unwrap_or_else(|| cx.theme().mono_font_family.clone())
+        });
         let code_background = node_cx.style.prose.map(|prose| prose.code_background);
         let mut offset = 0;
 
@@ -1303,7 +1306,11 @@ impl Node {
         // the table scrolls sideways (`ProseTableFrame`) rather than
         // clipping its right-hand columns or breaking words.
         let font_size = rems(0.875).to_pixels(window.rem_size());
-        let mono = cx.theme().mono_font_family.clone();
+        let mono = node_cx
+            .style
+            .inline_code_family
+            .clone()
+            .unwrap_or_else(|| cx.theme().mono_font_family.clone());
         let base = window.text_style().font();
         let min_widths: Vec<Pixels> = (0..cols)
             .map(|ix| {

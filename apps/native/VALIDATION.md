@@ -893,3 +893,69 @@ renderer (sheet, docked and popped-out window).
   520×480 popped-out preview. They used a temporary harness copy serving the
   table and a Markdown file; production source was unchanged. Linux only: no
   Windows/macOS, hardware GPU or screen-reader verification.
+
+## Visual pass: tables, quotes, orchestration cards, merged turns (2026-10-03)
+
+The 2026-10-02 follow-up pass had no screenshots. Captured the release build
+against `native-harness serve --sessions 3 --turns 0 --rich-transcript` under
+private Xvfb + lavapipe (`WAYLAND_DISPLAY` unset, or GPUI opens on the host
+compositor): Dark/Light/Nord at 1400 wide, Dark at 720, Dark scrolled back, and
+Dark with `merge_turn_tools` (seeded with the new `smoke.py --setting KEY=JSON`).
+
+Fine as built: tables (stripes, header, right alignment, inline code in cells),
+blockquote rail, Skill/Spawn/subagent work-card shells and the folded dispatch
+brief, the merged turn card (Read, Edit, note and search under one "3 steps"
+header), and approval-button contrast in Nord. Fixed from the captures:
+
+- Response-card actions were full-width borderless buttons stacked with large
+  gaps, reading as plain text. They are now a wrapping footer row under a rule
+  of outlined buttons with the desktop's Lucide icons (`assets/icons/lucide/`)
+  and the desktop's effect tooltips.
+- Durations over an hour read "3882m 11s"; `duration_label` now gives "64h 42m".
+- At 720 the orchestration card title (`flex_shrink_0`, 320px cap) pushed the
+  status badge off the card ("Runnin"); the title now shrinks first.
+- Scrolled back, history showed through the gaps between the approval card,
+  composer and hint line. The dock has a chat-colored backdrop that fades over
+  the 12px above it (inside the transcript's dock padding).
+
+- Native serialized suite **291 passed, 1 ignored**; strict Clippy and rustfmt passed.
+- Captures: [dock + card actions](docs/ui-visual-pass-dock-card-actions.png),
+  [720 wide](docs/ui-visual-pass-narrow.png).
+
+The three items left open here were fixed the same day (next section).
+
+## Ellipsis, italics and 0.9em inline code (2026-10-03)
+
+- **Ellipsis: GPUI 0.2.2 bugs, now patched in `vendor/gpui`** (see its
+  `WORKSPACER-PATCHES.md`). `TextLayout` reused any cached size for unwrapped
+  text, so `truncate()` text measured unconstrained never re-measured when flex
+  shrank it: clipped, never "…". Turning wrapping on (a one-line clamp) to
+  dodge the cache collapsed non-growing `min_w_0` boxes (history titles and
+  paths vanished) and exposed a second bug: `truncate_line` rewrote the shared
+  runs, so a later pass bolded only "Nat" of "Native client experiment". The
+  patch keys the cache on truncation width and clones runs per measurement;
+  every existing `truncate()` call now ellipsizes. CI path filters include
+  `vendor/gpui/**`.
+- **Italics:** Inter Italic and Bold Italic are static instances of the official
+  Inter 4.1 `InterVariable-Italic.ttf` (same version and OFL license as the
+  bundled variable font); `prepare-fonts.sh` downloads it checksum-pinned and
+  reproduces both files exactly. Blockquotes and `*emphasis*` are now italic.
+- **Inline code at 0.9em:** "JetBrains Mono Inline" is JetBrains Mono with
+  outlines and advances scaled to 90% inside the same em and line metrics, so
+  it sits on the prose baseline smaller. Vendored gpui-component gained
+  `TextViewStyle::inline_code_family` (inline spans and table-width
+  measurement); native sets it only while the code font is the bundled
+  JetBrains Mono, and hides the face from the font pickers.
+
+- New tests: `truncated_text_ellipsizes_at_its_flex_width_and_recovers` (fails
+  on upstream 0.2.2: "narrow title was clipped, not ellipsized"),
+  `html_card_actions_are_a_compact_wrapping_row`,
+  `inline_code_face_follows_bundled_mono_and_stays_out_of_pickers`.
+- Native serialized suite **294 passed, 1 ignored**; strict Clippy and rustfmt passed.
+- Release-build captures, Dark/Light/Nord and 720 chat + history:
+  [themes](docs/ui-visual-pass-themes.png), [truncation](docs/ui-visual-pass-truncation.png).
+  The run-cloning fix has no unit test (the test text system ignores fonts);
+  the captures show the bold run intact.
+
+Noticed, not changed: at 720×600 the sidebar's last session row draws under
+the usage meters. Linux only: no Windows/macOS, hardware GPU or screen reader.

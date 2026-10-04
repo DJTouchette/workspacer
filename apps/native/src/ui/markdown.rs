@@ -86,6 +86,7 @@ impl Workspace {
             }),
             highlight_theme: cx.theme().highlight_theme.clone(),
             is_dark: self.appearance != Appearance::Light,
+            inline_code_family: super::typography::inline_code_family(&cx.theme().mono_font_family),
             code_block: div()
                 .rounded(px(p.control_radius))
                 .bg(rgb(p.code_block))

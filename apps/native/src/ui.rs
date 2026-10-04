@@ -95,6 +95,9 @@ use wks_native::timing::{self, TurnClock};
 const CHAT_WIDTH: f32 = 900.;
 
 /// Bundled provider marks layered over gpui-component's icon set.
+/// Fade height above the conversation dock; within its 12px of transcript padding.
+const DOCK_FADE: f32 = 12.;
+
 pub struct Assets;
 
 impl gpui::AssetSource for Assets {
@@ -106,6 +109,15 @@ impl gpui::AssetSource for Assets {
             )))),
             "brand/openai.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icons/brand/openai.svg"
+            )))),
+            "lucide/file-diff.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icons/lucide/file-diff.svg"
+            )))),
+            "lucide/message-square-plus.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icons/lucide/message-square-plus.svg"
+            )))),
+            "lucide/user-round.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icons/lucide/user-round.svg"
             )))),
             _ => gpui_component_assets::Assets.load(path),
         }
@@ -1504,7 +1516,11 @@ impl Render for Workspace {
                     this.follow = true;
                     this.list.scroll_to(ListOffset { item_ix: this.view.transcript.rows.len(), offset_in_item: px(0.) }); cx.notify();
                 })))))
-                .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center()
+                // The dock's backdrop: opaque behind the cards and hint line so
+                // scrolled-back history never shows through their gaps, fading
+                // out over the 12px above them (the transcript's spare padding).
+                .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center().pt(px(DOCK_FADE))
+                    .bg(gpui::linear_gradient(0., gpui::linear_color_stop(rgb(p.chat), 1. - DOCK_FADE / (f32::from(self.composer_dock_bounds.size.height) + DOCK_FADE).max(DOCK_FADE * 2.)), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
                     .child(chrome::chat_column().id("conversation-dock").relative().pt(px(if compact { 8. } else { 12. })).pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * if compact { 0.45 } else { 0.55 }).overflow_y_scroll().flex().flex_col().gap(px(if compact { 4. } else { 8. }))
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
@@ -1623,6 +1639,85 @@ mod tests {
                     )
             })
         }
+    }
+
+    /// A truncating title beside a fixed badge in a row of `width`; keeps the
+    /// title's text layout so tests can read back what GPUI actually drew.
+    struct TruncateProbe {
+        width: gpui::Pixels,
+        layout: Option<gpui::TextLayout>,
+    }
+
+    impl Render for TruncateProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let title = gpui::StyledText::new("A session title far too long for its row");
+            self.layout = Some(title.layout().clone());
+            div()
+                .w(self.width)
+                .flex()
+                .items_center()
+                .gap_2()
+                .debug_selector(|| "probe-row".into())
+                .child(div().min_w_0().truncate().child(title))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(px(60.))
+                        .debug_selector(|| "probe-badge".into())
+                        .child("Running"),
+                )
+        }
+    }
+
+    // Patched GPUI (vendor/gpui/WORKSPACER-PATCHES.md): truncated text is
+    // re-measured at its final flex width, so it gains "…" when the row is
+    // narrow and loses it again when the row widens. Upstream 0.2.2 kept the
+    // first, unconstrained measurement and only clipped.
+    #[gpui::test]
+    fn truncated_text_ellipsizes_at_its_flex_width_and_recovers(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| TruncateProbe {
+            width: px(180.),
+            layout: None,
+        });
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        let drawn = |visual: &mut VisualTestContext| {
+            window
+                .update(visual, |probe, _, _| probe.layout.as_ref().unwrap().text())
+                .unwrap()
+        };
+        let resize = |visual: &mut VisualTestContext, width: f32| {
+            window
+                .update(visual, |probe, _, cx| {
+                    probe.width = px(width);
+                    cx.notify();
+                })
+                .unwrap();
+            visual.run_until_parked();
+        };
+        visual.run_until_parked();
+        let narrow = drawn(&mut visual);
+        assert!(
+            narrow.ends_with('…'),
+            "narrow title was clipped, not ellipsized: {narrow:?}"
+        );
+        assert!(narrow.len() < "A session title far too long for its row".len());
+        let row = visual.debug_bounds("probe-row").unwrap();
+        let badge = visual.debug_bounds("probe-badge").unwrap();
+        assert!(badge.right() <= row.right(), "badge pushed out of its row");
+
+        resize(&mut visual, 2000.);
+        assert_eq!(
+            drawn(&mut visual),
+            "A session title far too long for its row"
+        );
+
+        resize(&mut visual, 150.);
+        let narrower = drawn(&mut visual);
+        assert!(
+            narrower.ends_with('…'),
+            "re-narrowed title lost its ellipsis: {narrower:?}"
+        );
+        assert!(narrower.len() < narrow.len(), "{narrower:?} vs {narrow:?}");
     }
 
     #[gpui::test]
@@ -2162,6 +2257,89 @@ mod tests {
         visual.simulate_click(gpui::point(px(4.), px(4.)), gpui::Modifiers::default());
         visual.run_until_parked();
         workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+    }
+
+    // Desktop parity (HtmlResponseCard footer): trusted card actions are one
+    // compact row of outlined buttons that wraps inside the card when narrow,
+    // not a full-width stack, and still do what they say.
+    #[gpui::test]
+    fn html_card_actions_are_a_compact_wrapping_row(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(1400.), px(1000.)));
+        let raw = serde_json::json!({
+            "v": 1, "title": "Review complete", "fallback": "Ready for review",
+            "bodyHtml": "<p>Ready</p>",
+            "actions": [
+                {"kind": "fill_composer", "label": "Continue", "text": "Carry on"},
+                {"kind": "view_diff", "label": "main.rs", "path": "src/main.rs"},
+                {"kind": "open_worker", "label": "Worker 1", "sessionId": "b"},
+            ],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                view.transcript.snapshot(ConversationSnapshot {
+                    seq: 1,
+                    first_seq: 1,
+                    items: vec![Item {
+                        kind: "assistant_text".into(),
+                        text: format!("```wks-html-card\n{raw}\n```"),
+                        ..Default::default()
+                    }],
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let actions = |visual: &mut VisualTestContext| {
+            (0..3)
+                .map(|i| {
+                    visual
+                        .debug_bounds(Box::leak(
+                            format!("card-action-live:a:0-0-{i}").into_boxed_str(),
+                        ))
+                        .unwrap_or_else(|| panic!("card action {i} not rendered"))
+                })
+                .collect::<Vec<_>>()
+        };
+        let wide = actions(&mut visual);
+        for (i, bounds) in wide.iter().enumerate() {
+            assert_eq!(
+                bounds.top(),
+                wide[0].top(),
+                "action {i} left the row: {wide:?}"
+            );
+            assert!(
+                bounds.size.height < px(40.),
+                "action {i} is not compact: {bounds:?}"
+            );
+            assert!(
+                bounds.size.width < px(300.),
+                "action {i} spans the card: {bounds:?}"
+            );
+        }
+        assert!(wide[0].right() < wide[1].left() && wide[1].right() < wide[2].left());
+
+        visual.simulate_resize(size(px(720.), px(1000.)));
+        visual.run_until_parked();
+        let card = visual.debug_bounds("html-card-live:a:0-0").unwrap();
+        for (i, bounds) in actions(&mut visual).iter().enumerate() {
+            assert!(
+                bounds.right() <= px(720.),
+                "action {i} spilled past the window: {bounds:?}"
+            );
+            assert!(
+                bounds.left() >= card.left(),
+                "action {i} left its card: {bounds:?}"
+            );
+        }
+
+        let prefill = actions(&mut visual)[0].center();
+        visual.simulate_click(prefill, gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "Carry on");
+        });
     }
 
     #[gpui::test]

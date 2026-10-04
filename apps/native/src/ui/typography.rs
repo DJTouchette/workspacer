@@ -17,14 +17,38 @@ pub(super) fn register_fonts(cx: &mut App) {
         Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Medium.ttf")),
         Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-SemiBold.ttf")),
         Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Bold.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Italic.ttf")),
+        Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-BoldItalic.ttf")),
         Cow::Borrowed(include_bytes!(
             "../../assets/fonts/JetBrainsMono-Variable.ttf"
         )),
         Cow::Borrowed(include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf")),
+        Cow::Borrowed(include_bytes!(
+            "../../assets/fonts/JetBrainsMonoInline-Regular.ttf"
+        )),
+        Cow::Borrowed(include_bytes!(
+            "../../assets/fonts/JetBrainsMonoInline-Bold.ttf"
+        )),
     ]) {
         log_font_error(error);
     }
     cx.set_global(RegisteredFonts);
+}
+
+/// JetBrains Mono with glyphs drawn at 90% inside the same em and line
+/// metrics: desktop inline code is 0.9em, but GPUI shapes a line at one size.
+/// Only used while the code font is the bundled JetBrains Mono.
+pub(super) const INLINE_CODE_FAMILY: &str = "JetBrains Mono Inline";
+
+/// The inline-code family for the current code font, if a smaller twin exists.
+pub(super) fn inline_code_family(mono: &SharedString) -> Option<SharedString> {
+    (mono.as_ref() == "JetBrains Mono").then(|| INLINE_CODE_FAMILY.into())
+}
+
+/// Font families offered in the pickers. Hidden system faces start with "."
+/// and the inline-code face is an implementation detail, not a choice.
+fn pickable(name: &str) -> bool {
+    !name.starts_with('.') && !name.trim().is_empty() && name != INLINE_CODE_FAMILY
 }
 
 fn log_font_error(error: anyhow::Error) {
@@ -62,7 +86,7 @@ impl FontControls {
         register_fonts(cx);
         let mut available = cx.text_system().all_font_names();
         available.extend(["Inter".into(), "JetBrains Mono".into()]);
-        available.retain(|name| !name.starts_with('.') && !name.trim().is_empty());
+        available.retain(|name| pickable(name));
         available.sort();
         available.dedup();
         let interface = cx.new(|cx| {
@@ -196,5 +220,25 @@ impl Workspace {
         // A popped-out viewer draws in its own window from these settings.
         self.refresh_popout(cx);
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_code_face_follows_bundled_mono_and_stays_out_of_pickers() {
+        assert_eq!(
+            inline_code_family(&"JetBrains Mono".into()),
+            Some(INLINE_CODE_FAMILY.into())
+        );
+        // Any other code font keeps the theme mono at full size.
+        assert_eq!(inline_code_family(&"Menlo".into()), None);
+        assert_eq!(inline_code_family(&"Fira Code".into()), None);
+        assert!(!pickable(INLINE_CODE_FAMILY));
+        assert!(!pickable(".SystemUIFont"));
+        assert!(pickable("JetBrains Mono"));
+        assert!(pickable("Inter"));
     }
 }
