@@ -121,7 +121,9 @@ impl Appearance {
                 surface: 0x3b4252,
                 chat: 0x252a33,
                 selected: 0x4c566a,
-                border: 0x3b4252,
+                // nord2: one step above the card surface (nord1), so dividers
+                // inside cards stay visible; nord1 itself vanished on cards.
+                border: 0x434c5e,
                 text: 0xeceff4,
                 prose: 0xd8dee9,
                 muted: 0x8eabc7,
@@ -215,6 +217,22 @@ mod tests {
                 contrast(p.muted, p.chat) > ratio,
                 "{appearance:?} muted ≤ disabled"
             );
+        }
+    }
+
+    #[test]
+    fn card_dividers_show_on_every_surface() {
+        // Rows inside cards and panels are separated by `border` drawn on
+        // `surface`; equal colors (Nord once) make every divider vanish.
+        for appearance in Appearance::ALL {
+            let p = appearance.palette();
+            for (name, fill) in [("surface", p.surface), ("chat", p.chat), ("base", p.base)] {
+                assert!(
+                    contrast(p.border, fill) >= 1.1,
+                    "{appearance:?} border on {name}: {:.2}",
+                    contrast(p.border, fill)
+                );
+            }
         }
     }
 
