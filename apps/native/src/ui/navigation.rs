@@ -423,7 +423,9 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.command(Command::Refresh, cx)))
     }
 
-    pub(super) fn render_projects(&self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn render_projects(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        // Short windows give the list, not the explanations, the height.
+        let short = window.viewport_size().height < px(620.);
         let p = self.appearance.palette();
         let rows = self.project_rows(cx);
         let count = rows.len();
@@ -443,22 +445,25 @@ impl Workspace {
             None,
             Some("WORKSPACE"),
             "Projects",
-            Some("Pinned and recent projects from the connected hub, plus folders your sessions run in.".into()),
+            (!short).then(|| {
+                "Pinned and recent projects from the connected hub, plus folders your sessions run in."
+                    .into()
+            }),
             None,
-            false,
+            short,
         );
         div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
             .children(chrome::page_drag_strip())
             .child(div().w_full().max_w(px(CHAT_WIDTH + 48.)).mx_auto().flex_1().min_h_0().flex().flex_col()
-            .child(div().px_6().pt(px(if caption { chrome::PAGE_CAPTION_INSET } else { 24. })).pb_3().flex().flex_col().gap_4()
+            .child(div().px(px(if short { 16. } else { 24. })).pt(px(if caption { chrome::PAGE_CAPTION_INSET } else if short { 12. } else { 24. })).pb_3().flex().flex_col().gap(px(if short { 8. } else { 16. }))
                 .child(header)
-                .child(chrome::card(p).p_4().flex().flex_col().gap_3()
+                .child(chrome::card(p).p(px(if short { 10. } else { 16. })).flex().flex_col().gap_3()
                     .child(div().flex().flex_wrap().items_center().gap_2()
                         .child(div().flex_1().min_w(px(220.)).child(Input::new(&self.project_path)))
                         .when(self.extras.local_paths, |d| d.child(self.button("browse-bookmark", "Browse…", true).on_click(cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)))))
                         .child(self.primary_button("save-project", "Pin project", can_write).flex_shrink_0()
                             .when(can_write, |d| d.on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx))))))
-                    .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent.")))
+                    .when(!short, |d| d.child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent."))))
                 .when(!self.settings_error.is_empty(), |d| d.child(chrome::notice_line(self.settings_error.clone(), chrome::Tone::Error, p, "projects-settings-error")))
                 .when(!self.projects.notice.is_empty(), |d| d.child(div().flex().flex_wrap().items_center().gap_2()
                     .child(div().flex_1().min_w(px(200.)).child(chrome::notice_line(self.projects.notice.clone(), notice_tone, p, "projects-notice")))

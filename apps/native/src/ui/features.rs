@@ -678,12 +678,15 @@ impl Workspace {
                     .px_4()
                     .py_3()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_3()
                     .child(
                         div()
+                            // Actions wrap below a title that would otherwise
+                            // be truncated to a word in narrow windows.
                             .flex_1()
-                            .min_w_0()
+                            .min_w(px(220.))
                             .flex()
                             .flex_col()
                             .gap_1()

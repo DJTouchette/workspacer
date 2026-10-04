@@ -1431,7 +1431,7 @@ impl Render for Workspace {
                 .into_any_element();
         }
         if self.screen == Screen::Projects {
-            let content = self.render_projects(cx);
+            let content = self.render_projects(window, cx);
             return self
                 .shell(window, cx)
                 .child(sidebar)
