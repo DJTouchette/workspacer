@@ -6570,6 +6570,33 @@ mod tests {
     }
 
     #[gpui::test]
+    fn inline_code_stays_whole_in_columns_at_their_minimum(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(720.), px(480.)));
+        // Too wide to fit, so every column sits at its whole-word minimum;
+        // code in centred and right-aligned columns must still not break
+        // (its thin-space margins count toward the minimum).
+        let md = "| Area | Owner | Component | Implementation |\n|---:|:---:|---|---|\n\
+                  | `node.rs` | `render_prose_table` | renderer | incremental |";
+        show_assistant_markdown(&workspace, &mut visual, md);
+        let table = table_frame(md, "Area");
+        assert!(assert_every_column_reachable(
+            &mut visual,
+            &table,
+            4,
+            px(720.)
+        ));
+        let plain = bounds_of(&mut visual, "prose-table-cell-0-0").size.height;
+        for col in [0, 1] {
+            let code = bounds_of(&mut visual, &format!("prose-table-cell-1-{col}"));
+            assert!(
+                code.size.height <= plain + px(0.5),
+                "code in column {col} wrapped: {code:?} vs one line {plain:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
     fn two_wide_tables_scroll_independently(cx: &mut TestAppContext) {
         let (workspace, mut visual, _commands, _updates) = fixture(cx);
         visual.simulate_resize(size(px(720.), px(480.)));

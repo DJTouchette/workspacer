@@ -1297,7 +1297,7 @@ impl Node {
         let total: usize = (0..cols).map(len).sum();
         // A column never narrows below its longest word, measured in the
         // cell's own font (bold header, monospace code) and capped so a long
-        // token such as a URL or path still wraps inside its column: flex
+        // token such as a URL still wraps inside its column: flex
         // shrinks wider columns instead of breaking a short header like
         // "Status" mid-word. When the minimums together exceed the width,
         // the table scrolls sideways (`ProseTableFrame`) rather than
@@ -1326,8 +1326,15 @@ impl Node {
                         if word.italic {
                             font.style = FontStyle::Italic;
                         }
+                        // Code spans carry their thin-space margins
+                        // (`INLINE_CODE_MARGIN`) on the same line.
+                        let text = if word.code {
+                            format!("\u{2009}{}\u{2009}", word.text)
+                        } else {
+                            word.text
+                        };
                         let run = gpui::TextRun {
-                            len: word.text.len(),
+                            len: text.len(),
                             font,
                             color: Hsla::default(),
                             background_color: None,
@@ -1336,13 +1343,13 @@ impl Node {
                         };
                         window
                             .text_system()
-                            .shape_line(word.text.into(), font_size, &[run], None)
+                            .shape_line(text.into(), font_size, &[run], None)
                             .width
                     })
                     .fold(px(0.), Pixels::max);
-                // The cap (about fourteen average characters) and the 10px
+                // The cap (about twenty characters of code) and the 10px
                 // side padding, plus a pixel against rounding.
-                longest.min(font_size * 9.) + px(21.)
+                longest.min(font_size * 12.) + px(21.)
             })
             .collect();
         // Stable while a message streams in: the source offset of the first
