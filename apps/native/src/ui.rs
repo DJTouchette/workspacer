@@ -766,7 +766,12 @@ impl Workspace {
             && receipt.number > self.last_spawn_receipt
         {
             self.last_spawn_receipt = receipt.number;
-            self.spawn_pending = false;
+            // Receipts reach every window on the connection. Only the window
+            // whose own launch is pending records recency, and any receipt
+            // retires its launched folder so a failed launch's path can never
+            // ride along on another window's success.
+            let launched = std::mem::take(&mut self.launched_cwd);
+            let own_launch = std::mem::replace(&mut self.spawn_pending, false);
             self.spawn_error = receipt.error.clone().unwrap_or_default();
             // A new failure is read from its first line, not where the last
             // one was left scrolled.
@@ -774,8 +779,7 @@ impl Workspace {
             if let Some(id) = &receipt.session {
                 // Like opening a project on the desktop: the hub's registry
                 // records it as recently used. Best effort; never blocks.
-                let launched = std::mem::take(&mut self.launched_cwd);
-                if !self.demo && wks_native::launch::absolute_directory(&launched) {
+                if own_launch && !self.demo && wks_native::launch::absolute_directory(&launched) {
                     let at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_millis() as i64);
@@ -3950,6 +3954,37 @@ mod tests {
         assert_eq!(path, "/work/project");
         assert!(at > 0);
         assert!(commands.try_recv().is_err());
+        // A failed launch keeps nothing: a later receipt for a launch this
+        // window did not start (another window's) records no project.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.spawn_pending = true;
+                this.launched_cwd = "/work/failed".into();
+                let mut failed = state("b");
+                failed.spawn_receipt = Some(wks_native::controller::SpawnReceipt {
+                    number: 2,
+                    session: None,
+                    error: Some("provider executable not found".into()),
+                    unsent_message: None,
+                });
+                this.update_view(Arc::new(failed), window, cx);
+                let mut other = state("c");
+                other.spawn_receipt = Some(wks_native::controller::SpawnReceipt {
+                    number: 3,
+                    session: Some("c".into()),
+                    error: None,
+                    unsent_message: None,
+                });
+                this.update_view(Arc::new(other), window, cx);
+            })
+        });
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).all(|c| !matches!(
+                c,
+                Command::Request(wks_native::features::Request::TouchProject { .. })
+            )),
+            "another window's launch never records this window's failed folder"
+        );
     }
 
     #[gpui::test]
