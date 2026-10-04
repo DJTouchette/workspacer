@@ -606,12 +606,22 @@ impl Workspace {
                             .debug_selector(|| "launch-project-status".into())
                             .w_full()
                             .flex()
-                            .items_center()
+                            .items_start()
                             .gap_1()
                             .text_size(px(11.))
+                            .line_height(gpui::relative(1.4))
                             .text_color(rgb(status_color))
-                            .child(Icon::new(status_icon).size(px(11.)).flex_shrink_0())
-                            .child(div().min_w_0().truncate().child(status)),
+                            // Wraps: a missing-folder warning carries its
+                            // recovery step, which must not be clipped.
+                            .child(
+                                div()
+                                    .h(px(11. * 1.4))
+                                    .flex()
+                                    .items_center()
+                                    .flex_shrink_0()
+                                    .child(Icon::new(status_icon).size(px(11.))),
+                            )
+                            .child(div().flex_1().min_w_0().child(status)),
                     ),
             )
             .child(

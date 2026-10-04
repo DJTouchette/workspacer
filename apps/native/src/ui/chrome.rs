@@ -1,5 +1,6 @@
 //! Shared native chrome: quiet actions, readable sections, and preference rows.
 use super::*;
+use gpui::AnyElement;
 use gpui_component::tooltip::Tooltip;
 
 /// GPUI 0.2.2 replaces the entire text refinement in interaction styles.
@@ -68,6 +69,36 @@ pub(super) fn model_badge(session: &Session, p: Palette, size: f32) -> Div {
     brand_badge(&session.provider, session.display_model(), p, size)
 }
 
+/// A provider's brand mark on a rounded tile, for choosing or describing an
+/// agent (New Agent, Agent setup). Same marks and colors as [`brand_badge`].
+pub(super) fn provider_mark(provider: &str, size: f32, p: Palette) -> Div {
+    let (mark, color) = match provider {
+        "claude" => (Some("brand/claude.svg"), CLAUDE_CLAY),
+        "codex" => (Some("brand/openai.svg"), p.text),
+        _ => (None, p.accent),
+    };
+    let glyph = size * 0.5;
+    div()
+        .size(px(size))
+        .flex_shrink_0()
+        .rounded(px((size * 0.3).min(p.control_radius)))
+        .bg(rgb(p.selected))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(match mark {
+            Some(path) => gpui::svg()
+                .path(path)
+                .size(px(glyph))
+                .text_color(rgb(color))
+                .into_any_element(),
+            None => Icon::new(IconName::Bot)
+                .size(px(glyph))
+                .text_color(rgb(color))
+                .into_any_element(),
+        })
+}
+
 /// The badge for any provider and display name (sessions and child agents).
 pub(super) fn brand_badge(provider: &str, name: String, p: Palette, size: f32) -> Div {
     let (mark, color) = match provider {
@@ -110,6 +141,116 @@ pub(super) fn brand_badge(provider: &str, name: String, p: Palette, size: f32) -
                 .text_color(rgb(color))
                 .child(name),
         )
+}
+
+/// Native type scale for chrome outside the conversation. Chat prose follows
+/// the reader's text-size setting instead; these keep pages consistent.
+pub(super) mod scale {
+    /// Page titles (Settings, Projects, Changes…); `TITLE_SHORT` in short windows.
+    pub const TITLE: f32 = 22.;
+    pub const TITLE_SHORT: f32 = 18.;
+    /// Card and section headings.
+    pub const HEADING: f32 = 15.;
+    /// Body copy and control labels on pages.
+    pub const BODY: f32 = 13.;
+    /// Descriptions, metadata and notices.
+    pub const META: f32 = 12.;
+    /// Captions, chips and hints.
+    pub const CAPTION: f32 = 11.;
+    /// Uppercase overlines.
+    pub const OVERLINE: f32 = 10.;
+}
+
+/// The shared raised surface for page content: settings groups, launch
+/// sections and secondary screens all use this one card treatment.
+pub(super) fn card(p: Palette) -> Div {
+    div()
+        .rounded(px(p.panel_radius))
+        .bg(rgb(p.surface))
+        .border_1()
+        .border_color(rgb(p.border))
+}
+
+/// What a status line means; color and icon follow from it, so loading is
+/// never shown as a warning and a success never reads as an error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Tone {
+    Info,
+    Loading,
+    Success,
+    Warning,
+    Error,
+}
+
+/// One wrapped status line with its tone's icon; for notices on pages.
+pub(super) fn notice_line(
+    text: impl Into<SharedString>,
+    tone: Tone,
+    p: Palette,
+    id: impl Into<gpui::ElementId>,
+) -> Div {
+    let (color, text_color) = match tone {
+        Tone::Info | Tone::Loading => (p.muted, p.muted),
+        Tone::Success => (p.success, p.text),
+        Tone::Warning => (p.warning, p.warning),
+        Tone::Error => (p.error, p.error),
+    };
+    div()
+        .w_full()
+        .flex()
+        .items_start()
+        .gap_2()
+        .text_size(px(scale::META))
+        .line_height(gpui::relative(1.45))
+        .text_color(rgb(text_color))
+        .child(
+            div()
+                .flex_shrink_0()
+                .h(px(scale::META * 1.45))
+                .flex()
+                .items_center()
+                .child(match tone {
+                    Tone::Loading => brand_spinner(11., p, id).into_any_element(),
+                    Tone::Success => Icon::new(IconName::CircleCheck)
+                        .size(px(13.))
+                        .text_color(rgb(color))
+                        .into_any_element(),
+                    Tone::Info => Icon::new(IconName::Info)
+                        .size(px(13.))
+                        .text_color(rgb(color))
+                        .into_any_element(),
+                    Tone::Warning | Tone::Error => Icon::new(IconName::TriangleAlert)
+                        .size(px(13.))
+                        .text_color(rgb(color))
+                        .into_any_element(),
+                }),
+        )
+        .child(div().flex_1().min_w_0().child(text.into()))
+}
+
+/// Free text from the hub or a local action, classified by how it reads.
+/// Used where one notice slot carries both confirmations and failures.
+pub(super) fn notice_tone(text: &str) -> Tone {
+    let lower = text.to_lowercase();
+    if lower.ends_with('…') && !lower.contains("fail") && !lower.contains("could not") {
+        Tone::Loading
+    } else if lower.contains("saved")
+        || lower.starts_with("pinned")
+        || lower.starts_with("unpinned")
+        || lower.ends_with(" applied")
+    {
+        Tone::Success
+    } else if lower.contains("fail")
+        || lower.contains("error")
+        || lower.contains("could not")
+        || lower.contains("couldn't")
+        || lower.contains("cannot")
+        || lower.contains("unavailable")
+    {
+        Tone::Error
+    } else {
+        Tone::Warning
+    }
 }
 
 pub(super) fn chat_column() -> Div {
@@ -377,7 +518,150 @@ impl Workspace {
             })
             .child(Icon::new(icon).size(px(13.)))
     }
+
+    /// A text button for actions that stop or remove something: quiet at
+    /// rest, error-toned, never mistaken for the page's primary action.
+    pub(super) fn danger_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        enabled: bool,
+    ) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        let tint = |alpha: f32| gpui::Hsla::from(rgb(p.error)).opacity(alpha);
+        interactive_control(div().id(id.into()), p, enabled)
+            .px_3()
+            .py_2()
+            .font_weight(FontWeight::MEDIUM)
+            .rounded(px(p.control_radius))
+            .text_size(px(scale::META))
+            .text_color(rgb(if enabled { p.error } else { p.disabled }))
+            .when(enabled, |d| {
+                d.hover_text_style(move |s| s.bg(tint(0.12)).text_color(rgb(p.error)))
+                    .active_text_style(move |s| s.bg(tint(0.2)).text_color(rgb(p.error)))
+            })
+            .child(label.into())
+    }
+
+    /// Scrolling page body for every non-chat screen. Where the app draws its
+    /// own caption the top strip is window chrome: it drags the window and
+    /// keeps page actions clear of the minimize / maximize / close buttons.
+    pub(super) fn page_view(
+        &self,
+        id: &'static str,
+        max_width: f32,
+        short: bool,
+        content: impl IntoElement,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let caption = custom_caption();
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .bg(rgb(p.chat))
+            .child(
+                div()
+                    .id(id)
+                    .size_full()
+                    .overflow_y_scroll()
+                    .px(px(if short { 16. } else { 24. }))
+                    .pt(px(if caption {
+                        PAGE_CAPTION_INSET
+                    } else if short {
+                        12.
+                    } else {
+                        24.
+                    }))
+                    .pb(px(if short { 16. } else { 32. }))
+                    .child(div().w_full().max_w(px(max_width)).mx_auto().child(content)),
+            )
+            .children(page_drag_strip())
+    }
+
+    /// The one page header: optional back action, overline, title and a
+    /// wrapped description, with trailing actions on the right.
+    pub(super) fn page_header(
+        &self,
+        back: Option<Stateful<Div>>,
+        overline_text: Option<&'static str>,
+        title: impl Into<SharedString>,
+        description: Option<SharedString>,
+        trailing: Option<AnyElement>,
+        short: bool,
+    ) -> Div {
+        let p = self.appearance.palette();
+        div()
+            .debug_selector(|| "page-header".into())
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(back.map(|back| div().flex().child(back.ml(px(-10.)))))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(overline_text.map(|text| overline(text, p)))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_4()
+                            .child(
+                                div()
+                                    .debug_selector(|| "page-title".into())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(if short {
+                                        scale::TITLE_SHORT
+                                    } else {
+                                        scale::TITLE
+                                    }))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(title.into()),
+                            )
+                            .children(trailing.map(|t| {
+                                div()
+                                    .debug_selector(|| "page-actions".into())
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(t)
+                            })),
+                    )
+                    .children(description.map(|text| {
+                        div()
+                            .text_size(px(scale::META))
+                            .line_height(gpui::relative(1.45))
+                            .text_color(rgb(p.muted))
+                            .child(text)
+                    })),
+            )
+    }
 }
+
+/// The window-chrome strip across the top of a page, when the app draws its
+/// own caption: drags the window, stops short of the caption buttons.
+pub(super) fn page_drag_strip() -> Option<Div> {
+    custom_caption().then(|| {
+        drag_region(div())
+            .debug_selector(|| "page-drag-region".into())
+            .absolute()
+            .top_0()
+            .left_0()
+            .right(px(CAPTION_WIDTH))
+            .h(px(PAGE_CAPTION_INSET - 8.))
+    })
+}
+
+/// Top inset of pages under an app-drawn caption: the caption's height plus
+/// breathing room, all of it drag surface except the caption buttons.
+pub(super) const PAGE_CAPTION_INSET: f32 = CAPTION_HEIGHT + 8.;
 
 fn token_label(tokens: u64) -> String {
     match tokens {
@@ -486,6 +770,8 @@ pub(super) static FORCE_CAPTION: std::sync::atomic::AtomicBool =
 
 /// Width reserved at the top-right for the caption buttons.
 pub(super) const CAPTION_WIDTH: f32 = 46. * 3.;
+/// Height of the caption buttons' strip.
+pub(super) const CAPTION_HEIGHT: f32 = 32.;
 
 impl Workspace {
     /// Minimize / maximize / close at the window's top-right, painted over
@@ -536,7 +822,7 @@ impl Workspace {
                     .absolute()
                     .top_0()
                     .right_0()
-                    .h(px(32.))
+                    .h(px(CAPTION_HEIGHT))
                     .flex()
                     .occlude()
                     .child(button(

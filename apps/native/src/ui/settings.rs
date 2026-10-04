@@ -725,8 +725,18 @@ impl Workspace {
             )
     }
 
-    pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(super) fn render_settings(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
+        let short = window.viewport_size().height < px(620.);
+        // Beside a wide sidebar the category rail shrinks to icons, so the
+        // preferences themselves keep a readable measure.
+        let viewport = unzoom(window.viewport_size().width);
+        let sidebar = if self.sidebar_collapsed {
+            56.
+        } else {
+            wks_native::navigation::sidebar_width(self.settings.sidebar_width, viewport)
+        };
+        let tight = viewport - sidebar < 820.;
         let query = self.settings_search.read(cx).value().trim().to_owned();
         let searching = !query.is_empty();
         let entries = self.settings_entries(cx);
@@ -740,7 +750,8 @@ impl Workspace {
             })
             .collect();
         let rail = div()
-            .w(px(200.))
+            .debug_selector(|| "settings-rail".into())
+            .w(px(if tight { 40. } else { 200. }))
             .flex_shrink_0()
             .flex()
             .flex_col()
@@ -752,10 +763,16 @@ impl Workspace {
                     .map(|(section, count)| {
                         let active = !searching && self.settings_section == section;
                         let dimmed = searching && count == 0;
+                        let label = section.label();
                         chrome::interactive_control(div().id(section.label()), p, true)
                             .debug_selector(move || format!("settings-nav-{}", section.label()))
                             .h(px(34.))
-                            .px_3()
+                            .map(|d| if tight { d.justify_center() } else { d.px_3() })
+                            .when(tight, |d| {
+                                d.tooltip(move |window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(label).build(window, cx)
+                                })
+                            })
                             .rounded(px(p.control_radius))
                             .flex()
                             .items_center()
@@ -784,8 +801,8 @@ impl Workspace {
                                     p.muted
                                 },
                             )))
-                            .child(div().flex_1().child(section.label()))
-                            .when(searching && count > 0, |d| {
+                            .when(!tight, |d| d.child(div().flex_1().child(section.label())))
+                            .when(!tight && searching && count > 0, |d| {
                                 d.child(
                                     div()
                                         .px(px(6.))
@@ -907,61 +924,62 @@ impl Workspace {
                     ),
                 );
         }
-        div()
-            .id("settings-view")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .overflow_y_scroll()
-            .bg(rgb(p.chat))
-            .p_5()
+        let title = div()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(overline("MAKE IT YOURS", p))
             .child(
                 div()
-                    .max_w(px(920.))
-                    .mx_auto()
-                    .flex()
-                    .flex_col()
-                    .gap_5()
-                    .child(
-                        div()
-                            .pt_3()
-                            .flex()
-                            .items_end()
-                            .gap_4()
-                            .child(
-                                div()
-                                    .w(px(200.))
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(overline("MAKE IT YOURS", p))
-                                    .child(
-                                        div()
-                                            .text_size(px(28.))
-                                            .font_weight(FontWeight::BOLD)
-                                            .child("Settings"),
-                                    ),
-                            )
-                            .child(div().flex_1().min_w_0().child(search)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_start()
-                            .gap_4()
-                            .child(rail)
-                            .child(content),
-                    )
-                    .when(!self.settings_error.is_empty(), |d| {
+                    .debug_selector(|| "page-title".into())
+                    .text_size(px(if short {
+                        chrome::scale::TITLE_SHORT
+                    } else {
+                        chrome::scale::TITLE
+                    }))
+                    .font_weight(FontWeight::BOLD)
+                    .child("Settings"),
+            );
+        self.page_view(
+            "settings-view",
+            920.,
+            short,
+            div()
+                .flex()
+                .flex_col()
+                .gap_5()
+                .map(|d| {
+                    if tight {
+                        d.child(title).child(search)
+                    } else {
                         d.child(
                             div()
-                                .text_size(px(12.))
-                                .text_color(rgb(p.warning))
-                                .child(self.settings_error.clone()),
+                                .flex()
+                                .items_end()
+                                .gap_4()
+                                .child(title.w(px(200.)))
+                                .child(div().flex_1().min_w_0().child(search)),
                         )
-                    }),
-            )
+                    }
+                })
+                .when(!self.settings_error.is_empty(), |d| {
+                    d.child(chrome::notice_line(
+                        self.settings_error.clone(),
+                        chrome::Tone::Error,
+                        p,
+                        "settings-error",
+                    ))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap(px(if tight { 12. } else { 16. }))
+                        .child(rail)
+                        .child(content),
+                ),
+        )
     }
 
     /// j / k in Normal mode step through categories.

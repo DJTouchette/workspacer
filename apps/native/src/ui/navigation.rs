@@ -433,25 +433,40 @@ impl Workspace {
             .get("project-save")
             .is_some_and(|s| s.loading);
         let can_write = self.view.connected && !self.demo && !saving;
-        div().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
-            .child(div().p_5().flex().flex_col().gap_2()
-                .child(overline("WORKSPACE", p))
-                .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).child("Projects"))
-                .child(div().text_size(px(12.)).text_color(rgb(p.muted)).child("Pinned and recent projects from the connected hub, plus folders your sessions run in."))
-                .child(div().flex().flex_wrap().gap_2().child(div().flex_1().min_w(px(220.)).child(Input::new(&self.project_path)))
-                    .when(self.extras.local_paths, |d| d.child(self.button("browse-bookmark", "Browse…", true).on_click(cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)))))
-                    .child(self.button("save-project", "Pin project", can_write).flex_shrink_0()
-                        .when(can_write, |d| d.on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx))))))
-                .child(div().text_size(px(11.)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent."))
-                .when(!self.settings_error.is_empty(), |d| d.child(div().text_color(rgb(p.warning)).child(self.settings_error.clone())))
-                .when(!self.projects.notice.is_empty(), |d| d.child(div().flex().items_center().gap_2().text_size(px(12.))
-                    .text_color(rgb(if self.projects.fallback.is_some() { p.warning } else { p.muted }))
-                    .child(self.projects.notice.clone())
+        let caption = chrome::custom_caption();
+        let notice_tone = if self.projects.fallback.is_some() {
+            chrome::Tone::Warning
+        } else {
+            chrome::notice_tone(&self.projects.notice)
+        };
+        let header = self.page_header(
+            None,
+            Some("WORKSPACE"),
+            "Projects",
+            Some("Pinned and recent projects from the connected hub, plus folders your sessions run in.".into()),
+            None,
+            false,
+        );
+        div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
+            .children(chrome::page_drag_strip())
+            .child(div().w_full().max_w(px(CHAT_WIDTH + 48.)).mx_auto().flex_1().min_h_0().flex().flex_col()
+            .child(div().px_6().pt(px(if caption { chrome::PAGE_CAPTION_INSET } else { 24. })).pb_3().flex().flex_col().gap_4()
+                .child(header)
+                .child(chrome::card(p).p_4().flex().flex_col().gap_3()
+                    .child(div().flex().flex_wrap().items_center().gap_2()
+                        .child(div().flex_1().min_w(px(220.)).child(Input::new(&self.project_path)))
+                        .when(self.extras.local_paths, |d| d.child(self.button("browse-bookmark", "Browse…", true).on_click(cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)))))
+                        .child(self.primary_button("save-project", "Pin project", can_write).flex_shrink_0()
+                            .when(can_write, |d| d.on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx))))))
+                    .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent.")))
+                .when(!self.settings_error.is_empty(), |d| d.child(chrome::notice_line(self.settings_error.clone(), chrome::Tone::Error, p, "projects-settings-error")))
+                .when(!self.projects.notice.is_empty(), |d| d.child(div().flex().flex_wrap().items_center().gap_2()
+                    .child(div().flex_1().min_w(px(200.)).child(chrome::notice_line(self.projects.notice.clone(), notice_tone, p, "projects-notice")))
                     .when(self.projects.fallback.is_some(), |d| d.child(self.quiet_button("keep-on-device-projects", "Keep on this device", IconName::Check, true).debug_selector(|| "keep-on-device-projects".into())
                         .on_click(cx.listener(|this, _, _, cx| this.keep_project_on_device(cx)))))))
-                .when_some(self.projects.registry_error.clone(), |d, error| d.child(div().text_size(px(12.)).text_color(rgb(p.warning))
-                    .child(format!("Couldn't read the hub's projects ({error}). Showing this device's projects and active folders.")))))
-            .when(count == 0, |d| d.child(div().p_5().text_color(rgb(p.muted)).child(
+                .when_some(self.projects.registry_error.clone(), |d, error| d.child(chrome::notice_line(
+                    format!("Couldn’t read the hub’s projects ({error}). Showing this device’s projects and active folders."), chrome::Tone::Warning, p, "projects-registry-error"))))
+            .when(count == 0, |d| d.child(div().px_6().py_6().text_center().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(
                 if self.view.requests.get("projects").is_some_and(|s| s.loading) && self.projects.registry.is_none() { "Loading projects…" }
                 else { "No matching projects. Pin a directory above or clear the sidebar filter." })))
             .child(uniform_list("project-list", count, cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
@@ -466,7 +481,7 @@ impl Workspace {
                         (0, n) => format!("{n} ended · open project"),
                         (live, n) => format!("{live} running of {n} · open project"),
                     };
-                    div().h(px(84.)).px_5().pb_2().child(chrome::interactive_control(div().id(("project", ix)), p, true).h_full().p_3().rounded(px(p.panel_radius))
+                    div().h(px(84.)).px_6().pb_2().child(chrome::interactive_control(div().id(("project", ix)), p, true).h_full().p_3().rounded(px(p.panel_radius))
                         .bg(rgb(if ix == this.project_cursor { p.selected } else { p.surface }))
                         .cursor_pointer().hover(|style| style.bg(rgb(p.selected)))
                         .on_click(cx.listener(move |this, _, window, cx| this.open_project_path(path.clone(), window, cx)))
@@ -478,7 +493,7 @@ impl Workspace {
                                 .when(project.source == wks_native::projects::Source::Device, |d| d.child(div().flex_shrink_0().text_size(px(10.)).text_color(rgb(p.muted)).child("this device"))))
                             .child(div().truncate().font_family(mono_font()).text_size(px(11.)).text_color(rgb(p.muted)).child(project.path.clone()))
                             .child(div().text_size(px(11.)).text_color(rgb(if project.live_sessions > 0 { p.busy } else { p.accent })).child(sessions)))
-                        .when(project.removable(), |d| d.child(this.button(SharedString::from(format!("forget-project-{ix}")), "Forget", project.source == wks_native::projects::Source::Device || can_write)
+                        .when(project.removable(), |d| d.child(this.danger_button(SharedString::from(format!("forget-project-{ix}")), "Forget", project.source == wks_native::projects::Source::Device || can_write)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.forget_project(&forget, cx);
@@ -491,6 +506,6 @@ impl Workspace {
                             })))))
                 }).collect::<Vec<_>>()
             })).track_scroll(self.projects_scroll.clone()).flex_1().min_h_0())
-            .child(div().px_5().py_3().text_size(px(11.)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · / filter · i add · Ctrl Enter pin" } else { "Click a project to open it · Ctrl Enter to pin a path" }))
+            .child(div().px_6().py_3().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · / filter · i add · Ctrl Enter pin" } else { "Click a project to open it · Ctrl Enter to pin a path" })))
     }
 }

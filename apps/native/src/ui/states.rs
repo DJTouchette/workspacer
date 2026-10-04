@@ -136,7 +136,7 @@ impl Workspace {
             (
                 "state-requested-session",
                 "Requested session unavailable",
-                "Refresh the session list to check for this session, or start a new one.",
+                "Refresh the session list to check for this session, or start a new agent.",
                 false,
             )
         } else if !self.view.connected {
@@ -199,14 +199,14 @@ impl Workspace {
             (
                 "state-no-sessions",
                 "Your next idea starts here",
-                "Start a session in your project, or set up an agent to get ready.",
+                "Start an agent in one of your projects, or set one up first.",
                 false,
             )
         } else {
             (
                 "state-select-session",
                 "Choose a conversation",
-                "Select a session in the sidebar, or start a new session for your next task.",
+                "Select a session in the sidebar, or start a new agent for your next task.",
                 false,
             )
         };
@@ -297,7 +297,7 @@ impl Workspace {
                                     .justify_center()
                                     .gap_2()
                                     .child(
-                                        self.button("welcome-new", "Start a session", !self.demo)
+                                        self.button("welcome-new", "Start an agent", !self.demo)
                                             .debug_selector(|| "welcome-new".into())
                                             .when(!self.demo, |d| {
                                                 d.on_click(cx.listener(|this, _, window, cx| {

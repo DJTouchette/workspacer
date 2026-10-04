@@ -227,7 +227,7 @@ fn status_dot(color: u32) -> Div {
 
 fn overline(label: impl Into<SharedString>, p: Palette) -> Div {
     div()
-        .text_size(px(10.))
+        .text_size(px(chrome::scale::OVERLINE))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(p.muted))
         .child(label.into())
@@ -1410,7 +1410,7 @@ impl Render for Workspace {
                 .into_any_element();
         }
         if self.screen == Screen::Settings {
-            let content = self.render_settings(cx);
+            let content = self.render_settings(window, cx);
             return self
                 .shell(window, cx)
                 .child(sidebar)
@@ -1491,7 +1491,7 @@ impl Render for Workspace {
                         .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}"))
                             .when(compact, |d| d.child(div().flex_1().min_w_0().truncate().text_color(rgb(p.text)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(summary.clone())).child(self.button("approval-toggle-compact", if self.extras.approval_details { "Hide" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
                         .when(!compact, |d| d.child(div().flex().items_center().gap_2().child(div().flex_1().min_w_0().truncate().font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(if summary.is_empty() { "Review request details".to_owned() } else { summary })).child(self.button("approval-toggle", if self.extras.approval_details { "Hide details" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
-                        .when(self.extras.approval_details, |d| d.child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded_md().bg(rgb(p.surface)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).text_color(rgb(p.muted)).child(details)))
+                        .when(self.extras.approval_details, |d| d.child(div().id("approval-details").max_h(px(if compact { 52. } else { 120. })).overflow_y_scroll().p_3().rounded(px(p.control_radius)).bg(rgb(p.code_block)).border_1().border_color(rgb(p.border)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).text_color(rgb(p.prose)).child(details)))
                         .child(div().flex().gap_2()
                             .child(self.primary_button("approve", "Allow once", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))

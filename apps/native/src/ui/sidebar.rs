@@ -308,16 +308,13 @@ impl Workspace {
             })
             .child(self.sidebar_toggle(cx))
             .child(
-                self.icon_button(
-                    "new-session-rail",
-                    "New session",
-                    IconName::Plus,
-                    !self.demo,
-                )
-                .debug_selector(|| "new-session-button".into())
-                .when(!self.demo, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| this.show_new_session(window, cx)))
-                }),
+                self.icon_button("new-session-rail", "New agent", IconName::Plus, !self.demo)
+                    .debug_selector(|| "new-session-button".into())
+                    .when(!self.demo, |d| {
+                        d.on_click(
+                            cx.listener(|this, _, window, cx| this.show_new_session(window, cx)),
+                        )
+                    }),
             )
             .child(
                 self.icon_button("search-rail", "Search sessions", IconName::Search, true)
@@ -557,7 +554,7 @@ impl Workspace {
                     .child(div().flex_1())
                     .child(div().flex().items_center().gap_2().flex_shrink_0().occlude()
                     .child(
-                        self.icon_button("new-session", "New session", IconName::Plus, !self.demo)
+                        self.icon_button("new-session", "New agent", IconName::Plus, !self.demo)
                             .debug_selector(|| "new-session-button".into())
                             .when(!self.demo, |d| {
                                 d.on_click(cx.listener(|this, _, window, cx| {
@@ -634,7 +631,8 @@ impl Workspace {
                     .pb_2()
                     .flex()
                     .justify_between()
-                    .text_size(px(10.))
+                    .text_size(px(chrome::scale::OVERLINE))
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(p.muted))
                     .child("SESSIONS")
                     .child(if filtered {
@@ -701,7 +699,7 @@ impl Workspace {
                             } else if filtered {
                                 "Try another search or clear the filters."
                             } else {
-                                "Start a new session to begin."
+                                "Start a new agent to begin."
                             },
                         ))
                         .when(filtered, |d| {

@@ -198,49 +198,36 @@ impl Workspace {
                 .flex_col()
                 .gap_3()
         };
-        let header = div()
-            .flex()
-            .items_start()
-            .justify_between()
-            .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(overline(
-                        if resume {
-                            "CONTINUE A CONVERSATION"
-                        } else {
-                            "NEW AGENT"
-                        },
-                        p,
-                    ))
-                    .child(
-                        div()
-                            .debug_selector(|| "launch-title".into())
-                            .text_size(px(if short { 17. } else { 22. }))
-                            .font_weight(FontWeight::BOLD)
-                            .child(if resume {
-                                "Pick up where you left off"
-                            } else {
-                                "Start an agent"
-                            }),
-                    ),
+        let close = self
+            .icon_button(
+                "cancel-create",
+                "Back to conversation",
+                IconName::Close,
+                !busy,
             )
-            .child(
-                self.icon_button(
-                    "cancel-create",
-                    "Back to conversation",
-                    IconName::Close,
-                    !busy,
-                )
-                .when(!busy, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| {
-                        this.show_screen(Screen::Conversation, window, cx)
-                    }))
+            .when(!busy, |d| {
+                d.on_click(cx.listener(|this, _, window, cx| {
+                    this.show_screen(Screen::Conversation, window, cx)
+                }))
+            });
+        let header = self
+            .page_header(
+                None,
+                Some(if resume {
+                    "CONTINUE A CONVERSATION"
+                } else {
+                    "NEW AGENT"
                 }),
-            );
+                if resume {
+                    "Pick up where you left off"
+                } else {
+                    "Start an agent"
+                },
+                None,
+                Some(close.into_any_element()),
+                short,
+            )
+            .debug_selector(|| "launch-title".into());
         let agent = card()
             .child(projects::section_label("Agent", p))
             .child(self.render_provider_choice(busy, cx))
@@ -315,6 +302,7 @@ impl Workspace {
             });
         div()
             .id("new-session-form")
+            .relative()
             .flex_1()
             .min_w_0()
             .h_full()
@@ -327,6 +315,9 @@ impl Workspace {
                     .min_h_0()
                     .overflow_y_scroll()
                     .p(px(if short { 12. } else { 20. }))
+                    .when(chrome::custom_caption(), |d| {
+                        d.pt(px(chrome::PAGE_CAPTION_INSET))
+                    })
                     .child(content),
             )
             .child(
@@ -343,17 +334,18 @@ impl Workspace {
                     .justify_center()
                     .child(self.render_launch_footer(busy, can_create, wide, short, cx)),
             )
+            .children(chrome::page_drag_strip())
     }
 
     fn render_provider_choice(&self, busy: bool, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         div().flex().gap_2().children(
             [
-                ("claude", "Claude", "Claude Code", IconName::Bot),
-                ("codex", "Codex", "OpenAI Codex", IconName::SquareTerminal),
+                ("claude", "Claude", "Claude Code"),
+                ("codex", "Codex", "OpenAI Codex"),
             ]
             .into_iter()
-            .map(|(provider, name, subtitle, icon)| {
+            .map(|(provider, name, subtitle)| {
                 let selected = self.provider == provider;
                 chrome::interactive_control(div().id(provider), p, !busy)
                     .debug_selector(move || format!("launch-provider-{provider}"))
@@ -376,12 +368,7 @@ impl Workspace {
                             },
                         ))
                     })
-                    .child(
-                        Icon::new(icon)
-                            .size(px(18.))
-                            .flex_shrink_0()
-                            .text_color(rgb(if selected { p.accent } else { p.muted })),
-                    )
+                    .child(chrome::provider_mark(provider, 28., p))
                     .child(
                         div()
                             .flex_1()
