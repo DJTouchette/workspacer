@@ -527,6 +527,16 @@ windows compact the header, approval details, and composer to preserve transcrip
 space. Without a selected session, the welcome state takes the full content area.
 New-session fields and long approval details remain scrollable.
 
+Every non-chat screen (Settings, Projects, New Agent, Changes, Session details,
+Agent setup, Change model, Session history) is built from the same pieces in
+`src/ui/chrome.rs`: `page_view` (scrolling body, caption-safe top inset and a
+window drag strip where the app draws its own caption), `page_header` (back
+action, overline, title and description, trailing actions on the title row),
+`card`, `notice_line` with a `Tone` (loading, success, warning, error and info
+each have their own color and icon), `danger_button` for actions that stop or
+remove something, `provider_mark` brand tiles, and the `scale` type sizes. Use
+them for new screens rather than restyling locally.
+
 Current fixture captures (Linux/X11, software Vulkan; synthetic sessions):
 
 ![Dark conversation](docs/ui-dark.png)

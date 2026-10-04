@@ -697,6 +697,77 @@ keeping the last reading on failure; `usage::accounts` twins desktop
 - Native serialized suite **200 passed**; strict Clippy and rustfmt passed.
 
 
+## UI and UX refresh (2026-10-03)
+
+Baseline `bbe68428`; code at `5302cfc1` (later commits are docs only).
+Audited the whole native app against its own design system first. Settings
+and New Agent were already polished, and the other screens had drifted from
+them.
+
+Findings and what changed:
+
+- **Secondary screens were unfinished.** Changes, Session details, Agent setup,
+  Change model and Session history used five different title sizes, a plain
+  "Back to chat" text button floating top-right, stacked ghost buttons with no
+  primary action, and loading text shown in the warning color. They now share
+  `page_view` / `page_header` / `card` / `notice_line` with Settings and
+  Projects. Primary actions are filled, End session and Forget are
+  error-toned, and Changes is a file list with status chips and a diff panel
+  (deletions use `error`, not `warning`).
+- **Windows caption collisions.** The app-drawn caption (priority 1) covered
+  New Agent's ✕, page actions and the docked file viewer's Copy/Close (the
+  known "right preview header clipping"). The modal sheet covered the caption
+  buttons. Pages and the docked viewer now start below the caption and have a
+  drag strip, and the sheet's backdrop leaves the caption free. Tests:
+  `secondary_pages_keep_actions_clear_of_the_caption_and_drag_from_the_top`,
+  `file_viewer_controls_stay_clear_of_the_caption` (fails without the fix:
+  close at y=27 under a 32px caption).
+- **Nord dividers were invisible.** `border` equalled `surface`. Now nord2,
+  and `card_dividers_show_on_every_surface` pins it for all themes.
+- **Tables.** Inline-code pills in right/center-aligned cells were painted at
+  left-aligned positions (GPUI `position_for_index` ignores alignment), and
+  narrow chats split short headers mid-word ("Statu/s"). Both are fixed in the
+  vendored text code (see `WORKSPACER-PATCHES.md`).
+- **Brand consistency.** New Agent and Agent setup used generic Bot/terminal
+  icons where the rest of the app shows the Claude/OpenAI marks. Create
+  actions now say "agent" (New agent, Start an agent) and lists keep
+  "sessions".
+- **Responsive.** The Settings category rail shrinks to icons with tooltips
+  beside a wide sidebar, and the title stacks above search. At 480px tall,
+  Projects drops its explanations so the list keeps its height. History rows
+  wrap their actions instead of truncating titles. The New Agent
+  missing-folder warning wraps instead of clipping its recovery step.
+- **Feedback and keys.** Enter saves the session name. Settings errors show at
+  the top instead of below the fold. A shared notice tone keeps "Name saved"
+  from reading as a warning. The approval details panel no longer blends into
+  its card (`code_block` on `surface`).
+- **Launch recency across windows (P3).** A window whose launch failed kept its
+  folder, and another window's successful receipt then recorded that folder
+  as recently used. Only the launching window records recency now (extended
+  `new_session_click_leaves_a_pinned_view_and_creates_the_selected_session`).
+- **Parallel UI-test flake: root cause found.** The test zoom (`ZOOM_BITS`)
+  and caption preview (`FORCE_CAPTION`) were process-wide, so concurrent GPUI
+  tests laid out at another zoom or with caption chrome. Both are per-thread
+  in UI-test builds. Parallel `--bin wks-native` went from 4/4 failing runs to
+  4/4 passing.
+
+Checks at `5302cfc1` in a scrubbed environment (`env -i`, no `WKS_*` or
+provider binaries on `PATH`): `cargo fmt --check`; `cargo clippy --locked
+--all-targets --features ui-tests -- -D warnings`; serialized
+`cargo test --locked --features ui-tests -- --test-threads=1` (132 + 108 UI
+(1 ignored) + 3 + 1 + 37 + 3 pass); 4 parallel UI runs pass;
+`cargo build --locked --release --bins`; witness-selected hub-rs
+`--test models` passes. Visual: before (debug `bbe68428`) and after (release
+`5302cfc1`) captures with private Xvfb, Openbox and lavapipe, using
+`native-harness serve --sessions 6 --rich-transcript` and a throwaway
+HOME/XDG. Dark, Light and Nord at 1400×900 and 720×480, plus the Windows
+caption preview (`WKS_NATIVE_CAPTION=1`). No model or provider ran.
+
+Not done or still open: italics remain upright, because no Inter Italic face is
+bundled and the desktop has no source asset (adding one is an asset decision).
+"Tooltips above preview" and focus after closing the docked viewer were not
+reproduced. No Windows/macOS GPU, real-caption or screen-reader checks.
+
 ## Windows caption dragging repair (2026-10-02)
 
 Source and harness evidence establish a cancellation path in the original
