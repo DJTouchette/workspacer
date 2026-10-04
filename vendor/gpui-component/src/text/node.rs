@@ -301,6 +301,16 @@ impl Paragraph {
             .sum::<usize>()
     }
 
+    /// Characters in the longest whitespace-separated word.
+    pub(crate) fn longest_word(&self) -> usize {
+        self.children
+            .iter()
+            .flat_map(|node| node.text.split_whitespace())
+            .map(|word| word.chars().count())
+            .max()
+            .unwrap_or(0)
+    }
+
     pub(crate) fn merge(&mut self, other: Self) {
         self.children.extend(other.children);
     }
@@ -1263,6 +1273,21 @@ impl Node {
         let cols = col_lens.len().max(1);
         let len = |ix: usize| col_lens.get(ix).copied().unwrap_or(1).clamp(3, MAX_LENGTH);
         let total: usize = (0..cols).map(len).sum();
+        // A column never narrows below its longest word (capped, so a long
+        // token still wraps or clips): flex shrinks wider columns instead of
+        // breaking a short header like "Status" mid-word.
+        let min_word: Vec<usize> = (0..cols)
+            .map(|ix| {
+                table
+                    .children
+                    .iter()
+                    .filter_map(|row| row.children.get(ix))
+                    .map(|cell| cell.children.longest_word())
+                    .max()
+                    .unwrap_or(0)
+                    .min(14)
+            })
+            .collect();
         let rows = table.children.iter().enumerate().map(|(row_ix, row)| {
             let header = row_ix == 0;
             let striped = !header && row_ix % 2 == 0;
@@ -1293,7 +1318,10 @@ impl Node {
                     div()
                         .id(("cell", ix))
                         .debug_selector(move || format!("prose-table-cell-{row_ix}-{ix}"))
-                        .min_w_0()
+                        // ~0.6em per character of the 0.875rem cell text,
+                        // plus the 10px side padding.
+                        .min_w(rems(min_word[ix] as f32 * 0.6 * 0.875 + 1.25))
+                        .flex_shrink()
                         .overflow_hidden()
                         .w(relative(len(ix) as f32 / total as f32))
                         .when(align == ColumnumnAlign::Center, |this| this.text_center())
