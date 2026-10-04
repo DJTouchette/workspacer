@@ -36,6 +36,9 @@ tables and code, and its asynchronous parse cache:
   per visual line instead of square text-run backgrounds, and the Markdown
   parser surrounds each code span with thin spaces (U+2009) for margin; those
   are stripped from copied selections (`format/markdown.rs`, `text_view.rs`).
+  GPUI's `TextLayout::position_for_index` ignores text alignment while line
+  painting applies it, so in right/center-aligned text (table cells) the
+  quads are shifted by the same per-line alignment offset.
 
 - `TextView::handle()` returns a `TextViewHandle` over the view's state:
   top-level heading text with block indices (`Node::heading` in `node.rs`),

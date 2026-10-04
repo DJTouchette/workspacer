@@ -89,6 +89,40 @@ impl Inline {
         };
         let line_height = layout.line_height();
         let (pad, inset) = (px(3.), line_height * 0.12);
+        // `position_for_index` ignores text alignment, while painting applies
+        // it per visual line; shift right/center-aligned lines (table cells)
+        // by the same amount so each quad sits under its code.
+        let align = window.text_style().text_align;
+        let line_ends: Vec<(Pixels, Pixels)> = if matches!(align, gpui::TextAlign::Left) {
+            Vec::new()
+        } else {
+            let mut ends: Vec<(Pixels, Pixels)> = Vec::new();
+            for ix in self
+                .text
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(self.text.len()))
+            {
+                if let Some(pos) = layout.position_for_index(ix) {
+                    match ends.iter_mut().find(|(y, _)| *y == pos.y) {
+                        Some((_, x)) => *x = (*x).max(pos.x),
+                        None => ends.push((pos.y, pos.x)),
+                    }
+                }
+            }
+            ends
+        };
+        let right_edge = layout.bounds().right();
+        let shift = |y: Pixels| -> Pixels {
+            let Some((_, end)) = line_ends.iter().find(|(line, _)| *line == y) else {
+                return px(0.);
+            };
+            match align {
+                gpui::TextAlign::Right => right_edge - *end,
+                gpui::TextAlign::Center => (right_edge - *end) / 2.,
+                gpui::TextAlign::Left => px(0.),
+            }
+        };
         for range in ranges {
             let Some(code) = self.text.get(range.clone()) else {
                 continue;
@@ -122,10 +156,11 @@ impl Inline {
                 segments.push((s, p.x));
             }
             for (s, right) in segments.into_iter().filter(|(s, r)| *r - s.x > px(1.)) {
+                let dx = shift(s.y);
                 window.paint_quad(quad(
                     Bounds::from_corners(
-                        point(s.x - pad, s.y + inset),
-                        point(right + pad, s.y + line_height - inset),
+                        point(s.x + dx - pad, s.y + inset),
+                        point(right + dx + pad, s.y + line_height - inset),
                     ),
                     px(4.),
                     color,
