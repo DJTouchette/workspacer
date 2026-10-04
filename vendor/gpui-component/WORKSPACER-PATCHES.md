@@ -28,10 +28,22 @@ tables and code, and its asynchronous parse cache:
   bordered panel with a language header. Tables render through
   `render_prose_table` (rounded frame, tinted bold header, hairline rules,
   zebra stripes, smaller cells sized by content share but never narrower than
-  their longest word (capped at 14 characters); cells are blocks with
-  text alignment and clipping, not flex rows, so text wraps inside its column) and blockquotes
-  get a slim marker-colored rail with muted italic text. `None` keeps upstream
-  rendering.
+  their longest word, shaped in the cell's font (bold header, mono code) and
+  capped near 14 average characters so URLs/paths still wrap; cells are blocks
+  with text alignment and clipping, not flex rows, so text wraps inside its
+  column) and blockquotes get a slim marker-colored rail with muted italic
+  text. `None` keeps upstream rendering.
+
+  A table whose word minimums fit fills the width with no scroll affordance.
+  When they cannot fit (many columns, a narrow chat or preview, a large
+  interface size) `ProseTableFrame` keeps them and scrolls the rows sideways
+  inside the fixed frame (desktop parity: `overflow-x: auto`): trackpad or
+  Shift+wheel, an always-visible draggable scrollbar strip under the rows,
+  and Left/Right once the frame is focused (click or Tab; it is a tab stop
+  only while it scrolls). A plain vertical wheel keeps scrolling the page
+  (`restrict_scroll_to_axis`). Each table keeps its scroll handle in keyed
+  element state (first cell's source offset). Whether it overflows comes from
+  the previous layout; a mismatch triggers one deferred redraw.
 
   In prose mode inline code is drawn by `Inline` as rounded (4px), padded quads
   per visual line instead of square text-run backgrounds, and the Markdown

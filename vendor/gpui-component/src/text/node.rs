@@ -6,9 +6,10 @@ use std::{
 
 use gpui::{
     AnyElement, App, DefiniteLength, Div, Element, ElementId, FontStyle, FontWeight, Half,
-    HighlightStyle, InteractiveElement as _, IntoElement, Length, ListState, ObjectFit,
-    ParentElement, SharedString, SharedUri, StatefulInteractiveElement, Styled, StyledImage as _,
-    Window, div, img, prelude::FluentBuilder as _, px, relative, rems,
+    HighlightStyle, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, Length, ListState,
+    ObjectFit, ParentElement, Pixels, RenderOnce, ScrollHandle, SharedString, SharedUri,
+    StatefulInteractiveElement, Styled, StyledImage as _, Window, canvas, div, img, point,
+    prelude::FluentBuilder as _, px, relative, rems,
 };
 use markdown::mdast;
 use ropey::Rope;
@@ -16,6 +17,7 @@ use ropey::Rope;
 use crate::{
     ActiveTheme as _, Icon, IconName, StyledExt, h_flex,
     highlighter::{HighlightTheme, SyntaxHighlighter},
+    scroll::{Scrollbar, ScrollbarShow},
     text::{
         CodeBlockActionsFn,
         inline::{Inline, InlineState},
@@ -301,14 +303,34 @@ impl Paragraph {
             .sum::<usize>()
     }
 
-    /// Characters in the longest whitespace-separated word.
-    pub(crate) fn longest_word(&self) -> usize {
-        self.children
+    /// Up to `count` of the longest whitespace-separated words, with the
+    /// marks that set their font (for table column minimums).
+    pub(crate) fn long_words(&self, header: bool, count: usize) -> Vec<StyledWord> {
+        let mut words: Vec<StyledWord> = self
+            .children
             .iter()
-            .flat_map(|node| node.text.split_whitespace())
-            .map(|word| word.chars().count())
-            .max()
-            .unwrap_or(0)
+            .flat_map(|node| {
+                let text = node.text.as_ref();
+                text.split_whitespace().map(move |word| {
+                    let start = word.as_ptr() as usize - text.as_ptr() as usize;
+                    let mark = |f: fn(&TextMark) -> bool| {
+                        node.marks
+                            .iter()
+                            .any(|(range, mark)| range.contains(&start) && f(mark))
+                    };
+                    StyledWord {
+                        text: word.to_owned(),
+                        header,
+                        bold: mark(|m| m.bold),
+                        italic: mark(|m| m.italic),
+                        code: mark(|m| m.code),
+                    }
+                })
+            })
+            .collect();
+        words.sort_by_key(|word| std::cmp::Reverse(word.text.chars().count()));
+        words.truncate(count);
+        words
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
@@ -1273,21 +1295,64 @@ impl Node {
         let cols = col_lens.len().max(1);
         let len = |ix: usize| col_lens.get(ix).copied().unwrap_or(1).clamp(3, MAX_LENGTH);
         let total: usize = (0..cols).map(len).sum();
-        // A column never narrows below its longest word (capped, so a long
-        // token still wraps or clips): flex shrinks wider columns instead of
-        // breaking a short header like "Status" mid-word.
-        let min_word: Vec<usize> = (0..cols)
+        // A column never narrows below its longest word, measured in the
+        // cell's own font (bold header, monospace code) and capped so a long
+        // token such as a URL or path still wraps inside its column: flex
+        // shrinks wider columns instead of breaking a short header like
+        // "Status" mid-word. When the minimums together exceed the width,
+        // the table scrolls sideways (`ProseTableFrame`) rather than
+        // clipping its right-hand columns or breaking words.
+        let font_size = rems(0.875).to_pixels(window.rem_size());
+        let mono = cx.theme().mono_font_family.clone();
+        let base = window.text_style().font();
+        let min_widths: Vec<Pixels> = (0..cols)
             .map(|ix| {
-                table
+                let longest = table
                     .children
                     .iter()
-                    .filter_map(|row| row.children.get(ix))
-                    .map(|cell| cell.children.longest_word())
-                    .max()
-                    .unwrap_or(0)
-                    .min(14)
+                    .enumerate()
+                    .filter_map(|(row_ix, row)| Some((row_ix == 0, row.children.get(ix)?)))
+                    .flat_map(|(header, cell)| cell.children.long_words(header, 3))
+                    .map(|word| {
+                        let mut font = base.clone();
+                        if word.code {
+                            font.family = mono.clone();
+                        }
+                        if word.bold {
+                            font.weight = FontWeight::BOLD;
+                        } else if word.header {
+                            font.weight = FontWeight::SEMIBOLD;
+                        }
+                        if word.italic {
+                            font.style = FontStyle::Italic;
+                        }
+                        let run = gpui::TextRun {
+                            len: word.text.len(),
+                            font,
+                            color: Hsla::default(),
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        };
+                        window
+                            .text_system()
+                            .shape_line(word.text.into(), font_size, &[run], None)
+                            .width
+                    })
+                    .fold(px(0.), Pixels::max);
+                // The cap (about fourteen average characters) and the 10px
+                // side padding, plus a pixel against rounding.
+                longest.min(font_size * 9.) + px(21.)
             })
             .collect();
+        // Stable while a message streams in: the source offset of the first
+        // cell's text, so each table keeps its own scroll position.
+        let key = table
+            .children
+            .iter()
+            .flat_map(|row| row.children.iter())
+            .find_map(|cell| cell.children.span)
+            .map_or(0, |span| span.start);
         let rows = table.children.iter().enumerate().map(|(row_ix, row)| {
             let header = row_ix == 0;
             let striped = !header && row_ix % 2 == 0;
@@ -1318,9 +1383,7 @@ impl Node {
                     div()
                         .id(("cell", ix))
                         .debug_selector(move || format!("prose-table-cell-{row_ix}-{ix}"))
-                        // ~0.6em per character of the 0.875rem cell text,
-                        // plus the 10px side padding.
-                        .min_w(rems(min_word[ix] as f32 * 0.6 * 0.875 + 1.25))
+                        .min_w(min_widths[ix])
                         .flex_shrink()
                         .overflow_hidden()
                         .w(relative(len(ix) as f32 / total as f32))
@@ -1336,18 +1399,17 @@ impl Node {
                         )
                 }))
         });
-        div().pb(mb).w_full().child(
-            div()
-                .id("table")
-                .w_full()
-                .text_size(rems(0.875))
-                .line_height(relative(1.5))
-                .border_1()
-                .border_color(prose.border)
-                .rounded(px(8.))
-                .overflow_hidden()
-                .children(rows),
-        )
+        div()
+            .debug_selector(|| "prose-table".into())
+            .pb(mb)
+            .w_full()
+            .child(ProseTableFrame {
+                key,
+                min_width: min_widths.iter().copied().fold(px(0.), |a, b| a + b),
+                border: prose.border,
+                focus_border: prose.marker,
+                rows: rows.map(IntoElement::into_any_element).collect(),
+            })
     }
 
     /// A short name for a block's kind; task lists are `task-list` and
@@ -1584,4 +1646,147 @@ impl Node {
             }
         }
     }
+}
+
+/// A word of a table cell and the marks that choose its font.
+pub(crate) struct StyledWord {
+    text: String,
+    header: bool,
+    bold: bool,
+    italic: bool,
+    code: bool,
+}
+
+/// The rounded frame of a prose table and its sideways scrolling
+/// (workspacer patch). A table whose whole-word column minimums fit fills
+/// the width with no scroll affordance. One that cannot fit keeps those
+/// minimums and scrolls horizontally: trackpad or Shift+wheel over it, a
+/// draggable scrollbar strip under its rows, and Left/Right once focused
+/// (click it, or Tab to it). A plain vertical wheel still scrolls the page.
+#[derive(IntoElement)]
+struct ProseTableFrame {
+    key: usize,
+    min_width: Pixels,
+    border: Hsla,
+    focus_border: Hsla,
+    rows: Vec<AnyElement>,
+}
+
+impl RenderOnce for ProseTableFrame {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let key = self.key;
+        let handle = window
+            .use_keyed_state(("prose-table-scroll", key), cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        // From the last layout; a mismatch with this frame's layout is
+        // corrected below by an immediate second draw.
+        let overflowing = handle.max_offset().width > px(0.5);
+        let view = window.current_view();
+        let mut scroll = div()
+            .id("table-scroll")
+            .w_full()
+            .overflow_x_scroll()
+            .track_scroll(&handle)
+            .child(
+                div()
+                    .id("table")
+                    .debug_selector(move || format!("prose-table-content-{key}"))
+                    .w_full()
+                    .min_w(self.min_width)
+                    .children(self.rows),
+            );
+        // A vertical wheel over a wide table scrolls the page, not the table.
+        scroll.style().restrict_scroll_to_axis = Some(true);
+        div()
+            .id(("prose-table", key))
+            .debug_selector(move || format!("prose-table-frame-{key}"))
+            .w_full()
+            .text_size(rems(0.875))
+            .line_height(relative(1.5))
+            .border_1()
+            .border_color(self.border)
+            .rounded(px(8.))
+            .overflow_hidden()
+            .when(overflowing, |this| {
+                this.focusable()
+                    .tab_stop(true)
+                    .focus(move |s| s.border_color(self.focus_border))
+            })
+            .on_key_down({
+                let handle = handle.clone();
+                move |event: &KeyDownEvent, window, cx| {
+                    let m = &event.keystroke.modifiers;
+                    if m.control || m.alt || m.platform || m.function || m.shift {
+                        return;
+                    }
+                    // Keys pass through a table that (no longer) scrolls.
+                    if handle.max_offset().width <= px(0.5) {
+                        return;
+                    }
+                    let step = (handle.bounds().size.width * 0.25).max(window.rem_size() * 2.5);
+                    let delta = match event.keystroke.key.as_str() {
+                        "left" => -step,
+                        "right" => step,
+                        _ => return,
+                    };
+                    if scroll_table_by(&handle, delta) {
+                        cx.notify(view);
+                    }
+                    cx.stop_propagation();
+                }
+            })
+            .child(scroll)
+            .when(overflowing, |this| {
+                this.child(
+                    div()
+                        .debug_selector(|| "prose-table-scrollbar".into())
+                        .relative()
+                        .w_full()
+                        .h(px(14.))
+                        .border_t_1()
+                        .border_color(self.border.opacity(0.6))
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .child(
+                                    Scrollbar::horizontal(&handle)
+                                        .id("prose-table-scrollbar")
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                        ),
+                )
+            })
+            .child(
+                canvas(
+                    move |_, _, cx| {
+                        // This layout disagrees with the one the scrollbar and
+                        // focusability were chosen from: redraw once it ends.
+                        if (handle.max_offset().width > px(0.5)) != overflowing {
+                            cx.defer(move |cx| cx.notify(view));
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_0(),
+            )
+    }
+}
+
+/// Scroll a prose table sideways by `delta`, within its content; whether
+/// the offset changed.
+fn scroll_table_by(handle: &ScrollHandle, delta: Pixels) -> bool {
+    let max = handle.max_offset().width;
+    let offset = handle.offset();
+    let x = (-offset.x + delta).clamp(px(0.), max);
+    if x == -offset.x {
+        return false;
+    }
+    handle.set_offset(point(-x, offset.y));
+    true
 }

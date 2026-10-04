@@ -886,8 +886,13 @@ messages.
 
 Markdown tables follow the desktop chat: a rounded frame, a bright bold header
 on the code-header tint, hairline row rules, faint zebra stripes, smaller text
-and wrapping (never truncated) cells. Blockquotes get a slim accent rail and
-muted italic copy.
+and wrapping (never truncated) cells. Columns never break a word that fits
+(long URLs and paths still wrap). A table that fits fills the width; one whose
+words cannot fit (many columns, a narrow chat or file preview, a large
+interface size) scrolls sideways inside its frame, in chat and the Markdown
+preview alike: trackpad or Shift+wheel, the scrollbar under its rows, or click
+or Tab to it and use Left/Right. Blockquotes get a slim accent rail and muted
+italic copy.
 
 Messages and work cards show quiet, right-aligned server timestamps below their content in local time
 (with the date for older days). Live tool activity groups share one timestamp
