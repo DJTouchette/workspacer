@@ -800,6 +800,32 @@ impl Workspace {
         self.permission = Permission::Ask;
         self.load_models(true, cx);
     }
+    /// Save the Session details name for this device; empty restores the
+    /// agent's own title.
+    pub(super) fn save_session_name(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.view.selected.clone() else {
+            return;
+        };
+        let name = self.extras.name.read(cx).value().trim().to_owned();
+        if name.chars().count() > 200 {
+            self.extras.notice = "Use a name of at most 200 characters.".into();
+        } else {
+            let names = self
+                .settings
+                .names
+                .entry(self.project_scope.clone())
+                .or_default();
+            if name.is_empty() {
+                names.remove(&id);
+            } else {
+                names.insert(id, name);
+            }
+            self.save_settings(cx);
+            self.extras.notice = "Name saved".into();
+        }
+        cx.notify();
+    }
+
     fn render_session(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         let Some(s) = self.selected_session() else {
@@ -850,22 +876,7 @@ impl Workspace {
                     .child(
                         self.primary_button("save-session-name", "Save name", true)
                             .flex_shrink_0()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let name = this.extras.name.read(cx).value().trim().to_owned();
-                                if name.len() > 200 {
-                                    this.extras.notice = "Use a name of at most 200 characters.".into();
-                                } else {
-                                    let names = this.settings.names.entry(this.project_scope.clone()).or_default();
-                                    if name.is_empty() {
-                                        names.remove(&id);
-                                    } else {
-                                        names.insert(id.clone(), name);
-                                    }
-                                    this.save_settings(cx);
-                                    this.extras.notice = "Name saved".into();
-                                }
-                                cx.notify();
-                            })),
+                            .on_click(cx.listener(|this, _, _, cx| this.save_session_name(cx))),
                     ),
             );
         let (status, status_color) = if self.view.connected {

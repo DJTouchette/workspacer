@@ -586,6 +586,21 @@ impl Workspace {
                 _ => {}
             },
         ));
+        let extras = features::Extras::new(window, cx);
+        // Enter in Session details' name field saves, like its button.
+        focus_watch.push(cx.subscribe_in(
+            &extras.name,
+            window,
+            |this, _, event: &gpui_component::input::InputEvent, _, cx| {
+                if matches!(
+                    event,
+                    gpui_component::input::InputEvent::PressEnter { secondary: false }
+                ) && this.screen == Screen::Session
+                {
+                    this.save_session_name(cx);
+                }
+            },
+        ));
         let mut incoming = controller.views.clone();
         let updates = cx.spawn_in(window, async move |this, cx| {
             while incoming.changed().await.is_ok() {
@@ -632,7 +647,7 @@ impl Workspace {
         }));
         window.focus(&focus);
         Self {
-            extras: features::Extras::new(window, cx),
+            extras,
             remote: Default::default(),
             chat: transcript::ChatUi::default(),
             child_ui: children::ChildUi::default(),
@@ -5071,6 +5086,43 @@ mod tests {
             px(200.),
             "labelled rail when there is room"
         );
+    }
+
+    #[gpui::test]
+    fn enter_saves_the_session_name_on_this_device(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.open_feature(Screen::Session, window, cx);
+            })
+        });
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.extras
+                    .name
+                    .update(cx, |input, cx| input.set_value("", window, cx))
+            })
+        });
+        visual.run_until_parked();
+        visual.simulate_input("Release prep");
+        visual.run_until_parked();
+        // A single-line Input propagates Enter after emitting PressEnter; the
+        // test platform then types the unhandled key as "\n", which a real
+        // platform does not. Dispatch the Input's own Enter action instead.
+        visual.dispatch_action(gpui_component::input::Enter { secondary: false });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            let saved = this
+                .settings
+                .names
+                .get(&this.project_scope)
+                .and_then(|names| names.get("a"));
+            assert_eq!(saved.map(String::as_str), Some("Release prep"));
+            assert_eq!(this.extras.notice, "Name saved");
+            assert_eq!(this.screen, Screen::Session, "saving keeps the page open");
+        });
     }
 
     #[gpui::test]
