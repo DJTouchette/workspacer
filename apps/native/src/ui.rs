@@ -34,9 +34,21 @@ use gpui::{
 /// already applies): 1.0 = 100%. Every literal size in the UI goes through
 /// [`px`], and gpui-component's rem-based widgets follow the theme font size,
 /// which is set through `px` too, so one factor zooms the whole app.
+#[cfg_attr(all(test, feature = "ui-tests"), allow(dead_code))]
 static ZOOM_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
 
+// GPUI tests run concurrently, one per thread. A process-wide zoom set by
+// one test would resize every other test's layout mid-assertion, so UI-test
+// builds keep it per thread (each test's whole GPUI app lives on one).
+#[cfg(all(test, feature = "ui-tests"))]
+thread_local! {
+    static TEST_ZOOM: std::cell::Cell<f32> = const { std::cell::Cell::new(1.) };
+}
+
 pub(crate) fn zoom() -> f32 {
+    #[cfg(all(test, feature = "ui-tests"))]
+    return TEST_ZOOM.get();
+    #[cfg(not(all(test, feature = "ui-tests")))]
     f32::from_bits(ZOOM_BITS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
@@ -46,6 +58,9 @@ pub(crate) fn set_zoom(zoom: f32) {
     } else {
         1.
     };
+    #[cfg(all(test, feature = "ui-tests"))]
+    TEST_ZOOM.set(zoom);
+    #[cfg(not(all(test, feature = "ui-tests")))]
     ZOOM_BITS.store(zoom.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -4767,14 +4782,14 @@ mod tests {
 
     impl CaptionPreview {
         fn new() -> Self {
-            chrome::FORCE_CAPTION.store(true, std::sync::atomic::Ordering::Relaxed);
+            chrome::FORCE_CAPTION.set(true);
             Self
         }
     }
 
     impl Drop for CaptionPreview {
         fn drop(&mut self) {
-            chrome::FORCE_CAPTION.store(false, std::sync::atomic::Ordering::Relaxed);
+            chrome::FORCE_CAPTION.set(false);
         }
     }
 

@@ -758,15 +758,18 @@ pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Di
 /// drag regions. `WKS_NATIVE_CAPTION=1` previews the same chrome elsewhere.
 pub(crate) fn custom_caption() -> bool {
     #[cfg(feature = "ui-tests")]
-    if FORCE_CAPTION.load(std::sync::atomic::Ordering::Relaxed) {
+    if FORCE_CAPTION.get() {
         return true;
     }
     cfg!(target_os = "windows") || std::env::var_os("WKS_NATIVE_CAPTION").is_some()
 }
 
+// Per thread, like the test zoom: concurrent GPUI tests must not see another
+// test's caption preview.
 #[cfg(feature = "ui-tests")]
-pub(super) static FORCE_CAPTION: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    pub(super) static FORCE_CAPTION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 /// Width reserved at the top-right for the caption buttons.
 pub(super) const CAPTION_WIDTH: f32 = 46. * 3.;
