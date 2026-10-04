@@ -918,7 +918,7 @@ impl Workspace {
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&archive, cx))))
                     .when(s.stopped() && self.supported_session(), |d| d.child(self.button("resume-session", "Resume session…", !busy)
                         .when(!busy, |d| d.on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx))))))
-                    .when(!s.stopped() && !confirming, |d| d.child(self.danger_button("end-session", "End session…", !busy)
+                    .when(!s.stopped() && !confirming, |d| d.child(self.danger_button("end-session", "End session…", !busy).debug_selector(|| "end-session".into())
                         .when(!busy, |d| d.on_click(cx.listener(move |this, _, _, cx| { this.extras.confirm_end = Some(end.clone()); cx.notify(); }))))),
             )
             .when(confirming, |d| d.child(
@@ -934,8 +934,8 @@ impl Workspace {
                     .gap_3()
                     .child(chrome::notice_line("End this agent? Its current work stops. You can resume its conversation later.", chrome::Tone::Warning, p, "confirm-end-copy"))
                     .child(div().flex().gap_2()
-                        .child(self.button("cancel-end", "Keep running", true).on_click(cx.listener(|this, _, _, cx| { this.extras.confirm_end = None; cx.notify(); })))
-                        .child(self.danger_button("confirm-end", "End session", !busy).when(!busy, |d| d.on_click(cx.listener(|this, _, _, cx| { this.act(Action::Terminate, cx); this.extras.confirm_end = None; }))))),
+                        .child(self.button("cancel-end", "Keep running", true).debug_selector(|| "cancel-end".into()).on_click(cx.listener(|this, _, _, cx| { this.extras.confirm_end = None; cx.notify(); })))
+                        .child(self.danger_button("confirm-end", "End session", !busy).debug_selector(|| "confirm-end".into()).when(!busy, |d| d.on_click(cx.listener(|this, _, _, cx| { this.act(Action::Terminate, cx); this.extras.confirm_end = None; }))))),
             ))
             .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(
                 "Archiving hides the session on this device and keeps it running. Ending stops the agent.",

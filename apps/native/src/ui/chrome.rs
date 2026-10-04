@@ -884,3 +884,30 @@ pub(super) fn drag_region<E: InteractiveElement>(element: E) -> E {
 thread_local! {
     pub(super) static DRAG_HIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Tone, notice_tone};
+
+    #[test]
+    fn notices_read_by_what_they_say() {
+        assert_eq!(notice_tone("Name saved"), Tone::Success);
+        assert_eq!(notice_tone("Pinned /work/api"), Tone::Success);
+        assert_eq!(notice_tone("Saving project…"), Tone::Loading);
+        assert_eq!(notice_tone("Attachment failed: too large"), Tone::Error);
+        assert_eq!(
+            notice_tone("Could not open the attachment picker."),
+            Tone::Error
+        );
+        assert_eq!(
+            notice_tone("This provider cannot be resumed by the native client yet."),
+            Tone::Error
+        );
+        assert_eq!(
+            notice_tone("Use a name of at most 200 characters."),
+            Tone::Warning
+        );
+        // Failure wins over a trailing ellipsis.
+        assert_eq!(notice_tone("Could not reconnect…"), Tone::Error);
+    }
+}

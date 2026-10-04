@@ -4941,6 +4941,182 @@ mod tests {
     }
 
     #[gpui::test]
+    fn secondary_pages_keep_actions_clear_of_the_caption_and_drag_from_the_top(
+        cx: &mut TestAppContext,
+    ) {
+        let _caption = CaptionPreview::new();
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+            })
+        });
+        for width in [720., 1200.] {
+            visual.simulate_resize(size(px(width), px(700.)));
+            for (screen, new_session) in [
+                (Screen::Projects, false),
+                (Screen::Settings, false),
+                (Screen::Recent, false),
+                (Screen::Changes, false),
+                (Screen::History, false),
+                (Screen::Session, false),
+                (Screen::Setup, false),
+                (Screen::Model, false),
+                (Screen::Conversation, true),
+            ] {
+                visual.update(|_, cx| {
+                    workspace.update(cx, |this, cx| {
+                        this.screen = screen;
+                        this.new_session = new_session;
+                        cx.notify();
+                    })
+                });
+                visual.run_until_parked();
+                let caption = visual.debug_bounds("window-caption").unwrap();
+                let title = visual.debug_bounds("page-title").unwrap();
+                assert!(
+                    title.top() >= caption.bottom(),
+                    "{screen:?} title starts below the caption strip at {width}"
+                );
+                for selector in ["page-actions", "feature-back"] {
+                    if let Some(control) = visual.debug_bounds(selector) {
+                        assert!(
+                            !control.intersects(&caption),
+                            "{selector} on {screen:?} sits under the caption at {width}"
+                        );
+                    }
+                }
+                let strip = visual.debug_bounds("page-drag-region").unwrap();
+                assert!(
+                    strip.right() <= caption.left(),
+                    "strip stops at the caption"
+                );
+                let (hit, prevented) = caption_mouse_down(
+                    &mut visual,
+                    gpui::point(strip.center().x, strip.top() + px(8.)),
+                );
+                assert!(hit && !prevented, "{screen:?} top strip drags the window");
+                assert!(
+                    !caption_mouse_down(&mut visual, title.center()).0,
+                    "page content below the strip never drags"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn file_viewer_controls_stay_clear_of_the_caption(cx: &mut TestAppContext) {
+        let _caption = CaptionPreview::new();
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        // Docked beside the chat, then the modal sheet of a narrow window.
+        for (width, number) in [(1400., 1), (720., 2)] {
+            visual.simulate_resize(size(px(width), px(800.)));
+            preview_state(
+                &workspace,
+                &mut visual,
+                "a",
+                file_target("/repo/docs/guide.md"),
+                number,
+                false,
+                None,
+                serde_json::json!({"contents": GUIDE, "size": GUIDE.len()}),
+            );
+            settle(&mut visual);
+            let caption = visual.debug_bounds("window-caption").unwrap();
+            let close = visual.debug_bounds("file-viewer-close").unwrap();
+            assert!(
+                close.top() >= caption.bottom(),
+                "viewer close {close:?} under the caption {caption:?} at {width}"
+            );
+            if width < 1000. {
+                let backdrop = visual.debug_bounds("file-viewer-backdrop").unwrap();
+                assert!(
+                    backdrop.top() >= caption.bottom(),
+                    "the sheet leaves the window buttons usable"
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn narrow_settings_rail_keeps_every_category_reachable(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.settings.sidebar_width = 304.;
+                this.show_screen(Screen::Settings, window, cx);
+            })
+        });
+        visual.simulate_resize(size(px(760.), px(600.)));
+        visual.run_until_parked();
+        let rail = visual.debug_bounds("settings-rail").unwrap();
+        assert_eq!(rail.size.width, px(40.), "icon rail beside a wide sidebar");
+        let keyboard = visual.debug_bounds("settings-nav-Keyboard").unwrap();
+        assert!(keyboard.size.width > px(0.) && rail.contains(&keyboard.center()));
+        visual.simulate_click(keyboard.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.settings_section, settings::SettingsSection::Keyboard)
+        });
+        visual.simulate_resize(size(px(1400.), px(800.)));
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("settings-rail").unwrap().size.width,
+            px(200.),
+            "labelled rail when there is room"
+        );
+    }
+
+    #[gpui::test]
+    fn ending_a_session_asks_first_and_cancel_sends_nothing(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.open_feature(Screen::Session, window, cx);
+            })
+        });
+        visual.run_until_parked();
+        while commands.try_recv().is_ok() {}
+        let click = |visual: &mut VisualTestContext, selector: &'static str| {
+            let bounds = visual
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} is rendered"));
+            visual.simulate_click(bounds.center(), gpui::Modifiers::default());
+            visual.run_until_parked();
+        };
+        let confirming = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.extras.confirm_end.clone())
+        };
+        assert_eq!(confirming(&mut visual), None);
+        click(&mut visual, "end-session");
+        assert_eq!(confirming(&mut visual).as_deref(), Some("a"));
+        assert!(visual.debug_bounds("confirm-end-panel").is_some());
+        click(&mut visual, "cancel-end");
+        assert_eq!(confirming(&mut visual), None);
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .all(|c| !matches!(c, Command::Act { .. })),
+            "cancelling never reaches the agent"
+        );
+        click(&mut visual, "end-session");
+        click(&mut visual, "confirm-end");
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|c| matches!(
+                c,
+                Command::Act { ref session, action: Action::Terminate } if session == "a"
+            )),
+            "confirming ends exactly the selected session"
+        );
+    }
+
+    #[gpui::test]
     fn original_non_occluding_drag_is_cancelled_by_shell_focus(cx: &mut TestAppContext) {
         // Reproduce cd7a5028's event path without requiring a Windows window.
         // Native WM_NCLBUTTONDOWN checks this exact DispatchEventResult before

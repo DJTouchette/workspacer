@@ -1326,6 +1326,11 @@ impl Workspace {
                         .w(width)
                         .py_2()
                         .pr_2()
+                        // Under an app-drawn caption the header starts below
+                        // the window buttons instead of under them.
+                        .when(chrome::custom_caption(), |d| {
+                            d.pt(px(chrome::CAPTION_HEIGHT + 4.))
+                        })
                         .child(pane),
                 )
                 .with_animation(
@@ -1362,6 +1367,11 @@ impl Workspace {
                     .debug_selector(|| "file-viewer-backdrop".into())
                     .absolute()
                     .inset_0()
+                    // The sheet paints above the caption; leave its strip
+                    // free so the window buttons stay visible and usable.
+                    .when(chrome::custom_caption(), |d| {
+                        d.top(px(chrome::CAPTION_HEIGHT))
+                    })
                     .occlude()
                     .bg(gpui::Hsla::from(rgb(p.shadow)).opacity(0.45))
                     .flex()
