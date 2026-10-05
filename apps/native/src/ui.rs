@@ -1409,7 +1409,7 @@ impl Render for Workspace {
         let dock_view = cx.entity().downgrade();
         // Draft attachments with their thumbnails (images only; PDFs keep
         // the file chip). Loading and failure fall back to the name.
-        let draft_files: Vec<(String, String, Option<Option<Arc<gpui::Image>>>)> = self
+        let draft_files: Vec<features::DraftFile> = self
             .view
             .selected
             .as_ref()
@@ -3985,9 +3985,9 @@ mod tests {
         };
         let with = |state: RequestState, extra: Option<(&'static str, RequestState)>| {
             let mut view = state_at("/work/app");
-            view.requests.insert("projects".into(), state);
+            view.requests.insert("projects", state);
             if let Some((key, extra)) = extra {
-                view.requests.insert(key.into(), extra);
+                view.requests.insert(key, extra);
             }
             Arc::new(view)
         };
@@ -4182,7 +4182,7 @@ mod tests {
         });
         let mut next = state("a");
         next.requests.insert(
-            "child-access".into(),
+            "child-access",
             RequestState {
                 number: 1,
                 request: Request::ChildAccess { set: None },
@@ -4214,7 +4214,7 @@ mod tests {
         // A refused save leaves the last confirmed value in place.
         let mut refused = state("a");
         refused.requests.insert(
-            "child-access".into(),
+            "child-access",
             RequestState {
                 number: 2,
                 request: Request::ChildAccess { set: Some(true) },
@@ -4962,7 +4962,7 @@ mod tests {
         let data = base64::engine::general_purpose::STANDARD.encode(png.into_inner());
         let mut next = state("a");
         next.requests.insert(
-            "previews".into(),
+            "previews",
             RequestState {
                 number: 1,
                 request: Request::Previews {

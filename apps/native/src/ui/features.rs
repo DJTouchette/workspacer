@@ -4,6 +4,10 @@ use gpui::AnyElement;
 use serde_json::Value;
 use wks_native::features::{AttachmentSource, Request, attention_transition};
 
+/// A draft attachment: name, hub path, and its thumbnail (`None` loading,
+/// `Some(None)` unavailable or not an image).
+pub(super) type DraftFile = (String, String, Option<Option<Arc<gpui::Image>>>);
+
 pub(super) struct Extras {
     pub name: Entity<InputState>,
     pub return_launch: bool,
@@ -506,7 +510,7 @@ impl Workspace {
     /// a thumbnail opens the image in the viewer.
     pub(super) fn render_draft_attachments(
         &self,
-        files: Vec<(String, String, Option<Option<Arc<gpui::Image>>>)>,
+        files: Vec<DraftFile>,
         cwd: &str,
         cx: &mut Context<Self>,
     ) -> Div {
