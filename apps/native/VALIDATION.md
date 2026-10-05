@@ -1192,3 +1192,74 @@ inspected. Limits: the long-error and busy states were checked only by GPUI
 geometry tests, not captured. The `Ctrl Enter` keycap uses `p.surface`, so on
 the panel it reads as plain mono text, as it already does in the chat composer.
 No Windows/macOS or hardware-GPU capture.
+
+## Windows update hand-off (#23, 2026-10-05)
+
+Reported: on Windows, **Install and restart** closed the app; no update and no
+relaunch followed. The cause was traced in source and official documentation, not
+reproduced on a Windows host. The old hand-off quit once `spawn()` returned.
+It never learned whether the helper ran:
+
+- The helper used `DETACHED_PROCESS | CREATE_NO_WINDOW`. Windows ignores
+  `CREATE_NO_WINDOW` alongside `DETACHED_PROCESS`, so PowerShell ran with no
+  console (Microsoft *Process Creation Flags*).
+- The helper inherited the app's job object. A kill-on-close job ends it with the app
+  (*Nested Jobs*: children join the parent's job chain unless they break away).
+- The script set `$ErrorActionPreference='SilentlyContinue'`. It ignored the
+  installer exit code and relaunched unconditionally. An error left no trace.
+- The failure notice went to `extras.notice`, which the About card never
+  renders. The quit also bypassed the unsaved-editor guard.
+
+The fix in `src/updates.rs`, `src/update_helper.ps1` and `src/ui/updater.rs`:
+
+- The script is constant text. A JSON plan supplies every value through
+  `WKS_UPDATE_PLAN`.
+- The helper starts with `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`, plus
+  `CREATE_BREAKAWAY_FROM_JOB`. It retries without breakaway when the job forbids
+  it and logs which way it ran.
+- It runs from the absolute System32 `powershell.exe`, not through `PATH`.
+- The app quits only after the helper records `waiting`. It quits through the
+  unsaved-editor guard. A helper that never becomes ready keeps the app open and
+  shows the reason.
+- The helper holds a process handle and waits for the app to exit. It refuses
+  to install while anything runs from the install folder.
+- It runs `/S /D=<install folder>`, requires exit code 0 and the expected
+  `build-stamp.json` version, and relaunches with the original arguments and
+  working directory. On failure, it relaunches the previous version.
+- `last-update.{json,log}` records every step. The next launch reports the result
+  on the About card.
+
+The NSIS source (`script.cpp`) defaults a silent file-write error to Ignore.
+`installer.nsi` turns the resulting error flag into exit code 1, but the
+installer may already have replaced earlier files. The busy-folder check
+therefore runs before the installer, and the exit code acts as a backstop.
+
+Evidence, kept separate by kind:
+
+- **Linux, executed:** `cargo test --features ui-tests -- --test-threads=1`
+  passed all native suites. The updater coverage includes:
+  - a round trip of the relaunch command line through the C runtime splitting rules
+  - a check that the plan carries every value and the script carries none (including `’` paths)
+  - outcome reporting and the stopped-helper report
+  - the non-Windows refusal
+  - the GPUI hand-off test: unsaved edits block it, a never-ready helper keeps the app open, a retry reuses the verified download, and a waiting helper is never started twice
+- **Windows, compiled but not executed:** `cargo clippy --target
+  x86_64-pc-windows-msvc` type-checked the Windows hand-off. The fixture
+  `tests/windows_update_handoff.rs` was checked against stub dependencies.
+- **Windows, runs in existing CI only** (`native-client` windows-latest and
+  `rust-native-preview` `cargo test` steps): `tests/windows_update_handoff.rs`
+  uses copies of its own executable as the app, the installer and a busy
+  process. The production helper runs in real Windows PowerShell. It proves:
+  - wait, then install, then relaunch, even when the app's kill-on-close job is closed
+  - installer failure (exit code 2) and a wrong installed version
+  - a busy install folder
+  - a missing or never-ready helper
+  - a job that forbids breakaway, which is recorded as a stuck `waiting` state
+- **Windows, runs in existing CI only:** `scripts/test-windows-installer.ps1`
+  holds a payload file locked. The real silent NSIS installer must then exit
+  non-zero.
+
+Not covered: Defender or AppLocker/Constrained Language policy on user machines, and
+a real GUI app updating itself end to end. A build that already has the old
+hand-off still runs that old code, so its users must install this fix
+manually once.

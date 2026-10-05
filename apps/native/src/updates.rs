@@ -2,7 +2,9 @@
 //! install tracks the rolling `nightly` prerelease, a stable one the latest
 //! release), compare versions, and on Windows download the per-user NSIS
 //! installer, verify it, and hand off to a helper that installs after this
-//! process exits and relaunches it.
+//! process exits and relaunches it. The helper confirms it is running before
+//! the app quits, checks the installer's exit code and installed version, and
+//! records each step in `state_dir()` for the next launch to report.
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use sha2::Digest;
@@ -212,77 +214,329 @@ pub async fn download(asset: &Value) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// PowerShell single-quoted literal.
-fn ps_quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
+/// Where the helper records its progress and log: outside the install folder
+/// (which it replaces) and the temp download (which it deletes), so the next
+/// launch can report what happened.
+pub fn state_dir() -> Result<PathBuf> {
+    let base = directories::BaseDirs::new().context("Cannot locate the local data directory")?;
+    Ok(base
+        .data_local_dir()
+        .join("Workspacer Native Rust Preview")
+        .join("updates"))
 }
 
-/// The helper script: wait for this app (and anything else running from its
-/// install directory, such as the local backend) to exit, install silently,
-/// then relaunch with the same arguments.
-pub fn handoff_script(pid: u32, installer: &str, exe: &str, args: &[String]) -> String {
-    // String split, so the script is identical whichever OS builds it.
-    let dir = exe.rsplit_once(['\\', '/']).map_or("", |(dir, _)| dir);
-    let args = args
-        .iter()
-        .map(|a| ps_quote(a))
+const STATE_FILE: &str = "last-update.json";
+const SEEN_FILE: &str = "last-update.seen.json";
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const PLAN_FILE: &str = "last-update-plan.json";
+const LOG_FILE: &str = "last-update.log";
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const OUTPUT_FILE: &str = "last-update-output.log";
+/// The helper script. Constant text: paths and arguments travel in the plan.
+pub const HELPER_SCRIPT: &str = include_str!("update_helper.ps1");
+
+/// How long each helper step may take.
+#[derive(Clone, Copy, Debug)]
+pub struct Timeouts {
+    /// The helper must report that it is waiting before the app quits.
+    pub ready: std::time::Duration,
+    /// The app closing, including an unsaved-edits question.
+    pub app_exit: std::time::Duration,
+    /// Other processes running from the install folder.
+    pub siblings: std::time::Duration,
+    pub install: std::time::Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        use std::time::Duration;
+        Self {
+            ready: Duration::from_secs(30),
+            app_exit: Duration::from_secs(15 * 60),
+            siblings: Duration::from_secs(60),
+            install: Duration::from_secs(10 * 60),
+        }
+    }
+}
+
+/// Everything the helper needs to replace the running app and start it again.
+#[derive(Clone, Debug)]
+pub struct Handoff {
+    /// The process the helper waits for.
+    pub pid: u32,
+    pub installer: PathBuf,
+    /// The version the installer must leave in `build-stamp.json`.
+    pub expected_version: String,
+    /// The executable to relaunch; its folder is the install folder.
+    pub exe: PathBuf,
+    /// Relaunch arguments, exactly as this process received them.
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub state_dir: PathBuf,
+    pub powershell: PathBuf,
+    pub timeouts: Timeouts,
+}
+
+impl Handoff {
+    /// Replace this process: its executable, arguments and working directory.
+    pub fn current(installer: PathBuf, expected_version: &str) -> Result<Self> {
+        let args = std::env::args_os()
+            .skip(1)
+            .map(|arg| {
+                arg.into_string()
+                    .map_err(|_| anyhow::anyhow!("A launch argument is not valid Unicode"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        Ok(Self {
+            pid: std::process::id(),
+            installer,
+            expected_version: expected_version.to_owned(),
+            exe: std::env::current_exe()?,
+            args,
+            cwd: std::env::current_dir()?,
+            state_dir: state_dir()?,
+            // Never resolved through PATH or the app's own folder.
+            powershell: PathBuf::from(system_root)
+                .join(r"System32\WindowsPowerShell\v1.0\powershell.exe"),
+            timeouts: Timeouts::default(),
+        })
+    }
+
+    pub fn install_dir(&self) -> Result<PathBuf> {
+        Ok(self
+            .exe
+            .parent()
+            .context("The app has no install folder")?
+            .to_path_buf())
+    }
+
+    pub fn state_file(&self) -> PathBuf {
+        self.state_dir.join(STATE_FILE)
+    }
+
+    pub fn log_file(&self) -> PathBuf {
+        self.state_dir.join(LOG_FILE)
+    }
+
+    /// The JSON plan the helper script reads.
+    pub fn plan(&self, nonce: &str) -> Result<Value> {
+        ensure!(
+            compare(&self.expected_version, &self.expected_version).is_some(),
+            "The update has no valid version"
+        );
+        let text = |path: &std::path::Path| {
+            path.to_str()
+                .map(str::to_owned)
+                .context("A path is not valid Unicode")
+        };
+        let millis = |d: std::time::Duration| d.as_millis().min(i32::MAX as u128) as u64;
+        Ok(json!({
+            "nonce": nonce,
+            "parentId": self.pid,
+            "installer": text(&self.installer)?,
+            "exe": text(&self.exe)?,
+            "installDir": text(&self.install_dir()?)?,
+            "arguments": windows_command_line(&self.args),
+            "cwd": text(&self.cwd)?,
+            "expected": self.expected_version,
+            "state": text(&self.state_file())?,
+            "log": text(&self.log_file())?,
+            "appExitMs": millis(self.timeouts.app_exit),
+            "siblingMs": millis(self.timeouts.siblings),
+            "installMs": millis(self.timeouts.install),
+        }))
+    }
+}
+
+/// Join arguments into a Windows command line that `CommandLineToArgvW` and
+/// the Microsoft C runtime split back into exactly the same arguments.
+pub fn windows_command_line(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| {
+            if !arg.is_empty() && !arg.contains([' ', '\t', '\n', '\u{b}', '"']) {
+                return arg.clone();
+            }
+            let mut quoted = String::from('"');
+            let mut backslashes = 0;
+            for c in arg.chars() {
+                match c {
+                    '\\' => backslashes += 1,
+                    '"' => {
+                        quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                        quoted.push('"');
+                        backslashes = 0;
+                    }
+                    c => {
+                        quoted.extend(std::iter::repeat_n('\\', backslashes));
+                        quoted.push(c);
+                        backslashes = 0;
+                    }
+                }
+            }
+            quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
+            quoted.push('"');
+            quoted
+        })
         .collect::<Vec<_>>()
-        .join(",");
-    format!(
-        "$ErrorActionPreference='SilentlyContinue'; \
-         Wait-Process -Id {pid} -Timeout 60; \
-         $dir={dir}; \
-         Get-Process | Where-Object {{ $_.Path -and $_.Path.StartsWith($dir + '\\') }} | Wait-Process -Timeout 30; \
-         Start-Process -FilePath {installer} -ArgumentList '/S' -Wait; \
-         Start-Process -FilePath {exe}{relaunch}",
-        dir = ps_quote(dir),
-        installer = ps_quote(installer),
-        exe = ps_quote(exe),
-        relaunch = if args.is_empty() {
-            String::new()
-        } else {
-            format!(" -ArgumentList @({args})")
-        },
-    )
+        .join(" ")
 }
 
-/// Start the detached helper. The caller quits right after.
-pub fn hand_off(installer: &std::path::Path) -> Result<()> {
+/// The helper's last recorded state, if it belongs to this hand-off.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn read_state(path: &std::path::Path, nonce: &str) -> Option<Value> {
+    let value: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    (value["nonce"] == nonce).then_some(value)
+}
+
+/// Start the hidden helper and wait until it holds a handle to this process.
+/// Only then may the caller quit; any error means the helper is not running
+/// and the app must stay open.
+pub fn hand_off(handoff: &Handoff) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
+        use std::io::Write;
         use std::os::windows::process::CommandExt;
+        // A hidden console of its own. DETACHED_PROCESS would make Windows
+        // ignore CREATE_NO_WINDOW and leave PowerShell with no console.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        let exe = std::env::current_exe()?;
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        let script = handoff_script(
-            std::process::id(),
-            &installer.to_string_lossy(),
-            &exe.to_string_lossy(),
-            &args,
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        // Leave any job the app runs in, which may end its members with it.
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        const ERROR_ACCESS_DENIED: i32 = 5;
+
+        std::fs::create_dir_all(&handoff.state_dir)
+            .context("Could not create the update state folder")?;
+        let nonce = format!(
+            "{}-{}",
+            handoff.pid,
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
-        std::process::Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                script.as_str(),
-            ])
-            .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
-            .spawn()
-            .context("Could not start the installer helper")?;
-        Ok(())
+        let plan = handoff.plan(&nonce)?;
+        let plan_file = handoff.state_dir.join(PLAN_FILE);
+        std::fs::write(&plan_file, serde_json::to_vec_pretty(&plan)?)
+            .context("Could not write the update plan")?;
+        let state_file = handoff.state_file();
+        let _ = std::fs::remove_file(&state_file);
+        let mut log =
+            std::fs::File::create(handoff.log_file()).context("Could not create the update log")?;
+        writeln!(
+            log,
+            "{} app {} handing off {} (version {}) for {}",
+            chrono::Utc::now().to_rfc3339(),
+            handoff.pid,
+            handoff.installer.display(),
+            handoff.expected_version,
+            handoff.exe.display()
+        )?;
+        drop(log);
+        let output = std::fs::File::create(handoff.state_dir.join(OUTPUT_FILE))?;
+        let spawn = |flags: u32| -> std::io::Result<std::process::Child> {
+            std::process::Command::new(&handoff.powershell)
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    HELPER_SCRIPT,
+                ])
+                .env("WKS_UPDATE_PLAN", &plan_file)
+                .current_dir(&handoff.state_dir)
+                .stdin(std::process::Stdio::null())
+                .stdout(output.try_clone()?)
+                .stderr(output.try_clone()?)
+                .creation_flags(flags)
+                .spawn()
+        };
+        let base = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
+        let (mut child, breakaway) = match spawn(base | CREATE_BREAKAWAY_FROM_JOB) {
+            Ok(child) => (child, true),
+            // The app's job forbids breakaway; the helper stays in it.
+            Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED) => {
+                (spawn(base)?, false)
+            }
+            Err(error) => return Err(error).context("Could not start the installer helper"),
+        };
+        let mut log = std::fs::OpenOptions::new()
+            .append(true)
+            .open(handoff.log_file())?;
+        writeln!(
+            log,
+            "helper {} started; job breakaway: {breakaway}",
+            child.id()
+        )?;
+        drop(log);
+        let detail = |state: Option<Value>| {
+            state
+                .and_then(|s| s["detail"].as_str().map(str::to_owned))
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| format!("see {}", handoff.state_dir.join(OUTPUT_FILE).display()))
+        };
+        let deadline = std::time::Instant::now() + handoff.timeouts.ready;
+        loop {
+            let state = read_state(&state_file, &nonce);
+            match state.as_ref().and_then(|s| s["state"].as_str()) {
+                Some("waiting") => return Ok(()),
+                Some("failed") => bail!("The installer helper failed: {}", detail(state)),
+                _ => {}
+            }
+            if let Some(status) = child.try_wait()? {
+                bail!(
+                    "The installer helper exited ({status}) before it was ready: {}",
+                    detail(read_state(&state_file, &nonce))
+                );
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                bail!(
+                    "The installer helper did not start within {} seconds",
+                    handoff.timeouts.ready.as_secs()
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = installer;
+        let _ = handoff;
         bail!(
             "In-app install is available on Windows; download this platform's build from the release page"
         )
     }
+}
+
+/// What the last update did, once: a finished update (or one whose helper
+/// stopped without finishing) is reported and then marked seen.
+pub fn take_outcome(state_dir: &std::path::Path) -> Option<Value> {
+    let path = state_dir.join(STATE_FILE);
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+    let age = chrono::DateTime::parse_from_rfc3339(value["time"].as_str().unwrap_or_default())
+        .map(|time| chrono::Utc::now().signed_duration_since(time))
+        .unwrap_or(chrono::TimeDelta::MAX);
+    let stale = |limit: Timeouts| match value["state"].as_str() {
+        Some("waiting") => age > chrono::TimeDelta::seconds(120),
+        Some("installing") => {
+            age > chrono::TimeDelta::from_std(limit.install + limit.siblings)
+                .unwrap_or(chrono::TimeDelta::MAX)
+        }
+        _ => false,
+    };
+    match value["state"].as_str() {
+        Some("succeeded" | "failed") => {}
+        _ if stale(Timeouts::default()) => {
+            let step = value["state"].as_str().unwrap_or("starting").to_owned();
+            value["state"] = json!("failed");
+            value["detail"] = json!(format!(
+                "The update helper stopped while {step} and did not finish."
+            ));
+        }
+        // Still in progress (or unreadable): leave it for the helper.
+        _ => return None,
+    }
+    let _ = std::fs::rename(&path, state_dir.join(SEEN_FILE));
+    Some(value)
 }
 
 #[cfg(test)]
@@ -344,21 +598,170 @@ mod tests {
         assert!(dev["update_available"].is_null());
     }
 
+    /// The argument splitting the C runtime and `CommandLineToArgvW` apply.
+    fn split_windows(line: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut chars = line.chars().peekable();
+        loop {
+            while chars.peek().is_some_and(|c| *c == ' ' || *c == '\t') {
+                chars.next();
+            }
+            if chars.peek().is_none() {
+                return args;
+            }
+            let (mut arg, mut quoted) = (String::new(), false);
+            while let Some(&c) = chars.peek() {
+                if !quoted && (c == ' ' || c == '\t') {
+                    break;
+                }
+                chars.next();
+                match c {
+                    '\\' => {
+                        let mut count = 1;
+                        while chars.peek() == Some(&'\\') {
+                            chars.next();
+                            count += 1;
+                        }
+                        if chars.peek() == Some(&'"') {
+                            arg.extend(std::iter::repeat_n('\\', count / 2));
+                            if count % 2 == 1 {
+                                chars.next();
+                                arg.push('"');
+                            }
+                        } else {
+                            arg.extend(std::iter::repeat_n('\\', count));
+                        }
+                    }
+                    '"' if quoted && chars.peek() == Some(&'"') => {
+                        chars.next();
+                        arg.push('"');
+                    }
+                    '"' => quoted = !quoted,
+                    c => arg.push(c),
+                }
+            }
+            args.push(arg);
+        }
+    }
+
     #[test]
-    fn handoff_waits_installs_silently_and_relaunches_with_quoted_paths() {
-        let script = handoff_script(
-            42,
-            r"C:\Users\o'neil\AppData\Local\Temp\setup.exe",
-            r"C:\Users\o'neil\AppData\Local\Programs\Workspacer\wks-native.exe",
-            &["--local".into()],
-        );
-        assert!(script.contains("Wait-Process -Id 42"));
+    fn relaunch_command_line_round_trips_every_argument() {
+        let cases: Vec<Vec<String>> = vec![
+            vec![],
+            vec!["--local".into()],
+            vec![
+                "--rust-local-dir".into(),
+                r"C:\Users\o'neil\Work Dir\".into(),
+                r#"say "hi""#.into(),
+                String::new(),
+                r#"\\server\share\"#.into(),
+                r#"a\\"b"#.into(),
+                "tab\there".into(),
+                "--bus=ws://127.0.0.1:7895/bus".into(),
+            ],
+        ];
+        for args in cases {
+            let line = windows_command_line(&args);
+            assert_eq!(split_windows(&line), args, "{line}");
+        }
+        assert_eq!(windows_command_line(&["--local".into()]), "--local");
+    }
+
+    #[test]
+    fn helper_plan_carries_every_value_and_the_script_carries_none() {
+        let handoff = Handoff {
+            pid: 42,
+            installer: r"C:\Users\o’neil\Temp\Workspacer-Native-Rust-Preview-Setup-1.2.3-x64.exe".into(),
+            expected_version: "1.2.3".into(),
+            exe: r"C:\Users\o’neil\AppData\Local\Programs\Workspacer Native Rust Preview\wks-native.exe"
+                .into(),
+            args: vec!["--local".into(), r#"it's "x""#.into()],
+            cwd: r"C:\Users\o’neil".into(),
+            state_dir: r"C:\Users\o’neil\AppData\Local\Workspacer Native Rust Preview\updates".into(),
+            powershell: r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".into(),
+            timeouts: Timeouts::default(),
+        };
+        let plan = handoff.plan("n1").unwrap();
+        // Path splitting follows the build host; values are what was given.
+        assert_eq!(plan["parentId"], 42);
+        assert_eq!(plan["expected"], "1.2.3");
+        assert_eq!(plan["arguments"], r#"--local "it's \"x\"""#);
+        assert_eq!(plan["installer"], handoff.installer.to_str().unwrap());
+        assert_eq!(plan["appExitMs"], 15 * 60 * 1000);
         assert!(
-            script.contains(
-                r"'C:\Users\o''neil\AppData\Local\Temp\setup.exe' -ArgumentList '/S' -Wait"
-            )
+            plan["state"]
+                .as_str()
+                .unwrap()
+                .ends_with("last-update.json")
         );
-        assert!(script.contains(r"$dir='C:\Users\o''neil\AppData\Local\Programs\Workspacer'"));
-        assert!(script.ends_with("-ArgumentList @('--local')"));
+        // Nothing user-controlled is parsed as PowerShell, and the script
+        // survives Windows command-line quoting unchanged.
+        assert!(!HELPER_SCRIPT.contains('"'));
+        assert!(HELPER_SCRIPT.contains("$env:WKS_UPDATE_PLAN"));
+        assert!(HELPER_SCRIPT.contains("'/S /D=' + $plan.installDir"));
+        let bad = Handoff {
+            expected_version: "latest".into(),
+            ..handoff
+        };
+        assert!(bad.plan("n1").is_err(), "a non-version is never expected");
+    }
+
+    #[test]
+    fn last_update_is_reported_once_and_a_stopped_helper_is_explained() {
+        let dir = std::env::temp_dir().join(format!(
+            "wks-update-outcome-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |state: &str, age: i64| {
+            let time = chrono::Utc::now() - chrono::TimeDelta::seconds(age);
+            std::fs::write(
+                dir.join(STATE_FILE),
+                json!({"state": state, "detail": "", "expected": "1.2.3", "time": time.to_rfc3339()})
+                    .to_string(),
+            )
+            .unwrap();
+        };
+        assert!(take_outcome(&dir).is_none(), "nothing recorded");
+        write("succeeded", 1);
+        assert_eq!(take_outcome(&dir).unwrap()["state"], "succeeded");
+        assert!(take_outcome(&dir).is_none(), "reported once");
+        write("waiting", 5);
+        assert!(
+            take_outcome(&dir).is_none(),
+            "a helper may still be waiting"
+        );
+        write("waiting", 600);
+        let stopped = take_outcome(&dir).unwrap();
+        assert_eq!(stopped["state"], "failed");
+        assert!(
+            stopped["detail"]
+                .as_str()
+                .unwrap()
+                .contains("stopped while waiting")
+        );
+        write("installing", 120);
+        assert!(take_outcome(&dir).is_none(), "the installer may still run");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn other_platforms_never_start_a_helper() {
+        let handoff = Handoff {
+            pid: 1,
+            installer: "/nonexistent/setup.exe".into(),
+            expected_version: "1.2.3".into(),
+            exe: "/nonexistent/wks-native".into(),
+            args: vec![],
+            cwd: "/".into(),
+            state_dir: "/nonexistent/updates".into(),
+            powershell: "/nonexistent/powershell".into(),
+            timeouts: Timeouts::default(),
+        };
+        let error = hand_off(&handoff).unwrap_err().to_string();
+        assert!(error.contains("available on Windows"));
+        assert!(!std::path::Path::new("/nonexistent/updates").exists());
     }
 }

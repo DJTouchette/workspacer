@@ -8,6 +8,13 @@ use wks_native::features::{AttachmentSource, Request, attention_transition};
 /// `Some(None)` unavailable or not an image).
 pub(super) type DraftFile = (String, String, Option<Option<Arc<gpui::Image>>>);
 
+/// Starts the installer helper; returns once it is waiting for the app.
+pub(super) trait UpdateStarter:
+    Fn(&wks_native::updates::Handoff) -> anyhow::Result<()> + Send + Sync
+{
+}
+impl<F: Fn(&wks_native::updates::Handoff) -> anyhow::Result<()> + Send + Sync> UpdateStarter for F {}
+
 pub(super) struct Extras {
     pub name: Entity<InputState>,
     pub return_launch: bool,
@@ -32,6 +39,17 @@ pub(super) struct Extras {
     pub _update_timer: Option<Task<()>>,
     /// The download request already handed to the installer helper.
     pub update_handoff: u64,
+    /// A downloaded, verified installer and its version, until handed off.
+    pub update_installer: Option<(String, String)>,
+    /// The helper is starting; the app quits once it reports it is waiting.
+    pub update_handing_off: bool,
+    /// When a helper last reported it is waiting for the app to close (the
+    /// close was held by unsaved edits); it waits `Timeouts::app_exit`.
+    pub update_helper_ready: Option<std::time::Instant>,
+    /// Hand-off progress, failures and the last update's outcome.
+    pub update_notice: String,
+    /// Starts the installer helper (tests substitute a recorder).
+    pub update_starter: std::sync::Arc<dyn UpdateStarter>,
     /// The session's model, context window and effort when Change model
     /// opened, so Apply sends only what the user actually changed.
     pub model_base: Option<(String, Option<u64>, String)>,
@@ -64,6 +82,11 @@ impl Extras {
             answers: Vec::new(),
             _update_timer: None,
             update_handoff: 0,
+            update_installer: None,
+            update_handing_off: false,
+            update_helper_ready: None,
+            update_notice: String::new(),
+            update_starter: std::sync::Arc::new(wks_native::updates::hand_off),
             model_base: None,
             child_access: None,
             child_access_receipt: 0,

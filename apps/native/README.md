@@ -627,9 +627,19 @@ be expanded, and attachment controls share the composer action row.
   an **Update** pill in the sidebar when a newer build exists, and Settings →
   About shows channel, installed and latest versions. On Windows **Install and
   restart** downloads the native installer and verifies its size and GitHub's
-  SHA-256 digest. A hidden helper then waits for the app and its local backend
-  to exit, runs the per-user installer silently (`/S`, upgrade in place) and
-  relaunches with the same arguments. Other platforms link to the release page.
+  SHA-256 digest. Unsaved editor changes are saved or discarded first. A hidden
+  Windows PowerShell helper (`src/update_helper.ps1`, parameters from a JSON
+  plan, never from script text) must report that it is waiting before the app
+  quits; otherwise the app stays open and says why. It is started with
+  `CREATE_NO_WINDOW` and leaves the app's job object where allowed. After the
+  app exits and nothing else runs from the install folder, it runs the per-user
+  installer silently in place (`/S /D=<install folder>`), requires exit code 0
+  and the expected version in `build-stamp.json`, and relaunches with the same
+  arguments and working directory (the previous version when the install
+  failed). Each step is recorded in
+  `%LOCALAPPDATA%\Workspacer Native Rust Preview\updates\last-update.{json,log}`;
+  the next launch reports the outcome under Settings → About. Other platforms
+  link to the release page.
 
 Normal-mode shortcuts: `g h` session history, `g d` changes, `g a` setup,
 `g e` session actions, `g m` model, `g f` files/editor and `g t` terminal. `Esc` returns from a secondary view;

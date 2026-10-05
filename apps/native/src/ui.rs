@@ -1066,7 +1066,7 @@ impl Workspace {
         self.resume_explorer(cx);
         self.sync_terminals(window, cx);
         self.sync_review(cx);
-        self.hand_off_update(cx);
+        self.hand_off_update(window, cx);
         self.land_on_latest();
         if self.new_session || self.screen == Screen::Model {
             self.sync_models(window, cx);
@@ -6440,6 +6440,137 @@ mod tests {
             _ => None,
         });
         assert_eq!(requested, Some(asset));
+    }
+
+    #[gpui::test]
+    fn verified_update_hands_off_only_without_unsaved_edits(cx: &mut TestAppContext) {
+        use wks_native::features::Request;
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let started: Arc<std::sync::Mutex<Vec<wks_native::updates::Handoff>>> = Default::default();
+        let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        workspace.update(&mut visual, |this, _| {
+            let (started, fail) = (started.clone(), fail.clone());
+            this.extras.update_starter = Arc::new(move |handoff| {
+                started.lock().unwrap().push(handoff.clone());
+                if fail.load(std::sync::atomic::Ordering::SeqCst) {
+                    anyhow::bail!("helper exited before it was ready")
+                }
+                Ok(())
+            });
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        let lib = file_target("/repo/src/lib.rs");
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            lib,
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": "one\n", "size": 4}),
+        );
+        settle(&mut visual);
+        let pane = pane_of(&workspace, &visual);
+        visual.simulate_input("X");
+        visual.run_until_parked();
+        assert!(pane.read_with(&visual, |p, _| p.dirty()));
+        let notice = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.extras.update_notice.clone())
+        };
+
+        // A verified download never closes over unsaved edits.
+        let installer = "/tmp/update/Workspacer-Native-Rust-Preview-Setup-0.170.0-x64.exe";
+        request_state(
+            &workspace,
+            &mut visual,
+            Request::DownloadUpdate {
+                asset: serde_json::json!({"version": "0.170.0"}),
+            },
+            2,
+            serde_json::json!({"installer": installer, "version": "0.170.0"}),
+        );
+        assert!(
+            started.lock().unwrap().is_empty(),
+            "no helper over unsaved edits"
+        );
+        assert!(notice(&mut visual).starts_with("Save or discard your unsaved edits"));
+        assert!(pane.read_with(&visual, |p, _| p.dirty()), "edits untouched");
+
+        // Once saved, Install hands off the same verified file; a helper that
+        // never becomes ready keeps the app open and says why.
+        visual.simulate_keystrokes("ctrl-s");
+        visual.run_until_parked();
+        request_state(
+            &workspace,
+            &mut visual,
+            Request::SaveFile {
+                session: "a".into(),
+                path: "/repo/src/lib.rs".into(),
+                contents: "Xone\n".into(),
+                base: "one\n".into(),
+                force: false,
+            },
+            5,
+            serde_json::json!({"saved": true, "contents": "Xone\n"}),
+        );
+        assert!(!pane.read_with(&visual, |p, _| p.dirty()));
+        let _ = effects(&mut commands);
+        visual
+            .update(|window, cx| workspace.update(cx, |this, cx| this.install_update(window, cx)));
+        visual.run_until_parked();
+        {
+            let started = started.lock().unwrap();
+            assert_eq!(started.len(), 1);
+            let handoff = &started[0];
+            assert_eq!(handoff.installer, std::path::PathBuf::from(installer));
+            assert_eq!(handoff.expected_version, "0.170.0");
+            assert_eq!(handoff.pid, std::process::id());
+            assert_eq!(
+                handoff.args,
+                std::env::args().skip(1).collect::<Vec<_>>(),
+                "relaunch keeps the original arguments"
+            );
+        }
+        assert_eq!(
+            notice(&mut visual),
+            "Update could not start: helper exited before it was ready"
+        );
+        workspace.read_with(&visual, |this, _| assert!(!this.extras.update_handing_off));
+
+        // Retrying reuses the download and closes once the helper is ready.
+        fail.store(false, std::sync::atomic::Ordering::SeqCst);
+        visual
+            .update(|window, cx| workspace.update(cx, |this, cx| this.install_update(window, cx)));
+        visual.run_until_parked();
+        assert_eq!(started.lock().unwrap().len(), 2);
+        assert_eq!(notice(&mut visual), "Closing to install 0.170.0…");
+        assert!(
+            !effects(&mut commands)
+                .iter()
+                .any(|c| matches!(c, Command::Request(Request::DownloadUpdate { .. }))),
+            "never downloaded again"
+        );
+
+        // While that helper waits, Install only closes again: new unsaved
+        // edits get the editor's question, and no second helper starts.
+        visual.simulate_input("Q");
+        visual.run_until_parked();
+        assert!(pane.read_with(&visual, |p, _| p.dirty()));
+        visual
+            .update(|window, cx| workspace.update(cx, |this, cx| this.install_update(window, cx)));
+        visual.run_until_parked();
+        assert_eq!(started.lock().unwrap().len(), 2, "one helper at a time");
+        assert!(
+            visual.debug_bounds("file-viewer-unsaved").is_some(),
+            "asked first"
+        );
+        assert!(notice(&mut visual).starts_with("Save or discard your unsaved edits to finish"));
+        assert!(pane.read_with(&visual, |p, _| p.dirty()), "edits untouched");
     }
 
     #[gpui::test]

@@ -404,7 +404,7 @@ impl Request {
             Self::Updates => crate::updates::check(&installed_version()).await,
             Self::DownloadUpdate { asset } => {
                 let path = crate::updates::download(asset).await?;
-                Ok(json!({"installer": path}))
+                Ok(json!({"installer": path, "version": asset["version"]}))
             }
         }
     }
