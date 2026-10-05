@@ -104,6 +104,18 @@ fn status_badge(label: &'static str, tone: u32) -> Div {
         .child(label)
 }
 
+/// Provider mark (20px) plus the row's gap, so details align with the name.
+const DETAIL_INDENT: f32 = 28.;
+/// A disclosure's own border and padding, so its chevron aligns with text.
+const DISCLOSURE_INSET: f32 = 6.;
+
+/// "Structured result — Builder (session:abc):" → "Structured result · Builder".
+fn report_title(title: &str) -> String {
+    let title = title.trim_end_matches(':');
+    let title = title.rfind(" (session:").map_or(title, |at| &title[..at]);
+    title.replacen(" — ", " · ", 1)
+}
+
 fn short_id(id: &str) -> String {
     if id.chars().count() > 10 {
         format!("{}…", id.chars().take(8).collect::<String>())
@@ -168,13 +180,16 @@ impl Workspace {
             .flex()
             .flex_col()
             // Tone rail, as the desktop Surface's: the kind before any words.
+            // Inset and rounded, because clipping is rectangular and a flush
+            // bar would poke past the card's rounded corners.
             .child(
                 div()
                     .absolute()
-                    .left_0()
-                    .top_0()
-                    .bottom_0()
+                    .left(px(5.))
+                    .top(px(10.))
+                    .bottom(px(10.))
                     .w(px(3.))
+                    .rounded_full()
                     .bg(rgb(tone)),
             )
             .child(
@@ -368,8 +383,10 @@ impl Workspace {
                             ),
                         ),
                 );
+            // Details line up with the worker's name, past its provider mark.
+            let mut details = div().ml(px(DETAIL_INDENT)).flex().flex_col().gap_1();
             if let Some(failed) = &entry.failed {
-                row = row.child(
+                details = details.child(
                     div()
                         .text_size(px(12.))
                         .text_color(rgb(p.error))
@@ -377,7 +394,7 @@ impl Workspace {
                 );
             }
             if let Some(crossed) = &entry.crossed {
-                row = row.child(
+                details = details.child(
                     div()
                         .text_size(px(12.))
                         .text_color(rgb(p.warning))
@@ -386,7 +403,7 @@ impl Workspace {
             }
             // A still-running worker's own words are shown open.
             if let Some(note) = &entry.note {
-                row = row.child(
+                details = details.child(
                     div()
                         .pl_2()
                         .border_l_2()
@@ -399,9 +416,15 @@ impl Workspace {
             if let Some(last) = &entry.last_reply {
                 let open_key = format!("{key}-reply-{index}");
                 let open = self.chat.open.get(&open_key).copied().unwrap_or(false);
-                row = row.child(self.fleet_disclosure(open_key, "Last reply", open, cx));
+                details =
+                    details.child(div().ml(px(-DISCLOSURE_INSET)).child(self.fleet_disclosure(
+                        open_key,
+                        "Last reply",
+                        open,
+                        cx,
+                    )));
                 if open {
-                    row = row.child(
+                    details = details.child(
                         div()
                             .pl_2()
                             .border_l_2()
@@ -412,14 +435,15 @@ impl Workspace {
                     );
                 }
             }
+            row = row.child(details);
             card = card.child(row);
         }
         if !fleet.reports.is_empty() {
-            let mut reports = div().pl_4().pr_2().pb_2().flex().flex_col().gap_2();
+            let mut reports = div().pl_4().pr_3().pb_2().flex().flex_col().gap_2();
             for (i, (title, report)) in fleet.reports.iter().enumerate() {
                 let report_key = format!("{key}-report-{i}");
                 reports = reports.child(if title.starts_with("Structured result") {
-                    self.render_result(&report_key, title, report, window, cx)
+                    self.render_result(&report_key, &report_title(title), report, window, cx)
                         .into_any_element()
                 } else {
                     div()
@@ -430,7 +454,7 @@ impl Workspace {
                             div()
                                 .text_size(px(11.))
                                 .text_color(rgb(p.muted))
-                                .child(title.clone()),
+                                .child(report_title(title)),
                         )
                         .child(self.render_raw(&report_key, report, window, cx))
                         .into_any_element()
@@ -529,4 +553,19 @@ fn interactive_reply(
                 p.disabled
             })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn report_titles_drop_the_raw_session_reference() {
+        assert_eq!(
+            super::report_title("Structured result — Session creation review (session:demo-0001):"),
+            "Structured result · Session creation review"
+        );
+        assert_eq!(
+            super::report_title("Worker escalation — A (b) (session:x)"),
+            "Worker escalation · A (b)"
+        );
+    }
 }

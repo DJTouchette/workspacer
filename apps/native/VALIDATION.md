@@ -959,3 +959,54 @@ The three items left open here were fixed the same day (next section).
 
 Noticed, not changed: at 720×600 the sidebar's last session row draws under
 the usage meters. Linux only: no Windows/macOS, hardware GPU or screen reader.
+
+## Omarchy themes, readable selection, fleet wake cards (2026-10-05)
+
+Items #1, #4, #13, #14, #15, #16, #19, #20 and #21 from the native feedback
+round, on worktree branch `wks/native-themes-visuals-usage`.
+
+- **Selection (#1):** vendored gpui-component `Inline::paint` painted the
+  selection quads after the text, and native used the opaque row highlight as
+  `theme.selection`, so selected chat/Markdown text (chat, viewer sheet/dock
+  and popped-out viewer share `Inline`) vanished. Selection now paints under
+  the glyphs (patch noted in `vendor/gpui-component/WORKSPACER-PATCHES.md`),
+  and every palette has a translucent `selection` token. Tests composite it
+  over chat, code, user and card surfaces and require 4.5:1 text; syntax
+  tokens must stay ≥3:1 when selected in the new themes.
+- **Themes (#16):** Tokyo Night, Catppuccin Mocha/Latte, Gruvbox and
+  Everforest from Omarchy `colors.toml` (read only), with syntax sets in their
+  editor conventions, `Appearance::is_dark()` for the light palettes, a
+  wrapping eight-tile picker, `t` cycling and persistence. New themes meet
+  7:1 text, 4.5:1 prose and primary labels, 3:1 tones; the three pre-existing
+  palette shortfalls (Dark primary label 3.68, Light success on base 3.00,
+  Nord error on cards 2.46) are pinned as named exceptions, unchanged.
+- **Fleet wakes (#20):** the parser ports desktop `ENTRY_RE` and passes every
+  case in `contracts/fleet-message-cases.json`. Wakes render as worker cards:
+  tone rail and kind overline, titled with the worker's name (or "N
+  sessions") instead of "You", live status (Needs approval → Resolved),
+  model/folder/short-ID metadata, Open (direct workers only, rechecked on
+  click), draft-preserving Reply, Last reply and Original wake disclosures.
+- **Nesting (#19):** project filter and search now match whole lineages, so
+  workers in `~/.workspacer/worktrees/...` stay under a manager whose checkout
+  is the open project (the reported "SESSIONS 1").
+- **Usage (#14):** logins without a reading are listed (Sign in again /
+  Refresh failed / No reading yet, with the hub's reason); a failed
+  `usage.report` with nothing cached shows "Usage unavailable".
+- **#13** context window is an even segmented control (Default no longer
+  removes 1M); **#4** the requested-session notice is a themed card with icon
+  actions; **#15** no Connected label/dot while healthy; **#21** timestamp
+  footers keep 6px above / 8px below and share the right edge on tool cards.
+
+Checks (`CARGO_BUILD_JOBS=4`): `cargo fmt --check`, strict Clippy and the
+serialized suite (`--test-threads=1`) passed: **313 passed, 1 ignored**
+(139 library, 130 UI, 3 background, 1 project, 37 protocol, 3 Rust hub). New GPUI tests cover each item. GPUI never clears `debug_bounds`
+between frames, so disappearance is asserted on state, not bounds.
+
+Private Xvfb + lavapipe captures (debug build, fixture harness with two wakes,
+a 1M selection and a sign-in-needed login): [themes](docs/ui-omarchy-themes-dark.png),
+[Latte/Nord/Light/Dark](docs/ui-omarchy-themes-latte-baseline.png),
+[selection](docs/ui-selection-readable.png), [wake cards](docs/ui-fleet-wake-cards.png),
+[context window](docs/ui-context-window-segmented.png),
+[usage](docs/ui-usage-unmeasured.png), [theme picker](docs/ui-theme-picker.png).
+Not captured: the request notice (needs a hub UI request; covered by a GPUI
+geometry test). Linux only: no Windows/macOS, hardware GPU or live provider.

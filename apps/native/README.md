@@ -150,8 +150,10 @@ Existing-hub mode does not own or stop backend processes on exit. The connected 
 
 ## Typography
 
-Native appearance uses Dark, Light and Nord semantic palettes, selected in
-**Settings → Appearance** and saved on this device. Floating composer and approval
+Native appearance uses Dark, Light and Nord semantic palettes plus five ported
+from Omarchy's stock themes (Tokyo Night, Catppuccin Mocha, Catppuccin Latte,
+Gruvbox, Everforest), selected in **Settings → Appearance** and saved on this
+device. Floating composer and approval
 surfaces use palette-specific shadows. Native palettes are independent of the
 Electron client's custom-theme registry.
 
@@ -391,7 +393,15 @@ cargo run --locked --bin wks-native -- --bus ws://127.0.0.1:17996/bus
 python3 scripts/smoke.py --bus ws://127.0.0.1:17996/bus --no-input --scroll-pages 10
 ```
 
-Choose **Dark**, **Light**, or **Nord** under **Settings → Appearance**.
+Choose **Dark**, **Light**, **Nord**, **Tokyo Night**, **Catppuccin Mocha**,
+**Catppuccin Latte**, **Gruvbox** or **Everforest** under **Settings →
+Appearance**. The Omarchy ports take their UI, syntax, diff and selection
+colors from `/usr/share/omarchy/themes/<slug>/colors.toml` and each theme's
+editor conventions; a few values are darkened or brightened where the
+originals fall short of the native contrast checks (see `appearance.rs`).
+Omarchy itself is not required and the system theme is never read or changed.
+Text selection is translucent and drawn beneath the glyphs, so selected code
+keeps its syntax colors in every palette.
 Switching applies immediately to the chrome, brand mark, conversation, inputs,
 and Markdown/code theme without changing sessions or composer drafts. These
 palettes follow the Electron themes (Light uses a darker warning color for
@@ -553,6 +563,9 @@ Repeat the capture with an isolated appearance preference:
 ```sh
 python3 scripts/smoke.py --binary target/debug/wks-native --theme light --output light.png
 python3 scripts/smoke.py --binary target/debug/wks-native --theme nord --width 720 --height 480 --output compact.png
+# Any palette slug (tokyo-night, catppuccin, catppuccin-latte, gruvbox, everforest);
+# --drag x1,y1,x2,y2 drag-selects text before the capture.
+python3 scripts/smoke.py --binary target/debug/wks-native --theme everforest --drag 420,476,700,512 --output selected.png
 # Against an isolated native-harness serve fixture (no agent/model calls):
 python3 scripts/smoke.py --binary target/debug/wks-native --bus ws://127.0.0.1:7896/bus --new-session --output create.png
 python3 scripts/smoke.py --binary target/debug/wks-native --screen projects --no-input --output projects.png

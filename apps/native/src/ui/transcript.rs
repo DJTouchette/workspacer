@@ -524,6 +524,9 @@ impl Workspace {
                 )
                 .child(footer);
         }
+        // Tool cards span the column edge to edge; inset their metadata to
+        // the same right edge as messages and work cards.
+        let footer = footer.when(row.tool.is_some(), |d| d.px_3());
         let footer = if has_meta {
             meta_spacing(footer)
         } else {

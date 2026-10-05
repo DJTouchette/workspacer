@@ -86,13 +86,16 @@ def main():
     parser.add_argument("--settle-seconds", type=float, default=3)
     parser.add_argument("--sample-seconds", type=float, default=3)
     parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "changes", "setup", "session", "model"), default="conversation")
-    parser.add_argument("--theme", choices=("dark", "light", "nord"), default="dark")
+    parser.add_argument("--theme", choices=("dark", "light", "nord", "tokyo-night", "catppuccin", "gruvbox",
+                                            "everforest", "catppuccin-latte"), default="dark")
     parser.add_argument("--width", type=int, default=1000)
     parser.add_argument("--height", type=int, default=700)
     parser.add_argument("--scroll-pages", type=int, default=0, help="Scroll chat upward by this many half-pages before capture")
     parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
     parser.add_argument("--animation-region", help="Verify pixels change across four frames in x,y,width,height (for a visible spinner)")
     parser.add_argument("--click", action="append", help="Click x,y before capture; repeat for a sequence of preview and toggle checks")
+    parser.add_argument("--drag", action="append",
+                        help="Drag-select from x1,y1 to x2,y2 before capture (text selection checks); repeatable")
     parser.add_argument("--hover", help="Hover a window point x,y before capture (for control styling checks)")
     parser.add_argument("--keys", nargs="+", help="Additional X11 keys before capture, for example Escape Tab")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
@@ -120,6 +123,15 @@ def main():
             clicks.append((x, y))
         except ValueError:
             parser.error("--click requires x,y inside the window")
+    drags = []
+    for drag in args.drag or []:
+        try:
+            x1, y1, x2, y2 = map(int, drag.split(","))
+            if not all(0 <= x < args.width for x in (x1, x2)) or not all(0 <= y < args.height for y in (y1, y2)):
+                raise ValueError()
+            drags.append((x1, y1, x2, y2))
+        except ValueError:
+            parser.error("--drag requires x1,y1,x2,y2 inside the window")
     hover = None
     if args.hover:
         try:
@@ -184,6 +196,15 @@ def main():
             time.sleep(1)
         if args.keys:
             drive("key", "--delay", "80", *args.keys)
+            time.sleep(1)
+        for x1, y1, x2, y2 in drags:
+            # Stepped moves: GPUI extends a selection from mouse-move events.
+            drive("mousemove", "--window", window, str(x1), str(y1), "mousedown", "1")
+            for step in range(1, 9):
+                drive("mousemove", "--window", window,
+                      str(x1 + (x2 - x1) * step // 8), str(y1 + (y2 - y1) * step // 8))
+                time.sleep(0.05)
+            drive("mouseup", "1")
             time.sleep(1)
         if hover:
             drive("mousemove", "--window", window, str(hover[0]), str(hover[1]))

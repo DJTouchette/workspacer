@@ -148,7 +148,7 @@ pub async fn serve_with_transcript(
     }
 }
 
-/// Two Claude logins and Codex, shaped like the hub's `usage.report`.
+/// Two Claude logins (one needing sign-in) and Codex, shaped like `usage.report`.
 fn usage_report() -> Value {
     let now = chrono::Utc::now().timestamp();
     let window = |pct: f64, reset_in: i64, pace: &str, expected: f64| {
@@ -156,16 +156,19 @@ fn usage_report() -> Value {
             "pace":{"known":true,"state":pace,"expectedPct":expected}})
     };
     let off = json!({"used_percent":{"state":"unavailable","reason":"extra usage is off"}});
+    let reauth =
+        json!({"used_percent":{"state":"unknown","reason":"NeedsReauth: oauth token expired"}});
     json!({"generated_at":now,"evaluated_at":now,"valid_until":now+60,"providers":[
         {"provider":"claude","accounts":[
             {"account":"","label":"default","is_default":true,"fresh":true,"windows":{
                 "five_hour":window(42.,8_040,"on_track",45.),
                 "seven_day":window(76.,3*86_400+4*3_600,"overspending",58.),
                 "monthly":off}},
-            {"account":"work","label":"work","is_default":false,"fresh":true,"windows":{
-                "five_hour":window(8.,15_000,"on_track",20.),
-                "seven_day":window(31.,5*86_400,"on_track",30.),
-                "monthly":off}}
+            // A second login whose token expired: listed with its state,
+            // as claudemon reports it, rather than dropped.
+            {"account":"work","label":"work","is_default":false,"fresh":null,
+                "failure":{"kind":"needs_reauth","detail":"oauth token expired (the CLI refreshes it on its next turn)"},
+                "windows":{"five_hour":reauth,"seven_day":reauth,"monthly":reauth}}
         ]},
         {"provider":"codex","accounts":[
             {"account":"","label":"default","is_default":true,"fresh":true,"windows":{
@@ -233,6 +236,8 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
     match index {
         0 => {
             snapshot["statusLine"] = json!({"contextUsedPct":42.0,"contextWindowSize":200000});
+            // A chosen 1M window, so Change model shows its context choices.
+            snapshot["requestedSelection"] = json!({"model":"sonnet","contextWindow":1000000});
             snapshot["subagents"] = json!([
                 {"id":"fixture-native-review","toolUseId":"subagent-running","type":"Explore","description":"Inspect transcript parsing","status":"running","model":"gpt-5.6-luna","startedAt":1790852400000i64,"toolCalls":4,"tokens":12400,"costUSD":0.018,"lastToolName":"Read","lastToolSummary":"apps/native/src/model.rs"},
                 {"id":"fixture-native-tests","toolUseId":"subagent-running","type":"Test","description":"Check regression coverage","status":"complete","model":"claude-sonnet-4-6","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":7,"tokens":28300,"costUSD":0.084},
