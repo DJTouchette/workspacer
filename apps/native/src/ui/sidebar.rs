@@ -1,6 +1,26 @@
 //! Session navigation, with a compact rail that preserves window-local state.
 use super::*;
 use gpui_component::tooltip::Tooltip;
+use std::collections::BTreeMap;
+use wks_native::child_agents::{ChildAgent, ClearMark, clear_key_provider, clear_key_session};
+
+const CLEAR_CHILD: &str = "Clear · hide this finished child here on this device · not archived or stopped · still in Session history";
+const CLEAR_SUBAGENT: &str = "Clear · hide this finished subagent here on this device · nothing is stopped · the parent chat keeps its record";
+const CLEAR_FINISHED: &str = "Clear finished children · hide them here on this device · running children stay · nothing is archived or stopped";
+
+fn provider_clear(parent: &str, child: &ChildAgent) -> (String, ClearMark) {
+    (
+        clear_key_provider(parent, &child.id),
+        ClearMark::provider(child, super::timing::now_ms()),
+    )
+}
+
+fn session_clear(session: &Session) -> (String, ClearMark) {
+    (
+        clear_key_session(&session.id),
+        ClearMark::session(session, super::timing::now_ms()),
+    )
+}
 
 #[derive(Clone)]
 pub(super) enum SidebarRow {
@@ -23,14 +43,11 @@ impl Workspace {
             rows.push(SidebarRow::Session { index, depth });
             let parent = &self.view.sessions[index];
             let native = wks_native::child_agents::project(parent, &[], std::iter::empty());
-            // Provider-native subagents are the parent's business: once one
-            // has finished and the parent's turn is over, it leaves the sidebar
-            // (the chat keeps its record). The one being viewed stays put.
-            let parent_busy =
-                parent.working() || parent.approval.is_some() || parent.questions.is_some();
+            // Provider-native subagents stay under their parent through every
+            // turn and focus change, finished or not, until the user clears
+            // them. The one being viewed stays put so its highlight has a home.
             for child in native.unanchored.into_iter().filter(|child| {
-                !child.settled()
-                    || parent_busy
+                !self.provider_cleared(&parent.id, child)
                     || self
                         .view
                         .child
@@ -178,6 +195,31 @@ impl Workspace {
                                 p,
                                 SharedString::from(format!("sidebar-native-working-{}", child.id)),
                             ))
+                        })
+                        .when(child.settled(), |d| {
+                            let (parent, child) = (parent.clone(), child.clone());
+                            d.child(
+                                self.icon_button(
+                                    SharedString::from(format!(
+                                        "clear-native-{parent}-{}",
+                                        child.id
+                                    )),
+                                    CLEAR_SUBAGENT,
+                                    IconName::EyeOff,
+                                    true,
+                                )
+                                .debug_selector(move || format!("sidebar-clear-provider-{ix}"))
+                                .size(px(20.))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.clear_children(
+                                            vec![provider_clear(&parent, &child)],
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
                         }),
                 )
                 .child(
@@ -221,6 +263,134 @@ impl Workspace {
                         }))
                 }),
             )
+    }
+
+    fn child_clears(&self) -> Option<&BTreeMap<String, ClearMark>> {
+        self.settings.cleared_children.get(&self.project_scope)
+    }
+
+    /// A finished provider-native child the user cleared, still on the run
+    /// it was cleared after.
+    pub(super) fn provider_cleared(&self, parent: &str, child: &ChildAgent) -> bool {
+        child.settled()
+            && self
+                .child_clears()
+                .and_then(|marks| marks.get(&clear_key_provider(parent, &child.id)))
+                .is_some_and(|mark| mark.covers(&ClearMark::provider(child, 0)))
+    }
+
+    /// A finished Workspacer child session the user cleared.
+    pub(super) fn session_cleared(&self, session: &Session) -> bool {
+        !session.parent_session_id.is_empty()
+            && wks_native::child_agents::session_finished(session)
+            && self
+                .child_clears()
+                .and_then(|marks| marks.get(&clear_key_session(&session.id)))
+                .is_some_and(|mark| mark.covers(&ClearMark::session(session, 0)))
+    }
+
+    /// Cleared on this device (whether or not it has worked since).
+    pub(super) fn clear_marked(&self, id: &str) -> bool {
+        self.child_clears()
+            .is_some_and(|marks| marks.contains_key(&clear_key_session(id)))
+    }
+
+    /// The parent's finished, shown children: Workspacer sessions nested
+    /// beneath it and its provider-native agents. Running ones never count.
+    pub(super) fn clearable_children(&self, parent: &Session) -> Vec<(String, ClearMark)> {
+        let now = super::timing::now_ms();
+        let sessions = self.view.sessions.iter().filter(|s| {
+            s.parent_session_id == parent.id
+                && s.id != parent.id
+                && !self.archived(&s.id)
+                && wks_native::child_agents::session_finished(s)
+                && !self.session_cleared(s)
+        });
+        let native = wks_native::child_agents::project(parent, &[], std::iter::empty());
+        sessions
+            .map(|s| (clear_key_session(&s.id), ClearMark::session(s, now)))
+            .chain(
+                native
+                    .unanchored
+                    .iter()
+                    .filter(|c| c.settled() && !self.provider_cleared(&parent.id, c))
+                    .map(|c| provider_clear(&parent.id, c)),
+            )
+            .collect()
+    }
+
+    /// Hide finished children from this device's sidebar. A visibility mark
+    /// only: no stop, close, archive, forget or selection change is sent, and
+    /// the session, transcript and history stay available.
+    pub(super) fn clear_children(
+        &mut self,
+        marks: Vec<(String, ClearMark)>,
+        cx: &mut Context<Self>,
+    ) {
+        if marks.is_empty() {
+            return;
+        }
+        let scope = self
+            .settings
+            .cleared_children
+            .entry(self.project_scope.clone())
+            .or_default();
+        for (key, mark) in marks {
+            wks_native::child_agents::remember_clear(scope, key, mark);
+        }
+        self.save_settings(cx);
+    }
+
+    /// Show a cleared child session in the sidebar again.
+    pub(super) fn unclear_session(&mut self, id: &str, cx: &mut Context<Self>) {
+        let key = clear_key_session(id);
+        if let Some(marks) = self.settings.cleared_children.get_mut(&self.project_scope)
+            && marks.remove(&key).is_some()
+        {
+            self.settings
+                .cleared_children
+                .retain(|_, marks| !marks.is_empty());
+            self.save_settings(cx);
+        }
+    }
+
+    /// A cleared child that is seen working again comes back and stays back
+    /// once it finishes; the clear was for the work it had done.
+    pub(super) fn lift_child_clears(&mut self, cx: &mut Context<Self>) {
+        if !self.view.connected {
+            return;
+        }
+        let Some(marks) = self.settings.cleared_children.get(&self.project_scope) else {
+            return;
+        };
+        let mut working = std::collections::BTreeSet::new();
+        for s in self.view.sessions.iter() {
+            if !s.state.is_empty() && !wks_native::child_agents::session_finished(s) {
+                working.insert(clear_key_session(&s.id));
+            }
+            for child in wks_native::child_agents::project(s, &[], std::iter::empty()).unanchored {
+                if child.running() {
+                    working.insert(clear_key_provider(&s.id, &child.id));
+                }
+            }
+        }
+        let active: Vec<String> = marks
+            .keys()
+            .filter(|key| working.contains(*key))
+            .cloned()
+            .collect();
+        if active.is_empty() {
+            return;
+        }
+        if let Some(marks) = self.settings.cleared_children.get_mut(&self.project_scope) {
+            for key in &active {
+                marks.remove(key);
+            }
+        }
+        self.settings
+            .cleared_children
+            .retain(|_, marks| !marks.is_empty());
+        self.save_settings(cx);
     }
 
     /// The footer's connection note. A healthy connection is the norm and
@@ -650,7 +820,7 @@ impl Workspace {
                             .view
                             .sessions
                             .iter()
-                            .filter(|s| !self.archived(&s.id))
+                            .filter(|s| !self.archived(&s.id) && !self.session_cleared(s))
                             .count();
                         format!("{} / {total}", self.visible_sessions(cx).len())
                     } else {
@@ -791,6 +961,11 @@ impl Workspace {
                                 };
                                 let model_info = format!("{provider} · {model}");
                                 let working = session.working();
+                                // Nested, finished children offer Clear (this
+                                // device's child view) in place of Archive.
+                                let finished_child = depth > 0
+                                    && wks_native::child_agents::session_finished(session);
+                                let clearable = this.clearable_children(session);
                                 let badge = chrome::model_badge(session, p, 11.);
                                 let context = session
                                     .context_window
@@ -872,7 +1047,39 @@ impl Workspace {
                                                         || session.questions.is_some(),
                                                     |d| d.child(status_dot(p.warning)),
                                                 )
-                                                .child(
+                                                .when(!clearable.is_empty(), |d| {
+                                                    d.child(
+                                                        this.icon_button(
+                                                            SharedString::from(format!("clear-finished-{}", session.id)),
+                                                            CLEAR_FINISHED,
+                                                            IconName::EyeOff,
+                                                            true,
+                                                        )
+                                                        .debug_selector(move || format!("sidebar-clear-finished-{ix}"))
+                                                        .size(px(20.))
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.clear_children(clearable.clone(), cx);
+                                                        })),
+                                                    )
+                                                })
+                                                .child(if finished_child {
+                                                    this.icon_button(
+                                                        SharedString::from(format!("clear-child-{}", session.id)),
+                                                        CLEAR_CHILD,
+                                                        IconName::EyeOff,
+                                                        true,
+                                                    )
+                                                    .debug_selector(move || format!("sidebar-clear-{ix}"))
+                                                    .size(px(20.))
+                                                    .on_click(cx.listener({
+                                                        let clear = session_clear(session);
+                                                        move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.clear_children(vec![clear.clone()], cx);
+                                                        }
+                                                    }))
+                                                } else {
                                                     this.icon_button(
                                                         SharedString::from(format!("archive-sidebar-{}", session.id)),
                                                         "Archive · hides it in every client, keeps it running · restore from Session history → Archived",
@@ -887,8 +1094,8 @@ impl Workspace {
                                                             cx.stop_propagation();
                                                             this.toggle_archive(&id, cx);
                                                         }
-                                                    })),
-                                                ),
+                                                    }))
+                                                }),
                                         )
                                         // Model and folder share one line; the
                                         // title-row loader already says "working".

@@ -389,6 +389,97 @@ pub fn overview_anchor<'a>(
     timed.then(|| anchor.unwrap_or(0))
 }
 
+/// Most cleared children remembered per hub; the oldest marks go first.
+pub const MAX_CLEARED: usize = 512;
+
+/// A finished child the user cleared from the sidebar. Only a device-local
+/// visibility mark: nothing is stopped, closed, archived or forgotten, and the
+/// session, transcript and history stay where they were. The work evidence
+/// seen when clearing separates a replay of that same finish (stays cleared)
+/// from the child working again (shown again).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ClearMark {
+    pub cleared_at_ms: i64,
+    pub started_at_ms: Option<i64>,
+    pub completed_at_ms: Option<i64>,
+    pub tool_calls: Option<u64>,
+}
+impl ClearMark {
+    /// A provider-native run is its start and finish. Tool counts are left
+    /// out: artifact scans backfill them after the finish.
+    pub fn provider(child: &ChildAgent, now_ms: i64) -> Self {
+        Self {
+            cleared_at_ms: now_ms,
+            started_at_ms: child.telemetry.started_at_ms,
+            completed_at_ms: child.telemetry.completed_at_ms,
+            tool_calls: None,
+        }
+    }
+    /// A session's timestamps move with non-work updates; its tool count only
+    /// moves when it works.
+    pub fn session(session: &Session, now_ms: i64) -> Self {
+        Self {
+            cleared_at_ms: now_ms,
+            tool_calls: session.telemetry.tool_calls,
+            ..Default::default()
+        }
+    }
+    /// `current` still describes the work this mark was taken on. A value
+    /// unknown on either side is not evidence of new work, so late telemetry
+    /// for the same finish never brings a cleared child back.
+    pub fn covers(&self, current: &Self) -> bool {
+        fn newer<T: PartialOrd>(marked: Option<T>, now: Option<T>) -> bool {
+            matches!((marked, now), (Some(marked), Some(now)) if now > marked)
+        }
+        !(newer(self.started_at_ms, current.started_at_ms)
+            || newer(self.completed_at_ms, current.completed_at_ms)
+            || newer(self.tool_calls, current.tool_calls))
+    }
+}
+pub fn clear_key_provider(parent: &str, agent: &str) -> String {
+    format!("agent:{parent}/{agent}")
+}
+pub fn clear_key_session(id: &str) -> String {
+    format!("session:{id}")
+}
+/// A Workspacer child session that has finished its work: back at its prompt
+/// or ended, nothing pending, and none of its own provider-native children
+/// still running.
+pub fn session_finished(session: &Session) -> bool {
+    matches!(
+        session.state.as_str(),
+        "input" | "idle" | "stopped" | "ended"
+    ) && session.approval.is_none()
+        && session.questions.is_none()
+        && !session
+            .subagents
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|child| {
+                ChildAgent {
+                    status: text(child, &["status"]),
+                    ..Default::default()
+                }
+                .running()
+            })
+}
+/// Remember a clear, keeping the newest `MAX_CLEARED`.
+pub fn remember_clear(marks: &mut BTreeMap<String, ClearMark>, key: String, mark: ClearMark) {
+    marks.insert(key, mark);
+    while marks.len() > MAX_CLEARED {
+        let Some(oldest) = marks
+            .iter()
+            .min_by_key(|(_, mark)| mark.cleared_at_ms)
+            .map(|(key, _)| key.clone())
+        else {
+            break;
+        };
+        marks.remove(&oldest);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,5 +692,102 @@ mod tests {
         assert_eq!(provider.duration_ms(i64::MAX), None);
         session.merge(&json!({"mode":"stopped","started_at":"2026-10-01T00:00:05Z"}));
         assert_eq!(from_session(&session).duration_ms(i64::MAX), None);
+    }
+
+    #[test]
+    fn clear_marks_survive_replays_and_late_telemetry_but_not_new_work() {
+        let mut parent = Session::default();
+        parent.merge(&json!({"sessionId":"p","subagents":[{"id":"a","status":"complete","startedAt":1000,"completedAt":2000}]}));
+        let child = |parent: &Session| {
+            project(parent, &[], std::iter::empty())
+                .unanchored
+                .remove(0)
+        };
+        let mark = ClearMark::provider(&child(&parent), 5000);
+        assert_eq!(
+            (mark.started_at_ms, mark.completed_at_ms),
+            (Some(1000), Some(2000))
+        );
+        // The same finish replayed, or backfilled with tool counts and usage.
+        parent.merge(&json!({"subagents":[{"id":"a","status":"complete","startedAt":1000,"completedAt":2000,"toolCalls":7,"tokens":9}]}));
+        assert!(mark.covers(&ClearMark::provider(&child(&parent), 6000)));
+        // Reused for a second run: a later finish is new work.
+        parent.merge(&json!({"subagents":[{"id":"a","status":"complete","startedAt":1000,"completedAt":9000}]}));
+        assert!(!mark.covers(&ClearMark::provider(&child(&parent), 9500)));
+        // A finish time that was unknown when cleared stays the same finish.
+        let unknown = ClearMark {
+            completed_at_ms: None,
+            ..mark.clone()
+        };
+        assert!(unknown.covers(&ClearMark::provider(&child(&parent), 9500)));
+
+        let mut session = Session::default();
+        session.merge(&json!({"sessionId":"c","mode":"input","totalToolCalls":3}));
+        let mark = ClearMark::session(&session, 1);
+        session.merge(&json!({"lastActivity":99,"updated_at":"2026-10-05T00:00:00Z"}));
+        assert!(
+            mark.covers(&ClearMark::session(&session, 2)),
+            "activity alone is not work"
+        );
+        session.merge(&json!({"totalToolCalls":4}));
+        assert!(!mark.covers(&ClearMark::session(&session, 2)));
+    }
+
+    #[test]
+    fn finished_sessions_exclude_pending_and_running_children() {
+        let mut session = Session::default();
+        session.merge(&json!({"sessionId":"c","mode":"input"}));
+        assert!(session_finished(&session));
+        session.merge(&json!({"subagents":[{"id":"a","status":"running"}]}));
+        assert!(!session_finished(&session), "its own child still works");
+        session.merge(
+            &json!({"subagents":[{"id":"a","status":"complete"}],"pendingApproval":{"id":"x"}}),
+        );
+        assert!(!session_finished(&session));
+        session.merge(&json!({"pendingApproval":null,"mode":"responding"}));
+        assert!(!session_finished(&session));
+        session.merge(&json!({"mode":"stopped"}));
+        assert!(session_finished(&session));
+    }
+
+    #[test]
+    fn remembered_clears_are_bounded_oldest_first() {
+        let mut marks = BTreeMap::new();
+        for at in 0..(MAX_CLEARED as i64 + 3) {
+            remember_clear(
+                &mut marks,
+                clear_key_session(&format!("s{at}")),
+                ClearMark {
+                    cleared_at_ms: at,
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(marks.len(), MAX_CLEARED);
+        assert!(!marks.contains_key("session:s0") && !marks.contains_key("session:s2"));
+        assert!(marks.contains_key("session:s3"));
+        assert_ne!(clear_key_provider("p", "a"), clear_key_session("p/a"));
+    }
+
+    #[test]
+    fn past_the_bound_the_newest_children_are_kept() {
+        let mut children: Vec<_> = (0..40)
+            .map(|ix| json!({"id":format!("c{ix}"),"status":"complete"}))
+            .collect();
+        children[39]["status"] = json!("running");
+        let mut parent = Session::default();
+        parent.merge(&json!({"sessionId":"p","subagents":children}));
+        let ids: Vec<_> = project(&parent, &[], std::iter::empty())
+            .unanchored
+            .into_iter()
+            .map(|child| child.id)
+            .collect();
+        assert_eq!(ids.len(), 32);
+        assert_eq!(ids.first().map(String::as_str), Some("c8"));
+        assert_eq!(
+            ids.last().map(String::as_str),
+            Some("c39"),
+            "the running child stays"
+        );
     }
 }

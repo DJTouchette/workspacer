@@ -1,5 +1,30 @@
 # Native client validation — 2026-09-27
 
+## Stable finished children and Clear (#29, 2026-10-05)
+
+Finished provider-native children used to leave the sidebar when the parent's
+turn ended. They came back only while open from the chat. A fleet read served
+before a newer `agent.snapshot` also rolled a finished child back to running
+(or dropped a new one) until the next event, because the pending-read overlay
+did not carry `subagents`. Both are fixed, and Native keeps the newest 32
+children rather than the first 32. Finished children offer device-local
+**Clear**; the parent offers **Clear finished children**. Clear is separate from
+the shared archive and sends no command.
+
+`native-harness serve --rich-transcript --child-lifecycle` finishes the first
+session's children, ends its turn after about 4s, and replays that identical
+snapshot every 1.5s. In a private Xvfb with an isolated config, the real debug
+binary kept every finished row through sibling focus, parent refocus, opening a
+child and returning, and replays (`docs/ui-child-rows-focus-stable.png`). Clear
+and Clear finished stayed stable through replays and focus changes, and left the
+running Workspacer child with Archive (`docs/ui-child-clear.png`,
+`docs/ui-child-clear-finished.png`). The marks were saved under the hub scope
+with `archived` untouched. All eight themes are in
+`docs/ui-child-clear-all-themes.png`. GPUI regressions cover focus/turn/replay
+stability, no emitted commands on Clear, reactivation, restart evidence,
+lineage context and History's **Show in sidebar**. A protocol regression covers
+the fleet-overlay race; it fails without the controller change.
+
 ## Native visual redesign (2026-09-29)
 
 The user's visual reference informed a flatter native layout. Dark uses near

@@ -434,6 +434,31 @@ async fn controller_reconciles_snapshot_races_gaps_and_stale_selection() {
     assert_eq!(next.transcript.rows[0].text, "Session B stays selected");
 }
 
+// #29: an older fleet read must not roll a finished child back to running, or
+// drop a newer one, until the next event arrives.
+#[tokio::test]
+async fn fleet_reads_keep_child_status_from_events_seen_while_pending() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    let mut newer = session("a");
+    newer["subagents"] = json!([
+        {"id":"t1","status":"complete","startedAt":1000,"completedAt":2000},
+        {"id":"t2","status":"running","startedAt":3000}
+    ]);
+    fleet.event("agent.snapshot", newer).await;
+    let mut older = session("a");
+    older["subagents"] = json!([{"id":"t1","status":"running","startedAt":1000}]);
+    fleet.result(json!([older, session("b")])).await;
+    let v = view(&controller, |v| v.sessions.len() == 2).await;
+    let parent = v.sessions.iter().find(|s| s.id == "a").unwrap();
+    let children = parent.subagents.as_array().unwrap();
+    assert_eq!(children.len(), 2, "{children:?}");
+    assert_eq!(children[0]["status"], "complete");
+    assert_eq!(children[0]["completedAt"], 2000);
+    assert_eq!(children[1]["id"], "t2");
+}
+
 #[tokio::test]
 async fn approval_contract_send_receipt_and_reconnect_reseed_use_real_websocket() {
     let mut hub = Hub::new().await;

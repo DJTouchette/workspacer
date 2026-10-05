@@ -61,6 +61,10 @@ enum Command {
         /// stderr and resolve the set.
         #[arg(long)]
         pending_questions: bool,
+        /// With --rich-transcript: the first session's native children finish
+        /// and its turn ends after ~4s; that snapshot then replays every 1.5s.
+        #[arg(long)]
+        child_lifecycle: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -156,6 +160,7 @@ async fn main() -> Result<()> {
             rich_transcript,
             missing_session_request,
             pending_questions,
+            child_lifecycle,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
@@ -166,6 +171,7 @@ async fn main() -> Result<()> {
                 rich_transcript,
                 missing_session_request,
                 pending_questions,
+                child_lifecycle,
             )
             .await?;
         }

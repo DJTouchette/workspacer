@@ -1148,6 +1148,14 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .gap_1()
+                            // A child cleared from the sidebar on this device
+                            // comes back here; that is not an archive restore.
+                            .when(self.clear_marked(&s.id), |d| {
+                                let id = s.id.clone();
+                                d.child(self.button("unclear-recent", "Show in sidebar", true)
+                                    .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Cleared from the sidebar on this device · show it under its parent again").build(window, cx))
+                                    .on_click(cx.listener(move |this, _, _, cx| this.unclear_session(&id, cx))))
+                            })
                             .child(self.button("archive-recent", if self.archived(&s.id) { "Restore" } else { "Archive" }, true)
                                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx))))
                             .when(s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"), |d| {
