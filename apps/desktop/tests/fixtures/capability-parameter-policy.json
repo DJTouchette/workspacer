@@ -3,6 +3,7 @@
     "fs.read": "path",
     "fs.readImage": "path",
     "fs.write": "path",
+    "fs.compareWrite": "path",
     "fs.listEntries": "path",
     "fs.listDir": "path",
     "fs.watch": "path",
@@ -978,6 +979,20 @@
     }
   },
   "sourceParameterDecisions": {
+    "fs.compareWrite": {
+      "contents": {
+        "kind": "inert",
+        "reason": "UTF-8 bytes written to the canonical host file under the same ambient file authority as fs.write, not executed by this handler or interpreted as argv, environment or a permission grant."
+      },
+      "expected": {
+        "kind": "inert",
+        "reason": "Required UTF-8 comparison text checked against the opened file under its OS lock. It is never a path, command or authority claim."
+      },
+      "force": {
+        "kind": "inert",
+        "reason": "Strict boolean allowing an already-authorized file writer to bypass only the expected-content check. It changes no caller identity, filesystem authority, provider policy or execution permission."
+      }
+    },
     "providers.listModels": {
       "useHomeDirectory": {
         "kind": "path",

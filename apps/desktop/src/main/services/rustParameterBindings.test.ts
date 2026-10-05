@@ -25,13 +25,10 @@ describe('Rust dispatcher caller parameter extraction', () => {
         (n, row) => n + row.fields.filter((field) => !!policy.dangerousKind(field)).length,
         0,
       ),
-    }).toEqual({ rows: 68, bindings: 47 });
+    }).toEqual({ rows: 69, bindings: 47 }); // observed: one additional shared write arm
     for (const [method, field] of [
       ['git.status', 'cwd'],
       ['git.stage', 'path'],
-      // fs.write.path now goes through a helper; the AST guard requires its
-      // original Go binding independently via go-reference.json.
-      ['fs.write', 'contents'],
       ['sessions.load', 'filename'],
       ['claude.profiles.add', 'configDir'],
     ]) {
@@ -51,6 +48,28 @@ describe('Rust dispatcher caller parameter extraction', () => {
         .map((field) => row.method + '.' + field),
     );
     expect(errors).toEqual([]);
+  });
+  it('classifies conditional-write path and inert text without admitting executable parameters', () => {
+    expect(policy.pathParameters['fs.compareWrite']).toBe(policy.pathParameters['fs.write']);
+    expect(policy.classifyParam('fs.compareWrite', 'path').status).toBe('path');
+    for (const field of ['contents', 'expected', 'force']) {
+      expect(policy.classifyParam('fs.compareWrite', field)).toMatchObject({
+        status: 'decision',
+        kind: 'inert',
+      });
+    }
+    for (const field of ['shell', 'command', 'argv', 'env', 'permissionMode']) {
+      expect(policy.classifyParam('fs.compareWrite', field).status).toBe('unclassified');
+    }
+    // Both writes now delegate parameter extraction to write(); this bounded
+    // scanner cannot claim those reads. The independent Rust AST guard traces
+    // the helper and checks all four fields against the current surface policy.
+    const rows = rustDispatcherBindings(rustSources(ROOT));
+    for (const method of ['fs.write', 'fs.compareWrite']) {
+      expect(rows.filter((row) => row.method === method)).toEqual([
+        { file: 'services/hub-rs/src/services/files.rs', method, fields: [] },
+      ]);
+    }
   });
   it('tracks caller aliases and pointer reads without accepting quoted or comment decoys', () => {
     expect(

@@ -3,6 +3,7 @@ import {
   inertMethods,
   methodDecisions,
   parameterDecisions,
+  sourceParameterDecisions,
   pathNamespaces,
   pathParameters,
 } from './capabilityParameterDecisions';
@@ -11,6 +12,7 @@ export {
   inertMethods,
   methodDecisions,
   parameterDecisions,
+  sourceParameterDecisions,
   pathNamespaces,
   pathParameters,
 };
@@ -130,7 +132,7 @@ export function classifyParam(
       kind: 'path',
       reason: 'Canonical path selection; authenticated paths are ambient, not a filesystem grant.',
     };
-  const decisions = parameterDecisions[method] || {},
+  const decisions = { ...parameterDecisions[method], ...sourceParameterDecisions[method] },
     key = fold ? foldName(param, Object.keys(decisions)) : param;
   const decision = key && Object.hasOwn(decisions, key) && decisions[key];
   return decision ? { status: 'decision', ...decision } : { status: 'unclassified' };

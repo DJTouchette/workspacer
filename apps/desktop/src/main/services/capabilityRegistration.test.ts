@@ -30,6 +30,13 @@ function extras(
     EXTRA[name] = { file: 'services/hub-rs/src/' + file, actor, reason, gate };
 }
 extras(
+  ['fs.compareWrite'],
+  'services/files.rs',
+  true,
+  'Conditional write under the same ambient authenticated file authority as fs.write. The shared filesystem dispatcher canonicalizes the absolute path before calling the locked writer; expected/contents are text and force changes only the comparison, never caller or execution authority.',
+  ['call(method,params,&home)'],
+);
+extras(
   ['federation.resumePeer'],
   'federation.rs',
   true,
@@ -170,6 +177,26 @@ function check(files: Map<string, string>): string[] {
 describe('capability registration source', { timeout: 90000 }, () => {
   it('classifies all actual Rust declarations with exact extra-authority and duplicate-ownership decisions', () =>
     expect(check(rustSources(ROOT))).toEqual([]));
+  it('pins conditional file writes to the shared path dispatcher and explicit current surface', () => {
+    expect(reference.currentAdditions['fs.compareWrite'].authority).toBe('fs.write');
+    expect(reference.full).toContain('fs.compareWrite');
+    expect(reference.catalog).toContain('fs.compareWrite');
+    expect(vocabulary.methods).not.toContain('fs.compareWrite'); // sealed historical vocabulary
+    const files = rustSources(ROOT);
+    const row = registrations(files).filter((row) => row.method === 'fs.compareWrite');
+    expect(row).toHaveLength(1);
+    expect(row[0].file).toBe('services/hub-rs/src/services/files.rs');
+    expect(EXTRA['fs.compareWrite'].actor).toBe(true);
+    const removed = new Map(files);
+    const file = row[0].file;
+    removed.set(
+      file,
+      files.get(file)!.replace('call(method, params, &home)', 'unguarded_write(params)'),
+    );
+    expect(check(removed)).toContain(
+      'missing handler-bound gate fs.compareWrite: call(method,params,&home)',
+    );
+  });
   it('enumerates retained desktop registrations and keeps hub-owned methods out of the provider registry', () => {
     const rows = desktopRegistrations(ROOT);
     const duplicates = rows

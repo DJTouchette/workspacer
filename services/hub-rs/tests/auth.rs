@@ -289,3 +289,67 @@ fn desktop_shaped_legacy_metadata_and_provider_grants_survive_every_store_rewrit
         );
     }
 }
+
+#[tokio::test]
+async fn conditional_write_has_exactly_plain_write_authority_and_canonical_path_checks() {
+    let root = tempfile::tempdir().unwrap();
+    let token_path = root.path().join("tokens.json");
+    let mut options = Options::default();
+    options.config_dir = Some(root.path().join("config"));
+    options.home_dir = Some(root.path().join("home"));
+    options.scoped_tokens = Some(token_path.clone());
+    let hub = Hub::start(options).unwrap();
+    hub.ready().await.unwrap();
+    let file = root.path().join("source.txt");
+    // Shell-shaped payloads remain bytes; extra caller claims cannot authorize
+    // a scoped view/triage/provider token or start a process.
+    let contents = "$(echo not-executed); arbitrary source text";
+    for scope in [Scope::View, Scope::Triage, Scope::Provider, Scope::Operator] {
+        let token = auth::mint(&token_path, scope, "conditional-write-test").unwrap();
+        let mut connection = hub
+            .handle()
+            .connect_authenticated(token.token, false)
+            .await
+            .unwrap();
+        recv(&mut connection).await;
+        for method in ["fs.write", "fs.compareWrite"] {
+            std::fs::write(&file, "before").unwrap();
+            connection
+                .send(Frame {
+                    id: "write".into(),
+                    method: method.into(),
+                    params: Some(
+                        json!({"path":file,"contents":contents,"expected":"before","force":true,
+                    "authenticatedHost":true,"skipPermissions":true,"command":"echo not-executed"}),
+                    ),
+                    ..Frame::op("call")
+                })
+                .unwrap();
+            let answer = recv(&mut connection).await;
+            assert_eq!(
+                answer.error.is_empty(),
+                scope == Scope::Operator,
+                "{scope:?}/{method}: {answer:?}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&file).unwrap(),
+                if scope == Scope::Operator {
+                    contents
+                } else {
+                    "before"
+                }
+            );
+        }
+    }
+    for method in ["fs.write", "fs.compareWrite"] {
+        assert!(
+            workspacer_hub::services::files::call(
+                method,
+                json!({"path":"relative.txt","contents":"after","expected":"before","force":true}),
+                root.path()
+            )
+            .is_err()
+        );
+    }
+    hub.shutdown().unwrap();
+}

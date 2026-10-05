@@ -1,5 +1,5 @@
 {
-  "description": "Captured Go method registration contract. Method presence alone does not establish behavioral parity.",
+  "description": "Required backend method surface, seeded from the captured Go registration contract. referenceFiles retain historical provenance; currentAdditions documents later Rust methods. Presence alone does not establish behavioral parity.",
   "referenceFiles": {
     "services/hub/cmd/brain/handlers.go": "2506b12a11a361ae4a0200efd6dd152d4b2b6c64b8b12d0bcbda4b60c6779f61",
     "services/hub/cmd/hub/main.go": "49318d2997c332f2593efed3b58bae5672019634298c30b47ca08ba6d981ee3d"
@@ -126,6 +126,7 @@
     "files.receiveUpload",
     "fleet.dispatchCapabilities",
     "fleetWorkflows.request",
+    "fs.compareWrite",
     "fs.listDir",
     "fs.listEntries",
     "fs.read",
@@ -185,6 +186,7 @@
     "config.getPath",
     "config.reload",
     "config.save",
+    "fs.compareWrite",
     "fs.listDir",
     "fs.listEntries",
     "fs.read",
@@ -205,6 +207,12 @@
       "reason": "Private callback from the Go brain process is replaced by owned in-process launch integration with actor-verified launch authority. External plugin prepare methods remain callable only through the validated integration path.",
       "replacement": "services/hub-rs/src/plugins/launch.rs",
       "tests": "services/hub-rs/src/plugins/launch/tests.rs"
+    }
+  },
+  "currentAdditions": {
+    "fs.compareWrite": {
+      "authority": "fs.write",
+      "reason": "Rust host conditional file write: the same authenticated ambient host-path authority as fs.write. Canonical absolute path selects the file; contents and expected are inert text, force only bypasses the content comparison. None grants provider, process, permission or caller-identity authority."
     }
   }
 }

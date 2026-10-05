@@ -3,6 +3,7 @@ import path from 'path';
 import ts from 'typescript';
 import fs from 'fs';
 import vocabulary from '../../../../../services/hub-rs/assets/hub-vocabulary.json';
+import reference from '../../../../../contracts/backend-capabilities.json';
 import hostConfig from '../../../../../contracts/host-trusted-config-cases.json';
 import * as policy from '../../../tests/support/capabilityParameters';
 import { desktopRegistrations, rustSources } from '../../../tests/support/capabilitySource';
@@ -31,7 +32,8 @@ function recordsValid(decisions = policy.parameterDecisions): void {
   ];
   if (
     new Set(names).size !== names.length ||
-    JSON.stringify(names.sort()) !== JSON.stringify([...vocabulary.methods].sort())
+    JSON.stringify(names.sort()) !==
+      JSON.stringify([...vocabulary.methods, ...Object.keys(reference.currentAdditions)].sort())
   )
     throw Error('method classification overlap or omission');
   for (const method of Object.keys(policy.pathParameters))

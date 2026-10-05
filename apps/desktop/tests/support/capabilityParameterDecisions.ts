@@ -10,3 +10,5 @@ export const parameterDecisions: Record<
 > = policy.parameterDecisions;
 export const dangerousNames: Record<string, string> = policy.dangerousNames;
 export const pathNamespaces: string[] = policy.pathNamespaces;
+
+export const sourceParameterDecisions: typeof parameterDecisions = policy.sourceParameterDecisions;
