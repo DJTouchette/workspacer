@@ -222,7 +222,32 @@ impl Backend {
 
     pub async fn action(&self, id: &str, action: &Action, _stream: bool) -> Result<Value> {
         let (method, params) = action.wire(id);
-        self.call(method, params).await
+        let mut reply = self.call(method, params).await?;
+        // Model then effort: the effort call only follows an accepted model
+        // change, and its refusal is reported without hiding that the model
+        // change went through.
+        if let Action::SetModel {
+            effort: Some(effort),
+            ..
+        } = action
+            && reply["ok"] != false
+        {
+            let (method, params) = Action::SetEffort(effort.clone()).wire(id);
+            let effort_reply = self.call(method, params).await;
+            match effort_reply {
+                Ok(value) if value["ok"] != false => reply["effort"] = value["effort"].clone(),
+                Ok(value) => {
+                    let error = value["error"].as_str().unwrap_or("refused").to_owned();
+                    return Ok(serde_json::json!({"ok":false,"modelApplied":true,
+                        "error":format!("The model change was accepted, but the effort change was refused: {error}")}));
+                }
+                Err(error) => {
+                    return Ok(serde_json::json!({"ok":false,"modelApplied":true,
+                        "error":format!("The model change was accepted, but the effort change failed: {error}")}));
+                }
+            }
+        }
+        Ok(reply)
     }
 }
 

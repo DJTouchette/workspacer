@@ -756,7 +756,7 @@ impl Workspace {
             )
     }
 
-    fn catalog_key(&self, _cx: &App) -> CatalogKey {
+    pub(super) fn catalog_key(&self, _cx: &App) -> CatalogKey {
         CatalogKey {
             provider: self.provider.into(),
             cwd: if self.provider == "claude" {
@@ -830,13 +830,33 @@ impl Workspace {
             picker.set_items(SearchableVec::new(items), window, cx);
             picker.set_selected_value(&self.model_choice, window, cx);
         });
+        if self.screen == Screen::Model {
+            self.select_exact_model(window, cx);
+        }
         self.reconcile_effort(window, cx);
+    }
+
+    /// Change model opens on the session's exact model ID; once the catalog
+    /// lists that exact ID, show it as the selected row instead of a custom
+    /// entry. A near match (an alias, another context variant) stays custom.
+    pub(super) fn select_exact_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.model_choice != "__custom" {
+            return;
+        }
+        let custom = self.model.read(cx).value().trim().to_owned();
+        if custom.is_empty() || !self.catalog_models.iter().any(|m| m.id == custom) {
+            return;
+        }
+        self.model_choice = custom;
+        self.model_picker.update(cx, |picker, cx| {
+            picker.set_selected_value(&self.model_choice, window, cx)
+        });
     }
 
     /// Model choice with the catalog's live state; the exact ID is entered
     /// here when Custom is chosen, so it is never hidden behind the fold.
-    /// `with_effort` places the effort menu beside the model (New Agent); the
-    /// live Model screen switches model only, so it leaves effort out.
+    /// `with_effort` places the effort menu beside the model (New Agent and
+    /// the live Model screen).
     pub(super) fn render_model_select(
         &self,
         busy: bool,
@@ -1031,7 +1051,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .child(self.render_model_select(busy, false, cx))
+            .child(self.render_model_select(busy, true, cx))
             .child(self.render_context_choice(busy, cx))
     }
 

@@ -322,6 +322,7 @@ actions!(
     native,
     [
         SendMessage,
+        ComposerEnter,
         CreateSession,
         NextSession,
         PreviousSession,
@@ -402,6 +403,14 @@ pub fn bind_keys(cx: &mut App) {
         // context as well; a root-only binding loses to its newline action.
         KeyBinding::new("ctrl-enter", SendMessage, Some("Workspace > Input")),
         KeyBinding::new("cmd-enter", SendMessage, Some("Workspace > Input")),
+        // Settings → Keyboard → Send with Enter: only the chat composer carries
+        // the ComposerEnter context, so every other field keeps its Enter.
+        KeyBinding::new("enter", ComposerEnter, Some("ComposerEnter > Input")),
+        KeyBinding::new(
+            "shift-enter",
+            gpui_component::input::Enter { secondary: false },
+            Some("ComposerEnter > Input"),
+        ),
         KeyBinding::new("alt-down", NextSession, Some("Workspace")),
         KeyBinding::new("alt-up", PreviousSession, Some("Workspace")),
         KeyBinding::new("ctrl-l", FocusComposer, Some("Workspace")),
@@ -905,6 +914,7 @@ impl Workspace {
             && receipt.number > self.last_receipt
         {
             self.last_receipt = receipt.number;
+            self.note_model_receipt(receipt);
             if receipt.error.is_none()
                 && matches!(receipt.action, Action::Stop)
                 && let Some(clock) = self.turn_clocks.get_mut(&receipt.session)
@@ -1100,6 +1110,23 @@ impl Workspace {
                 .unwrap_or_default(),
         );
         self.act(Action::Send(text), cx);
+    }
+
+    /// Enter in the composer when Enter sends. An IME composition keeps the
+    /// key (it commits the composition), and so does any state where the
+    /// draft cannot be sent: nothing is inserted, nothing is lost.
+    fn composer_enter(&mut self, _: &ComposerEnter, window: &mut Window, cx: &mut Context<Self>) {
+        let composing = self
+            .composer
+            .update(cx, |input, cx| {
+                gpui::EntityInputHandler::marked_text_range(input, window, cx)
+            })
+            .is_some_and(|range| !range.is_empty());
+        if composing || !self.settings.enter_sends {
+            cx.propagate();
+            return;
+        }
+        self.send(&SendMessage, window, cx);
     }
 
     fn act(&mut self, action: Action, cx: &mut Context<Self>) {
@@ -1549,7 +1576,7 @@ impl Render for Workspace {
                 .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, cx)))
                 .children(self.render_child_bar(cx))
                 .when(selected.is_some() && self.view.child.is_none(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
-                    .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).occlude().bg(rgb(p.surface)).border_1()
+                    .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).key_context(if self.settings.enter_sends { "Composer ComposerEnter" } else { "Composer" }).occlude().bg(rgb(p.surface)).border_1()
                         .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) { rgb(p.accent).into() } else { gpui::Hsla::from(rgb(p.border)).opacity(0.55) })
                         .rounded(px(p.composer_radius)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
                         .when(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).is_some_and(|v| !v.is_empty()), |d| d.child(div().flex().flex_wrap().gap_2()
@@ -1575,8 +1602,8 @@ impl Render for Workspace {
                         .child(div().flex_1().min_w_0().flex().items_center().gap_2()
                             .when(animate_activity, |d| d.child(brand_spinner(12., p, "composer-activity")))
                             .child(div().truncate().child(activity.unwrap_or_else(|| if enabled { "Ready" } else { "Session unavailable" }.into()))))
-                        .child(div().flex().gap_1().items_center().flex_shrink_0().child(keycap(if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
-                        .when(!narrow, |d| d.child("Enter for a new line")))))) ))
+                        .child(div().debug_selector(|| "composer-send-hint".into()).flex().gap_1().items_center().flex_shrink_0().child(keycap(if self.settings.enter_sends { "Enter" } else if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
+                        .when(!narrow, |d| d.child(if self.settings.enter_sends { "Shift Enter for a new line" } else { "Enter for a new line" })))))) ))
             .children(self.render_docked_viewer(window, cx))
             .into_any_element()
     }
@@ -4434,6 +4461,117 @@ mod tests {
                 assert_eq!(this.composer.read(cx).value().as_ref(), text);
             })
         });
+    }
+
+    /// Settings → Keyboard → Send messages with Enter: Enter sends (queued
+    /// while the agent works), Shift+Enter adds a line, an IME composition
+    /// keeps its Enter, a busy composer swallows nothing into the draft, and
+    /// the default Ctrl/Cmd+Enter mode keeps Enter as a newline.
+    #[gpui::test]
+    fn enter_sends_setting_swaps_send_and_newline_in_the_composer_only(cx: &mut TestAppContext) {
+        use gpui::EntityInputHandler;
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let mut working = state("a");
+        Arc::make_mut(&mut working.sessions)[0].state = "responding".into();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settings.enter_sends = true;
+                this.update_view(Arc::new(working), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        visual.simulate_keystrokes("ctrl-l");
+        visual.simulate_input("line one");
+        visual.simulate_keystrokes("shift-enter");
+        visual.simulate_input("line two");
+        // An open IME composition: Enter belongs to the input method.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.composer.update(cx, |input, cx| {
+                    input.replace_and_mark_text_in_range(None, "に", None, window, cx)
+                })
+            })
+        });
+        visual.simulate_keystrokes("enter");
+        assert!(
+            commands.try_recv().is_err(),
+            "composition Enter never sends"
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.composer.update(cx, |input, cx| {
+                    input.replace_text_in_range(None, "", window, cx);
+                    input.unmark_text(window, cx);
+                    let value = input.value().to_string();
+                    let trimmed = value.trim_end_matches('\n').to_owned();
+                    input.set_value(trimmed, window, cx);
+                })
+            })
+        });
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(
+                this.composer.read(cx).value().as_ref(),
+                "line one\nline two"
+            )
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.composer
+                    .update(cx, |input, cx| input.focus(window, cx))
+            })
+        });
+        visual.simulate_keystrokes("enter");
+        match commands.try_recv() {
+            Ok(Command::Act {
+                session,
+                action: Action::Send(text),
+            }) => {
+                assert_eq!(session, "a");
+                assert_eq!(text, "line one\nline two", "queued while working");
+            }
+            other => panic!("Enter sends: {:?}", other.map(|_| ())),
+        }
+        let mut busy = state("a");
+        busy.busy = true;
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(busy), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("held", window, cx));
+                this.composer
+                    .update(cx, |input, cx| input.focus(window, cx));
+            })
+        });
+        visual.simulate_keystrokes("enter");
+        assert!(commands.try_recv().is_err(), "busy: nothing sent");
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "held")
+        });
+        // Default mode: Enter is a newline and only Ctrl/Cmd+Enter sends.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settings.enter_sends = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("first", window, cx));
+                this.composer
+                    .update(cx, |input, cx| input.focus(window, cx));
+            })
+        });
+        visual.run_until_parked();
+        visual.simulate_keystrokes("end enter");
+        assert!(commands.try_recv().is_err(), "plain Enter does not send");
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "first\n")
+        });
+        visual.simulate_keystrokes("ctrl-enter");
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::Act {
+                action: Action::Send(_),
+                ..
+            })
+        ));
     }
 
     #[gpui::test]
@@ -8262,6 +8400,150 @@ mod tests {
             assert_eq!(this.context_window, None);
         }));
     }
+    /// The title bar's model chip opens Change model on the session's exact
+    /// model and effort, lists the efforts the provider reports, and Apply
+    /// sends only what changed: nothing, the effort, or model then effort.
+    #[gpui::test]
+    fn title_model_chip_switches_model_and_effort_without_substitution(cx: &mut TestAppContext) {
+        use wks_native::launch::{Catalog, ModelChoice};
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let codex = |next: &mut View| {
+            Arc::make_mut(&mut next.sessions)[0].merge(&serde_json::json!({
+                "provider":"codex","cwd":"/project","transport":"stream",
+                "settings":{"model":"gpt-5.5","effort":"medium"}}));
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut next = state("a");
+                codex(&mut next);
+                this.update_view(Arc::new(next), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("draft stays", window, cx));
+            })
+        });
+        visual.run_until_parked();
+        let chip = visual
+            .debug_bounds("title-model")
+            .expect("model chip in the title bar");
+        visual.simulate_click(chip.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                assert_eq!(this.screen, Screen::Model);
+                assert_eq!(this.effort, "medium", "opens on the session's effort");
+                assert_eq!(this.model_choice, "__custom", "no catalog yet: exact ID");
+                assert_eq!(this.model.read(cx).value().as_ref(), "gpt-5.5");
+                let mut next = state("a");
+                codex(&mut next);
+                next.catalog = Catalog {
+                    key: this.catalog_key(cx),
+                    loading: false,
+                    error: None,
+                    models: vec![
+                        ModelChoice {
+                            id: "gpt-5.5".into(),
+                            label: "GPT-5.5".into(),
+                            efforts: vec!["low".into(), "medium".into(), "high".into()],
+                            default_effort: Some("medium".into()),
+                            ..Default::default()
+                        },
+                        ModelChoice {
+                            id: "gpt-5.4".into(),
+                            label: "GPT-5.4".into(),
+                            efforts: vec!["low".into(), "high".into()],
+                            ..Default::default()
+                        },
+                        ModelChoice {
+                            id: "gpt-5.5-codex".into(),
+                            label: "GPT-5.5 Codex".into(),
+                            ..Default::default()
+                        },
+                    ],
+                };
+                this.update_view(Arc::new(next), window, cx);
+                assert_eq!(this.model_choice, "gpt-5.5", "the exact ID is selected");
+                assert_eq!(
+                    this.effort_options().0,
+                    vec!["low", "medium", "high"],
+                    "efforts come from the provider's report for this model"
+                );
+                while commands.try_recv().is_ok() {}
+                this.apply_model_change(cx);
+                assert!(this.extras.notice.contains("already uses"));
+            })
+        });
+        assert!(
+            commands.try_recv().is_err(),
+            "an unchanged form sends nothing"
+        );
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("launch-effort-picker").is_some());
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.effort = "high".into();
+                this.apply_model_change(cx);
+            })
+        });
+        match commands.try_recv() {
+            Ok(Command::Act {
+                session,
+                action: Action::SetEffort(effort),
+            }) => assert_eq!((session.as_str(), effort.as_str()), ("a", "high")),
+            other => panic!("effort-only change: {:?}", other.map(|_| ())),
+        }
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                // Accepted: the baseline moves, so Apply does not resend it.
+                this.note_model_receipt(&Receipt {
+                    number: 1,
+                    session: "a".into(),
+                    action: Action::SetEffort("high".into()),
+                    error: None,
+                });
+                this.model_choice = "gpt-5.4".into();
+                this.reconcile_effort(window, cx);
+                assert_eq!(this.effort, "high", "still offered by the new model");
+                this.apply_model_change(cx);
+            })
+        });
+        match commands.try_recv() {
+            Ok(Command::Act {
+                action:
+                    Action::SetModel {
+                        model,
+                        effort,
+                        context_window,
+                    },
+                ..
+            }) => {
+                assert_eq!(model, "gpt-5.4");
+                assert_eq!(effort, None, "effort unchanged since the receipt");
+                assert_eq!(context_window, None);
+            }
+            other => panic!("model change: {:?}", other.map(|_| ())),
+        }
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.effort = "low".into();
+                this.apply_model_change(cx);
+                assert_eq!(this.composer.read(cx).value().as_ref(), "draft stays");
+                this.show_screen(Screen::Conversation, window, cx);
+                assert_eq!(this.composer.read(cx).value().as_ref(), "draft stays");
+            })
+        });
+        match commands.try_recv() {
+            Ok(Command::Act {
+                action: Action::SetModel { model, effort, .. },
+                ..
+            }) => assert_eq!(
+                (model.as_str(), effort.as_deref()),
+                ("gpt-5.4", Some("low"))
+            ),
+            other => panic!("model and effort: {:?}", other.map(|_| ())),
+        }
+    }
+
     #[gpui::test]
     fn normal_text_paste_still_reaches_the_composer(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);

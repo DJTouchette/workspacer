@@ -36,6 +36,9 @@ pub struct Settings {
     pub interface_scale: u16,
     pub sidebar_width: f32,
     pub vim_navigation: bool,
+    /// Composer submit key: Enter sends and Shift+Enter adds a line, instead
+    /// of the default Ctrl/Cmd+Enter to send and Enter for a new line.
+    pub enter_sends: bool,
     pub keep_running: bool,
     pub notifications: bool,
     /// Client-local session organization, scoped by hub identity.
@@ -58,6 +61,7 @@ impl Default for Settings {
             interface_scale: 100,
             sidebar_width: 304.,
             vim_navigation: true,
+            enter_sends: false,
             keep_running: false,
             notifications: true,
             names: BTreeMap::new(),

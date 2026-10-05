@@ -38,7 +38,13 @@ pub enum Action {
     SetModel {
         model: String,
         context_window: Option<u64>,
+        /// Then also switch effort (`claude.setEffort`, after the model call
+        /// succeeds); `None` leaves the session's effort alone.
+        effort: Option<String>,
     },
+    /// Live reasoning-effort switch: Claude's `/effort` command or Codex's
+    /// thread settings, chosen by the hub per provider.
+    SetEffort(String),
 }
 
 impl Action {
@@ -52,10 +58,14 @@ impl Action {
             Self::SetModel {
                 model,
                 context_window,
+                ..
             } => (
                 "claude.setModel",
                 json!({"sessionId":id,"model":model,"modelIdentity":model,"contextWindow":context_window}),
             ),
+            Self::SetEffort(effort) => {
+                ("claude.setEffort", json!({"sessionId":id,"effort":effort}))
+            }
             Self::Send(text) => ("agents.sendMessage", json!({"sessionId":id, "text":text})),
             Self::Approve(yes) => (
                 "claude.approve",
@@ -1008,9 +1018,12 @@ impl Worker {
                                     .iter()
                                     .all(|s| !s.trim().is_empty() && s.len() <= 65536)
                         }
-                        Action::SetModel { model, .. } => {
-                            !model.trim().is_empty() && model.len() < 256
+                        Action::SetModel { model, effort, .. } => {
+                            !model.trim().is_empty()
+                                && model.len() < 256
+                                && effort.as_deref().is_none_or(crate::launch::valid_effort)
                         }
+                        Action::SetEffort(effort) => crate::launch::valid_effort(effort),
                     }
             });
         if !valid {
@@ -1388,7 +1401,20 @@ impl Worker {
                     if queued && !matches!(&action, Action::Send(_)) {
                         "Change queued; the provider will apply it when ready".into()
                     } else {
-                        String::new()
+                        match &action {
+                            Action::SetModel { model, effort, .. } => match effort {
+                                Some(effort) => format!(
+                                    "Model change accepted: {model} · {} effort",
+                                    crate::launch::effort_label(effort)
+                                ),
+                                None => format!("Model change accepted: {model}"),
+                            },
+                            Action::SetEffort(effort) => format!(
+                                "Effort change accepted: {}",
+                                crate::launch::effort_label(effort)
+                            ),
+                            _ => String::new(),
+                        }
                     }
                 });
                 self.view.receipt = Some(Receipt {

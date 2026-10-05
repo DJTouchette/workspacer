@@ -1209,15 +1209,62 @@ async fn end_model_and_question_controls_use_structured_contracts() {
             action: Action::SetModel {
                 model: "opus".into(),
                 context_window: Some(1_000_000),
+                effort: None,
             },
         })
         .unwrap();
     let model = hub.frame("call", Some("claude.setModel")).await;
     assert_eq!(model.value["params"]["contextWindow"], 1_000_000);
+    assert!(
+        model.value["params"].get("effort").is_none(),
+        "effort never rides on the model call"
+    );
     model
         .result(json!({"ok":true,"disposition":"queued"}))
         .await;
     view(&controller, |v| v.notice.contains("queued") && !v.busy).await;
+    // Model and effort together: the model call first, then claude.setEffort,
+    // which the hub routes per provider (Claude's /effort, Codex's thread).
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::SetModel {
+                model: "gpt-5.5".into(),
+                context_window: None,
+                effort: Some("high".into()),
+            },
+        })
+        .unwrap();
+    hub.frame("call", Some("claude.setModel"))
+        .await
+        .result(json!({"ok":true,"model":"gpt-5.5"}))
+        .await;
+    let effort = hub.frame("call", Some("claude.setEffort")).await;
+    assert_eq!(effort.value["params"]["effort"], "high");
+    assert_eq!(effort.value["params"]["sessionId"], "a");
+    effort
+        .result(json!({"ok":false,"error":"this session can't take input right now (ended)"}))
+        .await;
+    view(&controller, |v| {
+        v.notice.contains("model change was accepted") && v.notice.contains("ended") && !v.busy
+    })
+    .await;
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::SetEffort("low".into()),
+        })
+        .unwrap();
+    let effort = hub.frame("call", Some("claude.setEffort")).await;
+    assert_eq!(effort.value["params"]["effort"], "low");
+    effort.result(json!({"ok":true,"effort":"low"})).await;
+    view(&controller, |v| {
+        v.receipt
+            .as_ref()
+            .is_some_and(|r| matches!(r.action, Action::SetEffort(_)) && r.error.is_none())
+            && !v.busy
+    })
+    .await;
     controller
         .command(Command::Act {
             session: "a".into(),

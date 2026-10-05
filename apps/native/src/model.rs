@@ -26,6 +26,9 @@ pub struct Session {
     /// by snapshots that omit it, unlike the selection alias in `model`.
     pub runtime_model: String,
     pub context_window: Option<u64>,
+    /// Reasoning effort the hub recorded for this session (launch or live
+    /// switch); empty when it never named one (the provider default).
+    pub effort: String,
     pub context: ContextUsage,
     pub telemetry: crate::child_agents::Telemetry,
     pub approval: Option<Value>,
@@ -189,6 +192,13 @@ impl Session {
             && !model.is_empty()
         {
             self.model = model.to_owned();
+        }
+        if let Some(effort) = value
+            .pointer("/settings/effort")
+            .or_else(|| value.get("effort"))
+            .and_then(Value::as_str)
+        {
+            self.effort = crate::transcript::head(effort.trim(), 32);
         }
         if let Some(model) = [
             "/statusLine/modelDisplay",

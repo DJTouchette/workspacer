@@ -277,7 +277,14 @@ Captured during a real Codex round trip through an isolated backend:
   and interrupt controls. Failed/unknown-outcome sends preserve their drafts.
 - Reconnection, snapshot reseeding, delta-gap recovery, and stale-response guards.
 - `Alt+Up/Down` switches sessions; `Ctrl/Cmd+L` focuses the composer;
-  `Ctrl/Cmd+Enter` sends; plain Enter inserts a newline; `Ctrl/Cmd+R` refreshes.
+  `Ctrl/Cmd+Enter` sends; plain Enter inserts a newline; `Ctrl/Cmd+R` refreshes
+  (the title bar no longer carries a refresh button; **Retry conversation** and
+  **Reconnect and wake** remain where a read failed or the server paused).
+  **Settings → Keyboard → Send messages with** switches the composer to Enter
+  to send and Shift+Enter for a new line. The choice is saved on this device and
+  applies only to the chat composer: other fields keep their Enter, an open IME
+  composition keeps Enter for the input method, and a busy composer neither
+  sends nor adds a line. While the agent works, Enter queues the message.
 - Scrollback retains its position while new text arrives. Jump to latest resumes
   following the conversation.
 
@@ -454,6 +461,7 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Ctrl/Cmd+P` | Projects, including with Vim disabled |
 | `Ctrl/Cmd+,` | Settings, including with Vim disabled |
 | `Ctrl/Cmd+Enter` | Send, start the agent, or pin the focused project-path field |
+| `Enter` / `Shift+Enter` | With **Send messages with Enter**: send / new line in the composer |
 
 The existing `Ctrl/Cmd+N`, `Ctrl/Cmd+L`, `Ctrl/Cmd+R`, and `Alt+Up/Down` shortcuts
 remain available. Settings and Projects never send a hidden composer draft.
@@ -501,8 +509,17 @@ be expanded, and attachment controls share the composer action row.
   to their original session, and stay in the draft after failed/uncertain sends.
   Remove discards a draft attachment; uploaded files follow the hub’s retention.
 - **Question choices** support single and multiple selections and custom answers.
-  Labels and typed numbers are sent literally. **Model…** applies a selected model
-  and context to the running session; queued changes are reported as queued.
+  Labels and typed numbers are sent literally. **Model and effort** opens from
+  the title bar's model chip (which also shows the session's recorded effort) or
+  `g m`. It starts on the session's exact model ID — selected in the list only
+  when the catalog has that exact ID, never a near match — and its effort, and
+  lists the efforts the provider reports for the chosen model (Claude's
+  `--effort` ladder; Codex's per-model catalog). **Apply** sends only what
+  changed: `claude.setModel` for the model and context, then `claude.setEffort`
+  for the effort (the hub routes it to Claude's `/effort` or Codex's thread
+  settings). An unchanged form sends nothing. Accepted, queued and refused
+  changes are reported, including a model change accepted with its effort
+  refused. Drafts are untouched.
 - **Updates follow the build's channel.** A nightly install (version contains
   `-nightly`) checks the rolling `nightly` prerelease; a stable install checks the
   latest release. The app checks 8 seconds after launch and every 6 hours, shows

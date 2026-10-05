@@ -598,6 +598,34 @@ impl Workspace {
         ));
         entries.push(Entry::new(
             S::Keyboard,
+            "send-key",
+            "Send messages with",
+            "The composer's send key. The other combination adds a new line.",
+            "enter send submit newline shift ctrl cmd composer keyboard shortcut",
+            Layout::Row,
+            self.segmented(
+                "send-key",
+                vec![
+                    (
+                        false,
+                        if cfg!(target_os = "macos") {
+                            "⌘ Enter".into()
+                        } else {
+                            "Ctrl Enter".into()
+                        },
+                    ),
+                    (true, "Enter".into()),
+                ],
+                self.settings.enter_sends,
+                |this, enter_sends, _, cx| {
+                    this.settings.enter_sends = enter_sends;
+                    this.save_settings(cx);
+                },
+                cx,
+            ),
+        ));
+        entries.push(Entry::new(
+            S::Keyboard,
             "shortcuts",
             "Shortcuts",
             "Vim shortcuts apply in Normal mode. Text fields keep ordinary editing keys.",
@@ -636,6 +664,10 @@ impl Workspace {
                     (
                         "Ctrl/Cmd Enter",
                         "Send message, create session, or save a project path",
+                    ),
+                    (
+                        "Enter / Shift Enter",
+                        "With Send messages with Enter: send / new line in the composer",
                     ),
                     ("Ctrl/Cmd L", "Focus the editor"),
                     (

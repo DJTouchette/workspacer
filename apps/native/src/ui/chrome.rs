@@ -238,6 +238,7 @@ pub(super) fn notice_tone(text: &str) -> Tone {
         || lower.starts_with("pinned")
         || lower.starts_with("unpinned")
         || lower.ends_with(" applied")
+        || lower.contains(" change accepted:")
     {
         Tone::Success
     } else if lower.contains("fail")
@@ -246,6 +247,7 @@ pub(super) fn notice_tone(text: &str) -> Tone {
         || lower.contains("couldn't")
         || lower.contains("cannot")
         || lower.contains("unavailable")
+        || lower.contains("refused")
     {
         Tone::Error
     } else {
@@ -348,18 +350,49 @@ impl Workspace {
                     .child(title.to_owned()),
             )
             .when_some(session.filter(|_| !narrow), |d, session| {
+                // The model chip is the model/effort control: it opens Change
+                // model on the session's current model and effort.
+                let model_enabled = enabled && self.supported_session();
+                let effort = (!session.effort.is_empty())
+                    .then(|| wks_native::launch::effort_label(&session.effort));
                 d.child(
-                    div()
+                    interactive_control(div().id("title-model"), p, model_enabled)
+                        .debug_selector(|| "title-model".into())
                         .flex_shrink_0()
-                        .max_w(px(180.))
+                        .max_w(px(240.))
                         .pl(px(6.))
                         .pr_2()
                         .py(px(3.))
                         .rounded_full()
                         .bg(rgb(p.selected))
+                        .flex()
+                        .items_center()
+                        .gap_1()
                         .text_size(px(11.))
                         .font_weight(FontWeight::MEDIUM)
-                        .child(model_badge(session, p, 12.)),
+                        .child(model_badge(session, p, 12.))
+                        .when_some(effort, |d, effort| {
+                            d.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(rgb(p.muted))
+                                    .child(format!("· {effort}")),
+                            )
+                        })
+                        .when(model_enabled, |d| {
+                            d.child(
+                                Icon::new(IconName::ChevronDown)
+                                    .size(px(10.))
+                                    .text_color(rgb(p.muted)),
+                            )
+                            .hover(|s| s.bg(rgb(p.border)))
+                            .tooltip(|window, cx| {
+                                Tooltip::new("Change model or effort").build(window, cx)
+                            })
+                            .on_click(cx.listener(
+                                |this, _, window, cx| this.open_feature(Screen::Model, window, cx),
+                            ))
+                        }),
                 )
             })
             .child(divider())
@@ -369,9 +402,6 @@ impl Workspace {
     pub(super) fn chat_actions(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
         let selected = self.view.selected.is_some();
         let model_enabled = enabled && self.supported_session();
-        let can_refresh =
-            (self.view.connected && !self.view.loading && !self.view.sessions_loading)
-                || (self.view.power_paused && self.view.can_resume_power_pause);
         div()
             .flex()
             .items_center()
@@ -409,7 +439,7 @@ impl Workspace {
             .child(
                 self.icon_button(
                     "open-model",
-                    "Change model",
+                    "Change model or effort",
                     IconName::Settings2,
                     model_enabled,
                 )
@@ -417,21 +447,6 @@ impl Workspace {
                     d.on_click(cx.listener(|this, _, window, cx| {
                         this.open_feature(Screen::Model, window, cx)
                     }))
-                }),
-            )
-            .child(
-                self.icon_button(
-                    "refresh",
-                    if self.view.power_paused {
-                        "Reconnect and wake"
-                    } else {
-                        "Refresh conversation"
-                    },
-                    IconName::Redo,
-                    can_refresh,
-                )
-                .when(can_refresh, |d| {
-                    d.on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
                 }),
             )
     }

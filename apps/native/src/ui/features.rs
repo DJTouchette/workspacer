@@ -29,6 +29,9 @@ pub(super) struct Extras {
     pub _update_timer: Option<Task<()>>,
     /// The download request already handed to the installer helper.
     pub update_handoff: u64,
+    /// The session's model, context window and effort when Change model
+    /// opened, so Apply sends only what the user actually changed.
+    pub model_base: Option<(String, Option<u64>, String)>,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -55,6 +58,7 @@ impl Extras {
             answers: Vec::new(),
             _update_timer: None,
             update_handoff: 0,
+            model_base: None,
         }
     }
 }
@@ -168,8 +172,13 @@ impl Workspace {
                         picker.set_selected_value(&String::from("__custom"), window, cx)
                     });
                     self.model
-                        .update(cx, |input, cx| input.set_value(s.model, window, cx));
+                        .update(cx, |input, cx| input.set_value(s.model.clone(), window, cx));
                     self.context_window = s.context_window;
+                    self.effort = s.effort.clone();
+                    self.extras.model_base =
+                        Some((s.model.clone(), s.context_window, s.effort.clone()));
+                    self.select_exact_model(window, cx);
+                    self.reconcile_effort(window, cx);
                     self.load_models(true, cx);
                 }
             }
@@ -532,8 +541,8 @@ impl Workspace {
                 Some("Connect your agents on the machine running this workspace.".into()),
             ),
             Screen::Model => (
-                "Change model",
-                Some("Choose the model for this session’s next work. A busy provider may queue the change.".into()),
+                "Model and effort",
+                Some("Choose the model and reasoning effort for this session’s next work. A busy provider may queue the change.".into()),
             ),
             _ => ("", None),
         };
@@ -1170,31 +1179,14 @@ impl Workspace {
                             .border_color(rgb(p.border))
                             .flex()
                             .justify_end()
-                            .child(
-                                self.primary_button("apply-model", "Apply model", !busy)
-                                    .when(!busy, |d| {
-                                        d.on_click(cx.listener(|this, _, _, cx| {
-                                            let model = if this.model_choice == "__custom" {
-                                                this.model.read(cx).value().trim().to_owned()
-                                            } else {
-                                                this.model_choice.clone()
-                                            };
-                                            if model.is_empty() {
-                                                this.extras.notice =
-                                                    "Choose a model or enter its exact ID.".into();
-                                                cx.notify();
-                                                return;
-                                            }
-                                            this.act(
-                                                Action::SetModel {
-                                                    model,
-                                                    context_window: this.context_window,
-                                                },
-                                                cx,
-                                            );
-                                        }))
-                                    }),
-                            ),
+                            .child(self.primary_button("apply-model", "Apply", !busy).when(
+                                !busy,
+                                |d| {
+                                    d.on_click(
+                                        cx.listener(|this, _, _, cx| this.apply_model_change(cx)),
+                                    )
+                                },
+                            )),
                     ),
             )
             .when(!notice.is_empty(), |d| {
@@ -1205,6 +1197,74 @@ impl Workspace {
                     "model-notice",
                 ))
             })
+    }
+    /// Send exactly what changed on Change model: the model (with its context
+    /// window), the effort, or both in that order. An unchanged form sends
+    /// nothing, and a model the user did not pick is never substituted.
+    pub(super) fn apply_model_change(&mut self, cx: &mut Context<Self>) {
+        let model = if self.model_choice == "__custom" {
+            self.model.read(cx).value().trim().to_owned()
+        } else {
+            self.model_choice.clone()
+        };
+        let (base_model, base_window, base_effort) =
+            self.extras.model_base.clone().unwrap_or_default();
+        let model_changed =
+            !model.is_empty() && (model != base_model || self.context_window != base_window);
+        let effort_changed = !self.effort.is_empty() && self.effort != base_effort;
+        if model.is_empty() && !effort_changed {
+            self.extras.notice = "Choose a model or enter its exact ID.".into();
+            cx.notify();
+            return;
+        }
+        let action = match (model_changed, effort_changed) {
+            (true, effort) => Action::SetModel {
+                model,
+                context_window: self.context_window,
+                effort: effort.then(|| self.effort.clone()),
+            },
+            (false, true) => Action::SetEffort(self.effort.clone()),
+            (false, false) => {
+                self.extras.notice = "The session already uses this model and effort.".into();
+                cx.notify();
+                return;
+            }
+        };
+        self.act(action, cx);
+    }
+    /// Move the Change model baseline to what the hub accepted, so a repeated
+    /// Apply does not resend it; a refused change leaves it as it was.
+    pub(super) fn note_model_receipt(&mut self, receipt: &wks_native::controller::Receipt) {
+        if self.view.selected.as_ref() != Some(&receipt.session) {
+            return;
+        }
+        let Some(base) = &mut self.extras.model_base else {
+            return;
+        };
+        let model_applied = receipt.error.is_none()
+            || receipt
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("model change was accepted"));
+        match &receipt.action {
+            Action::SetModel {
+                model,
+                context_window,
+                effort,
+            } => {
+                if model_applied {
+                    base.0 = model.clone();
+                    base.1 = *context_window;
+                }
+                if receipt.error.is_none()
+                    && let Some(effort) = effort
+                {
+                    base.2 = effort.clone();
+                }
+            }
+            Action::SetEffort(effort) if receipt.error.is_none() => base.2 = effort.clone(),
+            _ => {}
+        }
     }
     pub(super) fn question_answers(&self, cx: &App) -> Vec<String> {
         let qs = self

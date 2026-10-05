@@ -325,6 +325,7 @@ impl Workspace {
     fn workspace_actions(&self, shell: Div, cx: &mut Context<Self>) -> Div {
         shell
             .on_action(cx.listener(Self::send))
+            .on_action(cx.listener(Self::composer_enter))
             .on_action(cx.listener(|this, _: &ZoomIn, window, cx| {
                 let next =
                     wks_native::navigation::step_interface_scale(this.settings.interface_scale, 1);
