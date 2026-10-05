@@ -853,8 +853,15 @@
   // until the first read answers, so archived rows never flash into view.
   let archive = null;          // {version, archived: {sessionId: ms}} | null
   let archiveReady = false;
-  let archiveResync = true;    // take the next read as-is (set per connect)
-  const archivePending = new Map();  // sessionId -> archived, until the hub answers
+  // Reads are numbered so a reply from before a reconnect can never be taken
+  // as the fresh read; the fresh read is taken as-is only if no change event
+  // arrived after it was sent (an archive reset can lower the version).
+  let archiveReadSeq = 0, archiveEventSinceRead = false;
+  // sessionId -> {on, op}: a change shown before the hub answers. Only the
+  // request that set it (same op) may settle it, so archive→restore→archive
+  // cannot let the first reply clear the third click.
+  const archivePending = new Map();
+  let archiveOpSeq = 0;
   let connected = false;
 
   const S = {
@@ -2291,7 +2298,7 @@
   /** Hidden from the normal fleet by the shared archive (a pending change
    *  shows as already made). */
   function isArchived(id) {
-    if (archivePending.has(id)) return archivePending.get(id);
+    if (archivePending.has(id)) return archivePending.get(id).on;
     return !!(archive && archive.archived && Object.prototype.hasOwnProperty.call(archive.archived, id));
   }
   /** The fleet this filter lists: archived sessions only under "Archived",
@@ -2305,20 +2312,18 @@
     if (!doc || typeof doc.version !== 'number' || !doc.archived || typeof doc.archived !== 'object') return false;
     if (!force && archive && archive.version >= doc.version) return false;
     archive = doc;
-    for (const [id, on] of archivePending) {
-      if (Object.prototype.hasOwnProperty.call(doc.archived, id) === on) archivePending.delete(id);
-    }
     return true;
   }
   /** Read on every (re)connect — changes made while away have no replay. A hub
    *  without shared archives (or a token that cannot read it) shows everything. */
   function loadArchive() {
-    archiveResync = true;
+    const seq = ++archiveReadSeq;
+    archiveEventSinceRead = false;
     if (!can('sessionArchive.get')) { archiveReady = true; afterArchive(); return; }
     call('sessionArchive.get', {})
-      .then((doc) => { applyArchive(doc, archiveResync); })
+      .then((doc) => { if (seq === archiveReadSeq) applyArchive(doc, !archiveEventSinceRead); })
       .catch(() => {})
-      .finally(() => { archiveResync = false; archiveReady = true; afterArchive(); });
+      .finally(() => { if (seq === archiveReadSeq) { archiveReady = true; afterArchive(); } });
   }
   function afterArchive() {
     if (S.filter === 'archived' && !listedFleet('archived').length && !archivedRecents().length) S.filter = 'all';
@@ -2326,11 +2331,13 @@
   }
   /** Archive or restore — visibility only, never a stop. */
   function setArchived(id, on) {
-    archivePending.set(id, on);
+    const op = ++archiveOpSeq;
+    archivePending.set(id, { on, op });
     afterArchive();
+    const settle = () => { const p = archivePending.get(id); if (p && p.op === op) archivePending.delete(id); };
     call('sessionArchive.set', { sessionId: id, archived: on })
-      .then((doc) => { applyArchive(doc, false); if (archivePending.get(id) === on) archivePending.delete(id); })
-      .catch((e) => { if (archivePending.get(id) === on) archivePending.delete(id); toast((on ? 'Archive' : 'Restore') + ' failed: ' + errText(e)); })
+      .then((doc) => { applyArchive(doc, false); settle(); })
+      .catch((e) => { settle(); toast((on ? 'Archive' : 'Restore') + ' failed: ' + errText(e)); })
       .finally(afterArchive);
   }
 
@@ -2447,7 +2454,7 @@
     // reason dispatches are missing from the list under it.
     const parts = [nodesHtml(), pushBannerHtml()];
     if (archivedView) {
-      parts.push(`<div class="foot">Archived sessions are hidden from the fleet on every device and keep running.${can('sessionArchive.set') ? ' Open one and use ⋯ › Restore, or tap Restore below.' : ''}</div>`);
+      parts.push(`<div class="foot">Archived sessions are hidden from the fleet on every device and keep running.${can('sessionArchive.set') ? ' Open one and use ⋯ › Restore' + (archivedRecents().length ? ', or tap Restore below.' : '.') : ''}</div>`);
     }
     if (!roster.length) {
       if (!archivedView || !archivedRecents().length) {
@@ -4719,7 +4726,7 @@
         else if (t === 'node.state_changed') applyNodeState((f.event.data || {}).node);
         // Another client archived or restored; a peer's stamped copy is not ours.
         else if (t === 'sessionArchive.changed' && !peer) {
-          archiveResync = false;
+          archiveEventSinceRead = true;
           if (applyArchive(f.event.data, false)) afterArchive();
         }
         else if (t === 'hub.peer.connected') {
