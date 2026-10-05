@@ -2402,8 +2402,13 @@ mod tests {
         });
         visual.run_until_parked();
         assert!(visual.debug_bounds("file-viewer-image").is_some());
-        // Backdrop click closes it.
-        visual.simulate_click(gpui::point(px(4.), px(4.)), gpui::Modifiers::default());
+        // Backdrop click closes it. Under an app-drawn caption (Windows) the
+        // backdrop starts below the caption strip, so aim inside its bounds.
+        let backdrop = visual.debug_bounds("file-viewer-backdrop").unwrap();
+        visual.simulate_click(
+            backdrop.origin + gpui::point(px(4.), px(4.)),
+            gpui::Modifiers::default(),
+        );
         visual.run_until_parked();
         workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
     }
@@ -2744,12 +2749,13 @@ mod tests {
                     pane.editor().unwrap().read(cx).value().to_string()
                 });
                 assert!(edited.contains("typed") && edited.contains("one\ntwo\n"));
-                // The editor's own keys still work: select all and copy.
-                visual.simulate_keystrokes("ctrl-a ctrl-c");
+                // The editor's own keys still work: select all and copy, on
+                // the platform's modifier (cmd on macOS, where ctrl-a is Home).
+                visual.simulate_keystrokes("secondary-a secondary-c");
                 visual.run_until_parked();
                 let copied = visual.update(|_, cx| cx.read_from_clipboard());
                 assert_eq!(copied.and_then(|item| item.text()), Some(edited));
-                untouched(&mut visual, &mut commands, "ctrl-a ctrl-c");
+                untouched(&mut visual, &mut commands, "select all, copy");
                 // Esc over unsaved edits asks first; Discard closes.
                 visual.simulate_keystrokes("escape");
                 visual.run_until_parked();
@@ -6546,6 +6552,56 @@ mod tests {
             })
         });
         assert_eq!(kept, 3);
+    }
+
+    // A background session that finishes its turn raises one OS alert. The
+    // test build records alerts instead of posting them (see
+    // `post_attention_alerts`): real WinRT toasts from successive test
+    // threads crashed the serial Windows suite.
+    #[gpui::test]
+    fn background_turn_end_alerts_once_without_posting_a_real_toast(cx: &mut TestAppContext) {
+        features::POSTED_ALERTS.take();
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let show = |visual: &mut VisualTestContext, session_state: &str| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut next = state("b");
+                    Arc::make_mut(&mut next.sessions)[0].state = session_state.into();
+                    this.update_view(Arc::new(next), window, cx);
+                })
+            });
+            visual.run_until_parked();
+            features::POSTED_ALERTS.take()
+        };
+        assert!(
+            show(&mut visual, "input").is_empty(),
+            "the first view is no transition"
+        );
+        assert!(
+            show(&mut visual, "responding").is_empty(),
+            "starting work is quiet"
+        );
+        assert_eq!(
+            show(&mut visual, "input"),
+            [("Work completed".to_owned(), "Alpha".to_owned())],
+            "the finished turn alerts, named for its session"
+        );
+        assert!(
+            show(&mut visual, "input").is_empty(),
+            "one alert per transition"
+        );
+        visual.update(|window, cx| {
+            assert!(
+                !window.is_window_active(),
+                "alerts are for a background window"
+            );
+            workspace.update(cx, |this, _| this.settings.notifications = false)
+        });
+        show(&mut visual, "responding");
+        assert!(
+            show(&mut visual, "input").is_empty(),
+            "notifications off: no alert"
+        );
     }
 
     #[gpui::test]

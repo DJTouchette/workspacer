@@ -154,6 +154,48 @@ impl Extras {
         }
     }
 }
+/// OS notifications for sessions that need attention while the window is in
+/// the background. Shown off the UI thread, at most five per update.
+#[cfg(not(all(test, feature = "ui-tests")))]
+fn post_attention_alerts(alerts: Vec<(String, String)>, cx: &mut Context<Workspace>) {
+    cx.background_executor()
+        .spawn(async move {
+            for (title, body) in alerts.into_iter().take(5) {
+                let mut notification = notify_rust::Notification::new();
+                notification
+                    .summary(&title)
+                    .body(&body)
+                    .appname("Workspacer Native");
+                #[cfg(target_os = "windows")]
+                notification.app_id(if cfg!(feature = "rust-hub") {
+                    "Workspacer.Native.RustPreview"
+                } else {
+                    "Workspacer.Native"
+                });
+                if let Err(error) = notification.show() {
+                    eprintln!("Native notification unavailable: {error}");
+                }
+            }
+        })
+        .detach();
+}
+
+/// The UI tests record alerts instead of showing them. A real one is
+/// platform FFI on the GPUI test thread, which runs "background" tasks: a
+/// WinRT toast in the COM apartment each test platform opens and closes (the
+/// serial Windows suite died with an access violation starting the second
+/// test to raise one, on a fresh thread), D-Bus on the developer's desktop.
+#[cfg(all(test, feature = "ui-tests"))]
+fn post_attention_alerts(alerts: Vec<(String, String)>, _: &mut Context<Workspace>) {
+    POSTED_ALERTS.with_borrow_mut(|posted| posted.extend(alerts.into_iter().take(5)));
+}
+
+#[cfg(all(test, feature = "ui-tests"))]
+thread_local! {
+    pub(super) static POSTED_ALERTS: std::cell::RefCell<Vec<(String, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn questions(value: &Value) -> Vec<Value> {
     value
         .as_array()
@@ -320,26 +362,7 @@ impl Workspace {
                 }
             }
             if !alerts.is_empty() {
-                cx.background_executor()
-                    .spawn(async move {
-                        for (title, body) in alerts.into_iter().take(5) {
-                            let mut notification = notify_rust::Notification::new();
-                            notification
-                                .summary(&title)
-                                .body(&body)
-                                .appname("Workspacer Native");
-                            #[cfg(target_os = "windows")]
-                            notification.app_id(if cfg!(feature = "rust-hub") {
-                                "Workspacer.Native.RustPreview"
-                            } else {
-                                "Workspacer.Native"
-                            });
-                            if let Err(error) = notification.show() {
-                                eprintln!("Native notification unavailable: {error}");
-                            }
-                        }
-                    })
-                    .detach();
+                post_attention_alerts(alerts, cx);
             }
         }
         if let Some(state) = next.requests.get("child-access")
