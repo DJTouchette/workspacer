@@ -16,17 +16,21 @@ pub async fn serve_with_transcript(
     turns: usize,
     rich: bool,
 ) -> Result<()> {
-    serve_feedback_fixture(listener, sessions, turns, rich, false).await
+    serve_feedback_fixture(listener, sessions, turns, rich, false, false).await
 }
 
 /// Visual acceptance fixture. The optional request exercises the native
 /// unavailable-session notice through the actual bus event path.
+/// `pending_questions` gives the first sessions question sets (see
+/// [`fixture_questions`]); each `claude.answer` is printed to stderr as one
+/// `fixture claude.answer <params>` line and resolves that session's set.
 pub async fn serve_feedback_fixture(
     listener: TcpListener,
     sessions: usize,
     turns: usize,
     rich: bool,
     missing_session_request: bool,
+    pending_questions: bool,
 ) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
@@ -55,7 +59,8 @@ pub async fn serve_feedback_fixture(
             let mut history: BTreeMap<String, (Vec<Value>, u64)> = BTreeMap::new();
             let mut active_id = "demo-0000".to_owned();
             let mut seq = items.len() as u64;
-            let mut pending = true;
+            let mut pending = !pending_questions;
+            let mut answered = BTreeSet::<String>::new();
             let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut streaming = false;
@@ -185,7 +190,12 @@ pub async fn serve_feedback_fixture(
                                         "cwd":format!("/workspaces/project-{}", i % 8), "parentSessionId":if i==1 {"demo-0000"}else{""}, "provider":"claude", "model":"sonnet", "transport":"stream", "mode":if streaming && active_id == format!("demo-{i:04}") {"responding"} else {"input"},
                                         "pendingApproval":if i == 0 && pending {json!({"toolName":"Bash", "toolInput":{"command":"cargo test"}})} else {Value::Null}
                                         });
-                                        if rich { rich_snapshot(i, snapshot) } else { snapshot }
+                                        let mut snapshot = if rich { rich_snapshot(i, snapshot) } else { snapshot };
+                                        if pending_questions && !answered.contains(&format!("demo-{i:04}")) && let Some(questions) = fixture_questions(i) {
+                                            snapshot["pendingQuestions"] = questions;
+                                            snapshot["mode"] = json!("question");
+                                        }
+                                        snapshot
                                     }).collect()),
                                     "sessions.subagentConversation" if rich => rich_subagent_conversation(id, frame["params"]["agentId"].as_str().unwrap_or_default()),
                                     "sessions.conversation" => {
@@ -215,7 +225,13 @@ pub async fn serve_feedback_fixture(
                                     }
                                     "claude.approve" => { pending = false; json!({"ok":true}) }
                                     "claude.signal" => { streaming = false; json!({"ok":true}) }
-                                    "claude.answer" => json!({"ok":true}),
+                                    "claude.answer" => {
+                                        eprintln!("fixture claude.answer {}", frame["params"]);
+                                        answered.insert(id.to_owned());
+                                        let resolved = json!({"sessionId":id,"mode":"input","pendingQuestions":null});
+                                        if topics.contains("agent.snapshot") && socket.send(event("agent.snapshot", resolved)).await.is_err() { return; }
+                                        json!({"ok":true})
+                                    }
                                     _ => json!({"ok":false,"error":"Unknown fixture method"}),
                                 };
                                 if socket.send(Message::Text(json!({"op":"result","id":frame["id"],"result":result}).to_string())).await.is_err() { return; }
@@ -377,6 +393,35 @@ pub fn rich_items() -> Vec<Value> {
 }
 
 /// Rich-only child metadata. Keep load/benchmark fixtures unchanged.
+/// Pending AskUserQuestion sets for question-picker captures: a mixed set
+/// (single choice with descriptions, multiple choice, free text), one
+/// two-option question with long descriptions, and a free-text question.
+fn fixture_questions(index: usize) -> Option<Value> {
+    Some(match index {
+        0 => json!([
+            {"header":"Approach","question":"Which migration strategy should I use for the session store?","multiSelect":false,"options":[
+                {"label":"Online backfill","description":"Copy rows in batches while the hub keeps serving. Slower, no downtime."},
+                {"label":"Stop-the-world","description":"Pause writers, migrate in one transaction, restart. About 30 seconds of downtime."},
+                {"label":"Skip for now","description":"Keep the old schema behind a compatibility shim."}
+            ]},
+            {"header":"Checks","question":"Which checks should run before I commit?","multiSelect":true,"options":[
+                {"label":"cargo test"},{"label":"Clippy -D warnings"},{"label":"rustfmt --check"},{"label":"Desktop vitest"}
+            ]},
+            {"header":"Reviewer","question":"Anything the reviewer should know?","multiSelect":false,"options":[]}
+        ]),
+        2 => json!([
+            {"header":"Rollout","question":"The new picker changes how answers are sent. Should I ship it behind a setting first, or enable it for everyone in the next nightly?","multiSelect":false,"options":[
+                {"label":"Behind a setting","description":"Default off for one nightly so early users can compare the old and new pickers side by side before it becomes the only behavior."},
+                {"label":"Everyone, next nightly","description":"Replace the old picker outright. Faster feedback, but anyone who relies on the old layout loses it immediately."}
+            ]}
+        ]),
+        3 => {
+            json!([{"header":"Name","question":"What should I call the new release branch?","multiSelect":false,"options":[]}])
+        }
+        _ => return None,
+    })
+}
+
 fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
     match index {
         0 => {

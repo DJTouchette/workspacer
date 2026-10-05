@@ -99,6 +99,7 @@ def main():
     parser.add_argument("--hover", help="Hover a window point x,y before capture (for control styling checks)")
     parser.add_argument("--keys", nargs="+", help="Additional X11 keys before capture, for example Escape Tab")
     parser.add_argument("--new-session", action="store_true", help="Capture the creation form; requires a fixture --bus")
+    parser.add_argument("--session", help="Open this session ID at startup; requires a fixture --bus")
     parser.add_argument("--setting", action="append", default=[], metavar="KEY=JSON",
                         help="Seed native-settings.json, for example merge_turn_tools=true; repeatable")
     args = parser.parse_args()
@@ -106,6 +107,8 @@ def main():
         parser.error("The native minimum window size is 720 × 480")
     if args.new_session and not args.bus:
         parser.error("--new-session requires a fixture --bus; creation is disabled in demo mode")
+    if args.session and not args.bus:
+        parser.error("--session requires a fixture --bus")
     seeded = {}
     for setting in args.setting:
         key, _, value = setting.partition("=")
@@ -151,6 +154,7 @@ def main():
             parser.error("--animation-region requires x,y,width,height inside the window")
     command = [str(args.binary.resolve())]
     command += ["--bus", args.bus] if args.bus else ["--demo"]
+    command += ["--session", args.session] if args.session else []
     started = time.monotonic()
     # Isolate appearance from the user's real preference and credentials.
     settings = tempfile.TemporaryDirectory(prefix="wks-native-smoke-")
