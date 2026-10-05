@@ -1497,3 +1497,94 @@ transports and journals one attempt before inference. A restart after a claimed
 but unfinished request marks it skipped, avoiding duplicate paid requests.
 Electron/web renderers adopt published host titles and do not request competing
 titles. Human names remain authoritative. Host tests use fake completion only.
+
+## Composer top-edge clipping (#26) and title-capsule notices (#27), 2026-10-05
+
+Base d6d943ee. Commits 0d8649d3 (#26) and 3c6d7e2a (#27).
+
+**#26 cause (traced, then reproduced).** The conversation dock was a single
+`overflow_y_scroll` column that also held its measuring
+`canvas().absolute().top_0().left_0().size_full()`. GPUI's `Div::prepaint`
+unions *all* child layout bounds (absolute ones too) into `content_size`, and
+`clamp_scroll_position` then adds the padding again, so the dock always had a
+phantom `pt + pb` scroll range (28 px; 16 px compact) even when everything fit.
+The wheel smoother deliberately leaves `composer_dock_bounds` to the dock, so
+wheel/trackpad input over the dock's gutters or card gaps scrolled the
+composer (or the approval/question card above it) under the dock's top clip.
+The offset is element state keyed by id, so it survived session switches,
+hence "sometimes". It's not Windows-specific: the forced app-drawn caption
+(`WKS_NATIVE_CAPTION`, as on Windows) and interface sizes don't change it.
+A second path showed up in the GPUI matrix: a short window with
+attachments and a four-line draft made the composer group alone exceed the
+dock's 45 % cap, so reaching Send scrolled its top edge away.
+
+**#26 fix.** The dock is a measured `chat_frame` with two layers. Cards
+(pending, approval, questions, child bar) scroll in their own region, capped at
+what the measured composer layer leaves of the dock's share (floor 72 px). The
+composer layer never scrolls or clips. At rest, geometry, gutters, rounding,
+shadows and fade are unchanged (dock rows pixel-identical before/after at
+1000×700; only transcript timestamps differ).
+
+**#27.** Conversation notices under the title bar were loose, mostly
+warning-colored text over the transcript. `render_title_island` now grows the
+capsule into one surface: same surface, border, shadow and 20 px curve, a
+hairline seam, then one row per notice. Rows reuse `notice_line`/`notice_tone`
+and wrap at the capsule's measured width. Each carries its action (Retry, Open
+History) and a keyboard-reachable dismiss. The capsule outline is
+pixel-identical and only grows downward. The measured header pushes the
+transcript, and new text fades in over 180 ms. Dismissal is per slot and text
+and never clears owner state. Retry rows can't be dismissed. Nothing
+auto-dismisses or acts. "Change queued" is now info, a plain "Session
+created" success. Sidebar UI-bus notices (#4) and OS notifications are
+untouched.
+
+Tests (GPUI, deterministic):
+- `conversation_dock_wheel_never_clips_the_composer_top`: forced caption,
+  1000×700 / 720×480 / 1600×900 / 860×560 × interface 100 % and +3 steps ×
+  plain / approval / questions / attachments + 4-line draft (32 cases). Scroll
+  state carries over between cases. Line and pixel wheels land on the left and
+  right gutters and the top/bottom padding. Asserts the composer's exact bounds
+  never change, it stays below the cards' clip, and Send stays inside the
+  dock and window. Overflowing approval cards scroll inside their region.
+  Before the fix the first case failed:
+  the composer moved from 20 px below the dock clip to 8 px above it after one
+  3-line wheel. The phantom-only intermediate fix still failed the
+  720×480 attachment + draft case (composer top 18 px above the clip).
+- `title_notices_grow_the_capsule_into_one_island`: forced caption, three
+  sizes. Covers queued / accepted / long refusal: outline unchanged, tray
+  attached and inside the island, island clear of the caption buttons, header
+  grows by the tray, long text wraps. Also: dismiss collapses back to the
+  exact capsule; the same text later shows again; the unavailable-conversation
+  error keeps Retry (sends `Refresh`) and offers no dismiss; feature-notice
+  dismissal leaves `extras.notice` intact.
+- `notices_read_by_what_they_say` extended for the controller receipts.
+
+Full runs (four Cargo jobs, `--test-threads=1`, logs kept): native **361
+passed, 1 ignored** (lib 157, UI 153 + 1 ignored, auto_titles_hub 1,
+background_process 3, projects_hub 4, protocol 39, rust_hub 4); `cargo clippy
+--locked --all-targets --features ui-tests -- -D warnings` and `cargo fmt
+--check` clean.
+
+Real windows: private Xvfb `:94` with lavapipe, `native-harness serve` on
+127.0.0.1:17998 (`--rich-transcript`, `--pending-questions`), throwaway
+HOME/XDG, `WKS_NATIVE_CAPTION=1`. The debug build of d6d943ee sources ran
+against the fix. Real `xdotool` wheel input went over the dock gutter.
+[Composer and approval, rest | wheel, before then after](docs/ui-dock-clip-composer-before-after.png),
+[720×480 dark questions, before then after](docs/ui-dock-clip-questions-compact-before-after.png).
+The before build also showed a child view inheriting the clipped offset after
+a session switch. #27 used seeded feedback through the real UI: an effort
+change answered `queued` by the fixture, a no-op apply ("already uses this
+model"), `--session missing-session-7`.
+[Before | after, light 1000×700, dark 720×480, pinned missing](docs/ui-title-island-before-after.png),
+[all eight themes](docs/ui-title-island-all-themes.png).
+
+Limits: Linux X11/lavapipe only; Windows evidence needs native-client CI
+(custom caption and DPI paths were exercised only via the forced-caption
+preview and interface zoom, not a real Windows DPI). Attachment/draft growth
+was proven in GPUI, not in the real window (no file picker driven). The model
+"accepted"/"refused" rows were covered in GPUI only, because the fixture
+answers queued. Keyboard activation of the dismiss relies on the shared
+`interactive_control` focus/tab-stop path; no dedicated keyboard test. Open
+follow-up: below 620 px the composer hint line was meant to hide, but
+`.flex()` after `.hidden()` re-displays it. It carries the Working/elapsed
+status, so it was left as is.
