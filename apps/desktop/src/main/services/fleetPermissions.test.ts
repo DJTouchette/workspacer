@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const state = vi.hoisted(() => ({ enabled: false, rows: {} as Record<string, any> }));
+const state = vi.hoisted(() => ({ enabled: false, child: false, rows: {} as Record<string, any> }));
 vi.mock('./configService', () => ({
-  configService: { getConfig: () => ({ agents: { fleetFullAccess: state.enabled } }) },
+  configService: {
+    getConfig: () => ({ agents: { fleetFullAccess: state.enabled, childFullAccess: state.child } }),
+  },
 }));
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: { getSnapshot: (id: string) => state.rows[id] ?? null },
 }));
-import { fleetSkipsPermissions } from './fleetPermissions';
+import { childSkipsPermissions, fleetSkipsPermissions } from './fleetPermissions';
 beforeEach(() => {
   state.enabled = false;
+  state.child = false;
   state.rows = {};
 });
 describe('Fleet provider approval preference', () => {
@@ -38,5 +41,20 @@ describe('Fleet provider approval preference', () => {
     };
     expect(fleetSkipsPermissions({ parentSessionId: 'a' })).toBe(false);
     expect(fleetSkipsPermissions({ parentSessionId: 'restored' })).toBe(true);
+  });
+});
+describe('Child agent provider approval preference', () => {
+  it('applies only to new children of known local sessions, from current settings', () => {
+    state.rows = { parent: {}, foreign: { hub: 'peer' } };
+    expect(childSkipsPermissions({ parentSessionId: 'parent' })).toBe(false);
+    state.child = true;
+    expect(childSkipsPermissions({ parentSessionId: 'parent' })).toBe(true);
+    expect(childSkipsPermissions({})).toBe(false);
+    expect(childSkipsPermissions({ parentSessionId: 'missing' })).toBe(false);
+    expect(childSkipsPermissions({ parentSessionId: 'foreign' })).toBe(false);
+    expect(childSkipsPermissions({ parentSessionId: 'parent', resumeSessionId: 'old' })).toBe(false);
+    expect(childSkipsPermissions({ parentSessionId: 'parent', manager: true })).toBe(false);
+    // Independent of the fleet preference.
+    expect(fleetSkipsPermissions({ parentSessionId: 'parent' })).toBe(false);
   });
 });

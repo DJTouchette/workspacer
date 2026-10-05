@@ -1,5 +1,5 @@
 import { createSpawnTiming } from '../shared/spawnTiming';
-import { fleetSkipsPermissions } from './fleetPermissions';
+import { childSkipsPermissions, fleetSkipsPermissions } from './fleetPermissions';
 import { buildManagerInstructions } from '../shared/managerDoctrine';
 import { managerReplacementState } from './managerReplacementState';
 import { managerLaunchConfiguration } from './managerLaunchConfiguration';
@@ -358,7 +358,7 @@ async function spawnManaged(
     const bad = checkResultSchema(resultSchema);
     if (bad) throw new Error(`spawn: ${bad}`);
   }
-  const fleetBypass = fleetSkipsPermissions(opts);
+  const fleetBypass = fleetSkipsPermissions(opts) || childSkipsPermissions(opts);
   const skipPermissions = fleetBypass || !!opts.skipPermissions;
   timing.mark('preflight', managedId);
   await timing.measure('facade_ready', () => ensureMcpFacadeReady());
@@ -701,7 +701,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   const spawnEffort =
     opts.effort?.trim() ||
     (opts.manager && !opts.resumeSessionId ? resolveManagerEffort('codex') : undefined);
-  const fleetBypass = fleetSkipsPermissions(opts);
+  const fleetBypass = fleetSkipsPermissions(opts) || childSkipsPermissions(opts);
   const skipPermissions = fleetBypass || !!opts.skipPermissions;
   const facadeToken = mintSessionFacadeToken(
     sessionId,

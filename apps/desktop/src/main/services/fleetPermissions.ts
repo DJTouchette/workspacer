@@ -22,3 +22,20 @@ export function fleetSkipsPermissions(
   }
   return false;
 }
+
+/** `agents.childFullAccess`: the user's explicit choice that NEW child
+ * launches of this host's own sessions bypass provider approvals (Claude
+ * bypassPermissions, Codex full access). Provider policy only, never a
+ * Workspacer approval gate or facade/token grant. Parentless, unknown- or
+ * foreign-parent and resumed launches keep their own mode, as do running
+ * sessions. Local launchers only: paired/remote dispatch never takes it.
+ * Mirrors the Rust hub's spawn_plan so both launchers agree.
+ */
+export function childSkipsPermissions(
+  opts: { manager?: boolean; parentSessionId?: string; resumeSessionId?: string },
+  enabled = configService.getConfig().agents?.childFullAccess === true,
+): boolean {
+  if (!enabled || opts.manager || opts.resumeSessionId || !opts.parentSessionId) return false;
+  const parent = claudeSessionStore.getSnapshot(opts.parentSessionId);
+  return !!parent && !parent.hub;
+}

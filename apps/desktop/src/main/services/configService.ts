@@ -228,6 +228,10 @@ interface Config {
     /** Bypass provider approval prompts for new Fleet Manager and worker
      *  launches. This does not change Workspacer facade/token grants. */
     fleetFullAccess?: boolean;
+    /** Bypass provider approval prompts for NEW child agents of this host's
+     *  sessions (resumes and running sessions keep theirs). Provider policy
+     *  only; not a Workspacer gate or facade/token grant. */
+    childFullAccess?: boolean;
     /** Coding-agent harness the Fleet Manager itself runs on ('' = claude).
      *  The manager needs an MCP client to dispatch at all, so this is
      *  claude/codex/copilot — see SupervisorSection. */

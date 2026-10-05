@@ -1,5 +1,5 @@
 import { createSpawnTiming } from '../shared/spawnTiming';
-import { fleetSkipsPermissions } from './fleetPermissions';
+import { childSkipsPermissions, fleetSkipsPermissions } from './fleetPermissions';
 import { managerReplacementState } from './managerReplacementState';
 import { prepareLaunchIntegration } from './launchIntegrations';
 /**
@@ -190,7 +190,7 @@ async function spawnClaude(
     const bad = checkResultSchema(resultSchema);
     if (bad) throw new Error(`spawn: ${bad}`);
   }
-  const fleetBypass = fleetSkipsPermissions(opts);
+  const fleetBypass = fleetSkipsPermissions(opts) || childSkipsPermissions(opts);
   const skipPermissions = fleetBypass || !!opts.skipPermissions;
   // Fleet full access overrides launch choices; otherwise the explicit mode
   // wins over the legacy boolean. Record the resolved mode for the composer.
