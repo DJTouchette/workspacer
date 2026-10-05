@@ -28,6 +28,7 @@ type Row = {
 export class HostAutoTitles {
   private records = new Map<string, Record>();
   private running = new Set<string>();
+  private suppressed = new Set<string>();
   constructor(
     private directory: () => string,
     private enabled: () => boolean,
@@ -39,10 +40,14 @@ export class HostAutoTitles {
   private read(file: string): Record | undefined {
     try {
       const row = JSON.parse(fs.readFileSync(file, 'utf8')) as Record;
-      return typeof row.generation === 'string' &&
-        ['pending', 'titled', 'skipped'].includes(row.state)
-        ? row
-        : undefined;
+      if (
+        typeof row?.generation !== 'string' ||
+        !['pending', 'titled', 'skipped'].includes(row.state) ||
+        (row.title !== undefined && typeof row.title !== 'string')
+      ) {
+        throw new Error('Invalid host title journal');
+      }
+      return row;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw error; // Never reset unreadable evidence and silently pay a second time.
@@ -51,7 +56,11 @@ export class HostAutoTitles {
   begin(id: string, requested: boolean, label?: string): void {
     // Every launch fences responses from the previous life, including a new label.
     this.records.delete(id);
-    if (!requested || label?.trim()) return;
+    if (!requested || label?.trim()) {
+      this.suppressed.add(id);
+      return;
+    }
+    this.suppressed.delete(id);
     const file = this.file(id);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     withConfigLock(file, () => {
@@ -68,6 +77,22 @@ export class HostAutoTitles {
     });
   }
   metadata(id: string): HostTitle | undefined {
+    if (this.suppressed.has(id)) return;
+    if (!this.records.has(id)) {
+      // Reattached daemon sessions need their host title even when no new
+      // spawn occurs. Read-only discovery never enrolls an unowned session.
+      try {
+        const saved = this.read(this.file(id));
+        if (saved)
+          this.records.set(
+            id,
+            saved.state === 'pending' && saved.attempted ? { ...saved, state: 'skipped' } : saved,
+          );
+      } catch {
+        // Unavailable/corrupt metadata is not authorization to generate again.
+        return;
+      }
+    }
     const row = this.records.get(id);
     return row ? { state: row.state, ...(row.title && { title: row.title }) } : undefined;
   }

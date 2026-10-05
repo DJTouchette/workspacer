@@ -57,6 +57,7 @@ describe('explicit host auto title ownership', () => {
       () => true,
       generate,
     );
+    expect(restarted.metadata('one')?.title).toBe('Repair updater handoff');
     restarted.begin('one', true);
     restarted.offer(row, vi.fn());
     expect(restarted.metadata('one')?.title).toBe('Repair updater handoff');
@@ -70,6 +71,12 @@ describe('explicit host auto title ownership', () => {
     expect(generate).toHaveBeenCalledTimes(2);
     for (const file of fs.readdirSync(dir))
       expect(fs.readFileSync(path.join(dir, file), 'utf8')).not.toContain('I found it');
+  });
+  it('refuses corrupt evidence rather than paying again', () => {
+    const { host, dir } = rig();
+    host.begin('one', true);
+    fs.writeFileSync(path.join(dir, fs.readdirSync(dir)[0]), '{}');
+    expect(() => host.begin('one', true)).toThrow('Invalid host title journal');
   });
   it('fences late responses against another launch and manual labels', async () => {
     const { host, row, generate } = rig();

@@ -42,11 +42,11 @@ $serial = Join-Path $Out 'serial.log'
 $cdb = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Debuggers\x64\cdb.exe'
 if (Test-Path $cdb) {
     $symbols = "$(Split-Path $exe);srv*$env:RUNNER_TEMP\symbols*https://msdl.microsoft.com/download/symbols"
-    # -g/-G skip the start and exit breakpoints, so the commands run only at
-    # the first exception the binary does not survive on its own (an access
-    # violation breaks first-chance; Rust panics are C++ EH, second-chance).
-    & $cdb -g -G -lines -y $symbols `
-        -c '.lastevent; r; .ecxr; kpn 100; ~*kn 40; q' `
+    # At the initial breakpoint install an AV handler, then run the suite.
+    # Stack collection and quit belong to the exception command, not the
+    # initial -c command (which would terminate before any test ran).
+    & $cdb -G -lines -y $symbols `
+        -c 'sxe -c ".lastevent; r; .ecxr; kpn 100; ~*kn 40; q" av; g' `
         $exe --test-threads=1 *> $serial
     "cdb exit: $LASTEXITCODE"
 } else {

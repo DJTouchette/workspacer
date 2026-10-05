@@ -791,6 +791,9 @@ export function registerHubCapabilities(): void {
        *  routing.yaml). The hub writes both rows; this is the key. */
       decisionId?: string;
     };
+    if (autoTitle !== undefined && typeof autoTitle !== 'boolean') {
+      throw new Error('agents.spawn: autoTitle must be a boolean');
+    }
     // An adopted older hub may clamp rather than refuse an exact model.
     // Its existing clamp receipt must still stop us before launching a substitute.
     if (exactModel && hubScrubbed?.some((field) =>
@@ -1030,9 +1033,6 @@ export function registerHubCapabilities(): void {
     // defaulting that straight to claude is how Settings could say codex while
     // every non-desktop path spawned a Claude manager. See lib/roleProviders
     // (TWIN: ipc.ts).
-    if (autoTitle !== undefined && typeof autoTitle !== 'boolean') {
-      throw new Error('agents.spawn: autoTitle must be a boolean');
-    }
     const provider = resolveSpawnProvider({ provider: reqProvider, manager });
     // THE ROUTING BLOCK, recorded as well as echoed. Every branch below passes
     // this same object to its spawner, which hands it to setSpawnMeta, which

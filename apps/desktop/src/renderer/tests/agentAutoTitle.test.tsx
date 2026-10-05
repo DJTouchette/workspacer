@@ -264,6 +264,28 @@ describe('host-owned title adoption', () => {
         expect(onTitle).toHaveBeenCalledWith('agent-s1', state === 'titled' ? 'Host result' : null);
     },
   );
+  it('drops a renderer result when ownership arrives during inference', async () => {
+    let finish!: (title: string) => void;
+    (window.electronAPI as any).agentSuggestTitle = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const onTitle = vi.fn();
+    const initial = snap(EXCHANGE);
+    const { rerender } = renderHook(
+      ({ rows }) =>
+        useAgentAutoTitle({ agents: [agent()], snapshotBySession: rows, enabled: true, onTitle }),
+      { initialProps: { rows: initial } },
+    );
+    const owned = snap(EXCHANGE);
+    owned.s1.autoTitle = { state: 'pending' };
+    rerender({ rows: owned });
+    finish('Stale renderer answer');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onTitle).not.toHaveBeenCalled();
+  });
   it('adopts the published title while disabled but preserves a manual name', () => {
     const snapshotBySession = snap(EXCHANGE);
     snapshotBySession.s1.autoTitle = { state: 'titled', title: 'Host result' };
