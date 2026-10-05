@@ -74,7 +74,8 @@
         "/app real-hub archive2 cases",
         "/m real-hub archive5 cases including controlled delayed-read/newer-event and three held mutation replies",
         "Raw view token get accepted and set refused; zero lifecycle calls; shared layout/conversation retained",
-        "Native real-WebSocket reconnect accepts reset version; native restore-during-migration serializes requests and preserves draft"
+        "Native real-WebSocket reconnect accepts reset version; native restore-during-migration serializes requests and preserves draft",
+        "Live /app conversation remains open with KEEP_ARCHIVED_CONVERSATION_DRAFT after its row is archived."
       ],
       "fixes": "Web read/connection sequences and pending operation identity; no first-paint archived-row flash. Native first-authoritative reconnect document can lower version. One write per session preserves queued latest intent, including restore during migration. Disconnect clears uncertain optimistic ownership and permits migration retry; shared offline toggles explain reconnect requirement.",
       "negativeEvidence": {
@@ -83,9 +84,9 @@
         "result": "Both newly added stale-read and ABA regressions failed on the handoff hook, then passed after corrections."
       },
       "captures": [
-        "apps/desktop/test-results/appArchive-a-native-archiv-5105e-urvives-reload-and-restores-app/web-sidebar-after-native-archive.png",
-        "apps/desktop/test-results/appArchive-a-native-archiv-5105e-urvives-reload-and-restores-app/web-sidebar-archived-view.png",
-        ".workspacer/reports/native-archive-mobile-artifacts/mobileArchive-a-native-arc-89b27-load-and-Restore-returns-it-mobile/m-archived-filter.png"
+        ".workspacer/reports/native-archive-evidence/web-after-archive.png",
+        ".workspacer/reports/native-archive-evidence/web-archived-view.png",
+        ".workspacer/reports/native-archive-evidence/mobile-archived-view.png"
       ],
       "limitations": "The complete mobile suite was worker evidence; independent run here covers all five archive cases plus a capture repeat. Attention/inbox intentionally retain archived sessions. Native/browser cross-client proof combines actual native-controller integration with real browser and native-shaped bus clients."
     }
@@ -125,13 +126,6 @@
       "exitCode": 0,
       "log": ".workspacer/reports/native-archive-review-logs/mobile-archive-e2e.log",
       "sha256": "62efb8db479c8db5165e97a04361ecebf0fac48fec9b3e7cb116956bdd35a99f"
-    },
-    {
-      "name": "app-archive-e2e",
-      "result": "2 passed against an isolated real hub; shared restore and layout retention",
-      "exitCode": 0,
-      "log": ".workspacer/reports/native-archive-review-logs/app-archive-e2e.log",
-      "sha256": "7636c135a8ad6c2d72c6fbad494ffcd5d584ded5223db08f4282717476298ea3"
     },
     {
       "name": "mobile-capture",
@@ -215,6 +209,13 @@
       "result": "6 passed",
       "exitCode": 0,
       "log": ".workspacer/reports/native-archive-review-logs/headroom.log"
+    },
+    {
+      "name": "app-final-e2e",
+      "result": "2 passed; live archived conversation keeps its typed draft, shared layout retained, restore synchronizes, no lifecycle calls",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/app-final-e2e.log",
+      "sha256": "8e181c37c9f5e83c332988f406194ba644f5ddfd9c2b09486fc576e5973cacc8"
     }
   ],
   "standaloneVendorTest": {
@@ -225,7 +226,7 @@
   },
   "historyAudit": {
     "baseline": "d6d943ee",
-    "newReachableCommitTreesChecked": 11,
+    "newReachableCommitTreesChecked": 12,
     "trackedRemoteTokenAbsentFromEveryNewTree": true,
     "pathHistorySinceBaselineEmpty": true,
     "contaminatedAncestor": "a8b266ab",
@@ -245,5 +246,19 @@
   ],
   "priorReview": ".workspacer/reports/native-platform-ci-review.json",
   "published": false,
-  "userStateChanged": false
+  "finalNativeCapture": {
+    "implementationCommit": "7dcd9a8be9d0c52c2615ed8882cc57b41fef78f0",
+    "buildLog": ".workspacer/reports/native-archive-review-logs/native-build.log",
+    "path": "apps/native/docs/ui-integration-dock-200.png",
+    "result": "Final combined binary, physical720x480 at200%, four-line typing and Ctrl+End show fourth line within composer; Send fully visible. Private processes stopped."
+  },
+  "captureProvenance": "After-archive web image comes from the earlier successful same-implementation /app run; final rerun retained the archived-view image. Both /app runs passed.",
+  "userRuntimeStateChanged": false,
+  "privateProcessesStopped": true,
+  "fixtureAdjustment": {
+    "log": ".workspacer/reports/native-archive-review-logs/app-draft-fixture-interrupted.log",
+    "exitCode": 130,
+    "reason": "Extra draft-retention probe initially selected stopped ws2 (read-only); interrupted and corrected to live ws1. Final two-case rerun passed."
+  },
+  "finalTestCommit": "4d3ddcca9226c79d5870223ec8fce3f81ac39542"
 }
