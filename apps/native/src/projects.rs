@@ -87,6 +87,11 @@ pub struct KnownProject {
     pub color: Option<u32>,
     /// An emoji or one or two letters from the registry.
     pub icon: Option<String>,
+    /// The icon URL the user gave (provenance; desktop's `favicon`).
+    pub favicon: Option<String>,
+    /// The downloaded icon under the hub's `<configDir>/project-icons/`
+    /// (desktop's `iconFile`); read through `ui.asset`. Wins over `icon`.
+    pub icon_file: Option<String>,
     pub favourite: bool,
     /// Epoch ms; legacy `recent` order maps onto negative ranks below it.
     pub last_opened: Option<i64>,
@@ -107,6 +112,8 @@ impl KnownProject {
     }
 
     /// The mark drawn for the project: the configured icon, else initials.
+    /// An emoji may be several code points (ZWJ sequences, flags), so a short
+    /// icon is kept whole; only a longer string is cut to two characters.
     pub fn mark(&self) -> String {
         if let Some(icon) = self
             .icon
@@ -114,9 +121,23 @@ impl KnownProject {
             .map(str::trim)
             .filter(|i| !i.is_empty())
         {
-            return icon.chars().take(2).collect();
+            return if icon.chars().count() <= MAX_ICON_CHARS {
+                icon.to_owned()
+            } else {
+                icon.chars().take(2).collect()
+            };
         }
         initials(self.title())
+    }
+
+    /// The registry's identity for this project, as an editable baseline.
+    pub fn identity(&self) -> Identity {
+        Identity {
+            label: self.label.clone().unwrap_or_default(),
+            icon: self.icon.clone().unwrap_or_default().trim().to_owned(),
+            favicon: self.favicon.clone().unwrap_or_default(),
+            icon_file: self.icon_file.clone().unwrap_or_default(),
+        }
     }
 
     /// Only an entry that holds nothing but a pin/recency stamp, or a device
@@ -131,6 +152,22 @@ impl KnownProject {
             .split_whitespace()
             .all(|term| haystack.contains(&term.to_lowercase()))
     }
+}
+
+/// The registry's display name for a directory (first non-empty `label`
+/// among its aliases, as [`list`] reads it), without building the whole list.
+pub fn registry_label(registry: &Value, dir: &str) -> Option<String> {
+    registry["projects"]
+        .as_object()?
+        .iter()
+        .filter(|(key, _)| same_dir(key, dir))
+        .find_map(|(_, entry)| {
+            entry["label"]
+                .as_str()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned)
+        })
 }
 
 pub fn basename(path: &str) -> &str {
@@ -205,6 +242,8 @@ fn upsert(rows: &mut Vec<KnownProject>, path: &str, source: Source) -> usize {
         label: None,
         color: None,
         icon: None,
+        favicon: None,
+        icon_file: None,
         favourite: false,
         last_opened: None,
         sessions: 0,
@@ -258,6 +297,15 @@ pub fn list(
                 .icon
                 .clone()
                 .or_else(|| entry["icon"].as_str().map(Into::into));
+            let text = |field: &str| {
+                entry[field]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned)
+            };
+            row.favicon = row.favicon.clone().or_else(|| text("favicon"));
+            row.icon_file = row.icon_file.clone().or_else(|| text("iconFile"));
             row.favourite |= entry["favourite"]
                 .as_bool()
                 .unwrap_or_else(|| legacy_favourites.iter().any(|f| same_dir(f, key)));
@@ -312,6 +360,67 @@ pub fn list(
     rows
 }
 
+/// An emoji is often several code points; this bounds what an icon holds.
+pub const MAX_ICON_CHARS: usize = 8;
+pub const MAX_LABEL_CHARS: usize = 80;
+
+/// A project's display identity, in the registry's own fields (the desktop's
+/// `ProjectIdentity`): `label`, `icon` (emoji or letters), `favicon` (the URL
+/// given) and `iconFile` (the hub's downloaded copy). Empty means unset; an
+/// unset field is removed from the entry rather than stored as `""`, so an
+/// entry left with only a pin stays forgettable. `color` and every other
+/// field are preserved untouched.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Identity {
+    pub label: String,
+    pub icon: String,
+    pub favicon: String,
+    pub icon_file: String,
+}
+
+impl Identity {
+    const FIELDS: [&'static str; 4] = ["label", "icon", "favicon", "iconFile"];
+
+    fn values(&self) -> [&str; 4] {
+        [&self.label, &self.icon, &self.favicon, &self.icon_file]
+    }
+
+    /// Trimmed and checked; the error is the user's to fix.
+    pub fn normalized(&self) -> Result<Self> {
+        let out = Self {
+            label: self.label.trim().to_owned(),
+            icon: self.icon.trim().to_owned(),
+            favicon: self.favicon.trim().to_owned(),
+            icon_file: self.icon_file.trim().to_owned(),
+        };
+        ensure!(
+            out.label.chars().count() <= MAX_LABEL_CHARS,
+            "Use a name of at most {MAX_LABEL_CHARS} characters"
+        );
+        ensure!(
+            out.icon.chars().count() <= MAX_ICON_CHARS && !out.icon.contains(char::is_whitespace),
+            "Use an emoji or one or two letters for the icon"
+        );
+        ensure!(
+            out.favicon.is_empty()
+                || ((out.favicon.starts_with("https://") || out.favicon.starts_with("http://"))
+                    && out.favicon.len() <= 2048
+                    && !out.favicon.contains(char::is_whitespace)),
+            "The icon URL must be an http(s) address"
+        );
+        ensure!(
+            out.icon_file.is_empty()
+                || (out.icon_file.len() <= 64
+                    && out
+                        .icon_file
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'.')),
+            "The hub returned an unusable icon file name"
+        );
+        Ok(out)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Patch {
     /// Pin (`true`) or unpin. Writes an explicit boolean so a legacy pin can
@@ -321,6 +430,8 @@ pub enum Patch {
     Touch(i64),
     /// Forget a pin/recency-only entry. Refused for configured projects.
     Remove,
+    /// Set the project's name and icon on every alias of the directory.
+    Identity(Identity),
 }
 
 /// The `config.save` patch for one project change, built against the hub's
@@ -335,7 +446,7 @@ pub fn patch(config: &Value, dir: &str, change: &Patch) -> Result<Value> {
     let key = resolve_key(&projects, dir);
     let mut partial = json!({});
     match change {
-        Patch::Pin(_) | Patch::Touch(_) => {
+        Patch::Pin(_) | Patch::Touch(_) | Patch::Identity(_) => {
             // Keep every imported alias and its metadata; update only the
             // identity field on all aliases so list/readback cannot disagree.
             let mut keys: Vec<String> = projects
@@ -365,6 +476,16 @@ pub fn patch(config: &Value, dir: &str, change: &Patch) -> Result<Value> {
                     Patch::Pin(pinned) => entry["favourite"] = json!(pinned),
                     Patch::Touch(now) => {
                         entry["lastOpened"] = json!(latest.unwrap_or(*now).max(*now))
+                    }
+                    Patch::Identity(identity) => {
+                        let object = entry.as_object_mut().expect("checked above");
+                        for (field, value) in Identity::FIELDS.iter().zip(identity.values()) {
+                            if value.is_empty() {
+                                object.remove(*field);
+                            } else {
+                                object.insert((*field).into(), json!(value));
+                            }
+                        }
                     }
                     Patch::Remove => unreachable!(),
                 }
@@ -429,6 +550,15 @@ pub fn verify(saved: &Value, dir: &str, change: &Patch) -> Result<()> {
                 && entries
                     .iter()
                     .all(|e| e["lastOpened"].as_f64().is_some_and(|at| at >= *now as f64))
+        }
+        Patch::Identity(identity) => {
+            !entries.is_empty()
+                && entries.iter().all(|e| {
+                    Identity::FIELDS
+                        .iter()
+                        .zip(identity.values())
+                        .all(|(field, value)| e[*field].as_str().unwrap_or("") == value)
+                })
         }
         // Every normalized map alias and legacy trace must be absent.
         Patch::Remove => {
@@ -770,6 +900,88 @@ mod tests {
             let mut half = removed.clone();
             half["projects"][aliases[0]] = json!({});
             assert!(verify(&half, path, &Patch::Remove).is_err());
+        }
+    }
+
+    /// Renaming a project and giving it an icon writes the desktop's own
+    /// fields on every alias, keeps colour/workflow/pins, removes cleared
+    /// fields instead of storing "", and is verified on readback.
+    #[test]
+    fn identity_edits_write_registry_fields_on_every_alias() {
+        let config = json!({"projects": {
+            "/a":{"label":"Old","color":"#336699","favourite":true},
+            "/a/":{"workflowId":"wf","iconFile":"stale.png","favicon":"https://old.example/x.png"},
+            "/b":{"label":"Other"}
+        }});
+        let identity = Identity {
+            label: "  App  ".into(),
+            icon: "🦀".into(),
+            favicon: "https://example.com/favicon.ico".into(),
+            icon_file: "0123456789abcdef0123456789abcdef.png".into(),
+        }
+        .normalized()
+        .unwrap();
+        assert_eq!(identity.label, "App");
+        let change = Patch::Identity(identity.clone());
+        assert!(verify(&config, "/a", &change).is_err(), "not saved yet");
+        let saved = patch(&config, "/a", &change).unwrap();
+        for alias in ["/a", "/a/"] {
+            let entry = &saved["projects"][alias];
+            assert_eq!(entry["label"], "App");
+            assert_eq!(entry["icon"], "🦀");
+            assert_eq!(entry["favicon"], "https://example.com/favicon.ico");
+            assert_eq!(entry["iconFile"], "0123456789abcdef0123456789abcdef.png");
+        }
+        assert_eq!(saved["projects"]["/a"]["color"], "#336699");
+        assert_eq!(saved["projects"]["/a"]["favourite"], true);
+        assert_eq!(saved["projects"]["/a/"]["workflowId"], "wf");
+        assert_eq!(saved["projects"]["/b"], json!({"label":"Other"}));
+        assert!(verify(&saved, "/a", &change).is_ok());
+        let rows = list(Some(&registry(&saved)), &[], &[]);
+        let app = rows.iter().find(|r| r.path == "/a").unwrap();
+        assert_eq!((app.title(), app.mark().as_str()), ("App", "🦀"));
+        assert_eq!(app.identity(), identity);
+        // A ZWJ emoji stays whole; a long string is cut to two characters.
+        let family = KnownProject {
+            icon: Some("👩‍💻".into()),
+            ..app.clone()
+        };
+        assert_eq!(family.mark(), "👩‍💻");
+        // Reset removes the fields; colour and the pin remain, and an entry
+        // left with only a pin is forgettable again.
+        let reset = Patch::Identity(Identity::default());
+        let cleared = patch(&saved, "/a", &reset).unwrap();
+        assert_eq!(
+            cleared["projects"]["/a"],
+            json!({"color":"#336699","favourite":true})
+        );
+        assert_eq!(cleared["projects"]["/a/"], json!({"workflowId":"wf"}));
+        assert!(verify(&cleared, "/a", &reset).is_ok());
+        assert!(verify(&saved, "/a", &reset).is_err());
+        let rows = list(Some(&registry(&cleared)), &[], &[]);
+        let app = rows.iter().find(|r| r.path == "/a").unwrap();
+        assert_eq!((app.title(), app.mark().as_str()), ("a", "A"));
+        // A skipped save (the hub answered with the old config) is an error.
+        assert!(verify(&config, "/a", &change).is_err());
+        for bad in [
+            Identity {
+                label: "x".repeat(81),
+                ..Default::default()
+            },
+            Identity {
+                icon: "too long icon".into(),
+                ..Default::default()
+            },
+            Identity {
+                favicon: "file:///etc/passwd".into(),
+                ..Default::default()
+            },
+            Identity {
+                icon_file: "../x.png".into(),
+                ..Default::default()
+            },
+        ] {
+            assert!(bad.normalized().is_err(), "{bad:?}");
         }
     }
 

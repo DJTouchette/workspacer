@@ -905,7 +905,7 @@ impl Workspace {
                                                         .flex_shrink_0(),
                                                 )
                                                 .child(div().flex_1().min_w_0().truncate().child(
-                                                    chrome::project_label(&session.cwd).to_owned(),
+                                                    this.project_name(&session.cwd),
                                                 ))
                                                 .when(!(working && this.view.connected), |d| {
                                                     d.child(

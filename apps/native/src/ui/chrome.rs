@@ -330,7 +330,7 @@ impl Workspace {
                             .truncate()
                             .text_size(px(12.))
                             .text_color(rgb(p.muted))
-                            .child(project_label(&session.cwd).to_owned()),
+                            .child(self.project_name(&session.cwd)),
                     )
                     .child(
                         div()

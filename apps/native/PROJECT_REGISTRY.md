@@ -30,6 +30,14 @@ Removal refuses if *any* alias is configured/malformed or scripts/widgets protec
 it. Successful removal requires absence from every equivalent map key and both
 legacy arrays; a skipped or half-applied save is an error.
 
+Identity edits (`Patch::Identity`: `label`, `icon`, `favicon`, `iconFile`)
+follow the same alias rule as pin/touch: every equivalent key gets the same
+four fields, an empty field is removed from the entry instead of written as
+`""`, and every other field (`color`, `workflowId`, pins, scripts) is kept.
+Readback requires every alias to hold exactly the requested values. A new
+icon URL is downloaded by the hub before the transaction starts, so a slow
+host never holds the write lock and a failed download saves nothing.
+
 The lock covers cooperating native backends in this process. External processes
 can still race between config.get and wholesale config.save. This repair does
 not change hub APIs, add external CAS, or claim cross-process atomicity. A

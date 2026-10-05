@@ -84,6 +84,11 @@ pub enum Request {
     BrowseFolders {
         path: String,
     },
+    /// Downloaded project icons (`iconFile`) from the hub's
+    /// `<configDir>/project-icons/`, as small PNGs keyed by file name.
+    ProjectIcons {
+        files: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -120,6 +125,7 @@ impl Request {
             Self::TouchProject { .. } => "project-touch",
             Self::InspectProject { .. } => "project-inspect",
             Self::BrowseFolders { .. } => "project-browse",
+            Self::ProjectIcons { .. } => "project-icons",
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -196,6 +202,25 @@ impl Request {
             }
             Self::InspectProject { path } => inspect_project(backend, path).await,
             Self::BrowseFolders { path } => backend.call("fs.listDir", json!({"path":path})).await,
+            Self::ProjectIcons { files } => {
+                let mut icons = serde_json::Map::new();
+                for file in files.iter().take(16) {
+                    let icon = match backend
+                        .call("ui.asset", json!({"file":file,"kind":"icon"}))
+                        .await
+                    {
+                        Ok(value) => tokio::task::spawn_blocking(move || project_icon(&value))
+                            .await
+                            .unwrap_or_else(|e| Err(e.into())),
+                        Err(error) => Err(error),
+                    };
+                    icons.insert(
+                        file.clone(),
+                        icon.unwrap_or_else(|e| json!({"error":e.to_string()})),
+                    );
+                }
+                Ok(Value::Object(icons))
+            }
             Self::Remote => crate::remote::state(backend).await,
             Self::RemoteAction(action) => crate::remote::apply(backend, action).await,
             Self::Changes { cwd } => backend.call("git.status", json!({"cwd":cwd})).await,
@@ -334,6 +359,38 @@ async fn save_project(
     path: &str,
     change: &crate::projects::Patch,
 ) -> Result<Value> {
+    // A new icon URL is fetched by the hub (desktop.downloadProjectIcon:
+    // http(s) only, image types only, 2 MiB, content-addressed) BEFORE the
+    // registry transaction, so a slow host never holds the write lock and a
+    // failed download saves nothing rather than a half-applied identity.
+    let resolved;
+    let change = match change {
+        crate::projects::Patch::Identity(identity) => {
+            let mut identity = identity.normalized()?;
+            if !identity.favicon.is_empty() && identity.icon_file.is_empty() {
+                let stored = backend
+                    .call(
+                        "desktop.downloadProjectIcon",
+                        json!({"url":identity.favicon}),
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Couldn't download the icon: {e}"))?;
+                ensure!(
+                    stored["ok"] != false,
+                    "Couldn't download the icon: {}",
+                    stored["error"].as_str().unwrap_or("refused")
+                );
+                identity.icon_file = stored["file"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("The hub stored no icon file"))?
+                    .to_owned();
+                identity = identity.normalized()?;
+            }
+            resolved = crate::projects::Patch::Identity(identity);
+            &resolved
+        }
+        other => other,
+    };
     let mut revision = backend.project_write().await;
     let current = backend.call("config.get", json!({})).await?;
     let partial = crate::projects::patch(&current, path, change)?;
@@ -398,6 +455,31 @@ fn decode_preview(value: &Value) -> Result<image::DynamicImage> {
     limits.max_alloc = Some(64 * 1024 * 1024);
     reader.limits(limits);
     Ok(reader.decode()?)
+}
+
+/// A project icon from `ui.asset` (`dataBase64` + `mime`) as a 64 px PNG.
+/// SVG is refused: native draws only bounded raster decodes.
+fn project_icon(value: &Value) -> Result<Value> {
+    let mime = value["mime"].as_str().unwrap_or("");
+    ensure!(
+        mime != "image/svg+xml",
+        "SVG project icons show on the desktop app only"
+    );
+    let data = value["dataBase64"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("The hub returned no icon data"))?;
+    ensure!(data.len() <= 3 * 1024 * 1024, "Icon exceeds 2 MiB");
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data)?;
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 * 1024 * 1024);
+    reader.limits(limits);
+    let image = reader.decode()?.thumbnail(64, 64);
+    let mut png = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut png, image::ImageFormat::Png)?;
+    Ok(json!({"png":base64::engine::general_purpose::STANDARD.encode(png.into_inner())}))
 }
 
 fn thumbnail(value: Value) -> Result<Value> {

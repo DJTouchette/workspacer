@@ -500,6 +500,7 @@ impl Workspace {
                     .child(div().flex_1().min_w(px(200.)).child(chrome::notice_line(self.projects.notice.clone(), notice_tone, p, "projects-notice")))
                     .when(self.projects.fallback.is_some(), |d| d.child(self.quiet_button("keep-on-device-projects", "Keep on this device", IconName::Check, true).debug_selector(|| "keep-on-device-projects".into())
                         .on_click(cx.listener(|this, _, _, cx| this.keep_project_on_device(cx)))))))
+                .children(self.render_identity_editor(cx))
                 .when_some(self.projects.registry_error.clone(), |d, error| d.child(chrome::notice_line(
                     format!("Couldn’t read the hub’s projects ({error}). Showing this device’s projects and active folders."), chrome::Tone::Warning, p, "projects-registry-error"))))
             .when(count == 0, |d| d.child(div().px_6().py_6().text_center().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(
@@ -513,6 +514,7 @@ impl Workspace {
                     let forget = project.clone();
                     let pinned = project.favourite;
                     let new_path = path.clone();
+                    let edit_path = path.clone();
                     let can_spawn = this.view.connected && !this.demo;
                     let sessions = match (project.live_sessions, project.sessions) {
                         (0, 0) => "No sessions yet · open to start one".to_owned(),
@@ -537,6 +539,12 @@ impl Workspace {
                             .when(can_spawn, |d| d.on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 this.new_agent_in_project(new_path.clone(), window, cx);
+                            }))))
+                        .child(this.icon_button(SharedString::from(format!("edit-project-{ix}")), "Edit name and icon", IconName::Palette, can_write)
+                            .debug_selector(move || format!("edit-project-{ix}"))
+                            .when(can_write, |d| d.on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.open_identity_editor(edit_path.clone(), window, cx);
                             }))))
                         .when(project.removable(), |d| d.child(this.danger_button(SharedString::from(format!("forget-project-{ix}")), "Forget", project.source == wks_native::projects::Source::Device || can_write)
                             .on_click(cx.listener(move |this, _, _, cx| {

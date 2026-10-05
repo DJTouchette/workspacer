@@ -4,7 +4,7 @@
 use super::*;
 use gpui_component::input::{MoveDown, MoveUp};
 use wks_native::features::Request;
-use wks_native::projects::{self, Inspection, KnownProject, Patch, Source};
+use wks_native::projects::{self, Identity, Inspection, KnownProject, Patch, Source};
 
 /// Rows the picker offers, in keyboard order.
 #[derive(Clone, Debug, PartialEq)]
@@ -44,6 +44,22 @@ pub(super) struct ProjectUi {
     pub fallback: Option<String>,
     /// The hub folder browser replaces the list while open.
     pub browsing: bool,
+    /// Name/icon editing for one project on the Projects screen.
+    pub editor: Option<IdentityEditor>,
+    /// Downloaded icons by `iconFile`: `None` = unavailable (keeps the
+    /// emoji/initials mark); absent = not read yet.
+    pub icons: HashMap<String, Option<Arc<gpui::Image>>>,
+    pub icon_receipt: u64,
+}
+
+/// The project identity form: the registry's own fields, prefilled from the
+/// hub's current entry so saving never drops what another client set.
+pub(super) struct IdentityEditor {
+    pub path: String,
+    pub base: Identity,
+    pub name: Entity<InputState>,
+    pub icon: Entity<InputState>,
+    pub favicon: Entity<InputState>,
 }
 
 /// Picker rows are this tall; the list shows at most this many before it
@@ -411,6 +427,26 @@ impl Workspace {
                 self.projects.registry_error = None;
             }
         }
+        if let Some(state) = next.requests.get("project-icons")
+            && !state.loading
+            && state.number > self.projects.icon_receipt
+        {
+            self.projects.icon_receipt = state.number;
+            if let Request::ProjectIcons { files } = &state.request {
+                for file in files {
+                    let image = state.value[file]["png"]
+                        .as_str()
+                        .and_then(|data| {
+                            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+                                .ok()
+                        })
+                        .map(|bytes| {
+                            Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes))
+                        });
+                    self.projects.icons.insert(file.clone(), image);
+                }
+            }
+        }
         if let Some(state) = next.requests.get("project-save")
             && !state.loading
             && state.number > self.projects.save_receipt
@@ -429,6 +465,22 @@ impl Workspace {
                     (None, Patch::Pin(true)) => self.projects.notice = "Pinned.".into(),
                     (None, Patch::Pin(false)) => self.projects.notice = "Unpinned.".into(),
                     (None, Patch::Remove) => self.projects.notice = "Removed from projects.".into(),
+                    (None, Patch::Identity(identity)) => {
+                        if self
+                            .projects
+                            .editor
+                            .as_ref()
+                            .is_some_and(|e| projects::same_dir(&e.path, path))
+                        {
+                            self.projects.editor = None;
+                        }
+                        self.projects.notice = if *identity == Identity::default() {
+                            "Name and icon reset."
+                        } else {
+                            "Name and icon saved."
+                        }
+                        .into();
+                    }
                     (None, Patch::Touch(_)) => {}
                 }
             }
@@ -459,6 +511,28 @@ impl Workspace {
         let mark = project
             .map(KnownProject::mark)
             .unwrap_or_else(|| projects::initials(projects::basename(path)));
+        // A downloaded icon wins over the emoji/initials once it has loaded,
+        // as on desktop; until then (or if it cannot be read) the mark stays.
+        let icon = project
+            .and_then(|p| p.icon_file.as_ref())
+            .and_then(|file| self.projects.icons.get(file).cloned().flatten());
+        if let Some(image) = icon {
+            return div()
+                .size(px(size))
+                .flex_shrink_0()
+                .rounded(px(p.control_radius.max(6.)))
+                .bg(bg)
+                .overflow_hidden()
+                .flex()
+                .items_center()
+                .justify_center()
+                .debug_selector(|| "project-icon-image".into())
+                .child(
+                    gpui::img(image)
+                        .size(px((size * 0.72).round()))
+                        .object_fit(gpui::ObjectFit::Contain),
+                );
+        }
         div()
             .size(px(size))
             .flex_shrink_0()
@@ -471,6 +545,276 @@ impl Workspace {
             .text_size(px((size * 0.38).round()))
             .font_weight(FontWeight::BOLD)
             .child(mark)
+    }
+
+    /// Read the downloaded icons the listed projects name and the client has
+    /// not read yet (bounded batches; a failure is cached as unavailable).
+    pub(super) fn ensure_project_icons(&mut self, cx: &mut Context<Self>) {
+        if self.demo
+            || !self.view.connected
+            || self
+                .view
+                .requests
+                .get("project-icons")
+                .is_some_and(|s| s.loading)
+        {
+            return;
+        }
+        let files: Vec<String> = self
+            .known_projects()
+            .into_iter()
+            .filter_map(|p| p.icon_file)
+            .filter(|file| !self.projects.icons.contains_key(file))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .take(16)
+            .collect();
+        if !files.is_empty() {
+            self.request(Request::ProjectIcons { files }, cx);
+        }
+    }
+
+    /// The project's display name wherever a session's folder is shown: the
+    /// registry's label, else the folder name.
+    pub(super) fn project_name(&self, cwd: &str) -> String {
+        self.projects
+            .registry
+            .as_deref()
+            .and_then(|registry| projects::registry_label(registry, cwd))
+            .unwrap_or_else(|| chrome::project_label(cwd).to_owned())
+    }
+
+    pub(super) fn open_identity_editor(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let base = self
+            .known_project(&path)
+            .map(|p| p.identity())
+            .unwrap_or_default();
+        let input =
+            |value: &str, placeholder: &str, window: &mut Window, cx: &mut Context<Self>| {
+                let value = value.to_owned();
+                let placeholder = placeholder.to_owned();
+                cx.new(|cx| {
+                    let mut input = InputState::new(window, cx).placeholder(placeholder);
+                    input.set_value(value, window, cx);
+                    input
+                })
+            };
+        let name = input(&base.label, projects::basename(&path), window, cx);
+        let icon = input(&base.icon, "Emoji or two letters", window, cx);
+        let favicon = input(
+            &base.favicon,
+            "https://example.com/favicon.ico (optional)",
+            window,
+            cx,
+        );
+        name.update(cx, |input, cx| input.focus(window, cx));
+        self.projects.notice.clear();
+        self.projects.fallback = None;
+        self.projects.editor = Some(IdentityEditor {
+            path,
+            base,
+            name,
+            icon,
+            favicon,
+        });
+        cx.notify();
+    }
+
+    /// Save the form (or reset every identity field). The favicon URL is
+    /// fetched by the hub only when it changed; an unchanged URL keeps its
+    /// downloaded file. Nothing is sent when nothing changed.
+    pub(super) fn save_identity(&mut self, reset: bool, cx: &mut Context<Self>) {
+        let Some(editor) = &self.projects.editor else {
+            return;
+        };
+        if self.demo || !self.view.connected {
+            self.projects.notice = "Connect to the hub to change its projects.".into();
+            cx.notify();
+            return;
+        }
+        if self
+            .view
+            .requests
+            .get("project-save")
+            .is_some_and(|s| s.loading)
+        {
+            return;
+        }
+        let identity = if reset {
+            Identity::default()
+        } else {
+            let favicon = editor.favicon.read(cx).value().trim().to_owned();
+            Identity {
+                label: editor.name.read(cx).value().to_string(),
+                icon: editor.icon.read(cx).value().to_string(),
+                icon_file: if favicon == editor.base.favicon {
+                    editor.base.icon_file.clone()
+                } else {
+                    String::new()
+                },
+                favicon,
+            }
+        };
+        let identity = match identity.normalized() {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.projects.notice = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
+        if identity == editor.base {
+            self.projects.notice = "No changes to save.".into();
+            cx.notify();
+            return;
+        }
+        let path = editor.path.clone();
+        self.projects.notice = if identity.icon_file.is_empty() && !identity.favicon.is_empty() {
+            "Downloading the icon on the hub…".into()
+        } else {
+            "Saving…".into()
+        };
+        self.request(
+            Request::SaveProject {
+                path,
+                change: Patch::Identity(identity),
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
+    pub(super) fn render_identity_editor(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let editor = self.projects.editor.as_ref()?;
+        let p = self.appearance.palette();
+        let saving = self
+            .view
+            .requests
+            .get("project-save")
+            .is_some_and(|s| s.loading);
+        let can_write = self.view.connected && !self.demo && !saving;
+        // The preview follows the form as typed.
+        let mut preview = self.known_project(&editor.path).unwrap_or(KnownProject {
+            path: editor.path.clone(),
+            label: None,
+            color: None,
+            icon: None,
+            favicon: None,
+            icon_file: None,
+            favourite: false,
+            last_opened: None,
+            sessions: 0,
+            live_sessions: 0,
+            source: Source::Hub,
+            configured: false,
+        });
+        let name = editor.name.read(cx).value().trim().to_owned();
+        let icon = editor.icon.read(cx).value().trim().to_owned();
+        preview.label = (!name.is_empty()).then_some(name);
+        preview.icon = (!icon.is_empty()).then_some(icon);
+        if editor.favicon.read(cx).value().trim() != editor.base.favicon {
+            preview.icon_file = None;
+        }
+        let field = |label: &'static str, input: &Entity<InputState>, selector: &'static str| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .flex_1()
+                .min_w(px(160.))
+                .child(section_label(label, p))
+                .child(
+                    div()
+                        .debug_selector(move || selector.into())
+                        .child(Input::new(input)),
+                )
+        };
+        Some(
+            chrome::card(p)
+                .debug_selector(|| "project-identity-editor".into())
+                .p_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(self.project_mark(Some(&preview), &editor.path, 40.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(preview.title().to_owned()),
+                                )
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .font_family(mono_font())
+                                        .text_size(px(11.))
+                                        .text_color(rgb(p.muted))
+                                        .child(editor.path.clone()),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_3()
+                        .child(field("Name", &editor.name, "project-identity-name"))
+                        .child(field("Icon", &editor.icon, "project-identity-icon")),
+                )
+                .child(field("Icon URL", &editor.favicon, "project-identity-favicon"))
+                .child(
+                    div()
+                        .text_size(px(chrome::scale::CAPTION))
+                        .text_color(rgb(p.muted))
+                        .child("Shared with Workspacer on this hub (desktop, phone and terminal clients). The hub downloads the icon URL once and keeps a copy; it wins over the emoji when it loads."),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            self.danger_button("project-identity-reset", "Reset", can_write)
+                                .when(can_write, |d| {
+                                    d.on_click(cx.listener(|this, _, _, cx| {
+                                        this.save_identity(true, cx)
+                                    }))
+                                }),
+                        )
+                        .child(self.button("project-identity-cancel", "Cancel", true).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.projects.editor = None;
+                                cx.notify();
+                            }),
+                        ))
+                        .child(
+                            self.primary_button("project-identity-save", "Save", can_write)
+                                .debug_selector(|| "project-identity-save".into())
+                                .when(can_write, |d| {
+                                    d.on_click(cx.listener(|this, _, _, cx| {
+                                        this.save_identity(false, cx)
+                                    }))
+                                }),
+                        ),
+                ),
+        )
     }
 
     fn project_facts(&self, project: Option<&KnownProject>) -> Vec<String> {

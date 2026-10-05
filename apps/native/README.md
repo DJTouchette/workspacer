@@ -427,6 +427,20 @@ projects with names, scripts or workflows are managed in Workspacer Settings →
 Projects. Paths are interpreted on the hub, not checked against the client's
 filesystem. Sessions belong to a project by their working directory.
 
+**Edit name and icon** (the palette button on a project row) sets the
+project's identity in that same shared registry, in the desktop's own fields:
+`label` (display name), `icon` (an emoji or one or two letters) and an icon URL
+(`favicon`). The hub downloads the URL once (`desktop.downloadProjectIcon`:
+http(s) image types up to 2 MiB) and records its content-addressed copy as
+`iconFile`; native reads that copy through `ui.asset` and draws it, scaled to a
+small PNG, in place of the emoji/initials. SVG icons keep the emoji/initials
+mark here. A failed download saves nothing. The name and icon show on
+Projects, in New Agent, in the chat title and on sidebar rows, and in the
+desktop, phone and terminal clients that read the same registry. Every alias
+of the directory is updated together, colour/workflow/pins are kept, and
+**Reset** removes the fields rather than storing empty values. The registry is
+read on every connection so names and icons appear without opening Projects.
+
 Opening a project filters the session sidebar to that project's sessions and
 opens one of them (or the New Agent form when it has none); **All** clears the
 project filter. A project can run any number of agents: every project row has

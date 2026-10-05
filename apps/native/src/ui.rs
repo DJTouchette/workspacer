@@ -1011,6 +1011,7 @@ impl Workspace {
             .unwrap_or_default();
         self.sync_projects(&view);
         self.view = view;
+        self.ensure_project_icons(cx);
         self.hand_off_update(cx);
         self.land_on_latest();
         if self.new_session || self.screen == Screen::Model {
@@ -1019,7 +1020,9 @@ impl Workspace {
                 self.load_models(true, cx);
             }
         }
-        if reconnected && (self.new_session || self.screen == Screen::Projects) {
+        // Project names and icons appear beside every session, so the shared
+        // registry is read on every (re)connection, not only on Projects.
+        if reconnected {
             self.load_projects(cx);
             if self.new_session {
                 self.refresh_project_inspection(cx);
@@ -1847,6 +1850,15 @@ mod tests {
     /// The next command that is not one of those reads.
     fn next_effect(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> Option<Command> {
         std::iter::from_fn(|| commands.try_recv().ok()).find(|c| !project_read(c))
+    }
+
+    /// `state("a")` with both sessions working in `cwd`.
+    fn state_at(cwd: &str) -> View {
+        let mut view = state("a");
+        for session in Arc::make_mut(&mut view.sessions) {
+            session.cwd = cwd.into();
+        }
+        view
     }
 
     fn state(id: &str) -> View {
@@ -3951,6 +3963,168 @@ mod tests {
             assert!(this.new_session);
             assert_eq!(this.projects.cwd.as_str(), "/one/app");
         });
+    }
+
+    /// Projects → Edit name and icon writes the shared registry's identity
+    /// (a new icon URL leaves iconFile for the hub to fill), closes on the
+    /// verified save, and the downloaded icon then draws as the mark while
+    /// the name follows the session into the title bar.
+    #[gpui::test]
+    fn project_identity_edits_the_shared_registry_and_shows_everywhere(cx: &mut TestAppContext) {
+        use base64::Engine;
+        use wks_native::features::{Request, RequestState};
+        use wks_native::projects::{Identity, Patch};
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let registry = |projects: serde_json::Value, revision: u64| RequestState {
+            number: revision,
+            request: Request::Projects,
+            loading: false,
+            value: Arc::new(serde_json::json!({"projects":projects,"favourites":[],
+                "recent":[],"configured":[],"revision":revision})),
+            error: None,
+        };
+        let with = |state: RequestState, extra: Option<(&'static str, RequestState)>| {
+            let mut view = state_at("/work/app");
+            view.requests.insert("projects".into(), state);
+            if let Some((key, extra)) = extra {
+                view.requests.insert(key.into(), extra);
+            }
+            Arc::new(view)
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(
+                    with(
+                        registry(serde_json::json!({"/work/app":{"favourite":true}}), 1),
+                        None,
+                    ),
+                    window,
+                    cx,
+                );
+                this.show_screen(Screen::Projects, window, cx);
+            })
+        });
+        visual.run_until_parked();
+        while commands.try_recv().is_ok() {}
+        let edit = visual
+            .debug_bounds("edit-project-0")
+            .expect("edit identity");
+        visual.simulate_click(edit.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("project-identity-editor").is_some());
+        visual.simulate_input("My App");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let editor = this.projects.editor.as_ref().unwrap();
+                editor
+                    .icon
+                    .update(cx, |i, cx| i.set_value("🦀", window, cx));
+                editor.favicon.update(cx, |i, cx| {
+                    i.set_value("https://example.com/i.png", window, cx)
+                });
+            })
+        });
+        let save = visual.debug_bounds("project-identity-save").unwrap();
+        visual.simulate_click(save.center(), gpui::Modifiers::none());
+        let sent = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(Request::SaveProject { path, change }) => Some((path, change)),
+            _ => None,
+        });
+        let identity = Identity {
+            label: "My App".into(),
+            icon: "🦀".into(),
+            favicon: "https://example.com/i.png".into(),
+            icon_file: String::new(),
+        };
+        assert_eq!(
+            sent,
+            Some(("/work/app".to_owned(), Patch::Identity(identity.clone())))
+        );
+        let file = "0123456789abcdef0123456789abcdef.png";
+        let stored = serde_json::json!({"/work/app":{"favourite":true,"label":"My App",
+            "icon":"🦀","favicon":"https://example.com/i.png","iconFile":file}});
+        let saved = RequestState {
+            number: 1,
+            request: Request::SaveProject {
+                path: "/work/app".into(),
+                change: Patch::Identity(identity),
+            },
+            loading: false,
+            value: registry(stored.clone(), 2).value,
+            error: None,
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(
+                    with(registry(stored.clone(), 1), Some(("project-save", saved))),
+                    window,
+                    cx,
+                );
+                assert!(this.projects.editor.is_none(), "closes once verified");
+                assert_eq!(this.projects.notice, "Name and icon saved.");
+                assert_eq!(this.project_name("/work/app/"), "My App");
+            })
+        });
+        let wanted = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(Request::ProjectIcons { files }) => Some(files),
+            _ => None,
+        });
+        assert_eq!(wanted, Some(vec![file.to_owned()]));
+        assert!(visual.debug_bounds("project-icon-image").is_none());
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(8, 8)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let icons = RequestState {
+            number: 1,
+            request: Request::ProjectIcons {
+                files: vec![file.into()],
+            },
+            loading: false,
+            value: Arc::new(serde_json::json!({file:{"png":
+                base64::engine::general_purpose::STANDARD.encode(png.into_inner())}})),
+            error: None,
+        };
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(
+                    with(registry(stored.clone(), 2), Some(("project-icons", icons))),
+                    window,
+                    cx,
+                )
+            })
+        });
+        visual.run_until_parked();
+        assert!(
+            visual.debug_bounds("project-icon-image").is_some(),
+            "the downloaded icon draws as the project mark"
+        );
+        // Unchanged form: nothing is sent; an unchanged URL keeps its file.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.open_identity_editor("/work/app".into(), window, cx);
+                while commands.try_recv().is_ok() {}
+                this.save_identity(false, cx);
+                assert_eq!(this.projects.notice, "No changes to save.");
+                let editor = this.projects.editor.as_ref().unwrap();
+                editor
+                    .name
+                    .update(cx, |i, cx| i.set_value("App", window, cx));
+                this.save_identity(false, cx);
+            })
+        });
+        let kept = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(Request::SaveProject {
+                change: Patch::Identity(identity),
+                ..
+            }) => Some(identity),
+            _ => None,
+        });
+        assert_eq!(
+            kept.map(|i| (i.label, i.icon_file)),
+            Some(("App".into(), file.into()))
+        );
     }
 
     #[gpui::test]

@@ -380,3 +380,166 @@ async fn projects_round_trip_through_the_hubs_shared_config() {
     host.shutdown().await.unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// A project's name and icon through the real hub: the icon URL is fetched
+/// by the hub's own `desktop.downloadProjectIcon` (here from a loopback
+/// fixture, never the internet), stored content-addressed, recorded as the
+/// desktop's `favicon` + `iconFile` on every alias, and read back through
+/// `ui.asset` as a small PNG. Reset removes the fields and keeps the pin.
+#[tokio::test]
+async fn project_identity_and_icon_round_trip_through_the_hub() {
+    use std::io::{Read, Write};
+    let root = std::env::temp_dir().join(format!(
+        "wks-native-identity-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut options = RustOptions::isolated(root.join("state")).unwrap();
+    options.home_dir = root.join("home");
+    std::fs::create_dir(&options.home_dir).unwrap();
+    options.usage_poll_on_boot = Some(false);
+    let config_file = options.config_dir.join("config.yaml");
+    let icons_dir = options.config_dir.join("project-icons");
+
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgb8(32, 32)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let png = png.into_inner();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let served = png.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(2) {
+            let mut stream = stream.unwrap();
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                served.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(&served).unwrap();
+        }
+    });
+
+    let host = NativeHost::start(Mode::Rust(options)).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), host.ready())
+        .await
+        .unwrap()
+        .unwrap();
+    let controller = host.controller();
+    let mut views = controller.views.clone();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !views.borrow_and_update().connected {
+            views.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    // Another client's aliases and metadata for the same directory.
+    std::fs::write(
+        &config_file,
+        serde_json::to_string(&serde_json::json!({"projects": {
+            "/work/app": {"favourite": true, "color": "#336699"},
+            "/work/app/": {"workflowId": "wf"}
+        }}))
+        .unwrap(),
+    )
+    .unwrap();
+    let url = format!("http://127.0.0.1:{port}/favicon.png");
+    let saved = run(
+        &controller,
+        Request::SaveProject {
+            path: "/work/app".into(),
+            change: Patch::Identity(projects::Identity {
+                label: "My App".into(),
+                icon: "🦀".into(),
+                favicon: url.clone(),
+                icon_file: String::new(),
+            }),
+        },
+    )
+    .await;
+    assert!(saved.error.is_none(), "{:?}", saved.error);
+    let map = &saved.value["projects"];
+    let file = map["/work/app"]["iconFile"].as_str().unwrap().to_owned();
+    assert!(file.ends_with(".png") && file.len() == 36, "{file}");
+    assert_eq!(std::fs::read(icons_dir.join(&file)).unwrap(), png);
+    for alias in ["/work/app", "/work/app/"] {
+        assert_eq!(map[alias]["label"], "My App");
+        assert_eq!(map[alias]["icon"], "🦀");
+        assert_eq!(map[alias]["favicon"], url.as_str());
+        assert_eq!(map[alias]["iconFile"], file.as_str());
+    }
+    assert_eq!(map["/work/app"]["color"], "#336699");
+    assert_eq!(map["/work/app"]["favourite"], true);
+    assert_eq!(map["/work/app/"]["workflowId"], "wf");
+    let row = projects::list(Some(&saved.value), &[], &[])
+        .into_iter()
+        .find(|p| p.path == "/work/app")
+        .unwrap();
+    assert_eq!(row.title(), "My App");
+    assert_eq!(row.icon_file.as_deref(), Some(file.as_str()));
+
+    let icons = run(
+        &controller,
+        Request::ProjectIcons {
+            files: vec![file.clone(), "ffffffffffffffffffffffffffffffff.png".into()],
+        },
+    )
+    .await;
+    assert!(icons.error.is_none(), "{:?}", icons.error);
+    assert!(
+        icons.value[&file]["png"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
+    assert!(
+        icons.value["ffffffffffffffffffffffffffffffff.png"]["error"].is_string(),
+        "a missing icon is reported per file"
+    );
+
+    // A refused download (not an image) saves nothing.
+    let refused = run(
+        &controller,
+        Request::SaveProject {
+            path: "/work/app".into(),
+            change: Patch::Identity(projects::Identity {
+                label: "Renamed".into(),
+                favicon: "http://127.0.0.1:9/unreachable.png".into(),
+                ..Default::default()
+            }),
+        },
+    )
+    .await;
+    assert!(refused.error.unwrap().contains("download"));
+    let text = std::fs::read_to_string(&config_file).unwrap();
+    assert!(text.contains("My App") && !text.contains("Renamed"));
+
+    let reset = run(
+        &controller,
+        Request::SaveProject {
+            path: "/work/app".into(),
+            change: Patch::Identity(projects::Identity::default()),
+        },
+    )
+    .await;
+    assert!(reset.error.is_none(), "{:?}", reset.error);
+    assert_eq!(
+        reset.value["projects"]["/work/app"],
+        serde_json::json!({"favourite": true, "color": "#336699"})
+    );
+    assert_eq!(
+        reset.value["projects"]["/work/app/"],
+        serde_json::json!({"workflowId": "wf"})
+    );
+
+    drop(views);
+    drop(controller);
+    host.shutdown().await.unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
