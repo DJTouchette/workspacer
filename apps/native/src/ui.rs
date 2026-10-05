@@ -6448,14 +6448,19 @@ mod tests {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
         let started: Arc<std::sync::Mutex<Vec<wks_native::updates::Handoff>>> = Default::default();
         let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let helper_alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
         workspace.update(&mut visual, |this, _| {
+            let helper_alive = helper_alive.clone();
             let (started, fail) = (started.clone(), fail.clone());
             this.extras.update_starter = Arc::new(move |handoff| {
                 started.lock().unwrap().push(handoff.clone());
                 if fail.load(std::sync::atomic::Ordering::SeqCst) {
                     anyhow::bail!("helper exited before it was ready")
                 }
-                Ok(())
+                let alive = helper_alive.clone();
+                Ok(wks_native::updates::ReadyHelper::for_test(move || {
+                    Ok(alive.load(std::sync::atomic::Ordering::SeqCst))
+                }))
             });
         });
         visual.update(|window, cx| {
@@ -6571,6 +6576,38 @@ mod tests {
         );
         assert!(notice(&mut visual).starts_with("Save or discard your unsaved edits to finish"));
         assert!(pane.read_with(&visual, |p, _| p.dirty()), "edits untouched");
+        helper_alive.store(false, std::sync::atomic::Ordering::SeqCst);
+        visual
+            .update(|window, cx| workspace.update(cx, |this, cx| this.install_update(window, cx)));
+        visual.run_until_parked();
+        assert_eq!(
+            started.lock().unwrap().len(),
+            2,
+            "no second helper after an ambiguous/stale receipt"
+        );
+        assert!(notice(&mut visual).contains("no longer confirms readiness"));
+        click(&mut visual, "file-viewer-prompt-discard");
+        visual.run_until_parked();
+        assert_eq!(
+            cx.windows().len(),
+            1,
+            "a stale helper must not turn Discard into a blind quit"
+        );
+        assert!(notice(&mut visual).contains("no longer confirms readiness"));
+        // A deleted temporary installer clears only the download cache so a
+        // subsequent Install can fetch it again instead of retrying forever.
+        workspace.update(&mut visual, |this, _| {
+            this.extras.update_helper_ready = None;
+            this.extras.update_starter =
+                Arc::new(|_| Err(wks_native::updates::MissingInstaller.into()));
+        });
+        visual
+            .update(|window, cx| workspace.update(cx, |this, cx| this.install_update(window, cx)));
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.extras.update_installer.is_none())
+        });
+        assert!(notice(&mut visual).contains("download it again"));
     }
 
     #[gpui::test]

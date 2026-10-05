@@ -631,12 +631,16 @@ be expanded, and attachment controls share the composer action row.
   Windows PowerShell helper (`src/update_helper.ps1`, parameters from a JSON
   plan, never from script text) must report that it is waiting before the app
   quits; otherwise the app stays open and says why. It is started with
-  `CREATE_NO_WINDOW` and leaves the app's job object where allowed. After the
+  `CREATE_NO_WINDOW` and must leave the app's job object; if Windows refuses
+  independent launch, the app stays open for a manual install. After the
   app exits and nothing else runs from the install folder, it runs the per-user
   installer silently in place (`/S /D=<install folder>`), requires exit code 0
   and the expected version in `build-stamp.json`, and relaunches with the same
-  arguments and working directory (the previous version when the install
-  failed). Each step is recorded in
+  arguments and working directory. Failure is reported, not treated as a
+  rollback guarantee. A timed-out installer retains the update lease until it
+  exits; the helper does not restart the app while files may be changing.
+  Repeated clicks and unsaved-editor decisions recheck the same helper rather
+  than starting another. Each step is recorded in
   `%LOCALAPPDATA%\Workspacer Native Rust Preview\updates\last-update.{json,log}`;
   the next launch reports the outcome under Settings → About. Other platforms
   link to the release page.

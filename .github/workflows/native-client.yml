@@ -38,7 +38,20 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets --features ui-tests -- -D warnings
       - name: Reducer, WebSocket and GPUI interaction tests
-        run: cargo test --locked --no-fail-fast --features ui-tests
+        run: cargo test --locked --no-fail-fast --features ui-tests -- --test-threads=1
+      - name: Verify all Windows updater handoff scenarios ran
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = & cargo test --locked --features ui-tests --test windows_update_handoff 2>&1
+          $exit = $LASTEXITCODE
+          $output | Tee-Object -FilePath windows-update-handoff.log
+          if ($exit -ne 0 -or ($output -join "`n") -notmatch 'windows_update_handoff: 6 passed, 0 failed, 0 filtered out') { throw 'Windows updater scenarios did not all pass' }
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows' && always()
+        with:
+          name: native-windows-update-handoff
+          path: apps/native/windows-update-handoff.log
       - name: Link the native application
         run: cargo build --locked --bin wks-native --bin native-harness
       - name: Real Linux window, keyboard and pixel smoke

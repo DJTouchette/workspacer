@@ -36,10 +36,10 @@ function Set-State([string]$name, [string]$detail) {
         time = (Get-Date).ToUniversalTime().ToString('o')
     }
     $temporary = $plan.state + '.tmp'
+    Write-Log ('state ' + $name + ' ' + $detail)
     [IO.File]::WriteAllText($temporary, ($record | ConvertTo-Json -Compress))
     if ([IO.File]::Exists($plan.state)) { [IO.File]::Delete($plan.state) }
     [IO.File]::Move($temporary, $plan.state)
-    Write-Log ('state ' + $name + ' ' + $detail)
 }
 
 function Start-App {
@@ -52,20 +52,40 @@ function Start-App {
         $app = [Diagnostics.Process]::Start($start)
         Write-Log ('relaunched ' + $plan.exe + ' as ' + $app.Id)
     } catch {
+        Set-State 'failed' ('Workspacer could not restart: ' + $_.Exception.Message)
         Write-Log ('relaunch failed: ' + $_.Exception.Message)
     }
+}
+
+function Normalize-ImagePath([string]$path) {
+    if ($path.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) { return '\\' + $path.Substring(8) }
+    if ($path.StartsWith('\\?\', [StringComparison]::OrdinalIgnoreCase)) { return $path.Substring(4) }
+    return $path
 }
 
 function Get-ImagePath($process) {
     try {
         $path = $process.Path
-        if ($path) { return [string]$path }
+        if ($path) { return Normalize-ImagePath ([string]$path) }
     } catch {}
     return ''
 }
 
 $exited = $false
+$ownsLease = $false
+$installDir = Normalize-ImagePath ([string]$plan.installDir)
+# A second app/helper must not race an already accepted installation. Plans
+# are per nonce; only the lease owner may replace the shared outcome record.
+$hasher = [Security.Cryptography.SHA256]::Create()
+$key = [BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes((Normalize-ImagePath ([IO.Path]::GetDirectoryName([string]$plan.state))).ToUpperInvariant()))).Replace('-', '')
+$hasher.Dispose()
+$lease = New-Object Threading.Mutex($false, ('Local\WorkspacerNativeUpdate-' + $key))
 try {
+    try { $ownsLease = $lease.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsLease = $true }
+    if (-not $ownsLease) {
+        [Console]::Error.WriteLine('Another Workspacer update helper already owns this installation. Nothing was installed.')
+        exit 8
+    }
     Write-Log ('helper ' + $PID + ' started for Workspacer ' + $plan.parentId + ', installing ' + $plan.expected)
     $parent = [Diagnostics.Process]::GetProcessById([int]$plan.parentId)
     # Keep a handle so a reused process ID can never satisfy the wait.
@@ -79,7 +99,7 @@ try {
     Write-Log 'Workspacer exited'
 
     # The installer cannot replace files that are still running.
-    $prefix = $plan.installDir.TrimEnd('\') + '\'
+    $prefix = $installDir.TrimEnd('\') + '\'
     $deadline = [DateTime]::UtcNow.AddMilliseconds([int]$plan.siblingMs)
     while ($true) {
         $busy = @(Get-Process | Where-Object {
@@ -103,8 +123,10 @@ try {
     $setup.UseShellExecute = $false
     $installer = [Diagnostics.Process]::Start($setup)
     if (-not $installer.WaitForExit([int]$plan.installMs)) {
-        Set-State 'failed' ('The installer did not finish in time. Run it manually: ' + $plan.installer)
-        exit 5
+        Set-State 'failed' ('The installer is still running after the timeout. Workspacer was not restarted while files may be changing. Wait for the installer to finish before reopening Workspacer or retrying. Log: ' + $plan.log)
+        # Keep the update lease until the installer actually exits. Releasing
+        # it here would allow another helper to overwrite a live installation.
+        $installer.WaitForExit()
     }
     $code = $installer.ExitCode
     Write-Log ('installer exited with code ' + $code)
@@ -129,7 +151,12 @@ try {
     exit 0
 } catch {
     $message = $_.Exception.Message
-    try { Set-State 'failed' ('The update helper stopped: ' + $message) } catch {}
+    if ($ownsLease) { try { Set-State 'failed' ('The update helper stopped: ' + $message) } catch {} }
+    [Console]::Error.WriteLine($message)
     if ($exited) { Start-App }
     exit 1
+} finally {
+    if ($ownsLease) { $lease.ReleaseMutex() }
+    $lease.Dispose()
+    try { [IO.File]::Delete($planPath) } catch {}
 }

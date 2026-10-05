@@ -148,6 +148,7 @@ pub(super) enum Pending {
     Replace,
     /// Close the main window (quit), after the user decides.
     CloseWindow,
+    FinishUpdate,
 }
 
 /// The explorer column of a pane.
@@ -291,7 +292,10 @@ impl PreviewPane {
         // edits are unsaved; the pane asks what to do with them first.
         if state.number != self.state.number && self.dirty() && self.navigation.is_none() {
             self.deferred = Some(state.clone());
-            if !matches!(self.pending, Some(Pending::Close | Pending::CloseWindow)) {
+            if !matches!(
+                self.pending,
+                Some(Pending::Close | Pending::CloseWindow | Pending::FinishUpdate)
+            ) {
                 self.pending = Some(Pending::Replace);
             }
             cx.notify();
@@ -719,6 +723,9 @@ impl PreviewPane {
                 if let Some(state) = self.deferred.take() {
                     self.load(&state, window, cx);
                 }
+            }
+            Pending::FinishUpdate => {
+                self.workspace_call(window, cx, |ws, window, cx| ws.install_update(window, cx))
             }
             Pending::CloseWindow => self.workspace_call(window, cx, |ws, window, cx| {
                 ws.close_main_window(window, cx)
@@ -1499,6 +1506,7 @@ impl Render for PreviewPane {
                 Pending::Back => "before going back".into(),
                 Pending::Close => "before closing".into(),
                 Pending::CloseWindow => "before quitting".into(),
+                Pending::FinishUpdate => "before installing the update".into(),
                 Pending::Replace => match self.deferred.as_ref().map(|s| &s.request) {
                     Some(Request::FilePreview { target, .. }) => {
                         format!("before opening {} from the chat", target.name())
@@ -1736,10 +1744,29 @@ impl Workspace {
     /// The main window is closing. `false` keeps it open while the editor
     /// asks about unsaved edits (Save / Discard then close it).
     pub fn confirm_window_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.confirm_close(Pending::CloseWindow, window, cx)
+    }
+
+    /// Saving/discarding an update prompt must recheck helper readiness, not
+    /// blindly close the app after a potentially long unsaved-edits decision.
+    pub(super) fn confirm_update_close(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.confirm_close(Pending::FinishUpdate, window, cx)
+    }
+
+    fn confirm_close(
+        &mut self,
+        pending: Pending,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(pane) = self.showing_pane().filter(|p| p.read(cx).dirty()) else {
             return true;
         };
-        pane.update(cx, |pane, cx| pane.guard_close(Pending::CloseWindow, cx));
+        pane.update(cx, |pane, cx| pane.guard_close(pending, cx));
         match &self.chat.viewer.popout {
             Some(popout) => {
                 let _ = popout

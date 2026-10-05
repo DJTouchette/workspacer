@@ -97,14 +97,9 @@ impl Workspace {
         if self.extras.update_handing_off {
             return;
         }
-        // A helper is still waiting: never start a second one, just close.
-        let waiting =
-            wks_native::updates::Timeouts::default().app_exit - std::time::Duration::from_secs(60);
-        if self
-            .extras
-            .update_helper_ready
-            .is_some_and(|ready| ready.elapsed() < waiting)
-        {
+        // An accepted handoff may still own an installer operation. Recheck
+        // its live process and receipt, never launch another based on a timer.
+        if self.extras.update_helper_ready.is_some() {
             self.quit_for_update(&version, window, cx);
             return;
         }
@@ -133,11 +128,14 @@ impl Workspace {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.extras.update_handing_off = false;
                 match result {
-                    Ok(()) => {
-                        this.extras.update_helper_ready = Some(std::time::Instant::now());
+                    Ok(helper) => {
+                        this.extras.update_helper_ready = Some(helper);
                         this.quit_for_update(&version, window, cx);
                     }
                     Err(error) => {
+                        if error.is::<wks_native::updates::MissingInstaller>() {
+                            this.extras.update_installer = None;
+                        }
                         this.extras.update_notice = format!("Update could not start: {error:#}");
                     }
                 }
@@ -151,7 +149,17 @@ impl Workspace {
     /// first, its Save or Discard closes the app and the waiting helper
     /// installs; Keep editing leaves the app open.
     fn quit_for_update(&mut self, version: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.confirm_window_close(window, cx) {
+        if !self
+            .extras
+            .update_helper_ready
+            .as_mut()
+            .is_some_and(|helper| helper.is_waiting().unwrap_or(false))
+        {
+            self.extras.update_notice = "Update could not continue: the helper no longer confirms readiness. Restart Workspacer before retrying, or run the downloaded installer manually.".into();
+            cx.notify();
+            return;
+        }
+        if self.confirm_update_close(window, cx) {
             self.extras.update_notice = format!("Closing to install {version}…");
             cx.quit();
         } else {

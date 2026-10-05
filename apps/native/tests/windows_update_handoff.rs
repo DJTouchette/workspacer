@@ -59,7 +59,7 @@ mod windows {
         Timeouts {
             // A cold PowerShell start on a busy runner.
             ready: Duration::from_secs(60),
-            app_exit: Duration::from_secs(60),
+            app_exit: Duration::from_secs(300),
             siblings: Duration::from_secs(4),
             install: Duration::from_secs(60),
         }
@@ -89,7 +89,18 @@ mod windows {
         handoff.state_dir = root.join("state");
         handoff.timeouts = timeouts();
         match hand_off(&handoff) {
-            Ok(()) => {
+            Ok(mut helper) => {
+                if root.join("probe-duplicate").exists() {
+                    assert!(
+                        hand_off(&handoff).is_err(),
+                        "a second helper must not arm another installation"
+                    );
+                    assert!(
+                        helper.is_waiting().unwrap(),
+                        "the rejected attempt must preserve the first receipt"
+                    );
+                    std::fs::write(root.join("duplicate-refused"), "").unwrap();
+                }
                 std::fs::write(root.join("handed-off"), "").unwrap();
                 // Quitting takes a moment; the installer must not start sooner.
                 std::thread::sleep(Duration::from_millis(1500));
@@ -104,7 +115,24 @@ mod windows {
     /// The installer: record how it was started, then do what the case asks.
     fn installer() {
         let root = root();
-        let args: Vec<String> = std::env::args().skip(1).collect();
+        // NSIS consumes the entire raw command-line suffix after /D=, even
+        // with spaces. CRT argv would split it and is not an installer oracle.
+        let command_line = unsafe {
+            let start = GetCommandLineW();
+            let mut len = 0;
+            while *start.add(len) != 0 {
+                len += 1;
+            }
+            String::from_utf16(std::slice::from_raw_parts(start, len)).unwrap()
+        };
+        let (prefix, directory) = command_line
+            .rsplit_once(" /D=")
+            .expect("NSIS directory argument");
+        assert!(
+            prefix.ends_with(" /S"),
+            "silent installer flag missing: {command_line}"
+        );
+        let args = vec!["/S".to_owned(), format!("/D={directory}")];
         let app: u32 = std::fs::read_to_string(root.join("app-pid"))
             .unwrap()
             .parse()
@@ -127,6 +155,7 @@ mod windows {
     type Handle = *mut core::ffi::c_void;
     #[link(name = "kernel32")]
     unsafe extern "system" {
+        fn GetCommandLineW() -> *const u16;
         fn OpenProcess(access: u32, inherit: i32, pid: u32) -> Handle;
         fn WaitForSingleObject(handle: Handle, millis: u32) -> u32;
         fn CloseHandle(handle: Handle) -> i32;
@@ -283,9 +312,18 @@ mod windows {
         }
 
         fn log(&self) -> String {
-            std::fs::read_to_string(self.root.join("state/last-update.log")).unwrap_or_default()
-                + &std::fs::read_to_string(self.root.join("state/last-update-output.log"))
-                    .unwrap_or_default()
+            let mut log = std::fs::read_to_string(self.root.join("state/last-update.log"))
+                .unwrap_or_default();
+            for file in std::fs::read_dir(self.root.join("state"))
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                if file.file_name().to_string_lossy().ends_with("-output.log") {
+                    log.push_str(&std::fs::read_to_string(file.path()).unwrap_or_default());
+                }
+            }
+            log
         }
 
         fn wait_relaunch(&self) -> Value {
@@ -342,9 +380,11 @@ mod windows {
 
     fn installs_and_relaunches_even_when_the_app_job_is_closed(driver: &Path) {
         let case = Case::new(driver, "success");
+        std::fs::write(case.root.join("probe-duplicate"), "").unwrap();
         let status = case.run_app(0, VERSION, Some(Job::new(true)));
         assert!(status.success(), "app: {status} {}", case.log());
         assert!(case.root.join("handed-off").exists());
+        assert!(case.root.join("duplicate-refused").exists());
         case.assert_relaunched_like_the_original();
         case.assert_installed_after_exit();
         let state = case.state();
@@ -423,6 +463,16 @@ mod windows {
             Handoff::current(case.root.join("download").join(SETUP), VERSION).unwrap();
         handoff.state_dir = case.root.join("state");
         handoff.timeouts = timeouts();
+        let missing = Handoff {
+            installer: case.root.join("missing.exe"),
+            ..handoff.clone()
+        };
+        assert!(
+            hand_off(&missing)
+                .err()
+                .unwrap()
+                .is::<wks_native::updates::MissingInstaller>()
+        );
         handoff.powershell = case.root.join("missing").join("powershell.exe");
         assert!(hand_off(&handoff).is_err(), "a missing helper is an error");
         // A helper that starts but cannot wait for its app reports failure
@@ -436,7 +486,7 @@ mod windows {
         handoff.powershell = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".into();
         handoff.pid = gone_pid;
         let started = Instant::now();
-        let error = format!("{:#}", hand_off(&handoff).unwrap_err());
+        let error = format!("{:#}", hand_off(&handoff).err().unwrap());
         assert!(
             started.elapsed() < Duration::from_secs(55),
             "reported promptly"
@@ -446,21 +496,19 @@ mod windows {
         assert!(case.read("installer.json").is_none());
     }
 
-    /// When the app's job forbids breakaway, the helper is ended with it.
-    /// That cannot be prevented from inside the job; it is recorded so the
-    /// next launch reports an unfinished update instead of saying nothing.
-    fn a_job_that_forbids_breakaway_is_recorded(driver: &Path) {
+    /// Refuse before reporting ready when the launcher would kill the helper
+    /// with the app. The real UI stays open on this error; this fixture exits 3.
+    fn a_job_that_forbids_breakaway_is_refused(driver: &Path) {
         let case = Case::new(driver, "no-breakaway");
-        assert!(case.run_app(0, VERSION, Some(Job::new(false))).success());
-        std::thread::sleep(Duration::from_secs(8));
+        assert_eq!(
+            case.run_app(0, VERSION, Some(Job::new(false))).code(),
+            Some(3)
+        );
+        assert!(!case.root.join("handed-off").exists());
         assert!(case.read("relaunched.json").is_none());
         assert!(case.read("installer.json").is_none());
-        assert_eq!(case.state()["state"], "waiting");
-        assert!(
-            case.log().contains("job breakaway: false"),
-            "{}",
-            case.log()
-        );
+        let error = std::fs::read_to_string(case.root.join("handoff-error")).unwrap();
+        assert!(error.contains("independently"), "{error}");
     }
 
     type Check = (&'static str, fn(&Path));
@@ -488,8 +536,8 @@ mod windows {
                 a_helper_that_cannot_start_keeps_the_app_open,
             ),
             (
-                "a_job_that_forbids_breakaway_is_recorded",
-                a_job_that_forbids_breakaway_is_recorded,
+                "a_job_that_forbids_breakaway_is_refused",
+                a_job_that_forbids_breakaway_is_refused,
             ),
         ];
         // `cargo test` passes harness flags; a name filters cases.

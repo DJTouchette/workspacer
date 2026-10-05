@@ -389,10 +389,90 @@ fn read_state(path: &std::path::Path, nonce: &str) -> Option<Value> {
     (value["nonce"] == nonce).then_some(value)
 }
 
+/// The cached, verified download was removed (for example by temp cleanup).
+/// The UI may discard this cache entry and offer a fresh download.
+#[derive(Debug)]
+pub struct MissingInstaller;
+impl std::fmt::Display for MissingInstaller {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The downloaded installer is no longer available. Choose Install and restart to download it again.")
+    }
+}
+impl std::error::Error for MissingInstaller {}
+
+/// A successful handoff retains a live process/readiness probe. Dropping it
+/// must not terminate the detached helper when the app exits.
+pub struct ReadyHelper {
+    probe: Box<dyn FnMut() -> Result<bool> + Send>,
+}
+impl ReadyHelper {
+    pub fn is_waiting(&mut self) -> Result<bool> {
+        (self.probe)()
+    }
+
+    #[cfg(feature = "ui-tests")]
+    pub fn for_test(probe: impl FnMut() -> Result<bool> + Send + 'static) -> Self {
+        Self {
+            probe: Box::new(probe),
+        }
+    }
+}
+
+/// Until readiness is committed, every error must stop and reap the helper.
+/// std::process::Child alone detaches on drop and would leave an unacknowledged
+/// update armed for a later ordinary app exit.
+#[cfg(windows)]
+struct StartingHelper(Option<std::process::Child>);
+#[cfg(windows)]
+impl std::ops::Deref for StartingHelper {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+#[cfg(windows)]
+impl std::ops::DerefMut for StartingHelper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
+    }
+}
+#[cfg(windows)]
+impl Drop for StartingHelper {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 /// Start the hidden helper and wait until it holds a handle to this process.
 /// Only then may the caller quit; any error means the helper is not running
 /// and the app must stay open.
-pub fn hand_off(handoff: &Handoff) -> Result<()> {
+pub fn hand_off(handoff: &Handoff) -> Result<ReadyHelper> {
+    start_helper(handoff).inspect_err(|error| {
+        #[cfg(windows)]
+        {
+            use std::io::Write;
+            if let Ok(mut log) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(handoff.log_file())
+            {
+                let _ = writeln!(
+                    log,
+                    "{} app {} handoff refused: {error:#}",
+                    chrono::Utc::now().to_rfc3339(),
+                    handoff.pid
+                );
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = error;
+    })
+}
+
+fn start_helper(handoff: &Handoff) -> Result<ReadyHelper> {
     #[cfg(target_os = "windows")]
     {
         use std::io::Write;
@@ -405,6 +485,17 @@ pub fn hand_off(handoff: &Handoff) -> Result<()> {
         const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
         const ERROR_ACCESS_DENIED: i32 = 5;
 
+        if !handoff.installer.is_file() {
+            return Err(MissingInstaller.into());
+        }
+        ensure!(
+            handoff.exe.is_file(),
+            "The installed application is unavailable; update manually."
+        );
+        ensure!(
+            handoff.cwd.is_dir(),
+            "The original working directory is unavailable; restart from an existing directory before updating."
+        );
         std::fs::create_dir_all(&handoff.state_dir)
             .context("Could not create the update state folder")?;
         let nonce = format!(
@@ -413,13 +504,17 @@ pub fn hand_off(handoff: &Handoff) -> Result<()> {
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
         let plan = handoff.plan(&nonce)?;
-        let plan_file = handoff.state_dir.join(PLAN_FILE);
+        let plan_file = handoff.state_dir.join(format!("{nonce}-{PLAN_FILE}"));
         std::fs::write(&plan_file, serde_json::to_vec_pretty(&plan)?)
             .context("Could not write the update plan")?;
         let state_file = handoff.state_file();
-        let _ = std::fs::remove_file(&state_file);
-        let mut log =
-            std::fs::File::create(handoff.log_file()).context("Could not create the update log")?;
+        // Another accepted helper may own the shared outcome. Its mutex and
+        // nonce protect the receipt; a new attempt must not erase its state.
+        let mut log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(handoff.log_file())
+            .context("Could not create the update log")?;
         writeln!(
             log,
             "{} app {} handing off {} (version {}) for {}",
@@ -430,7 +525,8 @@ pub fn hand_off(handoff: &Handoff) -> Result<()> {
             handoff.exe.display()
         )?;
         drop(log);
-        let output = std::fs::File::create(handoff.state_dir.join(OUTPUT_FILE))?;
+        let output_path = handoff.state_dir.join(format!("{nonce}-{OUTPUT_FILE}"));
+        let output = std::fs::File::create(&output_path)?;
         let spawn = |flags: u32| -> std::io::Result<std::process::Child> {
             std::process::Command::new(&handoff.powershell)
                 .args([
@@ -451,34 +547,55 @@ pub fn hand_off(handoff: &Handoff) -> Result<()> {
                 .spawn()
         };
         let base = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
-        let (mut child, breakaway) = match spawn(base | CREATE_BREAKAWAY_FROM_JOB) {
-            Ok(child) => (child, true),
-            // The app's job forbids breakaway; the helper stays in it.
+        let child = match spawn(base | CREATE_BREAKAWAY_FROM_JOB) {
+            Ok(child) => child,
+            // A helper still owned by the launcher's job may be killed with
+            // this app. Never report ready and reproduce the close-only bug.
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED) => {
-                (spawn(base)?, false)
+                bail!(
+                    "Windows prevented the update helper from running independently (launcher or policy restriction). Keep Workspacer open, or close it and run {} manually.",
+                    handoff.installer.display()
+                );
             }
             Err(error) => return Err(error).context("Could not start the installer helper"),
         };
+        let mut child = StartingHelper(Some(child));
         let mut log = std::fs::OpenOptions::new()
             .append(true)
             .open(handoff.log_file())?;
-        writeln!(
-            log,
-            "helper {} started; job breakaway: {breakaway}",
-            child.id()
-        )?;
+        writeln!(log, "helper {} started; job breakaway: true", child.id())?;
         drop(log);
         let detail = |state: Option<Value>| {
             state
                 .and_then(|s| s["detail"].as_str().map(str::to_owned))
                 .filter(|d| !d.is_empty())
-                .unwrap_or_else(|| format!("see {}", handoff.state_dir.join(OUTPUT_FILE).display()))
+                .unwrap_or_else(|| format!("see {}", output_path.display()))
         };
         let deadline = std::time::Instant::now() + handoff.timeouts.ready;
         loop {
             let state = read_state(&state_file, &nonce);
             match state.as_ref().and_then(|s| s["state"].as_str()) {
-                Some("waiting") => return Ok(()),
+                Some("waiting") => {
+                    // Leave ample time for joined backend shutdown. Once this
+                    // expires, the UI must not start a competing helper.
+                    let reserve = std::time::Duration::from_secs(120);
+                    let safe_wait = handoff
+                        .timeouts
+                        .app_exit
+                        .checked_sub(reserve)
+                        .filter(|duration| !duration.is_zero())
+                        .unwrap_or(handoff.timeouts.app_exit / 2);
+                    let expires = std::time::Instant::now() + safe_wait;
+                    let mut process = child.0.take().unwrap();
+                    return Ok(ReadyHelper {
+                        probe: Box::new(move || {
+                            Ok(std::time::Instant::now() < expires
+                                && process.try_wait()?.is_none()
+                                && read_state(&state_file, &nonce)
+                                    .is_some_and(|s| s["state"] == "waiting"))
+                        }),
+                    });
+                }
                 Some("failed") => bail!("The installer helper failed: {}", detail(state)),
                 _ => {}
             }
@@ -490,6 +607,7 @@ pub fn hand_off(handoff: &Handoff) -> Result<()> {
             }
             if std::time::Instant::now() >= deadline {
                 let _ = child.kill();
+                let _ = child.wait();
                 bail!(
                     "The installer helper did not start within {} seconds",
                     handoff.timeouts.ready.as_secs()
@@ -516,7 +634,10 @@ pub fn take_outcome(state_dir: &std::path::Path) -> Option<Value> {
         .map(|time| chrono::Utc::now().signed_duration_since(time))
         .unwrap_or(chrono::TimeDelta::MAX);
     let stale = |limit: Timeouts| match value["state"].as_str() {
-        Some("waiting") => age > chrono::TimeDelta::seconds(120),
+        Some("waiting") => {
+            age > chrono::TimeDelta::from_std(limit.app_exit + limit.ready)
+                .unwrap_or(chrono::TimeDelta::MAX)
+        }
         Some("installing") => {
             age > chrono::TimeDelta::from_std(limit.install + limit.siblings)
                 .unwrap_or(chrono::TimeDelta::MAX)
@@ -733,6 +854,11 @@ mod tests {
             "a helper may still be waiting"
         );
         write("waiting", 600);
+        assert!(
+            take_outcome(&dir).is_none(),
+            "a second app must not consume a live 15-minute wait"
+        );
+        write("waiting", 1200);
         let stopped = take_outcome(&dir).unwrap();
         assert_eq!(stopped["state"], "failed");
         assert!(
@@ -760,7 +886,7 @@ mod tests {
             powershell: "/nonexistent/powershell".into(),
             timeouts: Timeouts::default(),
         };
-        let error = hand_off(&handoff).unwrap_err().to_string();
+        let error = hand_off(&handoff).err().unwrap().to_string();
         assert!(error.contains("available on Windows"));
         assert!(!std::path::Path::new("/nonexistent/updates").exists());
     }

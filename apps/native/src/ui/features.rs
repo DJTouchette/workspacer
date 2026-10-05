@@ -10,10 +10,16 @@ pub(super) type DraftFile = (String, String, Option<Option<Arc<gpui::Image>>>);
 
 /// Starts the installer helper; returns once it is waiting for the app.
 pub(super) trait UpdateStarter:
-    Fn(&wks_native::updates::Handoff) -> anyhow::Result<()> + Send + Sync
+    Fn(&wks_native::updates::Handoff) -> anyhow::Result<wks_native::updates::ReadyHelper> + Send + Sync
 {
 }
-impl<F: Fn(&wks_native::updates::Handoff) -> anyhow::Result<()> + Send + Sync> UpdateStarter for F {}
+impl<
+    F: Fn(&wks_native::updates::Handoff) -> anyhow::Result<wks_native::updates::ReadyHelper>
+        + Send
+        + Sync,
+> UpdateStarter for F
+{
+}
 
 pub(super) struct Extras {
     pub name: Entity<InputState>,
@@ -43,9 +49,9 @@ pub(super) struct Extras {
     pub update_installer: Option<(String, String)>,
     /// The helper is starting; the app quits once it reports it is waiting.
     pub update_handing_off: bool,
-    /// When a helper last reported it is waiting for the app to close (the
-    /// close was held by unsaved edits); it waits `Timeouts::app_exit`.
-    pub update_helper_ready: Option<std::time::Instant>,
+    /// An accepted helper, retained even if it later fails: never start a
+    /// competing installer after an ambiguous handoff.
+    pub update_helper_ready: Option<wks_native::updates::ReadyHelper>,
     /// Hand-off progress, failures and the last update's outcome.
     pub update_notice: String,
     /// Starts the installer helper (tests substitute a recorder).
