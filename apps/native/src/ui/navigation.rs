@@ -203,6 +203,27 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Start another agent in a project, whatever is already running there:
+    /// the project filter keeps its sessions one click away in the sidebar,
+    /// and the New Agent form opens on that folder. Nothing launches until
+    /// the user confirms the form.
+    pub(super) fn new_agent_in_project(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.demo || self.spawn_pending || self.view.creating {
+            return;
+        }
+        self.project_filter = Some(path.clone());
+        self.search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.show_new_session(window, cx);
+        self.seed_project(&path, cx);
+        cx.notify();
+    }
+
     fn open_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.screen != Screen::Projects || self.new_session {
             return;
@@ -395,11 +416,20 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &ShowConversation, window, cx| {
                 this.show_screen(Screen::Conversation, window, cx)
             }))
-            .on_action(
-                cx.listener(|this, _: &CreateSession, window, cx| {
-                    this.show_new_session(window, cx)
-                }),
-            )
+            .on_action(cx.listener(|this, _: &CreateSession, window, cx| {
+                // On Projects, `n` starts an agent in the highlighted
+                // project rather than wherever the chat last was.
+                if this.screen == Screen::Projects && !this.new_session {
+                    let rows = this.project_rows(cx);
+                    if let Some(project) =
+                        rows.get(this.project_cursor.min(rows.len().saturating_sub(1)))
+                    {
+                        this.new_agent_in_project(project.path.clone(), window, cx);
+                        return;
+                    }
+                }
+                this.show_new_session(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &NextSession, _, cx| this.move_selection(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousSession, _, cx| this.move_selection(-1, cx)))
             .on_action(
@@ -482,10 +512,13 @@ impl Workspace {
                     let pin_path = path.clone();
                     let forget = project.clone();
                     let pinned = project.favourite;
+                    let new_path = path.clone();
+                    let can_spawn = this.view.connected && !this.demo;
                     let sessions = match (project.live_sessions, project.sessions) {
                         (0, 0) => "No sessions yet · open to start one".to_owned(),
-                        (0, n) => format!("{n} ended · open project"),
-                        (live, n) => format!("{live} running of {n} · open project"),
+                        (0, 1) => "1 ended · open to view it".to_owned(),
+                        (0, n) => format!("{n} ended · open to browse them"),
+                        (live, n) => format!("{live} running of {n} · open to browse them"),
                     };
                     div().h(px(84.)).px_6().pb_2().child(chrome::interactive_control(div().id(("project", ix)), p, true).h_full().p_3().rounded(px(p.panel_radius))
                         .bg(rgb(if ix == this.project_cursor { p.selected } else { p.surface }))
@@ -499,6 +532,12 @@ impl Workspace {
                                 .when(project.source == wks_native::projects::Source::Device, |d| d.child(div().flex_shrink_0().text_size(px(10.)).text_color(rgb(p.muted)).child("this device"))))
                             .child(div().truncate().font_family(mono_font()).text_size(px(11.)).text_color(rgb(p.muted)).child(project.path.clone()))
                             .child(div().text_size(px(11.)).text_color(rgb(if project.live_sessions > 0 { p.busy } else { p.accent })).child(sessions)))
+                        .child(this.quiet_button(SharedString::from(format!("new-agent-in-project-{ix}")), "New agent", IconName::Plus, can_spawn)
+                            .debug_selector(move || format!("new-agent-in-project-{ix}"))
+                            .when(can_spawn, |d| d.on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.new_agent_in_project(new_path.clone(), window, cx);
+                            }))))
                         .when(project.removable(), |d| d.child(this.danger_button(SharedString::from(format!("forget-project-{ix}")), "Forget", project.source == wks_native::projects::Source::Device || can_write)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 cx.stop_propagation();
@@ -512,6 +551,6 @@ impl Workspace {
                             })))))
                 }).collect::<Vec<_>>()
             })).track_scroll(self.projects_scroll.clone()).flex_1().min_h_0())
-            .child(div().px_6().py_3().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · / filter · i add · Ctrl Enter pin" } else { "Click a project to open it · Ctrl Enter to pin a path" })))
+            .child(div().px_6().py_3().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · n new agent · / filter · i add · Ctrl Enter pin" } else { "Click a project to open it · New agent starts another · Ctrl Enter to pin a path" })))
     }
 }

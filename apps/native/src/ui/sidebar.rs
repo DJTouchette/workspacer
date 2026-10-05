@@ -664,6 +664,22 @@ impl Workspace {
                                 .text_color(rgb(p.accent))
                                 .child(path.clone()),
                         )
+                        .child({
+                            let path = path.clone();
+                            let can_spawn = self.view.connected && !self.demo;
+                            self.icon_button(
+                                "new-agent-in-filter",
+                                "New agent in this project",
+                                IconName::Plus,
+                                can_spawn,
+                            )
+                            .debug_selector(|| "new-agent-in-filter".into())
+                            .when(can_spawn, |d| {
+                                d.on_click(cx.listener(move |this, _, window, cx| {
+                                    this.new_agent_in_project(path.clone(), window, cx)
+                                }))
+                            })
+                        })
                         .child(
                             self.button("all-projects", "All", true)
                                 .on_click(cx.listener(|this, _, _, cx| {

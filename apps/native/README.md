@@ -427,7 +427,12 @@ projects with names, scripts or workflows are managed in Workspacer Settings →
 Projects. Paths are interpreted on the hub, not checked against the client's
 filesystem. Sessions belong to a project by their working directory.
 
-Opening a project filters the session sidebar; **All** clears the project filter.
+Opening a project filters the session sidebar to that project's sessions and
+opens one of them (or the New Agent form when it has none); **All** clears the
+project filter. A project can run any number of agents: every project row has
+**New agent**, the sidebar's project filter has **+**, and `n` on a highlighted
+Projects row does the same. Each opens the New Agent form on that folder even
+when agents already run there; nothing launches until you confirm the form.
 The sidebar search matches session names/paths and project paths. Keyboard
 navigation follows the filtered list and keeps the highlighted row in view.
 
@@ -455,7 +460,7 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Enter` / `l` | Open the highlighted project |
 | `g s` | Settings |
 | `g c` | Conversation |
-| `n` | New session using the selected project's directory |
+| `n` | New session in the highlighted project (Projects) or the filtered/open project |
 | `Ctrl+U` / `Ctrl+D` | Scroll conversation by half a window |
 | `t` / `v` / `a` in Settings | Cycle theme / toggle Vim / switch default agent |
 | `Ctrl/Cmd+P` | Projects, including with Vim disabled |

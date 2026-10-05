@@ -3874,6 +3874,85 @@ mod tests {
         );
     }
 
+    /// A project with agents already running still offers New agent (row
+    /// button, `n` on the highlighted row, the sidebar filter's +), which only
+    /// opens the form on that folder; opening the project still reaches its
+    /// existing sessions.
+    #[gpui::test]
+    fn projects_with_running_agents_can_start_another(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                let rows = Arc::make_mut(&mut view.sessions);
+                rows[0].cwd = "/one/app".into();
+                rows[0].state = "responding".into();
+                rows[1].cwd = "/one/app".into();
+                this.demo = false;
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.simulate_keystrokes("g p");
+        visual.run_until_parked();
+        while commands.try_recv().is_ok() {}
+        let button = visual
+            .debug_bounds("new-agent-in-project-0")
+            .expect("New agent on a project that already has agents");
+        visual.simulate_click(button.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert!(this.new_session, "the New Agent form opens");
+            assert_eq!(this.projects.cwd.as_str(), "/one/app");
+            assert_eq!(this.project_filter.as_deref(), Some("/one/app"));
+            assert_eq!(
+                this.visible_sessions(cx),
+                vec![0, 1],
+                "both sessions listed"
+            );
+        });
+        assert!(
+            next_effect(&mut commands).is_none(),
+            "nothing launches or switches until the form is confirmed"
+        );
+        // The existing sessions stay navigable from the filtered sidebar.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.new_session = false;
+                this.show_screen(Screen::Projects, window, cx);
+            })
+        });
+        visual.simulate_keystrokes("enter");
+        assert!(matches!(
+            next_effect(&mut commands),
+            Some(Command::Select(_))
+        ));
+        let plus = visual
+            .debug_bounds("new-agent-in-filter")
+            .expect("the project filter offers New agent");
+        visual.simulate_click(plus.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.new_session);
+            assert_eq!(this.projects.cwd.as_str(), "/one/app");
+        });
+        assert!(next_effect(&mut commands).is_none());
+        // `n` on Projects uses the highlighted row, not the open chat's folder.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.new_session = false;
+                this.project_filter = None;
+                this.projects.cwd = "/elsewhere".into();
+                this.show_screen(Screen::Projects, window, cx);
+                window.focus(&this.focus);
+            })
+        });
+        visual.simulate_keystrokes("n");
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.new_session);
+            assert_eq!(this.projects.cwd.as_str(), "/one/app");
+        });
+    }
+
     #[gpui::test]
     fn search_and_disabled_vim_keep_input_and_modifier_shortcuts(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
