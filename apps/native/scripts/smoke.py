@@ -92,6 +92,8 @@ def main():
     parser.add_argument("--height", type=int, default=700)
     parser.add_argument("--scroll-pages", type=int, default=0, help="Scroll chat upward by this many half-pages before capture")
     parser.add_argument("--no-input", action="store_true", help="Capture without sending a fixture message")
+    parser.add_argument("--paint-region", action="append", default=[], metavar="X,Y,W,H",
+                        help="Require a region to paint content, not a blank background; repeatable")
     parser.add_argument("--animation-region", help="Verify pixels change across four frames in x,y,width,height (for a visible spinner)")
     parser.add_argument("--click", action="append", help="Click x,y before capture; repeat for a sequence of preview and toggle checks")
     parser.add_argument("--drag", action="append",
@@ -152,6 +154,15 @@ def main():
             animation_region = (left, top, width, height)
         except ValueError:
             parser.error("--animation-region requires x,y,width,height inside the window")
+    paint_regions = []
+    for region in args.paint_region:
+        try:
+            left, top, width, height = map(int, region.split(","))
+            if min(left, top) < 0 or min(width, height) <= 0 or left + width > args.width or top + height > args.height:
+                raise ValueError()
+            paint_regions.append((left, top, width, height))
+        except ValueError:
+            parser.error("--paint-region requires x,y,width,height inside the window")
     command = [str(args.binary.resolve())]
     command += ["--bus", args.bus] if args.bus else ["--demo"]
     command += ["--session", args.session] if args.session else []
@@ -214,6 +225,10 @@ def main():
             drive("mousemove", "--window", window, str(hover[0]), str(hover[1]))
             time.sleep(1)
         colors = screenshot(int(window), args.width, args.height, args.output)
+        region_colors = []
+        for index, (left, top, width, height) in enumerate(paint_regions):
+            output = args.output.with_name(f"{args.output.stem}-region-{index}.png")
+            region_colors.append(screenshot(int(window), width, height, output, left, top))
         animation_frames = None
         if animation_region:
             left, top, width, height = animation_region
@@ -232,6 +247,7 @@ def main():
                           "screenshot": str(args.output), "theme": args.theme, "screen": args.screen,
                           "width": args.width, "height": args.height,
                           "distinct_animation_frames": animation_frames,
+                          "paint_region_colors": region_colors,
                           "workload": "external bus" if args.bus else "in-process demo",
                           "scope": "window appearance is not first usable frame; host/build/GPU affect all values"}, indent=2))
         if process.poll() is not None:

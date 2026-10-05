@@ -1037,6 +1037,17 @@ impl Worker {
                         // back to running (or drops new ones) until the next
                         // event. Kept as the bounded projection.
                         if let Some(session) = self.sessions.get(id) {
+                            // Clear uses completed tool calls as work evidence.
+                            // Carry the parsed scalar, not an arbitrary payload,
+                            // and cover aliases a stale read may have supplied.
+                            if ["toolCalls", "totalToolCalls", "tool_calls"]
+                                .iter()
+                                .any(|key| data.get(*key).is_some())
+                            {
+                                for key in ["toolCalls", "totalToolCalls", "tool_calls"] {
+                                    merged[key] = json!(session.telemetry.tool_calls);
+                                }
+                            }
                             for (key, value) in [
                                 ("subagents", &session.subagents),
                                 ("workflows", &session.workflows),

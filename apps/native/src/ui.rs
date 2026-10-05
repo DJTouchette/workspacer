@@ -7195,7 +7195,10 @@ mod tests {
             "no stop, close, archive, delete or selection is sent"
         );
         let saved = Settings::load(&path).unwrap();
-        assert!(saved.cleared_children["test"].contains_key("agent:a/t1"));
+        assert!(
+            saved.cleared_children["test"]
+                .contains_key(&wks_native::child_agents::clear_key_provider("a", "t1"))
+        );
         assert!(saved.archived.is_empty());
         // Replays, focus changes and turn boundaries keep it cleared.
         for (selected, parent) in [
@@ -7358,6 +7361,69 @@ mod tests {
                 assert_eq!(ids(this, cx), ["a", "c", "b"]);
             })
         });
+    }
+
+    #[gpui::test]
+    fn provider_row_cells_stay_contained_across_rendered_focus_changes(cx: &mut TestAppContext) {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                set_zoom(1.);
+            }
+        }
+        let _reset = Reset;
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        for scale in [1., 1.5] {
+            set_zoom(scale);
+            visual.simulate_resize(size(gpui::px(900.), gpui::px(700.)));
+            for selected in ["a", "b", "a", "b"] {
+                visual.update(|window, cx| workspace.update(cx, |this, cx| {
+                    this.apply_typography(cx);
+                    let mut next = native_child_state(selected, "input", "complete", 2000);
+                    Arc::make_mut(&mut next.sessions)[0].merge(&serde_json::json!({"subagents":[{
+                        "id":"t1", "status":"complete", "description":"Long provider child title ".repeat(30), "model":"unknown-model-".repeat(30)
+                    }]}));
+                    this.update_view(Arc::new(next), window, cx);
+                }));
+                visual.run_until_parked();
+                let row = visual.debug_bounds("sidebar-provider-1").unwrap();
+                let model = visual.debug_bounds("sidebar-child-model-1").unwrap();
+                let clear = visual.debug_bounds("sidebar-clear-provider-1").unwrap();
+                assert!(row.size.width > gpui::px(100.));
+                assert!(model.left() >= row.left() && model.right() <= row.right());
+                assert!(model.top() >= row.top() && model.bottom() <= row.bottom());
+                assert!(row.contains(&clear.center()));
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn stale_clear_clicks_and_replayed_finishes_do_not_hide_new_work(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| workspace.update(cx, |this, cx| {
+            this.settings_path = None;
+            this.update_view(Arc::new(native_child_state("b", "input", "complete", 2000)), window, cx);
+            let painted = this.clearable_children(&this.view.sessions[0]);
+            this.update_view(Arc::new(native_child_state("b", "input", "waiting_approval", 0)), window, cx);
+            this.clear_children(painted, cx);
+            assert!(this.settings.cleared_children.is_empty(), "stale Clear cannot clear a child now awaiting approval");
+            this.update_view(Arc::new(native_child_state("b", "input", "complete", 3000)), window, cx);
+            let marks = this.clearable_children(&this.view.sessions[0]);
+            this.clear_children(marks, cx);
+            assert_eq!(provider_rows(this, cx), 0);
+            // Backfilled calls and activity are not another provider run.
+            let mut backfill = native_child_state("b", "input", "complete", 3000);
+            Arc::make_mut(&mut backfill.sessions)[0].merge(&serde_json::json!({"subagents":[{"id":"t1","status":"complete","startedAt":1000,"completedAt":3000,"lastActivity":9000,"toolCalls":99}]}));
+            this.update_view(Arc::new(backfill), window, cx);
+            assert_eq!(provider_rows(this, cx), 0);
+            // A newer finish is proof of work even if running was not observed.
+            this.update_view(Arc::new(native_child_state("b", "input", "complete", 5000)), window, cx);
+            assert_eq!(provider_rows(this, cx), 1);
+            assert!(this.settings.cleared_children.is_empty());
+            this.update_view(Arc::new(native_child_state("b", "input", "complete", 3000)), window, cx);
+            assert_eq!(provider_rows(this, cx), 1, "old finish cannot revive a retired clear mark");
+        }));
+        assert!(archive_effects(&mut commands).is_empty());
     }
 
     #[gpui::test]

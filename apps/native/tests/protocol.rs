@@ -442,16 +442,26 @@ async fn fleet_reads_keep_child_status_from_events_seen_while_pending() {
     let controller = Controller::start(hub.config.clone());
     let fleet = hub.frame("call", Some("sessions.snapshots")).await;
     let mut newer = session("a");
+    newer["totalToolCalls"] = json!(9);
+    newer["workflows"] = json!([{ "runId":"w", "status":"completed" }]);
     newer["subagents"] = json!([
         {"id":"t1","status":"complete","startedAt":1000,"completedAt":2000},
         {"id":"t2","status":"running","startedAt":3000}
     ]);
     fleet.event("agent.snapshot", newer).await;
     let mut older = session("a");
+    older["totalToolCalls"] = json!(2);
+    older["workflows"] = json!([{ "runId":"w", "status":"running" }]);
     older["subagents"] = json!([{"id":"t1","status":"running","startedAt":1000}]);
     fleet.result(json!([older, session("b")])).await;
     let v = view(&controller, |v| v.sessions.len() == 2).await;
     let parent = v.sessions.iter().find(|s| s.id == "a").unwrap();
+    assert_eq!(
+        parent.telemetry.tool_calls,
+        Some(9),
+        "new work evidence must not roll back"
+    );
+    assert_eq!(parent.workflows[0]["status"], "completed");
     let children = parent.subagents.as_array().unwrap();
     assert_eq!(children.len(), 2, "{children:?}");
     assert_eq!(children[0]["status"], "complete");

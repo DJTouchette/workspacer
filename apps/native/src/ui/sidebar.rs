@@ -8,6 +8,18 @@ const CLEAR_CHILD: &str = "Clear · hide this finished child here on this device
 const CLEAR_SUBAGENT: &str = "Clear · hide this finished subagent here on this device · nothing is stopped · the parent chat keeps its record";
 const CLEAR_FINISHED: &str = "Clear finished children · hide them here on this device · running children stay · nothing is archived or stopped";
 
+fn child_limit_note(session: &Session) -> &'static str {
+    if session
+        .subagents
+        .as_array()
+        .is_some_and(|children| children.len() == wks_native::child_agents::MAX_PROVIDER_CHILDREN)
+    {
+        "\nChild list capped at 32. Open the parent conversation for full child activity."
+    } else {
+        ""
+    }
+}
+
 fn provider_clear(parent: &str, child: &ChildAgent) -> (String, ClearMark) {
     (
         clear_key_provider(parent, &child.id),
@@ -246,10 +258,18 @@ impl Workspace {
                             d.child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_color(rgb(if child.failed() {
+                                    .text_color(rgb(if !self.view.connected {
+                                        p.muted
+                                    } else if child.failed() {
                                         p.error
-                                    } else {
+                                    } else if child.settled() {
                                         p.success
+                                    } else if wks_native::child_agents::provider_active(
+                                        &child.status,
+                                    ) {
+                                        p.warning
+                                    } else {
+                                        p.muted
                                     }))
                                     .child(state),
                             )
@@ -327,6 +347,23 @@ impl Workspace {
         marks: Vec<(String, ClearMark)>,
         cx: &mut Context<Self>,
     ) {
+        // Click handlers can outlive the snapshot they were painted from.
+        // Recheck terminal state and work identity before recording a clear.
+        let eligible: BTreeMap<_, _> = self
+            .view
+            .sessions
+            .iter()
+            .flat_map(|parent| self.clearable_children(parent))
+            .collect();
+        let marks: Vec<_> = marks
+            .into_iter()
+            .filter_map(|(key, painted)| {
+                eligible
+                    .get(&key)
+                    .filter(|current| painted.covers(current))
+                    .map(|current| (key, current.clone()))
+            })
+            .collect();
         if marks.is_empty() {
             return;
         }
@@ -365,12 +402,37 @@ impl Workspace {
         };
         let mut working = std::collections::BTreeSet::new();
         for s in self.view.sessions.iter() {
-            if !s.state.is_empty() && !wks_native::child_agents::session_finished(s) {
-                working.insert(clear_key_session(&s.id));
+            let key = clear_key_session(&s.id);
+            if s.working()
+                || s.subagents.as_array().into_iter().flatten().any(|child| {
+                    wks_native::child_agents::provider_active(
+                        child["status"].as_str().unwrap_or(""),
+                    )
+                })
+                || s.approval.is_some()
+                || s.questions.is_some()
+                || matches!(
+                    s.state.as_str(),
+                    "approval" | "question" | "waiting_approval" | "waiting_input" | "background"
+                )
+                || marks
+                    .get(&key)
+                    .is_some_and(|mark| !mark.covers(&ClearMark::session(s, 0)))
+            {
+                working.insert(key);
             }
             for child in wks_native::child_agents::project(s, &[], std::iter::empty()).unanchored {
-                if child.running() {
-                    working.insert(clear_key_provider(&s.id, &child.id));
+                let key = clear_key_provider(&s.id, &child.id);
+                if child.running()
+                    || matches!(
+                        child.status.as_str(),
+                        "approval" | "question" | "waiting_approval" | "waiting_input"
+                    )
+                    || marks
+                        .get(&key)
+                        .is_some_and(|mark| !mark.covers(&ClearMark::provider(&child, 0)))
+                {
+                    working.insert(key);
                 }
             }
         }
@@ -585,6 +647,7 @@ impl Workspace {
                                     "{title}\n{}\n{} · {status}",
                                     session.cwd, session.provider
                                 );
+                                let details = format!("{details}{}", child_limit_note(session));
                                 div().h(px(48.)).px_2().pb_1().child(
                                     chrome::interactive_control(
                                         div().id(SharedString::from(format!(
@@ -975,6 +1038,7 @@ impl Workspace {
                                     "{title}\n{}\n{model_info}{context} · {status}",
                                     session.cwd
                                 );
+                                let details = format!("{details}{}", child_limit_note(session));
                                 div()
                                     .h(px(64.))
                                     .px_2()
@@ -1129,7 +1193,7 @@ impl Workspace {
                                                         div()
                                                             .flex_shrink_0()
                                                             .text_color(rgb(color))
-                                                            .child(status.to_owned()),
+                                                            .child(if !child_limit_note(session).is_empty() { format!("{status} · Child list capped") } else { status.to_owned() }),
                                                     )
                                                 }),
                                         )

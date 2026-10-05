@@ -1040,7 +1040,9 @@ again (seen running, a later finish, or more tool calls) returns and stays.
 The child open in the chat stays listed while it is open; History's **Show in
 sidebar** undoes a cleared session. A cleared session with a live descendant
 stays as that descendant's parent. Archive still covers ordinary sessions and
-active children.
+active children. The sidebar keeps up to 32 provider children per parent,
+prioritizing retained unfinished work before recent finishes. At that limit,
+**Child list capped** points to the parent conversation for full child activity.
 
 Subagents with no spawning call in view (an untracked dispatch or one whose call
 scrolled out) gather in a collapsible **subagents** card pinned where they

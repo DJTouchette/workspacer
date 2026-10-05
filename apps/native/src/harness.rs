@@ -148,6 +148,9 @@ pub async fn serve_feedback_fixture(
                                 }
                             }
                             Some("call") => {
+                                if child_lifecycle {
+                                    eprintln!("fixture child-lifecycle call {}", frame["method"].as_str().unwrap_or("unknown"));
+                                }
                                 let id = frame["params"]["sessionId"].as_str().unwrap_or_default();
                                 let result = match frame["method"].as_str().unwrap_or_default() {
                                     "config.get" => config.clone(),

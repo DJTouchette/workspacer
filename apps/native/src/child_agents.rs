@@ -49,7 +49,7 @@ fn text(v: &Value, names: &[&str]) -> String {
         .map(|s| crate::transcript::head(s, 512))
         .unwrap_or_default()
 }
-fn timestamp(v: &Value, names: &[&str]) -> Option<i64> {
+pub(crate) fn timestamp(v: &Value, names: &[&str]) -> Option<i64> {
     let value = names.iter().find_map(|k| v.get(*k))?;
     value
         .as_i64()
@@ -144,10 +144,7 @@ impl Telemetry {
         }
         // A resumed worker must not retain a duration or completion from its
         // previous run even when the sparse update omits those fields.
-        if matches!(
-            text(v, &["status", "mode", "ambientState"]).as_str(),
-            "running" | "responding" | "streaming" | "working" | "thinking"
-        ) {
+        if provider_active(text(v, &["status", "mode", "ambientState"]).as_str()) {
             self.completed_at_ms = None;
             self.duration_ms = None;
         }
@@ -391,6 +388,32 @@ pub fn overview_anchor<'a>(
 
 /// Most cleared children remembered per hub; the oldest marks go first.
 pub const MAX_CLEARED: usize = 512;
+pub const MAX_PROVIDER_CHILDREN: usize = 32;
+
+/// Only explicit terminal statuses are safe to clear or deprioritize.
+pub fn provider_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "complete" | "completed" | "done" | "stopped" | "ended" | "failed" | "error" | "lost"
+    )
+}
+
+/// Positive evidence of live work or a pending decision, not an unknown replay.
+pub fn provider_active(status: &str) -> bool {
+    matches!(
+        status,
+        "running"
+            | "responding"
+            | "streaming"
+            | "working"
+            | "thinking"
+            | "background"
+            | "approval"
+            | "question"
+            | "waiting_approval"
+            | "waiting_input"
+    )
+}
 
 /// A finished child the user cleared from the sidebar. Only a device-local
 /// visibility mark: nothing is stopped, closed, archived or forgotten, and the
@@ -438,7 +461,7 @@ impl ClearMark {
     }
 }
 pub fn clear_key_provider(parent: &str, agent: &str) -> String {
-    format!("agent:{parent}/{agent}")
+    format!("agent:{}", serde_json::json!([parent, agent]))
 }
 pub fn clear_key_session(id: &str) -> String {
     format!("session:{id}")
@@ -457,13 +480,7 @@ pub fn session_finished(session: &Session) -> bool {
             .as_array()
             .into_iter()
             .flatten()
-            .any(|child| {
-                ChildAgent {
-                    status: text(child, &["status"]),
-                    ..Default::default()
-                }
-                .running()
-            })
+            .any(|child| !provider_terminal(child["status"].as_str().unwrap_or("")))
 }
 /// Remember a clear, keeping the newest `MAX_CLEARED`.
 pub fn remember_clear(marks: &mut BTreeMap<String, ClearMark>, key: String, mark: ClearMark) {
@@ -788,6 +805,45 @@ mod tests {
             ids.last().map(String::as_str),
             Some("c39"),
             "the running child stays"
+        );
+    }
+    #[test]
+    fn inventory_keeps_old_running_and_approval_children_ahead_of_new_finishes() {
+        let mut children: Vec<_> = (0..40)
+            .map(|ix| json!({"id":format!("c{ix}"),"status":"complete"}))
+            .collect();
+        children[0]["status"] = json!("running");
+        children[1]["status"] = json!("waiting_approval");
+        let mut parent = Session::default();
+        parent.merge(&json!({"sessionId":"p","mode":"input","subagents":children}));
+        let projected = project(&parent, &[], std::iter::empty());
+        let ids: Vec<_> = projected.unanchored.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.len(), MAX_PROVIDER_CHILDREN);
+        assert_eq!(&ids[..2], &["c0", "c1"]);
+        assert_eq!(ids.last(), Some(&"c39"));
+        assert!(!session_finished(&parent));
+        parent.merge(&json!({"subagents":[{"id":"approval","status":"waiting_approval"}]}));
+        assert!(
+            !session_finished(&parent),
+            "pending native approval is not finished work"
+        );
+    }
+
+    #[test]
+    fn explicit_older_run_and_finish_replays_do_not_regress_a_provider_child() {
+        let mut parent = Session::default();
+        parent.merge(&json!({"sessionId":"p","subagents":[{"id":"a","status":"complete","startedAt":3000,"completedAt":6000}]}));
+        parent.merge(&json!({"subagents":[{"id":"a","status":"running","startedAt":1000}]}));
+        assert_eq!(parent.subagents[0]["status"], "complete");
+        parent.merge(&json!({"subagents":[{"id":"a","status":"complete","startedAt":3000,"completedAt":4000}]}));
+        assert_eq!(parent.subagents[0]["completedAt"], 6000);
+        // A fresh explicit run is not held terminal by the previous one.
+        parent.merge(&json!({"subagents":[{"id":"a","status":"running","startedAt":7000}]}));
+        assert_eq!(parent.subagents[0]["status"], "running");
+        assert!(parent.subagents[0]["completedAt"].is_null());
+        assert_ne!(
+            clear_key_provider("a/b", "c"),
+            clear_key_provider("a", "b/c")
         );
     }
 }

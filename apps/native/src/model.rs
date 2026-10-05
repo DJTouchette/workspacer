@@ -216,14 +216,12 @@ impl Session {
             self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
         }
         if let Some(items) = value.get("subagents") {
-            // The daemon appends children, so the newest (and any still
-            // running) are the tail; past the bound, the oldest drop first.
-            let skip = items
-                .as_array()
-                .map_or(0, |all| all.len().saturating_sub(32));
-            let mut projected = inventory_from(
-                items,
-                skip,
+            // Keep unfinished children before filling remaining slots with
+            // recent finishes. Appending a completed sibling must never evict
+            // an older child that is still running or waiting for approval.
+            let selected = prioritized_children(items, &self.subagents);
+            let mut projected = bounded_inventory(
+                &selected,
                 &[
                     "id",
                     "toolUseId",
@@ -257,6 +255,20 @@ impl Session {
                         .find(|previous| previous["id"] == row["id"] && row["id"].is_string())
                         .and_then(Value::as_object)
                     {
+                        let old = Value::Object(previous.clone());
+                        let stamp = crate::child_agents::timestamp;
+                        let before = stamp(&old, &["startedAt"]);
+                        let incoming = stamp(row, &["startedAt"]);
+                        let older_run = matches!((before, incoming), (Some(a), Some(b)) if b < a);
+                        let older_finish = before == incoming
+                            && crate::child_agents::provider_terminal(
+                                row["status"].as_str().unwrap_or(""),
+                            )
+                            && matches!((stamp(&old, &["completedAt"]), stamp(row, &["completedAt"])), (Some(a), Some(b)) if b < a);
+                        if older_run || older_finish {
+                            *row = old;
+                            continue;
+                        }
                         for (key, value) in previous {
                             row.as_object_mut()
                                 .unwrap()
@@ -264,7 +276,7 @@ impl Session {
                                 .or_insert_with(|| value.clone());
                         }
                     }
-                    if row["status"] == "running" {
+                    if crate::child_agents::provider_active(row["status"].as_str().unwrap_or("")) {
                         row["completedAt"] = Value::Null;
                         row["durationMs"] = Value::Null;
                     }
@@ -350,6 +362,53 @@ impl Session {
     pub fn stopped(&self) -> bool {
         self.state == "stopped" || self.state == "ended"
     }
+}
+
+fn prioritized_children(value: &Value, previous: &Value) -> Value {
+    use crate::child_agents::{MAX_PROVIDER_CHILDREN, provider_terminal};
+    let Some(rows) = value.as_array() else {
+        return Value::Array(Vec::new());
+    };
+    fn status<'a>(row: &'a Value, previous: &'a Value) -> Option<&'a str> {
+        row["status"].as_str().or_else(|| {
+            previous
+                .as_array()?
+                .iter()
+                .find(|old| old["id"] == row["id"] && row["id"].is_string())?["status"]
+                .as_str()
+        })
+    }
+    let mut keep = std::collections::BTreeSet::new();
+    for priority in 0..3 {
+        for (ix, row) in rows.iter().enumerate() {
+            let state = status(row, previous).unwrap_or("");
+            if provider_terminal(state) {
+                continue;
+            }
+            let was_live = previous.as_array().into_iter().flatten().any(|old| {
+                old["id"] == row["id"]
+                    && row["id"].is_string()
+                    && !provider_terminal(old["status"].as_str().unwrap_or(""))
+            });
+            let rank = if was_live {
+                0
+            } else if !state.is_empty() && state != "unknown" {
+                1
+            } else {
+                2
+            };
+            if rank == priority && keep.len() < MAX_PROVIDER_CHILDREN {
+                keep.insert(ix);
+            }
+        }
+    }
+    for ix in (0..rows.len()).rev() {
+        if keep.len() == MAX_PROVIDER_CHILDREN {
+            break;
+        }
+        keep.insert(ix);
+    }
+    Value::Array(keep.into_iter().map(|ix| rows[ix].clone()).collect())
 }
 
 fn bounded_inventory(value: &Value, fields: &[&str]) -> Value {

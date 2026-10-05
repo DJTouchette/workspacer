@@ -1671,3 +1671,41 @@ response changes the latest visibility. Tests also verify view-token write
 refusal, shared restore, retained layout/conversation, and zero lifecycle calls.
 Final combined counts and platform limits are recorded in
 [the integration report](../../.workspacer/reports/native-feedback-26-28-review.json).
+
+### Independent #29 integration review
+
+Merged exact `9bf2c978` onto `7dc4a054`. Review additionally retained unfinished
+provider children ahead of recent terminal siblings at the 32-row limit, made
+pending native approvals prevent parent Clear, revalidated Clear against the
+current snapshot, and made newer work evidence retire its old clear mark.
+Provider clear keys encode the parent/agent pair unambiguously. Explicit older
+run/finish timestamps cannot regress the retained provider state. A delayed fleet
+read also preserves parsed tool counts: an added real-WebSocket regression
+failed with 9 rolling back to 2 before the correction, and passes afterward.
+Activity timestamps and late provider tool-count backfill do not resurrect a
+cleared completion.
+
+Independent private Xvfb `:99` / fixture `18067` used `--child-lifecycle` and
+forced Windows caption. Finished rows remained pixel-identical through focus
+changes (decoded RGB region hashes). A visual suspicion of blank rows was
+disproved by those hashes; all temporary paint probes and row-clipping/width
+experiments were removed. Clear persisted for the one intended provider child,
+survived replays, preserved the parent draft, and left its inline record openable.
+Opening that cleared record showed its row; returning hid it again. The
+fixture's method-only audit recorded reads and zero archive/lifecycle/send calls.
+[Focus stability](docs/ui-child-clear-integration-focus.png),
+[return with draft retained](docs/ui-child-clear-integration-return.png).
+
+The smoke CLI now accepts repeated `--paint-region X,Y,W,H` checks. With the
+lifecycle fixture, use a 1100×800 window, six seconds to settle, focus clicks
+`117,469` then `145,149`, and regions `46,200,240,47`, `46,264,240,47`, and
+`46,328,240,47`. Each must paint more than a blank background.
+
+Exact combined checks: default native **386 passed, 1 ignored**; no-default
+**205 passed**; no-default plus ui-tests **371 passed, 1 ignored**. GPUI was
+serialized; Cargo jobs were bounded to four. Strict Clippy, formatting, source
+capability guards and Python syntax passed. Windows/macOS execution remains
+required in the parent's CI. Provider inventories remain bounded to 32 rows;
+at saturation the parent says **Child list capped** and points to its chat.
+Stopped Workspacer sessions retain the existing hub visibility/history policy;
+Clear does not change that policy or add provider-child History restoration.
