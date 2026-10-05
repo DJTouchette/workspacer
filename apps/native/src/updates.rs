@@ -477,8 +477,9 @@ fn start_helper(handoff: &Handoff) -> Result<ReadyHelper> {
     {
         use std::io::Write;
         use std::os::windows::process::CommandExt;
-        // A hidden console of its own. DETACHED_PROCESS would make Windows
-        // ignore CREATE_NO_WINDOW and leave PowerShell with no console.
+        // No console window; stdin/stdout are redirected. Do not combine
+        // DETACHED_PROCESS with CREATE_NO_WINDOW: Windows ignores the latter
+        // in that combination. This flag choice alone is not a root-cause proof.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         // Leave any job the app runs in, which may end its members with it.

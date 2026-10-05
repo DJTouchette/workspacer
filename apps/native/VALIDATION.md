@@ -1197,13 +1197,14 @@ No Windows/macOS or hardware-GPU capture.
 ## Windows update hand-off (#23, 2026-10-05)
 
 Reported: on Windows, **Install and restart** closed the app; no update and no
-relaunch followed. The cause was traced in source and official documentation, not
-reproduced on a Windows host. The old hand-off quit once `spawn()` returned.
+relaunch followed. Source and official documentation exposed failure modes;
+the user's Windows failure was not reproduced locally. The old hand-off quit once `spawn()` returned.
 It never learned whether the helper ran:
 
 - The helper used `DETACHED_PROCESS | CREATE_NO_WINDOW`. Windows ignores
-  `CREATE_NO_WINDOW` alongside `DETACHED_PROCESS`, so PowerShell ran with no
-  console (Microsoft *Process Creation Flags*).
+  `CREATE_NO_WINDOW` alongside `DETACHED_PROCESS`. That interaction alone is
+  not a root-cause proof; neither configuration requires an interactive console
+  (Microsoft *Process Creation Flags*).
 - The helper inherited the app's job object. A kill-on-close job ends it with the app
   (*Nested Jobs*: children join the parent's job chain unless they break away).
 - The script set `$ErrorActionPreference='SilentlyContinue'`. It ignored the
@@ -1377,3 +1378,27 @@ stays visible). The scrollbar appears on hover/scroll only. Questions are
 answered all at once, not stepped like the desktop picker; there is no
 Decline. No Windows/macOS, hardware GPU, screen reader or real provider run.
 
+
+### Independent combined #23/#24 verification
+
+After merging exact updater `007fda43` and question picker `4ca32e76`, independent
+review also fixed a picker receipt race: an old same-session answer acknowledgement
+could mark a new question set read-only. The submitted signature and literal
+answers now fence acknowledgement/error state, and a local pending gate prevents
+multiple submissions before the asynchronous busy frame. A regression replaces
+questions and delivers the old receipt in one update.
+
+Combined Linux suite: **351 passed, 1 ignored**; the Windows-only handoff target
+explicitly reported a platform skip. Combined strict native Clippy and formatting
+passed. A fresh private Xvfb/fixture run sent exactly one `claude.answer` with
+`["Online backfill", "Clippy, strict", "2"]`, every `answerKinds` entry `text`,
+and preserved `KEEP_INTEGRATION_DRAFT`. The 720×480 Latte card kept Send visible.
+[Ready](docs/ui-integration-question-ready.png),
+[answered with draft retained](docs/ui-integration-question-answered.png),
+[minimum Latte window](docs/ui-integration-question-latte-minimum.png).
+
+The full source findings, limits, logs and Windows gates are in
+[the combined review](../../.workspacer/reports/native-update-review.json).
+This is ready for the parent's Windows CI run, **not a Windows release pass**.
+The six real Windows helper scenarios and NSIS locked-file smoke remain required.
+No production app/state, provider session, release or #25 work was changed.

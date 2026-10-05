@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-05",
+  "scope": [
+    23,
+    24
+  ],
+  "verdict": "LOCAL_REVIEW_PASSED_WINDOWS_CI_REQUIRED",
+  "localReviewComplete": true,
+  "releaseReady": false,
+  "validatedImplementationCommit": "9d325359d839c54664f1a7292f9239cc74a0ea48",
+  "inputs": {
+    "baseline": "10b29262",
+    "updaterExact": "007fda43",
+    "questionPickerExact": "4ca32e76"
+  },
+  "integration": {
+    "updaterCorrections": "30512558",
+    "questionMergeAndReceiptFix": "9d325359"
+  },
+  "findingsFixed": [
+    {
+      "finding": "Breakaway-denied fallback could acknowledge a helper still confined to a kill-on-close job.",
+      "fix": "Refuse independent-launch denial before quitting; no inherited-job fallback. Startup errors stop and reap unacknowledged helpers.",
+      "evidence": "Source review, Windows-specific fixture updated to require refusal; actual Windows execution pending."
+    },
+    {
+      "finding": "Elapsed-time reuse allowed a second helper before the first app-exit wait expired, and Save/Discard could blindly close after helper expiry.",
+      "fix": "Retain process/nonce readiness, recheck on every update quit including dirty-editor continuation, and never start a competing helper after accepted handoff.",
+      "evidence": "verified_update_hands_off_only_without_unsaved_edits passed with stale-helper and Discard assertions."
+    },
+    {
+      "finding": "Shared plan filenames and unleased helper operations could race.",
+      "fix": "Per-attempt plans and output logs; named helper mutex serializes update-state ownership. A timed-out installer retains the lease until it exits.",
+      "evidence": "PowerShell syntax parsed and source reviewed; successful Windows fixture case now also rejects a duplicate handoff while preserving the first receipt. Windows behavior pending."
+    },
+    {
+      "finding": "Fake installer split NSIS /D paths with CRT argv, making space-containing fixture paths invalid.",
+      "fix": "Read GetCommandLineW and emulate NSIS trailing /D directory parsing; assert silent /S prefix.",
+      "evidence": "Official NSIS command-line contract reviewed; Windows fixture execution pending."
+    },
+    {
+      "finding": "Stale waiting records could be consumed before the full app-exit timeout; relaunch failures and removed downloads had weak recovery.",
+      "fix": "Respect full timeout, record relaunch/start failures, normalize image prefixes, validate cached installer/exe/cwd; missing installer clears cache for fresh download.",
+      "evidence": "Linux outcome and GPUI missing-download tests passed; Windows launch/log behavior pending."
+    },
+    {
+      "finding": "Late question-answer acknowledgement could lock a new question set; UI could enqueue another answer before the asynchronous busy frame.",
+      "fix": "Bind submission and error to the question signature plus literal answers, and gate pending submissions locally.",
+      "evidence": "old_answer_receipt_does_not_lock_a_new_question_set and repeated CtrlEnter regressions passed; actual fixture emitted one text-kind answer and preserved composer draft."
+    }
+  ],
+  "checks": [
+    {
+      "name": "Full serialized combined native suite",
+      "result": "351 passed, 1 existing ignored; Windows handoff target reports platform skip",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-update-logs/combined-final.log",
+      "sha256": "4379c1bfa1c3163d7122cf7929427e4f953593ccec375c161c639f7a4b10fb48"
+    },
+    {
+      "name": "Native strict Clippy, all targets with ui-tests",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-update-logs/combined-clippy.log",
+      "sha256": "37482aa29dc6a24bff6b3deb910514b4f67892da0c790020016a2536190fadde"
+    },
+    {
+      "name": "Native cargo fmt --check",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-update-logs/combined-fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "Node Windows payload tests",
+      "result": "4 passed, 2 NSIS-dependent skipped",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-update-logs/payload-final.log",
+      "sha256": "cf43c5d9e103f3607f9a6089c1d936adbd93cf8aca082e697d4af8d8f378d604"
+    },
+    {
+      "name": "PowerShell 7.6.6 Linux parse-only validation",
+      "result": "helper and installer smoke parse; no Windows or helper execution",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-update-logs/powershell-syntax.log",
+      "sha256": "9be247766f575f07f60e5ac3eac1587735f952fa869bfe7e2e53387a76c02091"
+    },
+    {
+      "name": "Component documentation drift checker",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-update-logs/doc-drift.log",
+      "sha256": "8e88b91fd3a8b343a71136629ee8b699be15ca9f9fefabfb46ff7579eb94b7a1"
+    },
+    {
+      "name": "Curated Rivet reference validator",
+      "result": "66 pre-existing retired-Go references; curated docs and checker unchanged",
+      "exitCode": 1,
+      "log": ".workspacer/reports/native-update-logs/rivet-docs.log",
+      "sha256": "3e791301d9803b515b0f041c6cc805ef7019c822e274bd4277fb685c6f0f9b96"
+    }
+  ],
+  "windowsRequiredBeforeRelease": [
+    "native-client windows-latest: cargo test windows_update_handoff must report exactly 6 passed, 0 failed, 0 filtered out on the candidate SHA.",
+    "rust-native-preview Windows: same six-scenario runtime check plus real NSIS test-windows-installer.ps1 locked-file install must fail nonzero and recover on unlocked retry.",
+    "Parent must inspect actual Windows build/runtime results; Linux syntax and prior worker scratch cross-compiles are not Windows pass evidence."
+  ],
+  "workflowReview": {
+    "nativeClient": ".github/workflows/native-client.yml",
+    "rustPreview": ".github/workflows/rust-native-preview.yml",
+    "triggers": "Both include apps/native/** and their own workflow path; changed helper, fixture and workflow files trigger validation.",
+    "serialization": "Native full tests now pass --test-threads=1.",
+    "sixCaseGate": "Both Windows jobs explicitly execute the fixture again, preserve a log artifact, require exit0 and exact six-pass/no-filter summary.",
+    "installerSmoke": "Preview and release already invoke test-windows-installer.ps1; its locked-payload scenario remains mandatory."
+  },
+  "questionHarness": {
+    "display": ":95",
+    "port": 18047,
+    "isolated": true,
+    "providerCalls": 0,
+    "actualAnswerCalls": [
+      {
+        "sessionId": "demo-0000",
+        "answers": [
+          "Online backfill",
+          "Clippy, strict",
+          "2"
+        ],
+        "answerKinds": [
+          "text",
+          "text",
+          "text"
+        ]
+      }
+    ],
+    "draftObserved": "KEEP_INTEGRATION_DRAFT remained before and after CtrlEnter",
+    "captures": [
+      "apps/native/docs/ui-integration-question-ready.png",
+      "apps/native/docs/ui-integration-question-answered.png",
+      "apps/native/docs/ui-integration-question-latte-minimum.png"
+    ],
+    "inspected": [
+      "Dark mixed questions: choose option, Enter to next unanswered field, custom punctuation and literal2, CtrlEnter submit",
+      "Catppuccin Latte at720x480: fixed visible Send/header and scrollable choices"
+    ],
+    "cleanup": "Owned Xvfb, native fixture app and fixture server stopped."
+  },
+  "sourceReferences": [
+    {
+      "title": "Microsoft process creation flags",
+      "url": "https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags"
+    },
+    {
+      "title": "NSIS installer command-line rules",
+      "url": "https://nsis.sourceforge.io/Docs/Chapter3.html"
+    }
+  ],
+  "limitations": [
+    "No Windows runtime, Windows PowerShell5.1, real installer or user installation executed locally.",
+    "Original user failure was not reproduced; these are independently identified source-level failure modes and Linux regressions.",
+    "Manual installers/external process termination are outside the helper lease protocol; installer failure is not a rollback guarantee.",
+    "Existing broken updater builds may require one manual installation of the corrected build.",
+    "Rivet doclint baseline remains red; no broad unrelated documentation cleanup.",
+    "Title #25 was not merged. No push or release."
+  ],
+  "evidenceArchive": {
+    "path": ".workspacer/reports/native-update-evidence.tar.gz",
+    "bytes": 489271,
+    "sha256": "4eb8932599963ca498d0d4248b406f4a5a25e4300c18521e8a788499b6ea9eca"
+  },
+  "blockers": [
+    "Windows runtime and real locked-file installer validation are required release gates, owned by parent."
+  ]
+}
