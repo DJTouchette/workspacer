@@ -1,0 +1,125 @@
+{
+  "verdict": "PASS_LOCAL_CHECKS_READY_FOR_PARENT_CI",
+  "validatedImplementationCommit": "179e26a040446c1a9740d1aba329166e1488ea2a",
+  "baseline": "6d5c6f218063462848a7c4501bafb932cc6ba6ae",
+  "contractFixCommit": "ae019949",
+  "footerCommits": [
+    "2dabc605",
+    "e7b71654"
+  ],
+  "footerMergeCommit": "179e26a0",
+  "fix": [
+    "Added fs.compareWrite to current required full/catalog surface and regenerated brain-capabilities.json; retained original reference hashes and sealed hub-vocabulary.json.",
+    "Explicit acting-method EXTRA authority record pins the handler to the shared filesystem dispatcher. Canonical path uses fs.write authority; contents/expected/force have exact source parameter decisions.",
+    "Measured inline scanner ratchet updated from 68 to 69 arms, leaving 47 dangerous bindings; independent Rust AST traces all four actual helper fields.",
+    "Added mutation/parameter assertions and a real bus test proving view/triage/provider cannot forge write authority, operator authority matches plain write, shell-shaped data remains literal, and relative paths are refused.",
+    "Merged the reviewed #22 footer commits without conflicts; targeted footer/launch/new-session tests and formatting passed."
+  ],
+  "checks": [
+    {
+      "name": "Full desktop main suite (4 workers)",
+      "result": "3820 passed, 10 skipped",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/desktop-main-4.log",
+      "sha256": "3a364f79b95a25ce57cf601720bd5e7225e6a5b22ea44734d1f3d685f9d8083c"
+    },
+    {
+      "name": "Full renderer suite (4 workers)",
+      "result": "1936 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/desktop-renderer.log",
+      "sha256": "560a265d3d84d4792e7f275698da7e00c11a964b5addbcc64a6d2f00fa1dcdeb"
+    },
+    {
+      "name": "Full Headroom suite",
+      "result": "6 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/desktop-headroom.log",
+      "sha256": "a9842bf9ebc76b3f2bdad75c972f54b9605244c3eebe99797c1b80c587c3e74c"
+    },
+    {
+      "name": "Full desktop Prettier check",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/format.log",
+      "sha256": "4e67ae2bc705829515b3daa64407293af2d57e9e5db4f2de12ef12a7462ca4f5"
+    },
+    {
+      "name": "Desktop main and renderer typecheck",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/typecheck.log",
+      "sha256": "271544227d6cb6e30cd10dab1f45ab8e273be68a48295c208a6971717c47d0b9"
+    },
+    {
+      "name": "Strict typecheck of modified guard tests and support",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/guard-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "Focused cross-language registration/parameter guards",
+      "result": "22 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/focused-2.log",
+      "sha256": "42384ae1142276889a3178536ce2af456800455fa905ddee52c268dba20deb32"
+    },
+    {
+      "name": "Rust AST production source check",
+      "result": "123 methods, 124 dangerous bindings, zero errors; sealed historical vocabulary unchanged",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/source-check.log",
+      "sha256": "d93bd3f9b294066cf2bd5da527fe7f6a6a3dd6aa94fcbc0fc4ef4bee0705c1de"
+    },
+    {
+      "name": "Complete capability-source-check tool tests",
+      "result": "34 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/source-tests.log",
+      "sha256": "14f2abb931fef95d2be1162d95109eb66d83a418523ce9e3468124b81625c688"
+    },
+    {
+      "name": "Shared Rust auth and filesystem tests",
+      "result": "8 auth + 10 filesystem passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/hub-guards-2.log",
+      "sha256": "5c5642e169b881086dc67e2805ded20675c4efc1a830761dd726b03544a4cd77"
+    },
+    {
+      "name": "Actual installed capability inventory",
+      "result": "1 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/hub-inventory.log",
+      "sha256": "c48aaf35a256709da4447c0433a9b26d78786a790540776dfacb15fc43027143"
+    },
+    {
+      "name": "Merged footer and existing launch regressions",
+      "result": "6 passed, including all-eight-theme/three-size footer geometry",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/native-launch.log",
+      "sha256": "53c2bdd3c0dbe5790495083e1d3731fb77e6f33cc600fd1dd6b059cacffcb662"
+    },
+    {
+      "name": "Existing new-session regressions",
+      "result": "3 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/native-new-session.log",
+      "sha256": "9ae0cb90d4f6fc5548841a256461892f412dde25d4cb50cad64f8fb0e5b9d4d2"
+    },
+    {
+      "name": "Merged native formatting",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-feedback-ci-followup/native-fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "caveats": [
+    "First unrestricted desktop run hit the pre-existing managerTombstone 5-second timeout under concurrent load; the full suite passed on rerun with maxWorkers=4, without changing test assertions or timeouts.",
+    "Main suite retains 10 existing skips. No new Windows runtime run; parent owns CI and corrected nightly publication.",
+    "No full native rerun after the footer merge, per parent instructions; footer/launch/new-session tests were run instead."
+  ],
+  "blockers": [],
+  "published": false
+}
