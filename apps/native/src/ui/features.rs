@@ -28,6 +28,9 @@ pub(super) struct Extras {
     pub approval_details: bool,
     pub selected_options: Vec<std::collections::BTreeSet<usize>>,
     pub notice: String,
+    /// Title-island notices the user closed, by slot and text: a slot that
+    /// changes, or later repeats the same text, shows again.
+    pub dismissed_notices: Vec<(&'static str, String)>,
     pub show_archived: bool,
     pub confirm_end: Option<String>,
     pub resume: Option<String>,
@@ -112,6 +115,7 @@ impl Extras {
             approval_details: false,
             selected_options: Vec::new(),
             notice: String::new(),
+            dismissed_notices: Vec::new(),
             show_archived: false,
             confirm_end: None,
             resume: None,

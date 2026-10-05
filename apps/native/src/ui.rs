@@ -510,6 +510,9 @@ pub struct Workspace {
     /// The dock's composer layer, measured: the cards above it get the rest
     /// of the dock's share of the window.
     composer_layer_height: gpui::Pixels,
+    /// The title capsule's measured outer width: its notice island wraps
+    /// inside it.
+    title_bar_width: gpui::Pixels,
     header_bounds: gpui::Bounds<gpui::Pixels>,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
@@ -769,6 +772,7 @@ impl Workspace {
             composer,
             composer_dock_bounds: Default::default(),
             composer_layer_height: Default::default(),
+            title_bar_width: Default::default(),
             header_bounds: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
@@ -1626,45 +1630,79 @@ impl Render for Workspace {
         }
 
         let terminal_panel = self.render_terminal_panel(window, cx);
+        let title_bar = match self.render_child_title_bar(cx) {
+            Some(bar) => bar,
+            None => self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
+        };
+        let title_island = self.render_title_island(title_bar, notice, cx);
         // Transparent fade rather than a ruled strip: history scrolls softly
         // under the floating title pill instead of colliding with a hard edge.
-        let header = div().absolute().top_0().left_0().w_full().flex().justify_center()
-            .bg(gpui::linear_gradient(180., gpui::linear_color_stop(rgb(p.chat), 0.6), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
+        let header = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .flex()
+            .justify_center()
+            .bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(rgb(p.chat), 0.6),
+                gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.),
+            ))
             // Only the top chrome row drags, with later occluding title pills
             // and caption controls excluded by GPUI's hit test. Occluding the
             // drag surface itself keeps shell focus from cancelling OS moves.
-            .when(chrome::custom_caption(), |d| d.child(chrome::drag_region(div())
-                .debug_selector(|| "chat-drag-region".into())
-                .absolute().top_0().left_0().w_full().h(px(56.))))
-            .when(chrome::custom_caption(), |d| d.pr(px(chrome::CAPTION_WIDTH)))
-            .child(chrome::chat_column().relative().pt_3().pb_5().flex().flex_col().items_center().gap_2()
-                .child(canvas(move |bounds, _, cx| {
-                    cx.defer(move |cx| {
-                        let _ = header_view.update(cx, |this, cx| {
-                            if this.header_bounds != bounds {
-                                let delta = bounds.size.height - this.header_bounds.size.height;
-                                if !this.follow && delta != px(0.) {
-                                    let mut anchor = this.scroll_anchor();
-                                    anchor.offset_in_item += delta;
-                                    this.list.scroll_to(anchor);
-                                }
-                                this.header_bounds = bounds;
-                                cx.notify();
-                            }
-                        });
-                    });
-                }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
-                .child(match self.render_child_title_bar(cx) {
-                    Some(bar) => bar,
-                    None => self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
-                })
-                .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
-                .when(!notice.is_empty(), |d| d.child(div().occlude().py_1().text_size(px(11.)).text_color(rgb(p.warning)).child(notice)))
-                .when(!self.view.connected && !self.view.transcript.rows.is_empty(), |d| d.child(self.render_connection_banner(cx)))
-                .when(self.view.transcript.omitted && !self.view.transcript.has_older, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
-                .when(self.view.loading && !self.view.transcript.rows.is_empty(), |d| d.child(div().occlude().flex().items_center().gap_2().text_size(px(12.)).text_color(rgb(p.muted)).child(brand_spinner(12., p, "conversation-refresh")).child("Refreshing conversation…")))
-                .when(self.view.connected && !self.view.loading && self.view.notice.starts_with("Conversation unavailable:"), |d| d.child(self.button("retry-conversation", "Retry conversation", true).debug_selector(|| "retry-conversation".into()).on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
-);
+            .when(chrome::custom_caption(), |d| {
+                d.child(
+                    chrome::drag_region(div())
+                        .debug_selector(|| "chat-drag-region".into())
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(56.)),
+                )
+            })
+            .when(chrome::custom_caption(), |d| {
+                d.pr(px(chrome::CAPTION_WIDTH))
+            })
+            .child(
+                chrome::chat_column()
+                    .relative()
+                    .pt_3()
+                    .pb_5()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                cx.defer(move |cx| {
+                                    let _ = header_view.update(cx, |this, cx| {
+                                        if this.header_bounds != bounds {
+                                            let delta =
+                                                bounds.size.height - this.header_bounds.size.height;
+                                            if !this.follow && delta != px(0.) {
+                                                let mut anchor = this.scroll_anchor();
+                                                anchor.offset_in_item += delta;
+                                                this.list.scroll_to(anchor);
+                                            }
+                                            this.header_bounds = bounds;
+                                            cx.notify();
+                                        }
+                                    });
+                                });
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
+                    .child(title_island),
+            );
 
         self.shell(window, cx)
             .child(sidebar)
@@ -5964,6 +6002,168 @@ mod tests {
             visual.simulate_keystrokes("ctrl-0");
         }
         assert_eq!(checked, 32);
+    }
+
+    /// Bug #27: conversation notices are part of the title capsule, an island
+    /// that grows beneath it with the capsule's surface, border, shadow and
+    /// curve; long text wraps at the capsule's width; dismissal is per text;
+    /// an error's retry stays with it. The capsule itself never moves.
+    #[gpui::test]
+    fn title_notices_grow_the_capsule_into_one_island(cx: &mut TestAppContext) {
+        let _caption = CaptionPreview::new();
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let with_notice = |notice: &str| {
+            let mut view = state("a");
+            view.notice = notice.into();
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 12,
+                first_seq: 1,
+                items: (0..12)
+                    .map(|i| Item {
+                        kind: "assistant_text".into(),
+                        text: format!("Message {i}"),
+                        ..Default::default()
+                    })
+                    .collect(),
+            });
+            Arc::new(view)
+        };
+        let show = |visual: &mut VisualTestContext, notice: &str| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(with_notice(notice), window, cx)
+                })
+            });
+            visual.run_until_parked();
+        };
+        let header = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.header_bounds.size.height)
+        };
+        for (width, height) in [(1000., 700.), (720., 480.), (1600., 900.)] {
+            visual.simulate_resize(size(px(width), px(height)));
+            show(&mut visual, "");
+            let bare = header(&mut visual);
+            let capsule = visual.debug_bounds("title-bar").unwrap();
+            for notice in [
+                "Change queued; the provider will apply it when ready",
+                "Model change accepted: claude-opus-5-5 · High effort",
+                "Model change refused: this provider cannot switch models while a turn is running, so the request was not applied and nothing changed in the session.",
+            ] {
+                show(&mut visual, notice);
+                let case = format!("{width}x{height} {notice:?}");
+                let island = visual.debug_bounds("title-island").unwrap();
+                let tray = visual.debug_bounds("title-island-notices").unwrap();
+                let bar = visual.debug_bounds("title-bar").unwrap();
+                let row = visual.debug_bounds("island-notice-status").unwrap();
+                // The capsule's outline stays put and only grows downward,
+                // so a long message wraps instead of widening it.
+                assert_eq!(island.origin, capsule.origin, "{case}");
+                assert_eq!(island.size.width, capsule.size.width, "{case}");
+                assert_eq!(bar.size.height, capsule.size.height - px(2.), "{case}");
+                // Attached: the tray starts where the capsule ends, inside
+                // the island, and holds the notice.
+                assert!(
+                    (tray.top() - bar.bottom()).abs() < px(1.),
+                    "{case}: {tray:?} {bar:?}"
+                );
+                assert!(
+                    tray.left() >= island.left() && tray.right() <= island.right() + px(0.5),
+                    "{case}"
+                );
+                assert!(
+                    tray.bottom() <= island.bottom(),
+                    "{case}: {tray:?} {island:?}"
+                );
+                assert!(
+                    row.top() >= tray.top() && row.bottom() <= tray.bottom(),
+                    "{case}: {row:?} {tray:?}"
+                );
+                // Clear of the app-drawn caption buttons and the window.
+                assert!(
+                    island.right() <= px(width - chrome::CAPTION_WIDTH),
+                    "{case}: {island:?}"
+                );
+                assert!(
+                    island.left() >= px(0.) && island.bottom() < px(height / 2.),
+                    "{case}: {island:?}"
+                );
+                // The header grows with it, so the transcript is pushed, not covered.
+                assert!(
+                    header(&mut visual) >= bare + tray.size.height - px(1.),
+                    "{case}"
+                );
+            }
+            // The long refusal wrapped onto several lines within the capsule width.
+            let row = visual.debug_bounds("island-notice-status").unwrap();
+            assert!(row.size.height > px(40.), "{width}x{height}: {row:?}");
+
+            // Dismissing hides that text; the island collapses to the capsule.
+            let dismiss = visual.debug_bounds("dismiss-status-notice").unwrap();
+            visual.simulate_click(dismiss.center(), gpui::Modifiers::default());
+            visual.run_until_parked();
+            assert_eq!(header(&mut visual), bare, "{width}x{height}: dismissed");
+            assert_eq!(visual.debug_bounds("title-bar").unwrap(), capsule);
+            // The same words again after the slot moved on are news again.
+            show(&mut visual, "");
+            show(
+                &mut visual,
+                "Model change accepted: claude-opus-5-5 · High effort",
+            );
+            assert!(
+                header(&mut visual) > bare,
+                "{width}x{height}: repeated notice"
+            );
+        }
+
+        // An unavailable conversation keeps its error and Retry attached,
+        // without a dismiss that would drop the only retry.
+        visual.simulate_resize(size(px(1000.), px(700.)));
+        show(&mut visual, "Conversation unavailable: hub timed out");
+        let island = visual.debug_bounds("title-island").unwrap();
+        let retry = visual.debug_bounds("retry-conversation").unwrap();
+        assert!(island.contains(&retry.center()), "{retry:?} in {island:?}");
+        let before = header(&mut visual);
+        let stale_dismiss = visual.debug_bounds("dismiss-status-notice").unwrap();
+        visual.simulate_click(stale_dismiss.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(
+            header(&mut visual),
+            before,
+            "no dismiss on an error with its retry"
+        );
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.extras.dismissed_notices.is_empty())
+        });
+        while commands.try_recv().is_ok() {}
+        visual.simulate_click(retry.center(), gpui::Modifiers::default());
+        assert!(matches!(commands.try_recv(), Ok(Command::Refresh)));
+
+        // Local feature notices share the island, each with its own tone row.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(with_notice(""), window, cx);
+                this.extras.notice = "Attachment failed: too large".into();
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let island = visual.debug_bounds("title-island").unwrap();
+        let feature = visual.debug_bounds("island-notice-feature").unwrap();
+        assert!(
+            island.contains(&feature.center()),
+            "{feature:?} in {island:?}"
+        );
+        let dismiss = visual.debug_bounds("dismiss-feature-notice").unwrap();
+        visual.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            // Dismissal hides it here; the slot's text is left to its owner.
+            assert_eq!(this.extras.notice, "Attachment failed: too large");
+            assert_eq!(
+                this.extras.dismissed_notices,
+                vec![("feature", "Attachment failed: too large".to_owned())]
+            );
+        });
     }
 
     #[gpui::test]

@@ -234,7 +234,11 @@ pub(super) fn notice_tone(text: &str) -> Tone {
     let lower = text.to_lowercase();
     if lower.ends_with('…') && !lower.contains("fail") && !lower.contains("could not") {
         Tone::Loading
+    } else if lower.starts_with("change queued") {
+        // Accepted for later, not a problem.
+        Tone::Info
     } else if lower.contains("saved")
+        || lower == "session created"
         || lower.starts_with("pinned")
         || lower.starts_with("unpinned")
         || lower.ends_with(" applied")
@@ -283,6 +287,230 @@ pub(super) fn project_label(path: &str) -> &str {
 impl Workspace {
     /// Compact floating title pill: status, project / title, model chip and
     /// icon actions, sized to its content rather than the whole chat width.
+    /// The title capsule and its transient notices as one surface: notices
+    /// grow the capsule downward, like an island, instead of floating loose
+    /// beneath it. With nothing to say it stays the plain capsule. `status`
+    /// is the conversation notice (local first, then the hub's).
+    pub(super) fn render_title_island(
+        &mut self,
+        bar: Stateful<Div>,
+        status: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.appearance.palette();
+        let omitted = if self.view.transcript.omitted && !self.view.transcript.has_older {
+            OMITTED_NOTICE
+        } else {
+            ""
+        };
+        let feature = self.extras.notice.clone();
+        // A dismissal hides one text in one slot; once the slot moves on,
+        // the same words later are news again.
+        self.extras
+            .dismissed_notices
+            .retain(|(slot, text)| match *slot {
+                "status" => *text == status,
+                "feature" => *text == feature,
+                "omitted" => text == omitted,
+                _ => false,
+            });
+        let shown = |slot: &str, text: &str| {
+            !text.is_empty()
+                && !self
+                    .extras
+                    .dismissed_notices
+                    .iter()
+                    .any(|(s, t)| *s == slot && t == text)
+        };
+        // The retry belongs to its error: that row stays until it is used.
+        let retry = self.view.connected
+            && !self.view.loading
+            && self.view.notice.starts_with("Conversation unavailable:");
+        let (show_status, show_feature, show_omitted) = (
+            shown("status", &status) || (retry && !status.is_empty()),
+            shown("feature", &feature),
+            shown("omitted", omitted),
+        );
+        let mut rows: Vec<AnyElement> = Vec::new();
+        if !self.view.connected && !self.view.transcript.rows.is_empty() {
+            rows.push(self.render_connection_banner(cx).into_any_element());
+        }
+        if show_status {
+            let action = retry.then(|| {
+                self.quiet_button("retry-conversation", "Retry", IconName::Redo, true)
+                    .debug_selector(|| "retry-conversation".into())
+                    .py_1()
+                    .on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))
+                    .into_any_element()
+            });
+            let tone = notice_tone(&status);
+            rows.push(self.island_notice("status", status, tone, action, !retry, cx));
+        }
+        if show_feature {
+            let tone = notice_tone(&feature);
+            rows.push(self.island_notice("feature", feature, tone, None, true, cx));
+        }
+        if self.view.loading && !self.view.transcript.rows.is_empty() {
+            rows.push(self.island_notice(
+                "refresh",
+                "Refreshing conversation…".into(),
+                Tone::Loading,
+                None,
+                false,
+                cx,
+            ));
+        }
+        if show_omitted {
+            let action =
+                self.quiet_button("omitted-history", "Open History", IconName::BookOpen, true)
+                    .py_1()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::History, window, cx)
+                    }))
+                    .into_any_element();
+            rows.push(self.island_notice(
+                "omitted",
+                omitted.into(),
+                Tone::Info,
+                Some(action),
+                true,
+                cx,
+            ));
+        }
+        // Measures the capsule's outline: the bare bar, or the island.
+        let measure = cx.entity().downgrade();
+        let outline = canvas(
+            move |bounds, _, cx| {
+                cx.defer(move |cx| {
+                    let _ = measure.update(cx, |this, cx| {
+                        if this.title_bar_width != bounds.size.width {
+                            this.title_bar_width = bounds.size.width;
+                            cx.notify();
+                        }
+                    });
+                });
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
+        if rows.is_empty() {
+            return bar.child(outline).into_any_element();
+        }
+        // The island's 1px border replaces the bar's own, so the capsule's
+        // outline stays where it was and only grows downward.
+        let border = gpui::px(1.);
+        let width = self.title_bar_width - border * 2.;
+        // New words fade in rather than pop; the height change itself is
+        // already absorbed by the measured header and its scroll anchor.
+        let signature = {
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            (show_status, show_feature, show_omitted, rows.len()).hash(&mut hash);
+            self.extras.notice.hash(&mut hash);
+            self.view.notice.hash(&mut hash);
+            self.local_notice.hash(&mut hash);
+            hash.finish() as usize
+        };
+        div()
+            .id("title-island")
+            .debug_selector(|| "title-island".into())
+            .occlude()
+            .max_w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            // Half the capsule's height: the top keeps the pill's curve.
+            .rounded(px(ISLAND_RADIUS))
+            .bg(rgb(p.surface))
+            .border_1()
+            .border_color(rgb(p.border))
+            .shadow(floating_shadow(p))
+            .child(outline)
+            .child(
+                bar.bg(gpui::transparent_black())
+                    .border_0()
+                    .h(px(40.) - border * 2.)
+                    .shadow(Vec::new()),
+            )
+            .child(
+                div()
+                    .id("title-island-notices")
+                    .debug_selector(|| "title-island-notices".into())
+                    // Wraps at the capsule's width instead of widening it
+                    // (until the first measurement, at a modest cap).
+                    .map(|d| {
+                        if width > px(0.) {
+                            d.w(width)
+                        } else {
+                            d.w_full().max_w(px(420.))
+                        }
+                    })
+                    .px_3()
+                    .pt_1()
+                    .pb_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .border_t_1()
+                    .border_color(gpui::Hsla::from(rgb(p.border)).opacity(0.6))
+                    .children(rows)
+                    .with_animation(
+                        ("title-island-reveal", signature),
+                        Animation::new(std::time::Duration::from_millis(180))
+                            .with_easing(gpui::ease_out_quint()),
+                        |tray, progress| tray.opacity(progress),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// One island notice: tone icon and wrapped text, then its action and a
+    /// dismiss (keyboard reachable, like every native control).
+    fn island_notice(
+        &self,
+        slot: &'static str,
+        text: String,
+        tone: Tone,
+        action: Option<AnyElement>,
+        dismissible: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = self.appearance.palette();
+        div()
+            .debug_selector(move || format!("island-notice-{slot}"))
+            .w_full()
+            .flex()
+            .items_start()
+            .gap_1()
+            .child(div().flex_1().min_w_0().py(px(5.)).child(notice_line(
+                text.clone(),
+                tone,
+                p,
+                SharedString::from(format!("island-notice-{slot}-icon")),
+            )))
+            .children(action)
+            .when(dismissible, |d| {
+                d.child(
+                    self.icon_button(
+                        SharedString::from(format!("dismiss-{slot}-notice")),
+                        "Dismiss",
+                        IconName::Close,
+                        true,
+                    )
+                    .debug_selector(move || format!("dismiss-{slot}-notice"))
+                    .size(px(24.))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.extras.dismissed_notices.push((slot, text.clone()));
+                        cx.notify();
+                    })),
+                )
+            })
+            .into_any_element()
+    }
+
     pub(super) fn render_title_bar(
         &self,
         narrow: bool,
@@ -713,6 +941,13 @@ pub(super) fn page_drag_strip() -> Option<Div> {
     })
 }
 
+/// The title capsule's corner radius (half its 40px height); the notice
+/// island under it keeps the same curve.
+pub(super) const ISLAND_RADIUS: f32 = 20.;
+/// Shown while older retained messages are left out of the transcript.
+const OMITTED_NOTICE: &str =
+    "Showing recent messages. Open History to browse older retained messages.";
+
 /// Top inset of pages under an app-drawn caption: the caption's height plus
 /// breathing room, all of it drag surface except the caption buttons.
 pub(super) const PAGE_CAPTION_INSET: f32 = CAPTION_HEIGHT + 8.;
@@ -963,5 +1198,22 @@ mod tests {
         );
         // Failure wins over a trailing ellipsis.
         assert_eq!(notice_tone("Could not reconnect…"), Tone::Error);
+        // Controller receipts for model/effort changes and new sessions.
+        assert_eq!(
+            notice_tone("Change queued; the provider will apply it when ready"),
+            Tone::Info
+        );
+        assert_eq!(notice_tone("Model change accepted: opus"), Tone::Success);
+        assert_eq!(notice_tone("Session created"), Tone::Success);
+        assert_eq!(
+            notice_tone(
+                "Session created. Initial message delivery was not confirmed; check the conversation before sending the retained draft."
+            ),
+            Tone::Warning
+        );
+        assert_eq!(
+            notice_tone("Model change refused: unsupported"),
+            Tone::Error
+        );
     }
 }
