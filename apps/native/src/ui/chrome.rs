@@ -256,7 +256,13 @@ pub(super) fn notice_tone(text: &str) -> Tone {
 }
 
 pub(super) fn chat_column() -> Div {
-    div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto().px_5()
+    chat_frame().px_5()
+}
+
+/// The chat column's outer measure without its gutters, for a frame whose
+/// child carries them (and so keeps them inside its own clip).
+pub(super) fn chat_frame() -> Div {
+    div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto()
 }
 
 pub(super) fn floating_shadow(p: Palette) -> Vec<gpui::BoxShadow> {
