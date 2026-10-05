@@ -54,6 +54,9 @@ enum Command {
         /// Include image, tool/diff, skill, and response-card examples.
         #[arg(long)]
         rich_transcript: bool,
+        /// Emit an unavailable-session navigation request for notice captures.
+        #[arg(long)]
+        missing_session_request: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -147,14 +150,16 @@ async fn main() -> Result<()> {
             sessions,
             turns,
             rich_transcript,
+            missing_session_request,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
-            wks_native::harness::serve_with_transcript(
+            wks_native::harness::serve_feedback_fixture(
                 listener,
                 sessions.min(10000),
                 turns.min(5000),
                 rich_transcript,
+                missing_session_request,
             )
             .await?;
         }

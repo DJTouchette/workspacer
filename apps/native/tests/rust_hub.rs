@@ -399,6 +399,57 @@ async fn editor_explorer_and_agent_terminal_round_trip_through_the_owned_hub() {
     let mut replay = terminal::Emulator::new(30, 100);
     read_until(&mut replay, &mut views, "wks-42").await;
 
+    // A second agent owns an independent persistent shell in its own cwd.
+    let second_cwd = root.join("second-project");
+    std::fs::create_dir(&second_cwd).unwrap();
+    let second_cwd = std::fs::canonicalize(second_cwd)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    controller
+        .command(Command::Terminal(terminal::Command::Open {
+            agent: "second-agent".into(),
+            cwd: second_cwd.clone(),
+            cols: 100,
+            rows: 30,
+        }))
+        .unwrap();
+    let second_view = wait(&mut views, "second shell", |v| {
+        v.terminals
+            .get("second-agent")
+            .is_some_and(|t| t.status == Status::Live)
+    })
+    .await;
+    let second_shell = second_view.terminals["second-agent"].shell.clone().unwrap();
+    assert_ne!(second_shell, shell);
+    controller
+        .command(Command::Terminal(terminal::Command::Input {
+            agent: "second-agent".into(),
+            bytes: b"echo second-$((21*2)); pwd\r".to_vec(),
+        }))
+        .unwrap();
+    let mut second_screen = terminal::Emulator::new(30, 100);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if let Some(chunk) = feed.take(&second_shell) {
+                second_screen.process(&chunk.bytes);
+            }
+            if second_screen.text().contains("second-42")
+                && second_screen.text().contains(&second_cwd)
+            {
+                break;
+            }
+            let _ = tokio::time::timeout(Duration::from_millis(100), views.changed()).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!second_screen.text().contains("wks-42"));
+    assert_eq!(
+        views.borrow().terminals[&agent].shell.as_ref(),
+        Some(&shell)
+    );
+
     // Restart ends that shell and starts another in the same folder.
     controller
         .command(Command::Terminal(terminal::Command::Restart {

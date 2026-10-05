@@ -9769,6 +9769,20 @@ mod tests {
         let mut popped = VisualTestContext::from_window(handle.into(), cx);
         popped.run_until_parked();
         assert!(popped.debug_bounds("terminal-view").is_some());
+        // A theme change while the panel is hidden must update the separate
+        // terminal window too, including light/dark ANSI treatment.
+        for appearance in Appearance::ALL {
+            visual.update(|window, cx| {
+                workspace.update(cx, |ws, cx| ws.set_appearance(appearance, window, cx))
+            });
+            popped.run_until_parked();
+            popped.update(|_, cx| {
+                assert_eq!(
+                    cx.global::<terminal::TerminalPalette>().0.code_block,
+                    appearance.palette().code_block
+                )
+            });
+        }
         popped.simulate_keystrokes("p w d enter ctrl-n");
         popped.run_until_parked();
         let sent: Vec<u8> = effects(&mut commands)

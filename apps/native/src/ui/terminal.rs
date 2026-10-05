@@ -234,6 +234,7 @@ fn ansi(index: u8, p: Palette) -> u32 {
         2 | 10 => return p.success,
         3 | 11 => return p.warning,
         4 | 12 => return p.accent,
+        5 | 13 => return p.busy,
         7 => return p.prose,
         15 => return p.text,
         8 => return p.muted,
@@ -519,6 +520,18 @@ impl Workspace {
 
     fn set_terminal_palette(&self, cx: &mut App) {
         cx.set_global(TerminalPalette(self.appearance.palette()));
+    }
+
+    /// Popouts keep their palette and font metrics current even while the
+    /// main terminal panel is hidden (for example while choosing a theme).
+    pub(super) fn refresh_terminals(&self, cx: &mut App) {
+        self.set_terminal_palette(cx);
+        for view in self.terminal.views.values() {
+            view.update(cx, |_, cx| cx.notify());
+        }
+        if let Some((window, _)) = &self.terminal.popout {
+            let _ = window.update(cx, |_, window, _| window.refresh());
+        }
     }
 
     /// Hand new output to each terminal, follow the selected agent, and keep

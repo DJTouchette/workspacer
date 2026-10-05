@@ -16,6 +16,18 @@ pub async fn serve_with_transcript(
     turns: usize,
     rich: bool,
 ) -> Result<()> {
+    serve_feedback_fixture(listener, sessions, turns, rich, false).await
+}
+
+/// Visual acceptance fixture. The optional request exercises the native
+/// unavailable-session notice through the actual bus event path.
+pub async fn serve_feedback_fixture(
+    listener: TcpListener,
+    sessions: usize,
+    turns: usize,
+    rich: bool,
+    missing_session_request: bool,
+) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
@@ -51,7 +63,8 @@ pub async fn serve_with_transcript(
             // Editor saves land in memory; nothing touches the disk.
             let mut written: BTreeMap<String, String> = BTreeMap::new();
             // Fixture shells: id → (cwd, typed line). They only echo.
-            let mut shells: BTreeMap<String, (String, String)> = BTreeMap::new();
+            let mut shells: BTreeMap<String, (String, String, Vec<u8>)> = BTreeMap::new();
+            let mut config = json!({"projects":{},"agents":{"childFullAccess":false}});
             loop {
                 tokio::select! {
                     _ = tick.tick(), if streaming => {
@@ -82,6 +95,7 @@ pub async fn serve_with_transcript(
                                     if frame["op"] == "unsubscribe" { topics.remove(topic); }
                                     else {
                                         topics.insert(topic.into());
+                                        if missing_session_request && topic == "command.focus_agent" && socket.send(event(topic, json!({"sessionId":"missing-feedback-session"}))).await.is_err() { return; }
                                         if topic.starts_with("agent.conversation.") && socket.send(event(topic, json!({"ready":true}))).await.is_err() { return; }
                                     }
                                 }
@@ -89,6 +103,21 @@ pub async fn serve_with_transcript(
                             Some("call") => {
                                 let id = frame["params"]["sessionId"].as_str().unwrap_or_default();
                                 let result = match frame["method"].as_str().unwrap_or_default() {
+                                    "config.get" => config.clone(),
+                                    "config.save" => {
+                                        if let Some(projects) = frame["params"].get("projects") { config["projects"] = projects.clone(); }
+                                        if let Some(enabled) = frame["params"].pointer("/agents/childFullAccess") { config["agents"]["childFullAccess"] = enabled.clone(); }
+                                        config.clone()
+                                    }
+                                    "claude.listModels" => json!({"aliases":[{"model":"sonnet"},{"model":"sonnet[1m]"},{"model":"opus"},{"model":"opus[1m]"},{"model":"haiku"}]}),
+                                    "providers.listModels" => json!([
+                                        {"id":"gpt-6-astra","label":"GPT-6 Astra","default":true,"effortLevels":["low","medium","high","xhigh","max"],"defaultEffort":"medium"},
+                                        {"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","effortLevels":["low","medium","high"],"defaultEffort":"low"}
+                                    ]),
+                                    "claude.setEffort" => json!({"ok":true,"disposition":"queued"}),
+                                    "desktop.downloadProjectIcon" => json!({"ok":true,"file":"fixture-project-icon.png"}),
+                                    "files.upload" => json!({"path":format!("/fixture/uploads/{}",frame["params"]["name"].as_str().unwrap_or("image.png"))}),
+                                    "fs.listDir" => json!({"path":frame["params"]["path"],"dirs":["src","docs"]}),
                                     "sessions.recent" => json!([
                                         {"sessionId":"demo-0000","provider":"claude","name":"Native client experiment","cwd":"/workspaces/project-0","mode":"input","transport":"stream"},
                                         {"sessionId":"past-session","provider":"codex","name":"Yesterday’s investigation","cwd":"/workspaces/project-1","mode":"stopped","transport":"stream"}
@@ -118,21 +147,24 @@ pub async fn serve_with_transcript(
                                     "fs.listEntries" => fixture_listing(frame["params"]["path"].as_str().unwrap_or_default()),
                                     "terminals.create" => {
                                         let shell = format!("fixture-shell-{}", shells.len() + 1);
-                                        shells.insert(shell.clone(), (frame["params"]["cwd"].as_str().unwrap_or_default().to_owned(), String::new()));
+                                        let cwd = frame["params"]["cwd"].as_str().unwrap_or_default().to_owned();
+                                        let banner = format!("\x1b[2mFixture shell (echo only; nothing runs) in\x1b[0m {cwd}\r\n\x1b[32m$\x1b[0m ").into_bytes();
+                                        shells.insert(shell.clone(), (cwd, String::new(), banner));
                                         json!({"sessionId":shell})
                                     }
                                     "sessions.attachTerminal" => {
-                                        if let Some((cwd, _)) = shells.get(id) {
+                                        if let Some((_, _, replay)) = shells.get(id) {
                                             let topic = format!("pty.bytes.{id}");
-                                            let banner = format!("\x1b[2mFixture shell (echo only; nothing runs) in\x1b[0m {cwd}\r\n\x1b[32m$\x1b[0m ");
-                                            if topics.contains(&topic) && socket.send(event(&topic, json!(base64_bytes(banner.as_bytes())))).await.is_err() { return; }
+                                            if topics.contains(&topic) && socket.send(event(&topic, json!(base64_bytes(replay)))).await.is_err() { return; }
                                             json!({"ok":true})
                                         } else { json!({"ok":false,"error":"no PTY buffer for that session"}) }
                                     }
                                     "sessions.terminalInput" => {
                                         let bytes = frame["params"]["bytesB64"].as_str().and_then(|b| { use base64::Engine; base64::engine::general_purpose::STANDARD.decode(b).ok() }).unwrap_or_default();
-                                        if let Some((cwd, line)) = shells.get_mut(id) {
+                                        if let Some((cwd, line, replay)) = shells.get_mut(id) {
                                             let output = fixture_echo(cwd, line, &bytes);
+                                            replay.extend_from_slice(&output);
+                                            if replay.len() > 1024 * 1024 { replay.drain(..replay.len() - 1024 * 1024); }
                                             let topic = format!("pty.bytes.{id}");
                                             if topics.contains(&topic) && socket.send(event(&topic, json!(base64_bytes(&output)))).await.is_err() { return; }
                                         }

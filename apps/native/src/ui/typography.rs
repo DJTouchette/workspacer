@@ -219,6 +219,7 @@ impl Workspace {
         self.list.scroll_to(anchor);
         // A popped-out viewer draws in its own window from these settings.
         self.refresh_popout(cx);
+        self.refresh_terminals(cx);
         cx.notify();
     }
 }
