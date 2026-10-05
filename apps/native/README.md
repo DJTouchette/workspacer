@@ -502,9 +502,14 @@ be expanded, and attachment controls share the composer action row.
   notify when the window is inactive, without replaying historical alerts on
   connection. OS settings still govern delivery. The Windows installer registers
   a dedicated Workspacer Native notification identity.
-- **Attach…** accepts images and PDFs up to 8 MiB. Paste image or normal Ctrl/Cmd+V
-  accepts clipboard screenshots; TIFF/BMP clipboard images are converted to PNG
-  off the UI thread with decode limits. Windows also supports native bitmap
+- **Attach…** accepts images and PDFs up to 8 MiB. Ordinary Ctrl/Cmd+V in the
+  composer accepts clipboard screenshots (there is no separate Paste image
+  button). Before sending, image attachments show as thumbnails read back from
+  the hub (the same bounded `fs.readImage` cache as chat images, so the preview
+  is the uploaded file); clicking one opens it in the viewer, and its corner ✕
+  removes it. PDFs, and images whose preview is still loading or unavailable,
+  keep a named chip with Remove. TIFF/BMP clipboard images are converted to
+  PNG off the UI thread with decode limits. Windows also supports native bitmap
   clipboard fallback. Attachments are uploaded to the connected hub, remain bound
   to their original session, and stay in the draft after failed/uncertain sends.
   Remove discards a draft attachment; uploaded files follow the hub’s retention.

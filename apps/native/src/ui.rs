@@ -1404,6 +1404,26 @@ impl Render for Workspace {
             clock.and_then(|clock| clock.latest_completion_for(&self.view.transcript))
         };
         let dock_view = cx.entity().downgrade();
+        // Draft attachments with their thumbnails (images only; PDFs keep
+        // the file chip). Loading and failure fall back to the name.
+        let draft_files: Vec<(String, String, Option<Option<Arc<gpui::Image>>>)> = self
+            .view
+            .selected
+            .as_ref()
+            .and_then(|id| self.extras.attachments.get(id))
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, path)| {
+                let preview = if name.to_lowercase().ends_with(".pdf") {
+                    Some(None)
+                } else {
+                    self.attachment_preview(&path, cx)
+                };
+                (name, path, preview)
+            })
+            .collect();
+        let draft_cwd = selected.as_ref().map(|s| s.cwd.clone()).unwrap_or_default();
         let header_view = cx.entity().downgrade();
         let title = selected
             .as_ref()
@@ -1579,20 +1599,11 @@ impl Render for Workspace {
                     .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).key_context(if self.settings.enter_sends { "Composer ComposerEnter" } else { "Composer" }).occlude().bg(rgb(p.surface)).border_1()
                         .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) { rgb(p.accent).into() } else { gpui::Hsla::from(rgb(p.border)).opacity(0.55) })
                         .rounded(px(p.composer_radius)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
-                        .when(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).is_some_and(|v| !v.is_empty()), |d| d.child(div().flex().flex_wrap().gap_2()
-                            .children(self.view.selected.as_ref().and_then(|id| self.extras.attachments.get(id)).into_iter().flatten().enumerate().map(|(ix, (name, _))| {
-                                div().id(("attachment", ix)).pl_2().pr_1().py_1().rounded_md().bg(rgb(p.selected)).max_w_full().flex().items_center().gap_2()
-                                    .child(Icon::new(IconName::File).size(px(14.)).text_color(rgb(p.accent)))
-                                    .child(div().min_w_0().truncate().text_size(px(12.)).child(name.clone()))
-                                    .child(self.icon_button("remove-attachment", "Remove attachment", IconName::Close, !self.view.busy).size(px(24.)).when(!self.view.busy, |d| d.on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(id) = &this.view.selected && let Some(files) = this.extras.attachments.get_mut(id) && ix < files.len() { files.remove(ix); } cx.notify();
-                                    }))))
-                            }))))
+                        .when(!draft_files.is_empty() || self.uploading(), |d| d.child(self.render_draft_attachments(draft_files, &draft_cwd, cx)))
                         .child(Input::new(&self.composer).appearance(false).disabled(self.view.busy))
                         .child(div().flex().items_center().justify_between().gap_2()
                             .child(div().flex().items_center().gap_1()
-                                .child(self.icon_button("attach-file", if self.uploading() { "Attaching file…" } else { "Attach a file" }, IconName::Plus, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx)))))
-                                .child(self.icon_button("paste-image", "Paste an image from the clipboard", IconName::GalleryVerticalEnd, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, _, cx| { if !this.paste_image(cx) { this.extras.notice = "No supported image on the clipboard.".into(); cx.notify(); } }))))
+                                .child(self.icon_button("attach-file", if self.uploading() { "Attaching file…" } else { "Attach a file (or paste an image)" }, IconName::Plus, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx)))))
                                 .children(selected.as_ref().and_then(|s| chrome::context_meter(s, p))))
                             .child(div().flex().items_center().gap_2()
                                 .when(working, |d| d.child(self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx))))))
@@ -4572,6 +4583,102 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// A pasted or attached image shows as a thumbnail read back from the hub
+    /// before sending (PDFs keep their chip); Remove still discards it, and
+    /// the composer has no separate Paste-image button.
+    #[gpui::test]
+    fn draft_images_preview_as_thumbnails_and_stay_removable(cx: &mut TestAppContext) {
+        use base64::Engine;
+        use wks_native::features::{Request, RequestState};
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let shot = "/hub/uploads/a/Screenshot.png";
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.extras.attachments.insert(
+                    "a".into(),
+                    vec![
+                        ("Screenshot.png".into(), shot.into()),
+                        ("brief.pdf".into(), "/hub/uploads/a/brief.pdf".into()),
+                    ],
+                );
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let mut requested = None;
+        while let Ok(command) = commands.try_recv() {
+            if let Command::Request(Request::Previews { paths }) = command {
+                requested = Some(paths);
+            }
+        }
+        assert_eq!(
+            requested.as_deref(),
+            Some(&[shot.to_owned()][..]),
+            "the image (not the PDF) is read back from the hub"
+        );
+        assert!(
+            visual.debug_bounds("draft-attachment-0").is_some(),
+            "loading chip"
+        );
+        assert!(
+            visual.debug_bounds("draft-attachment-1").is_some(),
+            "PDF chip"
+        );
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(4, 3)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let data = base64::engine::general_purpose::STANDARD.encode(png.into_inner());
+        let mut next = state("a");
+        next.requests.insert(
+            "previews".into(),
+            RequestState {
+                number: 1,
+                request: Request::Previews {
+                    paths: vec![shot.into()],
+                },
+                loading: false,
+                value: Arc::new(serde_json::json!({
+                    shot: {"width":4,"height":3,"dataUrl":format!("data:image/png;base64,{data}")}
+                })),
+                error: None,
+            },
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(next), window, cx))
+        });
+        visual.run_until_parked();
+        assert!(
+            visual.debug_bounds("draft-thumbnail-0").is_some(),
+            "image draft renders as a thumbnail"
+        );
+        assert!(visual.debug_bounds("draft-attachment-1").is_some());
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(
+                this.attachment_text("a", "look"),
+                format!("[Image: {shot}]\n[PDF: /hub/uploads/a/brief.pdf]\nlook")
+            );
+            let _ = cx;
+        });
+        // Remove sits on the thumbnail's corner.
+        let thumb = visual.debug_bounds("draft-thumbnail-0").unwrap();
+        visual.simulate_click(
+            gpui::point(thumb.right() - px(14.), thumb.top() + px(14.)),
+            gpui::Modifiers::none(),
+        );
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(
+                this.extras.attachments["a"],
+                vec![(
+                    "brief.pdf".to_owned(),
+                    "/hub/uploads/a/brief.pdf".to_owned()
+                )]
+            );
+        });
     }
 
     #[gpui::test]

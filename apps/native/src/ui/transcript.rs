@@ -218,6 +218,23 @@ impl Workspace {
         }
         self.schedule_previews(cx);
     }
+    /// A host-backed thumbnail for a draft attachment, through the same
+    /// bounded cache and `fs.readImage` path as chat images, so the preview is
+    /// the file the hub will hand the agent. `Some(Some(_))` loaded,
+    /// `Some(None)` unavailable, `None` still loading (and now requested).
+    pub(super) fn attachment_preview(
+        &mut self,
+        path: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Option<Arc<gpui::Image>>> {
+        if let Some(preview) = self.chat.previews.get(path) {
+            return Some(preview.image.clone());
+        }
+        self.chat.wanted.insert(path.to_owned());
+        self.schedule_previews(cx);
+        None
+    }
+
     fn schedule_previews(&mut self, cx: &mut Context<Self>) {
         if self.chat.preview_inflight
             || self.chat.preview_scheduled
