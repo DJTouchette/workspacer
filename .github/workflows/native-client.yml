@@ -39,6 +39,19 @@ jobs:
       - run: cargo clippy --locked --all-targets --features ui-tests -- -D warnings
       - name: Reducer, WebSocket and GPUI interaction tests
         run: cargo test --locked --no-fail-fast --features ui-tests -- --test-threads=1
+      - name: Windows GPUI crash diagnostics
+        # Evidence only: the suite above already failed the job.
+        if: failure() && runner.os == 'Windows'
+        continue-on-error: true
+        timeout-minutes: 30
+        shell: pwsh
+        run: ./scripts/windows-gpui-crash-diagnostics.ps1 -Out gpui-crash
+      - uses: actions/upload-artifact@v4
+        if: failure() && runner.os == 'Windows'
+        with:
+          name: native-windows-gpui-crash
+          path: apps/native/gpui-crash
+          if-no-files-found: ignore
       - name: Verify all Windows updater handoff scenarios ran
         if: runner.os == 'Windows'
         shell: pwsh
