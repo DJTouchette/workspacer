@@ -52,7 +52,9 @@ describe('Child agent provider approval preference', () => {
     expect(childSkipsPermissions({})).toBe(false);
     expect(childSkipsPermissions({ parentSessionId: 'missing' })).toBe(false);
     expect(childSkipsPermissions({ parentSessionId: 'foreign' })).toBe(false);
-    expect(childSkipsPermissions({ parentSessionId: 'parent', resumeSessionId: 'old' })).toBe(false);
+    expect(childSkipsPermissions({ parentSessionId: 'parent', resumeSessionId: 'old' })).toBe(
+      false,
+    );
     expect(childSkipsPermissions({ parentSessionId: 'parent', manager: true })).toBe(false);
     // Independent of the fleet preference.
     expect(fleetSkipsPermissions({ parentSessionId: 'parent' })).toBe(false);

@@ -427,7 +427,7 @@ fn guarded_save_serializes_competing_editors_and_preserves_plain_write() {
 
 #[test]
 fn ordinary_write_waits_for_the_same_os_lock_without_truncating() {
-    use std::{fs::OpenOptions, sync::mpsc, time::Duration};
+    use std::{fs::OpenOptions, io::Read, sync::mpsc, time::Duration};
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("source.rs");
     std::fs::write(&path, "base").unwrap();
@@ -450,7 +450,11 @@ fn ordinary_write_waits_for_the_same_os_lock_without_truncating() {
             .unwrap();
         });
         assert!(receive.recv_timeout(Duration::from_millis(100)).is_err());
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "base");
+        // Windows byte-range locks forbid a second handle from reading the
+        // locked range. Inspect through the lock-owning handle on every OS.
+        let mut contents = String::new();
+        (&held).read_to_string(&mut contents).unwrap();
+        assert_eq!(contents, "base");
         fs2::FileExt::unlock(&held).unwrap();
         assert_eq!(
             receive
