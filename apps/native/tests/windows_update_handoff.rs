@@ -17,9 +17,10 @@ fn main() {
 #[cfg(windows)]
 mod windows {
     use serde_json::{Value, json};
+    use std::io::{Read, Write};
     use std::os::windows::io::AsRawHandle;
     use std::path::{Path, PathBuf};
-    use std::process::{Child, Command};
+    use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
     use wks_native::updates::{Handoff, Timeouts, hand_off};
 
@@ -46,6 +47,20 @@ mod windows {
             installer();
         } else if name.eq_ignore_ascii_case("busy.exe") {
             std::thread::sleep(Duration::from_secs(120));
+        } else if let Ok(name) = std::env::var("WKS_UPDATE_CASE") {
+            // The coordinator assigns this process to a controlled permissive
+            // job before any test may spawn. Never inherit the runner's policy
+            // accidentally into a case meant to test installer behavior.
+            let mut go = [0];
+            std::io::stdin()
+                .read_exact(&mut go)
+                .expect("case admission");
+            assert_eq!(go, [1]);
+            let (_, case) = cases()
+                .into_iter()
+                .find(|(id, _)| *id == name)
+                .expect("known case");
+            case(&exe);
         } else {
             driver(&exe);
         }
@@ -374,7 +389,17 @@ mod windows {
 
     impl Drop for Case {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
+            if std::thread::panicking() {
+                eprintln!(
+                    "fixture retained: {}\nhandoff error: {}\nstate: {}\nlog:\n{}",
+                    self.root.display(),
+                    std::fs::read_to_string(self.root.join("handoff-error")).unwrap_or_default(),
+                    self.state(),
+                    self.log()
+                );
+            } else {
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
         }
     }
 
@@ -513,8 +538,8 @@ mod windows {
 
     type Check = (&'static str, fn(&Path));
 
-    fn driver(exe: &Path) {
-        let cases: [Check; 6] = [
+    fn cases() -> [Check; 6] {
+        [
             (
                 "installs_and_relaunches_even_when_the_app_job_is_closed",
                 installs_and_relaunches_even_when_the_app_job_is_closed,
@@ -539,22 +564,60 @@ mod windows {
                 "a_job_that_forbids_breakaway_is_refused",
                 a_job_that_forbids_breakaway_is_refused,
             ),
-        ];
+        ]
+    }
+
+    fn run_case(exe: &Path, name: &str) -> bool {
+        let job = Job::new(true);
+        let mut child = Command::new(exe)
+            .env("WKS_UPDATE_CASE", name)
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("start isolated updater case");
+        job.assign(&child);
+        eprintln!(
+            "updater case {name}: pid {}, controlled BREAKAWAY_OK job",
+            child.id()
+        );
+        child.stdin.take().unwrap().write_all(&[1]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            if let Some(status) = child.try_wait().expect("wait for isolated case") {
+                if !status.success() {
+                    eprintln!("updater case {name} exited {status}");
+                }
+                return status.success();
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                eprintln!("updater case {name} exceeded 180 seconds");
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // `job` is held until the isolated case finishes, then kills leftovers
+        // still confined to it. Successfully detached helpers were awaited by
+        // the case before returning; refusal cases never arm one.
+    }
+
+    fn driver(exe: &Path) {
+        let cases = cases();
         // `cargo test` passes harness flags; a name filters cases.
         let filter: Vec<String> = std::env::args()
             .skip(1)
             .filter(|a| !a.starts_with('-'))
             .collect();
         let (mut failed, mut ran) = (Vec::new(), 0);
-        for (name, case) in cases {
+        for (name, _) in cases {
             if !filter.is_empty() && !filter.iter().any(|f| name.contains(f.as_str())) {
                 continue;
             }
             ran += 1;
             let started = Instant::now();
-            match std::panic::catch_unwind(|| case(exe)) {
-                Ok(()) => println!("test {name} ... ok ({:?})", started.elapsed()),
-                Err(_) => {
+            match std::panic::catch_unwind(|| run_case(exe, name)) {
+                Ok(true) => println!("test {name} ... ok ({:?})", started.elapsed()),
+                Ok(false) | Err(_) => {
                     println!("test {name} ... FAILED");
                     failed.push(name);
                 }
