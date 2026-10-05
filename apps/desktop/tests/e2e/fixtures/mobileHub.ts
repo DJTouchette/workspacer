@@ -32,6 +32,7 @@ let HUB_BIN: string;
 
 export const HOST_TOKEN = 'test-host-token';
 export const TRIAGE_TOKEN = 'test-triage-token';
+export const VIEW_TOKEN = 'test-view-token';
 
 export interface CallRecord {
   method: string;
@@ -112,6 +113,7 @@ export async function startMobileHub(opts: MobileHubOptions = {}): Promise<Mobil
     tokensFile,
     JSON.stringify([
       { token: TRIAGE_TOKEN, scope: 'triage', label: 'phone', created: new Date().toISOString() },
+      { token: VIEW_TOKEN, scope: 'view', label: 'glance', created: new Date().toISOString() },
     ]),
   );
 
