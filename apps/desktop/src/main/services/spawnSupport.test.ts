@@ -12,7 +12,7 @@ import {
 const ROOT = path.resolve(__dirname, '../../../../..');
 describe('current spawn support has symmetric source closure', () => {
   it('executes all reviewed rows against actual source and the canonical namespace', () => {
-    expect(policy.cases).toHaveLength(50);
+    expect(policy.cases).toHaveLength(51);
     expect(checkDesktopSupport(ROOT, policy)).toEqual([]);
     for (const row of policy.cases) expect(keys.keys).toContain(row.name);
   });

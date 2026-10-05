@@ -77,9 +77,35 @@ pub(super) struct Extras {
     /// saved; `None` until read. Never assumed from a pending toggle.
     pub child_access: Option<(bool, bool)>,
     pub child_access_receipt: u64,
+    /// The hub's `agents.autoTitle` as last read or saved (see
+    /// `features::title_settings`); `None` until read.
+    pub titles: Option<Value>,
+    pub titles_receipt: u64,
+    /// Harness whose title model is edited while titles follow each agent;
+    /// seeded from the default agent on the first Settings visit.
+    pub title_harness: &'static str,
+    pub title_harness_seeded: bool,
+    pub title_picker: Entity<SelectState<SearchableVec<super::launch::PickerItem>>>,
+    pub _title_picker_subscription: gpui::Subscription,
+    /// Provider, choice and rows the picker was last built for.
+    pub title_picker_key: String,
+    /// The last change sent, until a newer titles receipt arrives.
+    pub title_sent: Option<wks_native::features::TitleChange>,
+    pub title_sent_after: u64,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let title_picker = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(super::titles::title_model_items("", &[], "")),
+                Some(gpui_component::IndexPath::new(0)),
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        let _title_picker_subscription =
+            cx.subscribe_in(&title_picker, window, Workspace::on_title_pick);
         Self {
             name: cx.new(|cx| InputState::new(window, cx).placeholder("Session name")),
             return_launch: false,
@@ -116,6 +142,15 @@ impl Extras {
             model_base: None,
             child_access: None,
             child_access_receipt: 0,
+            titles: None,
+            titles_receipt: 0,
+            title_harness: "claude",
+            title_harness_seeded: false,
+            title_picker,
+            _title_picker_subscription,
+            title_picker_key: String::new(),
+            title_sent: None,
+            title_sent_after: 0,
         }
     }
 }
@@ -317,6 +352,16 @@ impl Workspace {
                     state.value["childFullAccess"] == true,
                     state.value["fleetFullAccess"] == true,
                 ));
+            }
+        }
+        if let Some(state) = next.requests.get("titles")
+            && !state.loading
+            && state.number > self.extras.titles_receipt
+        {
+            self.extras.titles_receipt = state.number;
+            // A failed write leaves the last verified state, never the guess.
+            if state.error.is_none() {
+                self.extras.titles = Some((*state.value).clone());
             }
         }
         if let Some(state) = next.requests.get("upload")

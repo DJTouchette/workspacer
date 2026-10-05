@@ -310,6 +310,8 @@ export interface ClaudeSessionSnapshot {
   /** Live statusLine telemetry (ctx%/cost/5h/7d), fed by /statusline/stream. */
   statusLine?: SessionStatusLine;
 
+  /** Owning host claims naming; renderers must never start a competing request. */
+  autoTitle?: { state: string; title?: string };
   /** Human label set at spawn time (e.g. by a supervisor naming a worker). */
   label?: string;
   /** Session id of the agent that spawned this one — drives nesting in the UI. */

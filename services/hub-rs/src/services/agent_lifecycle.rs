@@ -16,6 +16,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+fn has_label(metadata: &Value) -> bool {
+    metadata["label"]
+        .as_str()
+        .is_some_and(|s| !s.trim().is_empty())
+}
+
 pub type Operation<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
 
 /// Implementations own exact facade health checks, credentials, instruction and
@@ -195,6 +201,52 @@ impl Lifecycle {
         })?;
         Ok(changed)
     }
+    /// The pending automatic-title request for `session`, when one is owed:
+    /// `(generation, provider, opening request)`. Only a launch that opted in
+    /// with no user label carries one (see `spawn_plan`).
+    pub fn auto_title_pending(&self, session: &str) -> Option<(String, String, String)> {
+        let rows = self.rows.lock().unwrap();
+        let row = rows.get(session)?;
+        (row.metadata["autoTitle"]["state"] == "pending" && !has_label(&row.metadata)).then(|| {
+            (
+                row.generation.clone(),
+                row.provider.clone(),
+                row.metadata["autoTitle"]["prompt"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_owned(),
+            )
+        })
+    }
+    /// Commit an automatic title for exactly the launch generation that asked
+    /// for it. A resumed/replaced generation, a title already recorded, or a
+    /// user label (launch label) all win over a late result: nothing is
+    /// written and `false` is returned.
+    pub async fn note_auto_title(
+        &self,
+        session: &str,
+        generation: &str,
+        outcome: Value,
+    ) -> Result<bool> {
+        let _operation = self.operations.lock().await;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(false);
+        }
+        let mut changed = false;
+        self.update(|rows| {
+            let Some(row) = rows.get_mut(session).filter(|r| {
+                r.generation == generation
+                    && r.metadata["autoTitle"]["state"] == "pending"
+                    && !has_label(&r.metadata)
+            }) else {
+                return Ok(());
+            };
+            row.metadata["autoTitle"] = outcome;
+            changed = true;
+            Ok(())
+        })?;
+        Ok(changed)
+    }
     /// Overlay attribution only. Persisted records never assert process liveness
     /// and never enrich a remote session with coincidentally identical identity.
     pub fn enrich(&self, mut snapshot: Value) -> Value {
@@ -223,6 +275,7 @@ impl Lifecycle {
                 "afterDispatchId",
                 "resultSchema",
                 "remoteOrigin",
+                "autoTitle",
             ] {
                 if let Some(value) = record.metadata.get(key) {
                     if key == "settings" {
@@ -234,6 +287,14 @@ impl Lifecycle {
                                 snapshot["settings"][key] = value.clone();
                             }
                         }
+                    } else if key == "autoTitle" {
+                        // State and result only; the recorded opening request
+                        // stays in the private journal.
+                        let mut value = value.clone();
+                        if let Some(map) = value.as_object_mut() {
+                            map.remove("prompt");
+                        }
+                        snapshot[key] = value;
                     } else {
                         snapshot[key] = value.clone();
                     }

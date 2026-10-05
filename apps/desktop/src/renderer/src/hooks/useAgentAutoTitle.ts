@@ -66,6 +66,7 @@ export function agentsAwaitingTitle(
     if (agent.global || !agent.sessionId) continue;
     if (agent.nameSetByUser || agent.autoTitled) continue;
     const snap = snapshotBySession[agent.sessionId];
+    if (snap?.autoTitle) continue;
     // A compacted snapshot (conversationOffset > 0) has dropped its leading
     // turns, so its "first" user message is just the oldest one still in the
     // window — titling from it would name a resumed session after whatever it
@@ -98,6 +99,8 @@ export function useAgentAutoTitle({
   // run, which happens on the very next snapshot — well before the round-trip
   // returns and marks the agent titled.
   const inFlightRef = useRef<Set<string>>(new Set());
+  const latestSnapshots = useRef(snapshotBySession);
+  latestSnapshots.current = snapshotBySession;
   // Openings seen while the snapshot was still whole. Compaction is one-way, so
   // without this an agent that opened fast could never be titled.
   const openingsRef = useRef<Map<string, { userMessage: string; assistantReply?: string }>>(
@@ -105,6 +108,13 @@ export function useAgentAutoTitle({
   );
 
   useEffect(() => {
+    // Host results are already paid for and remain visible even if this client's
+    // setting is now off. Human names still win over a late host response.
+    for (const agent of agents) {
+      if (!agent.sessionId || agent.nameSetByUser || agent.autoTitled) continue;
+      const owned = snapshotBySession[agent.sessionId]?.autoTitle;
+      if (owned && owned.state !== 'pending') onTitle(agent.id, owned.title ?? null);
+    }
     if (!enabled) return;
     const pending = agentsAwaitingTitle(agents, snapshotBySession, openingsRef.current);
     for (const { agent, exchange } of pending) {
@@ -114,10 +124,14 @@ export function useAgentAutoTitle({
         // The agent's OWN provider titles it: a codex agent must not need a
         // claude binary on PATH to get a name.
         .agentSuggestTitle({ ...exchange, provider: resolveProvider(agent.provider) })
-        .then((title) => onTitle(agent.id, title))
+        .then((title) => {
+          if (!latestSnapshots.current[agent.sessionId!]?.autoTitle) onTitle(agent.id, title);
+        })
         // A cosmetic feature must not spam the console on a missing binary;
         // main already logs the reason once.
-        .catch(() => onTitle(agent.id, null))
+        .catch(() => {
+          if (!latestSnapshots.current[agent.sessionId!]?.autoTitle) onTitle(agent.id, null);
+        })
         .finally(() => inFlightRef.current.delete(agent.id));
     }
   }, [agents, snapshotBySession, enabled, onTitle]);

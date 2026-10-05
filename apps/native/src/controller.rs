@@ -140,6 +140,11 @@ impl NewSession {
                 params[key] = json!(value.trim());
             }
         }
+        // No name given: ask the owning hub to name it after its first
+        // exchange (`agents.autoTitle`). A typed label is never replaced.
+        if self.label.trim().is_empty() {
+            params["autoTitle"] = json!(true);
+        }
         Ok(params)
     }
 }

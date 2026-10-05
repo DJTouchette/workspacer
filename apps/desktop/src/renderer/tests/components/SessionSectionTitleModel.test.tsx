@@ -107,3 +107,31 @@ describe('SessionSection — the auto-title model picker follows the harness', (
     await waitFor(() => expect(modelRow().getByRole('button').textContent).toMatch(/gpt-5-nano/i));
   });
 });
+
+describe('SessionSection — a fixed title harness (agents.autoTitle.provider)', () => {
+  it('defaults to each agent’s own harness and can pin one', async () => {
+    const { save } = renderSection({ agents: { autoTitle: { models: { codex: 'gpt-5-nano' } } } });
+    const row = within(screen.getByText('Title with').closest('div') as HTMLElement);
+    const active = (name: string) =>
+      (row.getByRole('button', { name }) as HTMLElement).style.backgroundColor;
+    expect(active('Agent’s own')).toBe('var(--wks-accent-bg)');
+    expect(active('Codex')).toBe('transparent');
+    fireEvent.click(row.getByRole('button', { name: 'Codex' }));
+    expect(save).toHaveBeenCalledWith({
+      agents: { autoTitle: { models: { codex: 'gpt-5-nano' }, provider: 'codex' } },
+    });
+    // The model row now edits the pinned harness.
+    await waitFor(() => expect(screen.getByText('Codex title model')).toBeInTheDocument());
+  });
+
+  it('shows a harness pinned elsewhere (native settings) as the active choice', async () => {
+    const { save } = renderSection({ agents: { autoTitle: { provider: 'codex' } } });
+    await waitFor(() => expect(screen.getByText('Codex title model')).toBeInTheDocument());
+    const row = within(screen.getByText('Title with').closest('div') as HTMLElement);
+    expect((row.getByRole('button', { name: 'Codex' }) as HTMLElement).style.backgroundColor).toBe(
+      'var(--wks-accent-bg)',
+    );
+    fireEvent.click(row.getByRole('button', { name: 'Agent’s own' }));
+    expect(save).toHaveBeenCalledWith({ agents: { autoTitle: { provider: '' } } });
+  });
+});

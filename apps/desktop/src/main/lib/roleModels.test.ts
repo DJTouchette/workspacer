@@ -19,6 +19,7 @@ const {
   perHarnessModel,
   resolveManagerModel,
   resolveTitleModel,
+  resolveTitleTarget,
   resolveManagerEffort,
   resolveManagerContextWindow,
   resolveManagerContextForSpawn,
@@ -108,6 +109,42 @@ describe('resolveTitleModel', () => {
   it('is undefined with no autoTitle config at all', () => {
     mockConfig = {};
     expect(resolveTitleModel('claude')).toBeUndefined();
+  });
+});
+
+describe('resolveTitleTarget — same resolution as the hub titler', () => {
+  it('keeps the agent’s own harness unless one is pinned', () => {
+    mockConfig = { agents: { autoTitle: { model: 'haiku', models: { codex: 'gpt-5' } } } };
+    expect(resolveTitleTarget('claude')).toEqual({
+      provider: 'claude',
+      model: 'haiku',
+      explicit: false,
+    });
+    expect(resolveTitleTarget('codex')).toEqual({
+      provider: 'codex',
+      model: 'gpt-5',
+      explicit: true,
+    });
+  });
+
+  it('a pinned harness uses its own row, exactly, even for another agent', () => {
+    mockConfig = {
+      agents: { autoTitle: { provider: 'codex', model: 'haiku', models: { codex: 'sonnet' } } },
+    };
+    expect(resolveTitleTarget('claude')).toEqual({
+      provider: 'codex',
+      model: 'sonnet',
+      explicit: true,
+    });
+  });
+
+  it('a pinned harness without a row never inherits the claude alias', () => {
+    mockConfig = { agents: { autoTitle: { provider: ' codex ', model: 'haiku' } } };
+    expect(resolveTitleTarget('claude')).toEqual({
+      provider: 'codex',
+      model: undefined,
+      explicit: false,
+    });
   });
 });
 

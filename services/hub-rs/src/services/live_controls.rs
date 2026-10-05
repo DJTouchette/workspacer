@@ -134,13 +134,21 @@ impl Controls {
                 .as_ref()
                 .map(|l| l.records())
                 .unwrap_or_default();
+            // Same precedence as live snapshots: launch label, then the user's
+            // cwd rename, then the hub's automatic title.
             return Ok(recent(&raw, |id, cwd| {
-                records
-                    .get(id)
-                    .and_then(|r| r.metadata["label"].as_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| names[cwd].as_str().unwrap_or(""))
-                    .to_owned()
+                let named = |value: &Value| {
+                    value
+                        .as_str()
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_owned)
+                };
+                let record = records.get(id);
+                record
+                    .and_then(|r| named(&r.metadata["label"]))
+                    .or_else(|| named(&names[cwd]))
+                    .or_else(|| record.and_then(|r| named(&r.metadata["autoTitle"]["title"])))
+                    .unwrap_or_default()
             }));
         }
         let id = text(&p, "sessionId");

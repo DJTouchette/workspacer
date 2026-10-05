@@ -108,11 +108,126 @@ pub enum Request {
     ChildAccess {
         set: Option<bool>,
     },
+    /// The hub's shared `agents.autoTitle` (automatic session names): read
+    /// (`None`) or change one field and verify it on readback. The owning hub
+    /// writes the titles, so this is hub configuration, not a device setting.
+    Titles {
+        set: Option<TitleChange>,
+    },
     /// Downloaded project icons (`iconFile`) from the hub's
     /// `<configDir>/project-icons/`, as small PNGs keyed by file name.
     ProjectIcons {
         files: Vec<String>,
     },
+}
+
+/// One change to `agents.autoTitle`; everything else in it is left alone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TitleChange {
+    Enabled(bool),
+    /// The harness that writes every title; empty = each agent's own.
+    Provider(String),
+    /// `autoTitle.models[provider]`; empty = that harness's own default.
+    Model {
+        provider: String,
+        model: String,
+    },
+}
+
+/// Whether `model` can be a `provider` id (the hub's `text::serves`, desktop's
+/// `isForeignModel`): decides when the legacy single `autoTitle.model` means
+/// something for that harness.
+pub fn title_model_serves(provider: &str, model: &str) -> bool {
+    let model = model.trim().to_lowercase();
+    match provider {
+        "claude" => {
+            [
+                "default",
+                "haiku",
+                "sonnet",
+                "sonnet[1m]",
+                "opus",
+                "opusplan",
+                "fable",
+            ]
+            .contains(&model.as_str())
+                || model.starts_with("claude-")
+        }
+        "codex" => {
+            model.starts_with("gpt-")
+                || model.starts_with("codex-")
+                || model
+                    .strip_prefix('o')
+                    .or_else(|| model.strip_prefix("gpt"))
+                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        }
+        _ => false,
+    }
+}
+
+/// The title model a harness actually uses: its own row, else the legacy
+/// field where it can serve it, else "" (the harness default; Claude's is
+/// Haiku on both the hub and desktop).
+pub fn effective_title_model(settings: &Value, provider: &str) -> String {
+    let own = settings["models"][provider].as_str().unwrap_or("");
+    if !own.is_empty() {
+        return own.to_owned();
+    }
+    let legacy = settings["legacyModel"].as_str().unwrap_or("");
+    if title_model_serves(provider, legacy) {
+        legacy.to_owned()
+    } else {
+        String::new()
+    }
+}
+
+impl TitleChange {
+    fn patch(&self) -> Value {
+        let auto = match self {
+            Self::Enabled(enabled) => json!({"enabled":enabled}),
+            Self::Provider(provider) => json!({"provider":provider}),
+            // Like desktop Settings: keep the legacy single field in step only
+            // while it means the same thing on this harness, so an older
+            // client reading it never disagrees.
+            Self::Model { provider, model }
+                if model.is_empty() || title_model_serves(provider, model) =>
+            {
+                json!({"models":{provider:model},"model":model})
+            }
+            Self::Model { provider, model } => json!({"models":{provider:model}}),
+        };
+        json!({"agents":{"autoTitle":auto}})
+    }
+    fn kept(&self, state: &Value) -> bool {
+        match self {
+            Self::Enabled(enabled) => state["enabled"] == *enabled,
+            Self::Provider(provider) => state["provider"] == provider.as_str(),
+            Self::Model { provider, model } => {
+                state["models"][provider.as_str()].as_str().unwrap_or("") == model
+            }
+        }
+    }
+}
+
+/// The parts of `agents.autoTitle` the native settings show, with the shared
+/// defaults applied: absent `enabled` is on, blank `provider` is the agent's.
+pub fn title_settings(config: &Value) -> Value {
+    let auto = &config["agents"]["autoTitle"];
+    let models: serde_json::Map<String, Value> = auto["models"]
+        .as_object()
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), json!(v.as_str()?.trim()))))
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "enabled": auto["enabled"] != false,
+        "provider": auto["provider"].as_str().map(str::trim).unwrap_or(""),
+        "models": models,
+        "legacyModel": auto["model"].as_str().map(str::trim).unwrap_or(""),
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +268,7 @@ impl Request {
             Self::BrowseFolders { .. } => "project-browse",
             Self::ProjectIcons { .. } => "project-icons",
             Self::ChildAccess { .. } => "child-access",
+            Self::Titles { .. } => "titles",
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -271,6 +387,21 @@ impl Request {
                     "childFullAccess": config["agents"]["childFullAccess"] == true,
                     "fleetFullAccess": config["agents"]["fleetFullAccess"] == true,
                 }))
+            }
+            Self::Titles { set } => {
+                let config = match set {
+                    // `agents` deep-merges on save, so only this field changes.
+                    Some(change) => {
+                        let saved = backend.call("config.save", change.patch()).await?;
+                        ensure!(
+                            change.kept(&title_settings(&saved)),
+                            "The hub did not save the setting (its config may be busy); try again"
+                        );
+                        saved
+                    }
+                    None => backend.call("config.get", json!({})).await?,
+                };
+                Ok(title_settings(&config))
             }
             Self::ProjectIcons { files } => {
                 let mut icons = serde_json::Map::new();
@@ -717,6 +848,58 @@ pub fn installed_version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn title_settings_apply_shared_defaults_and_resolve_the_effective_model() {
+        let read = title_settings(&json!({}));
+        assert_eq!(
+            read,
+            json!({"enabled":true,"provider":"","models":{},"legacyModel":""})
+        );
+        let settings = title_settings(&json!({"agents":{"autoTitle":{
+            "enabled":false,"provider":" codex ","model":"haiku","models":{"codex":" gpt-5.4-mini "}}}}));
+        assert_eq!(settings["enabled"], false);
+        assert_eq!(settings["provider"], "codex");
+        assert_eq!(effective_title_model(&settings, "codex"), "gpt-5.4-mini");
+        // Claude has no row: the legacy alias is what the hub uses.
+        assert_eq!(effective_title_model(&settings, "claude"), "haiku");
+        let legacy_codex = title_settings(&json!({"agents":{"autoTitle":{"model":"haiku"}}}));
+        assert_eq!(effective_title_model(&legacy_codex, "codex"), "");
+        assert!(title_model_serves("codex", "o4-mini"));
+        assert!(title_model_serves("claude", "claude-haiku-4-5"));
+        assert!(!title_model_serves("codex", "sonnet"));
+    }
+
+    #[test]
+    fn title_changes_patch_one_field_and_verify_it_on_readback() {
+        let model = TitleChange::Model {
+            provider: "codex".into(),
+            model: "gpt-5.4-mini".into(),
+        };
+        assert_eq!(
+            model.patch(),
+            json!({"agents":{"autoTitle":{"models":{"codex":"gpt-5.4-mini"},"model":"gpt-5.4-mini"}}})
+        );
+        // An id another harness would claim leaves the legacy field alone.
+        let foreign = TitleChange::Model {
+            provider: "codex".into(),
+            model: "sonnet".into(),
+        };
+        assert_eq!(
+            foreign.patch(),
+            json!({"agents":{"autoTitle":{"models":{"codex":"sonnet"}}}})
+        );
+        assert_eq!(
+            TitleChange::Provider(String::new()).patch(),
+            json!({"agents":{"autoTitle":{"provider":""}}})
+        );
+        let saved =
+            title_settings(&json!({"agents":{"autoTitle":{"models":{"codex":"gpt-5.4-mini"}}}}));
+        assert!(model.kept(&saved));
+        assert!(!foreign.kept(&saved));
+        assert!(TitleChange::Enabled(true).kept(&saved));
+        assert!(!TitleChange::Enabled(false).kept(&saved));
+    }
     #[test]
     fn remote_requests_keep_reads_and_changes_apart() {
         assert_eq!(Request::Remote.key(), "remote");

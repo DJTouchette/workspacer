@@ -34,8 +34,8 @@ function synthetic(body: string): string[] {
 }
 describe('canonical spawn spelling closes over actual provider fields', () => {
   it('retains historical keys and reviewed reservations and covers the desktop AST surface', () => {
-    expect(keys.keys).toHaveLength(51);
-    expect(new Set(keys.keys).size).toBe(51);
+    expect(keys.keys).toHaveLength(52);
+    expect(new Set(keys.keys).size).toBe(52);
     expect(historical.spawnKeys).toHaveLength(46);
     for (const key of historical.spawnKeys) expect(keys.keys).toContain(key);
     expect(keys.keys.filter((key) => !historical.spawnKeys.includes(key)).sort()).toEqual(
@@ -50,7 +50,7 @@ describe('canonical spawn spelling closes over actual provider fields', () => {
       expect(row.why.trim().length).toBeGreaterThan(0);
       executed.add(row.key);
     }
-    expect(executed.size).toBe(5);
+    expect(executed.size).toBe(6);
     expect([...executed].sort()).toEqual(Object.keys(keys.reservations).sort());
     expect(closure(actual())).toEqual([]);
   });

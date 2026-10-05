@@ -753,6 +753,10 @@ impl SpawnCoordinator {
                     if plan.metadata.get(key).is_none() {if let Some(value)=previous.metadata.get(key){plan.metadata[key]=value.clone();}}
                 }
                 if plan.metadata["settings"].get("model").is_none() {if let Some(model)=previous.metadata["settings"].get("model"){plan.metadata["settings"]["model"]=model.clone();}}
+                // A session is named once: a resume keeps the recorded title (or
+                // its still-pending original request), never re-titles from the
+                // resume message.
+                if let Some(prior)=previous.metadata.get("autoTitle").filter(|v|v.is_object()){plan.metadata["autoTitle"]=prior.clone();}
             }
             plan.metadata["transport"]=json!(if plan.endpoint=="/sessions/spawn" {"pty"}else{plan.request["transport"].as_str().unwrap_or("stream")});
             let mut tracking=self.tracking_input(&params,&project);

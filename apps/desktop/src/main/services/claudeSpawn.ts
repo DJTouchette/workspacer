@@ -54,6 +54,7 @@ import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudeArgvModel } from '../shared/modelContextWindows';
 
 export interface ClaudeSpawnOptions {
+  autoTitle?: boolean;
   cwd?: string;
   /** Claude profile (CLAUDE_CONFIG_DIR + extraArgs). */
   profileId?: string;
@@ -378,6 +379,7 @@ async function spawnClaude(
     claudeSessionStore.setSpawnMeta(sessionId, {
       cwd,
       label: opts.label,
+      autoTitle: opts.autoTitle,
       parentSessionId: opts.parentSessionId,
       isWakeTarget: opts.manager,
       provider: 'claude',

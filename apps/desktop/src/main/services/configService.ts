@@ -270,6 +270,10 @@ interface Config {
     };
     autoTitle?: {
       enabled?: boolean;
+      /** Harness that writes every title; ''/absent = the titled agent's own
+       *  (resolved by lib/roleModels `resolveTitleTarget`, mirrored by the
+       *  hub's `title_target`). */
+      provider?: string;
       /** Legacy single model for the one-shot title call. Ships `'haiku'`, a
        *  CLAUDE alias, so it is honoured only for harnesses that can serve it
        *  ('' = the harness's own default). Superseded by `models`. */

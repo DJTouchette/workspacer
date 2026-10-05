@@ -42,6 +42,31 @@
       }
     },
     {
+      "name": "autoTitle",
+      "rust": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Recorded on the launch journal only when no label was given; the owning hub's titler names the session once and a user label always wins. Grants no authority.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "services::spawn_plan::resolve|match params.get(\"autoTitle\")",
+          "services::spawn_plan::resolve|metadata[\"autoTitle\"] = json!"
+        ]
+      },
+      "desktop": {
+        "observed": true,
+        "disposition": "supported",
+        "reason": "Explicit unlabelled launches enroll in the owning host journal before registration; one attempt is persisted before inference, published to all clients, and fenced against respawn or labels. No execution authority.",
+        "evidenceKind": "implementation",
+        "evidence": [
+          "apps/desktop/src/main/services/managedSpawn.ts|autoTitle: opts.autoTitle,",
+          "apps/desktop/src/main/services/claudeSpawn.ts|autoTitle: opts.autoTitle,",
+          "apps/desktop/src/main/services/claudeSessionStore.ts|hostAutoTitles.begin(sessionId, meta.autoTitle === true, meta.label);",
+          "apps/desktop/src/main/services/hostAutoTitles.ts|atomicWriteFileSync(file, JSON.stringify({ ...record, attempted: true }), { mode: 0o600 });"
+        ]
+      }
+    },
+    {
       "name": "capability",
       "rust": {
         "observed": true,
@@ -338,7 +363,7 @@
         "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
         "evidenceKind": "implementation",
         "evidence": [
-          "apps/desktop/src/main/services/hubCapabilities.ts|label, parentSessionId, cols, rows,"
+          "apps/desktop/src/main/services/hubCapabilities.ts|label, autoTitle, parentSessionId, cols, rows,"
         ]
       }
     },
@@ -533,7 +558,7 @@
         "reason": "Applied by the launch plan or its admission adapter within the provider-specific contract; support does not bypass caller authorization.",
         "evidenceKind": "implementation",
         "evidence": [
-          "apps/desktop/src/main/services/hubCapabilities.ts|label, parentSessionId, cols, rows,"
+          "apps/desktop/src/main/services/hubCapabilities.ts|label, autoTitle, parentSessionId, cols, rows,"
         ]
       }
     },
@@ -1115,6 +1140,7 @@
   ],
   "mirroredSupported": [
     "afterDispatchId",
+    "autoTitle",
     "capability",
     "cols",
     "contextWindow",

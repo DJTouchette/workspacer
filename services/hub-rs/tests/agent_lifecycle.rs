@@ -542,3 +542,100 @@ async fn reused_identity_drops_stale_live_permission_and_fences_old_acknowledgme
     assert_eq!(current["settings"]["bypassAvailable"], true);
     service.close().await;
 }
+
+#[tokio::test]
+async fn automatic_titles_are_opt_in_generation_fenced_and_never_beat_a_user_label() {
+    use workspacer_hub::services::snapshots::with_auto_title;
+    let dir = tempfile::tempdir().unwrap();
+    let fake = Arc::new(Fake::default());
+    let path = dir.path().join("launch.json");
+    let service = Lifecycle::open(path.clone(), fake.clone(), fake.clone()).unwrap();
+    let resolve = |params: Value, id: &str| {
+        spawn_plan::resolve(&params, &json!({}), None, dir.path(), id, false)
+    };
+    // Opt-in with no label owes a title; the opening request stays private.
+    let owed = resolve(
+        json!({"cwd":dir.path(),"message":"  fix the login redirect  ","autoTitle":true}),
+        "owed",
+    )
+    .unwrap();
+    assert_eq!(owed.metadata["autoTitle"]["state"], "pending");
+    service.launch(owed).await.unwrap();
+    // A launch label is the user's name: nothing is owed even with opt-in.
+    let named = resolve(
+        json!({"cwd":dir.path(),"message":"x","label":"Mine","autoTitle":true}),
+        "named",
+    )
+    .unwrap();
+    assert!(named.metadata.get("autoTitle").is_none());
+    // Without opt-in nothing is owed either (Electron/MCP launches).
+    assert!(
+        resolve(json!({"cwd":dir.path(),"message":"x"}), "plain")
+            .unwrap()
+            .metadata
+            .get("autoTitle")
+            .is_none()
+    );
+    assert!(resolve(json!({"cwd":dir.path(),"autoTitle":"yes"}), "bad").is_err());
+
+    let generation = service.records()["owed"].generation.clone();
+    let (pending_generation, provider, prompt) = service.auto_title_pending("owed").unwrap();
+    assert_eq!(
+        (
+            pending_generation.as_str(),
+            provider.as_str(),
+            prompt.as_str()
+        ),
+        (generation.as_str(), "claude", "fix the login redirect")
+    );
+    let snapshot = service.enrich(json!({"sessionId":"owed"}));
+    assert_eq!(snapshot["autoTitle"], json!({"state":"pending"}));
+    assert!(with_auto_title(snapshot).get("label").is_none());
+
+    let title = json!({"state":"titled","title":"Fix login redirect","source":"model","provider":"codex","model":"gpt-5.4-mini"});
+    // A late result for another launch generation is dropped.
+    assert!(
+        !service
+            .note_auto_title("owed", "stale", title.clone())
+            .await
+            .unwrap()
+    );
+    assert!(service.auto_title_pending("owed").is_some());
+    assert!(
+        service
+            .note_auto_title("owed", &generation, title.clone())
+            .await
+            .unwrap()
+    );
+    // Recorded once: a second (retried/duplicate) result cannot overwrite it.
+    assert!(
+        !service
+            .note_auto_title(
+                "owed",
+                &generation,
+                json!({"state":"titled","title":"Other"})
+            )
+            .await
+            .unwrap()
+    );
+    assert!(service.auto_title_pending("owed").is_none());
+    let row = with_auto_title(service.enrich(json!({"sessionId":"owed"})));
+    assert_eq!(row["label"], "Fix login redirect");
+    assert_eq!(row["autoTitle"]["source"], "model");
+    // Survives a hub restart through the journal.
+    let reopened = Lifecycle::open(path, fake.clone(), fake).unwrap();
+    assert_eq!(
+        with_auto_title(reopened.enrich(json!({"sessionId":"owed"})))["label"],
+        "Fix login redirect"
+    );
+    // Any name a person gave (a cwd rename or launch label) outranks it, and
+    // a peer hub's row is never re-labelled from this journal.
+    assert_eq!(
+        with_auto_title(json!({"label":"Renamed","autoTitle":{"title":"Auto"}}))["label"],
+        "Renamed"
+    );
+    assert_eq!(
+        with_auto_title(json!({"hub":"peer","autoTitle":{"title":"Auto"}})).get("label"),
+        None
+    );
+}

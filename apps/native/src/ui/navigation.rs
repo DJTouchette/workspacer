@@ -145,6 +145,13 @@ impl Workspace {
         {
             self.request(wks_native::features::Request::ChildAccess { set: None }, cx);
         }
+        if screen == Screen::Settings {
+            if !self.extras.title_harness_seeded {
+                self.extras.title_harness_seeded = true;
+                self.extras.title_harness = self.settings.default_provider.id();
+            }
+            self.load_titles(cx);
+        }
         // An outcome belongs to the screen it happened on; a pending
         // keep-on-device offer stays until it is answered.
         if self.projects.fallback.is_none() {

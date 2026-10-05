@@ -15,6 +15,7 @@ const autoTitle = vi.hoisted(
   () =>
     ({ enabled: true, model: 'haiku' }) as {
       enabled?: boolean;
+      provider?: string;
       model?: string;
       models?: Record<string, string>;
     },
@@ -47,6 +48,7 @@ beforeEach(() => {
   autoTitle.enabled = true;
   autoTitle.model = 'haiku';
   autoTitle.models = undefined;
+  autoTitle.provider = undefined;
 });
 
 describe('titleModelFor', () => {
@@ -159,11 +161,46 @@ describe('agents.autoTitle.models — a title model per harness', () => {
     expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex', model: null });
   });
 
-  it('a wrong-harness id typed into the map is still caught by the adapter backstop', async () => {
+  it('passes an explicit per-harness choice exactly, never a substitute', async () => {
     // The map is user-written, so someone can put a claude alias in the codex
-    // row. resolveCompletionModel is the second layer that stops it.
+    // row. That choice is sent as-is; `complete` refuses what codex cannot
+    // serve and the agent falls back to its own first line.
     autoTitle.models = { codex: 'sonnet' };
-    await generateAgentTitle({ ...EXCHANGE, provider: 'codex' });
+    complete.mockResolvedValue({ ok: false, reason: 'unsupported-model', message: 'no' });
+    const title = await generateAgentTitle({ ...EXCHANGE, provider: 'codex' });
+    expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex', model: 'sonnet' });
+    expect(title).toBe('fix the flaky sidebar resize test');
+    expect(titleModelFor('codex', 'sonnet', true)).toBe('sonnet');
+  });
+});
+
+/**
+ * `agents.autoTitle.provider` pins one harness for every title — the same field
+ * and resolution as the hub's titler, so native and desktop agree.
+ */
+describe('agents.autoTitle.provider — a fixed title harness', () => {
+  it('titles a claude agent through the pinned harness with that harness’s model', async () => {
+    autoTitle.provider = 'codex';
+    autoTitle.models = { codex: 'gpt-5.4-mini', claude: 'sonnet' };
+    await generateAgentTitle({ ...EXCHANGE, provider: 'claude' });
+    expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex', model: 'gpt-5.4-mini' });
+  });
+
+  it('a pinned harness with no entry uses its own default, not the claude alias', async () => {
+    autoTitle.provider = 'codex';
+    await generateAgentTitle({ ...EXCHANGE, provider: 'claude' });
     expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex', model: null });
+  });
+
+  it('blank means the agent’s own harness', async () => {
+    autoTitle.provider = '  ';
+    await generateAgentTitle({ ...EXCHANGE, provider: 'codex' });
+    expect(complete.mock.calls[0][0]).toMatchObject({ provider: 'codex' });
+  });
+
+  it('an unknown pinned harness falls back without calling out', async () => {
+    autoTitle.provider = 'nonesuch';
+    expect(await generateAgentTitle(EXCHANGE)).toBe('fix the flaky sidebar resize test');
+    expect(complete).not.toHaveBeenCalled();
   });
 });

@@ -18,13 +18,48 @@ fn title_contract_preserves_provider_defaults_and_fallback() {
         text::fallback("# Repair login\nfollow-up"),
         Some("Repair login".into())
     );
+    let target = |config: &Value, agent: &str| {
+        let t = text::title_target(config, agent);
+        (t.provider, t.model, t.explicit)
+    };
     let config = json!({"agents":{"autoTitle":{"model":"haiku","models":{"codex":"gpt-5.4-mini","claude":"gpt-5"}}}});
+    // Default: the agent's own harness and that harness's own row.
     assert_eq!(
-        text::title_model(&config, "codex"),
-        Some("gpt-5.4-mini".into())
+        target(&config, "codex"),
+        ("codex".into(), Some("gpt-5.4-mini".into()), true)
     );
-    assert_eq!(text::title_model(&config, "claude"), Some("haiku".into()));
-    assert_eq!(text::title_model(&config, "opencode"), None);
+    // An explicit per-harness choice is passed exactly, never swapped for a
+    // "servable" one; the CLI's rejection is recorded instead.
+    assert_eq!(
+        target(&config, "claude"),
+        ("claude".into(), Some("gpt-5".into()), true)
+    );
+    // The legacy single field is only honoured where it can mean something.
+    assert_eq!(
+        target(&config, "opencode"),
+        ("opencode".into(), None, false)
+    );
+    let legacy = json!({"agents":{"autoTitle":{"model":"haiku"}}});
+    assert_eq!(
+        target(&legacy, "claude"),
+        ("claude".into(), Some("haiku".into()), false)
+    );
+    assert_eq!(target(&legacy, "codex"), ("codex".into(), None, false));
+    assert_eq!(
+        target(&json!({}), "claude"),
+        ("claude".into(), Some("haiku".into()), false)
+    );
+    // A fixed title harness overrides the agent's, with that harness's model.
+    let fixed = json!({"agents":{"autoTitle":{"provider":"codex","model":"haiku","models":{"codex":"gpt-5.4-mini","claude":"sonnet"}}}});
+    assert_eq!(
+        target(&fixed, "claude"),
+        ("codex".into(), Some("gpt-5.4-mini".into()), true)
+    );
+    let blank = json!({"agents":{"autoTitle":{"provider":"  ","models":{"claude":"sonnet"}}}});
+    assert_eq!(
+        target(&blank, "claude"),
+        ("claude".into(), Some("sonnet".into()), true)
+    );
     assert!(text::prompt(&"😀".repeat(2000), "").encode_utf16().count() < 1500);
 }
 #[test]
@@ -254,9 +289,16 @@ async fn direct_completion_uses_owned_stdin_and_never_interprets_model_or_prompt
         json!({"agents":{"binaries":{"codex":binary},"autoTitle":{"models":{"codex":malicious}}}});
     let prompt = format!("Title this: $(touch {})\nquotes \" ' & |", marker.display());
     assert_eq!(
-        completion::title("codex", &config, root.path(), None, &prompt)
-            .await
-            .unwrap(),
+        completion::title(
+            "codex",
+            text::title_target(&config, "codex").model.as_deref(),
+            &config,
+            root.path(),
+            None,
+            &prompt
+        )
+        .await
+        .unwrap(),
         "Repair cache"
     );
     assert_eq!(std::fs::read_to_string(input).unwrap(), prompt);
@@ -319,4 +361,131 @@ fn windows_shim_resolution_uses_declared_package_without_shell_or_path_escape() 
     )
     .unwrap();
     assert!(tools::launcher("codex", &shim).is_err());
+}
+
+/// Records every call and answers from a script, so title routing can be
+/// pinned without a provider binary or a paid model call.
+struct FakeTitles {
+    calls: Mutex<Vec<(String, Option<String>, String)>>,
+    answer: completion::Outcome<String>,
+}
+impl Generate for FakeTitles {
+    fn generate<'a>(
+        &'a self,
+        provider: &'a str,
+        model: Option<&'a str>,
+        _config: &'a Value,
+        prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = completion::Outcome<String>> + Send + 'a>>
+    {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((provider.into(), model.map(str::to_owned), prompt.into()));
+        let answer = self.answer.clone();
+        Box::pin(async move { answer })
+    }
+}
+fn titled(
+    config: Value,
+    answer: completion::Outcome<String>,
+) -> (tempfile::TempDir, Arc<Service>, Arc<FakeTitles>) {
+    let root = tempfile::tempdir().unwrap();
+    let store = Arc::new(Config::open(root.path().join("config.yaml")));
+    store.save(config, true).unwrap();
+    let fake = Arc::new(FakeTitles {
+        calls: Mutex::new(Vec::new()),
+        answer,
+    });
+    let service = Service::with_generator(store, root.path().into(), None, fake.clone());
+    (root, service, fake)
+}
+#[tokio::test]
+async fn suggest_routes_the_configured_harness_and_exact_model() {
+    let (_root, service, fake) = titled(
+        json!({"agents":{"autoTitle":{"provider":"codex","models":{"codex":"gpt-5.4-mini"}}}}),
+        Ok("Title: Fix the login redirect.".into()),
+    );
+    let outcome = service
+        .suggest(
+            "claude",
+            "fix the login redirect please",
+            "Looking at it",
+            true,
+        )
+        .await;
+    assert_eq!(outcome.title.as_deref(), Some("Fix the login redirect"));
+    assert_eq!(outcome.source, "model");
+    assert_eq!(
+        (outcome.provider.as_str(), outcome.model.as_deref()),
+        ("codex", Some("gpt-5.4-mini"))
+    );
+    let calls = fake.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "codex");
+    assert_eq!(calls[0].1.as_deref(), Some("gpt-5.4-mini"));
+    assert!(calls[0].2.contains("User: fix the login redirect please"));
+    assert!(calls[0].2.contains("Assistant: Looking at it"));
+}
+#[tokio::test]
+async fn suggest_failure_is_a_labelled_fallback_never_a_model_title() {
+    for (failure, reason) in [
+        (text::Failure::Missing, "missing"),
+        (text::Failure::Unsupported, "unsupported"),
+        (text::Failure::Authentication, "unauthenticated"),
+        (text::Failure::Timeout, "timeout"),
+    ] {
+        let (_root, service, fake) = titled(
+            json!({"agents":{"autoTitle":{"models":{"claude":"claude-opus-5-5"}}}}),
+            Err(failure),
+        );
+        let outcome = service
+            .suggest("claude", "# Repair the cache\nmore detail", "", true)
+            .await;
+        assert_eq!(outcome.source, "fallback");
+        assert_eq!(outcome.reason, Some(reason));
+        assert_eq!(outcome.title.as_deref(), Some("Repair the cache"));
+        assert_eq!(outcome.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(fake.calls.lock().unwrap().len(), 1);
+    }
+    // A model that answers with prose or a refusal is not a title either.
+    let (_root, service, _) = titled(json!({}), Ok("Sorry, I can't help with that".into()));
+    let outcome = service.suggest("claude", "do the thing", "", true).await;
+    assert_eq!(
+        (outcome.source, outcome.reason),
+        ("fallback", Some("empty"))
+    );
+    // Nothing to title from: no call at all.
+    let (_root, service, fake) = titled(json!({}), Ok("unused".into()));
+    let outcome = service.suggest("claude", "   ", "", true).await;
+    assert_eq!((outcome.title, outcome.source), (None, "none"));
+    assert!(fake.calls.lock().unwrap().is_empty());
+}
+#[tokio::test]
+async fn legacy_title_rpc_honours_the_fixed_harness_and_the_off_switch() {
+    let (_root, service, fake) = titled(
+        json!({"agents":{"autoTitle":{"provider":"codex","models":{"codex":"gpt-5.4-mini"}}}}),
+        Ok("Repair the cache".into()),
+    );
+    assert_eq!(
+        service
+            .title(&json!({"userMessage":"fix cache","provider":"claude"}))
+            .await
+            .unwrap(),
+        "Repair the cache"
+    );
+    assert_eq!(fake.calls.lock().unwrap()[0].0, "codex");
+    service
+        .config
+        .save(json!({"agents":{"autoTitle":{"enabled":false}}}), true)
+        .unwrap();
+    assert!(!service.titles_enabled());
+    assert_eq!(
+        service
+            .title(&json!({"userMessage":"fix cache","provider":"claude"}))
+            .await
+            .unwrap(),
+        Value::Null
+    );
+    assert_eq!(fake.calls.lock().unwrap().len(), 1);
 }

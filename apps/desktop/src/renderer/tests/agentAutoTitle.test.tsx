@@ -241,3 +241,45 @@ describe('useAgentAutoTitle', () => {
     }
   });
 });
+
+describe('host-owned title adoption', () => {
+  it.each(['pending', 'titled', 'fallback', 'skipped'])(
+    'never requests a second title for %s host work',
+    (state) => {
+      const snapshotBySession = snap(EXCHANGE);
+      snapshotBySession.s1.autoTitle = {
+        state,
+        ...(state === 'titled' && { title: 'Host result' }),
+      };
+      expect(agentsAwaitingTitle([agent()], snapshotBySession)).toEqual([]);
+      const suggest = vi.fn();
+      (window.electronAPI as any).agentSuggestTitle = suggest;
+      const onTitle = vi.fn();
+      renderHook(() =>
+        useAgentAutoTitle({ agents: [agent()], snapshotBySession, enabled: true, onTitle }),
+      );
+      expect(suggest).not.toHaveBeenCalled();
+      if (state === 'pending') expect(onTitle).not.toHaveBeenCalled();
+      else
+        expect(onTitle).toHaveBeenCalledWith('agent-s1', state === 'titled' ? 'Host result' : null);
+    },
+  );
+  it('adopts the published title while disabled but preserves a manual name', () => {
+    const snapshotBySession = snap(EXCHANGE);
+    snapshotBySession.s1.autoTitle = { state: 'titled', title: 'Host result' };
+    const onTitle = vi.fn();
+    const { rerender } = renderHook(
+      ({ named }) =>
+        useAgentAutoTitle({
+          agents: [agent({ nameSetByUser: named })],
+          snapshotBySession,
+          enabled: false,
+          onTitle,
+        }),
+      { initialProps: { named: true } },
+    );
+    expect(onTitle).not.toHaveBeenCalled();
+    rerender({ named: false });
+    expect(onTitle).toHaveBeenCalledWith('agent-s1', 'Host result');
+  });
+});

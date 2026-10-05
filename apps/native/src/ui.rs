@@ -18,6 +18,7 @@ mod smooth_scroll;
 mod states;
 mod syntax;
 mod terminal;
+mod titles;
 mod tools;
 mod transcript;
 mod typography;
@@ -1098,6 +1099,12 @@ impl Workspace {
             self.sync_models(window, cx);
             if reconnected {
                 self.load_models(true, cx);
+            }
+        }
+        if self.screen == Screen::Settings && !self.new_session {
+            self.sync_title_picker(window, cx);
+            if reconnected {
+                self.load_titles(cx);
             }
         }
         // Project names and icons appear beside every session, so the shared
@@ -4353,6 +4360,136 @@ mod tests {
         });
     }
 
+    /// Settings → Agents shows the hub's automatic-title settings as read,
+    /// changes one field per action, offers the edited harness's live
+    /// catalog (plus a configured ID it does not list, never substituted), and
+    /// keeps the last confirmed state when the hub refuses a change.
+    #[gpui::test]
+    fn automatic_titles_are_hub_settings_with_provider_and_catalog_model(cx: &mut TestAppContext) {
+        use wks_native::features::{Request, RequestState, TitleChange};
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.settings.default_provider = wks_native::navigation::Provider::Codex;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_screen(Screen::Settings, window, cx);
+                this.settings_section = settings::SettingsSection::Agents;
+            })
+        });
+        let opened: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(
+            opened
+                .iter()
+                .any(|c| matches!(c, Command::Request(Request::Titles { set: None })))
+        );
+        // The default agent's harness is edited first, with its own catalog.
+        assert!(opened.iter().any(|c| matches!(c, Command::LoadModels { key, .. } if key.provider == "codex" && key.cwd.is_empty())));
+        visual.simulate_resize(size(px(1000.), px(1900.)));
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("setting-auto-title").is_some());
+        assert!(visual.debug_bounds("setting-title-model").is_some());
+        let titles = |number, value: serde_json::Value, error: Option<&str>| {
+            let mut next = state("a");
+            next.catalog = wks_native::launch::Catalog {
+                key: CatalogKey {
+                    provider: "codex".into(),
+                    cwd: String::new(),
+                },
+                models: vec![ModelChoice {
+                    id: "gpt-5.4-mini".into(),
+                    label: "GPT-5.4 Mini".into(),
+                    is_default: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            next.requests.insert(
+                "titles",
+                RequestState {
+                    number,
+                    request: Request::Titles { set: None },
+                    loading: false,
+                    value: Arc::new(value),
+                    error: error.map(str::to_owned),
+                },
+            );
+            Arc::new(next)
+        };
+        let read = serde_json::json!({"enabled":true,"provider":"","models":{"codex":"gpt-legacy-pinned"},"legacyModel":"haiku"});
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(titles(1, read.clone(), None), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.extras.titles.as_ref(), Some(&read));
+            assert_eq!(this.title_harness(), "codex");
+            let picker = this.extras.title_picker.read(cx);
+            // The configured ID is shown as chosen even though the catalog
+            // does not list it — never silently swapped for the default.
+            assert_eq!(
+                picker.selected_value().map(String::as_str),
+                Some("gpt-legacy-pinned")
+            );
+        });
+        // Pin titles to Codex: one field, verified by the hub.
+        let pin = visual.debug_bounds("title-provider-2").unwrap();
+        visual.simulate_click(pin.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(sent.iter().any(|c| matches!(c, Command::Request(Request::Titles { set: Some(TitleChange::Provider(p)) }) if p == "codex")));
+        // Choose the catalog model from the dropdown.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.extras
+                    .title_picker
+                    .update(cx, |picker, cx| picker.focus(window, cx));
+            })
+        });
+        // The menu opens on the configured row (listed last); one row up is
+        // the catalog model.
+        visual.simulate_keystrokes("enter up enter");
+        visual.run_until_parked();
+        let picked = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(Request::Titles { set: Some(change) }) => Some(change),
+            _ => None,
+        });
+        assert_eq!(
+            picked,
+            Some(TitleChange::Model {
+                provider: "codex".into(),
+                model: "gpt-5.4-mini".into()
+            })
+        );
+        // The switch turns titles off on the hub.
+        let switch = visual.debug_bounds("auto-title-switch").unwrap();
+        visual.simulate_click(
+            gpui::point(switch.left() + px(12.), switch.center().y),
+            gpui::Modifiers::none(),
+        );
+        visual.run_until_parked();
+        let off = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(Request::Titles { set: Some(change) }) => Some(change),
+            _ => None,
+        });
+        assert_eq!(off, Some(TitleChange::Enabled(false)));
+        // A refused change keeps the last confirmed settings and says why.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(
+                    titles(2, serde_json::Value::Null, Some("config busy")),
+                    window,
+                    cx,
+                );
+                assert_eq!(this.extras.titles.as_ref(), Some(&read));
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("title-status").is_some());
+    }
+
     #[gpui::test]
     fn settings_categories_and_search_filter_preferences(cx: &mut TestAppContext) {
         let (workspace, mut visual, _, _updates) = fixture(cx);
@@ -6101,6 +6238,35 @@ mod tests {
             assert_eq!(saved.map(String::as_str), Some("Release prep"));
             assert_eq!(this.extras.notice, "Name saved");
             assert_eq!(this.screen, Screen::Session, "saving keeps the page open");
+        });
+    }
+
+    /// A name the user saved for a session outranks the hub's automatic
+    /// title, including one that lands later (a late result never wins).
+    #[gpui::test]
+    fn a_saved_name_outranks_a_late_hub_title(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut untitled = state("a");
+                Arc::make_mut(&mut untitled.sessions)[0].label = String::new();
+                this.update_view(Arc::new(untitled), window, cx);
+                this.settings
+                    .names
+                    .entry(this.project_scope.clone())
+                    .or_default()
+                    .insert("a".into(), "Release prep".into());
+                // The hub's title arrives after the rename.
+                let mut titled = state("a");
+                Arc::make_mut(&mut titled.sessions)[0].label = "Fix login redirect".into();
+                this.update_view(Arc::new(titled), window, cx);
+                let session = this.selected_session().unwrap().clone();
+                assert_eq!(session.label, "Fix login redirect");
+                assert_eq!(this.session_title(&session), "Release prep");
+                // Clearing the saved name shows the hub's title.
+                this.settings.names.clear();
+                assert_eq!(this.session_title(&session), "Fix login redirect");
+            })
         });
     }
 

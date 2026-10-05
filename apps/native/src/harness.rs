@@ -69,9 +69,35 @@ pub async fn serve_feedback_fixture(
             let mut written: BTreeMap<String, String> = BTreeMap::new();
             // Fixture shells: id → (cwd, typed line). They only echo.
             let mut shells: BTreeMap<String, (String, String, Vec<u8>)> = BTreeMap::new();
-            let mut config = json!({"projects":{},"agents":{"childFullAccess":false}});
+            let mut config = json!({"projects":{},"agents":{"childFullAccess":false,"autoTitle":{"enabled":true,"model":"haiku"}}});
+            // Sessions started through `agents.spawn`, and fixture events due
+            // later (a reply finishing, the hub's title landing).
+            let mut spawned: Vec<Value> = Vec::new();
+            let mut openings: BTreeMap<String, String> = BTreeMap::new();
+            let mut due: Vec<(tokio::time::Instant, String, Value)> = Vec::new();
+            let mut clock = tokio::time::interval(std::time::Duration::from_millis(100));
+            clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tokio::select! {
+                    _ = clock.tick(), if !due.is_empty() => {
+                        let now = tokio::time::Instant::now();
+                        let (ready, later): (Vec<_>, Vec<_>) = due.drain(..).partition(|(at, _, _)| *at <= now);
+                        due = later;
+                        for (_, id, patch) in ready {
+                            let Some(row) = spawned.iter_mut().find(|row| row["sessionId"] == id.as_str()) else { continue };
+                            for (key, value) in patch.as_object().into_iter().flatten() { row[key] = value.clone(); }
+                            // The fixture hub's titler: one name after the first
+                            // answer, never over a launch label, with the
+                            // configured harness/model recorded truthfully.
+                            if row["mode"] == "input" && row["autoTitle"]["state"] == "pending" && config["agents"]["autoTitle"]["enabled"] != false {
+                                let (title, record) = fixture_title(&config, row, openings.get(&id).map(String::as_str).unwrap_or_default());
+                                if !title.is_empty() { row["label"] = json!(title); }
+                                row["autoTitle"] = record;
+                            }
+                            let row = row.clone();
+                            if socket.send(event("agent.snapshot", row)).await.is_err() { return; }
+                        }
+                    }
                     _ = tick.tick(), if streaming => {
                         let fragment = " Streaming native text.";
                         seq += 1;
@@ -112,7 +138,30 @@ pub async fn serve_feedback_fixture(
                                     "config.save" => {
                                         if let Some(projects) = frame["params"].get("projects") { config["projects"] = projects.clone(); }
                                         if let Some(enabled) = frame["params"].pointer("/agents/childFullAccess") { config["agents"]["childFullAccess"] = enabled.clone(); }
+                                        if let Some(auto) = frame["params"].pointer("/agents/autoTitle").and_then(Value::as_object) {
+                                            for (key, value) in auto {
+                                                if key == "models" {
+                                                    for (provider, model) in value.as_object().into_iter().flatten() { config["agents"]["autoTitle"]["models"][provider] = model.clone(); }
+                                                } else { config["agents"]["autoTitle"][key] = value.clone(); }
+                                            }
+                                        }
                                         config.clone()
+                                    }
+                                    "agents.spawn" => {
+                                        let params = &frame["params"];
+                                        let id = format!("fixture-spawn-{}", spawned.len() + 1);
+                                        let message = params["message"].as_str().unwrap_or_default().to_owned();
+                                        let mut row = json!({"sessionId":id,"provider":params["provider"],"cwd":params["cwd"],"model":params["model"].as_str().unwrap_or("sonnet"),"transport":"stream","mode":"responding"});
+                                        if let Some(label) = params["label"].as_str().filter(|l| !l.trim().is_empty()) { row["label"] = json!(label); }
+                                        else if params["autoTitle"] == true { row["autoTitle"] = json!({"state":"pending"}); }
+                                        let reply = "I traced the redirect to the session cookie check and will patch the guard.";
+                                        let opening = vec![json!({"kind":"user_message","text":message}), json!({"kind":"assistant_text","text":reply})];
+                                        history.insert(id.clone(), (opening, 2));
+                                        openings.insert(id.clone(), message.clone());
+                                        spawned.push(row.clone());
+                                        if socket.send(event("agent.snapshot", row)).await.is_err() { return; }
+                                        due.push((tokio::time::Instant::now() + std::time::Duration::from_millis(1200), id.clone(), json!({"mode":"input"})));
+                                        json!({"sessionId":id,"messageQueued":!message.is_empty()})
                                     }
                                     "claude.listModels" => json!({"aliases":[{"model":"sonnet"},{"model":"sonnet[1m]"},{"model":"opus"},{"model":"opus[1m]"},{"model":"haiku"}]}),
                                     "providers.listModels" => json!([
@@ -123,10 +172,14 @@ pub async fn serve_feedback_fixture(
                                     "desktop.downloadProjectIcon" => json!({"ok":true,"file":"fixture-project-icon.png"}),
                                     "files.upload" => json!({"path":format!("/fixture/uploads/{}",frame["params"]["name"].as_str().unwrap_or("image.png"))}),
                                     "fs.listDir" => json!({"path":frame["params"]["path"],"dirs":["src","docs"]}),
-                                    "sessions.recent" => json!([
-                                        {"sessionId":"demo-0000","provider":"claude","name":"Native client experiment","cwd":"/workspaces/project-0","mode":"input","transport":"stream"},
-                                        {"sessionId":"past-session","provider":"codex","name":"Yesterday’s investigation","cwd":"/workspaces/project-1","mode":"stopped","transport":"stream"}
-                                    ]),
+                                    "sessions.recent" => {
+                                        let mut rows = vec![
+                                            json!({"sessionId":"demo-0000","provider":"claude","name":"Native client experiment","cwd":"/workspaces/project-0","mode":"input","transport":"stream"}),
+                                            json!({"sessionId":"past-session","provider":"codex","name":"Yesterday’s investigation","cwd":"/workspaces/project-1","mode":"stopped","transport":"stream"}),
+                                        ];
+                                        rows.extend(spawned.iter().map(|row| json!({"sessionId":row["sessionId"],"provider":row["provider"],"name":row["label"].as_str().unwrap_or(""),"cwd":row["cwd"],"mode":row["mode"],"transport":"stream"})));
+                                        Value::Array(rows)
+                                    }
                                     "fs.readImage" => preview_image(),
                                     "fs.read" => {
                                         let path = frame["params"]["path"].as_str().unwrap_or_default();
@@ -196,7 +249,7 @@ pub async fn serve_feedback_fixture(
                                             snapshot["mode"] = json!("question");
                                         }
                                         snapshot
-                                    }).collect()),
+                                    }).chain(spawned.iter().cloned()).collect()),
                                     "sessions.subagentConversation" if rich => rich_subagent_conversation(id, frame["params"]["agentId"].as_str().unwrap_or_default()),
                                     "sessions.conversation" => {
                                         let limit = frame["params"]["limit"].as_u64().map(|l| l as usize);
@@ -243,6 +296,41 @@ pub async fn serve_feedback_fixture(
             }
         });
     }
+}
+
+/// The fixture hub's stand-in titler: deterministic, no model call. Names the
+/// session from the first words of its opening request and records which
+/// harness and model the hub's config would have used.
+fn fixture_title(config: &Value, row: &Value, request: &str) -> (String, Value) {
+    let auto = &config["agents"]["autoTitle"];
+    let provider = auto["provider"]
+        .as_str()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or(row["provider"].as_str().unwrap_or("claude"))
+        .to_owned();
+    let model = auto["models"][provider.as_str()]
+        .as_str()
+        .filter(|m| !m.is_empty())
+        .map(str::to_owned)
+        .or_else(|| (provider == "claude").then(|| "haiku".into()));
+    let words: Vec<&str> = request
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .skip_while(|w| w.eq_ignore_ascii_case("please"))
+        .take(5)
+        .collect();
+    let mut title = words.join(" ");
+    if let Some(first) = title.get(..1) {
+        title = first.to_uppercase() + &title[1..];
+    }
+    let record = if title.is_empty() {
+        json!({"state":"skipped","source":"none","provider":provider,"model":model,"reason":"empty"})
+    } else {
+        json!({"state":"titled","title":title,"source":"model","provider":provider,"model":model})
+    };
+    (title, record)
 }
 
 fn base64_bytes(bytes: &[u8]) -> String {

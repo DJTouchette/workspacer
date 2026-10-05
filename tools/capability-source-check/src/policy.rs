@@ -280,8 +280,8 @@ pub fn check_spawn_keys(
         return vec!["spawn key contract lacks keys".into()];
     };
     let keys: BTreeSet<_> = rows.iter().filter_map(serde_json::Value::as_str).collect();
-    if rows.len() != 51 || keys.len() != 51 {
-        errors.push("spawn key registry must contain exactly51 unique reviewed keys".into());
+    if rows.len() != 52 || keys.len() != 52 {
+        errors.push("spawn key registry must contain exactly52 unique reviewed keys".into());
     }
     if keys.iter().any(|key| {
         !key.as_bytes().first().is_some_and(u8::is_ascii_lowercase)

@@ -87,6 +87,35 @@ export function resolveTitleModel(provider: AgentProvider): string | undefined {
 }
 
 /**
+ * Which harness writes an agent's title, and whether its model was chosen FOR
+ * that harness (`autoTitle.models[provider]`).
+ *
+ * `agents.autoTitle.provider` pins one harness for every title; blank (the
+ * default) keeps the agent's own, as titling always has. The hub's titler
+ * (services/hub-rs provider_utilities `title_target`) resolves the same way, so
+ * a native client and the desktop name a session with the same model.
+ *
+ * `explicit` matters because an explicit per-harness choice is passed through
+ * exactly: if that CLI cannot serve it the call fails and the agent falls back
+ * to its own first line, rather than being titled by a model nobody picked.
+ */
+export function resolveTitleTarget(agentProvider: AgentProvider): {
+  provider: AgentProvider;
+  model: string | undefined;
+  explicit: boolean;
+} {
+  const auto = configService.getConfig().agents?.autoTitle as
+    { provider?: string; models?: Record<string, string> } | undefined;
+  const pinned = typeof auto?.provider === 'string' ? auto.provider.trim() : '';
+  const provider = (pinned || agentProvider) as AgentProvider;
+  const chosen = auto?.models?.[provider];
+  if (typeof chosen === 'string' && chosen.trim()) {
+    return { provider, model: chosen.trim(), explicit: true };
+  }
+  return { provider, model: resolveTitleModel(provider), explicit: false };
+}
+
+/**
  * Reasoning EFFORT for an internal role, per harness
  * (`agents.managerEfforts`).
  *

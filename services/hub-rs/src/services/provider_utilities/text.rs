@@ -106,21 +106,56 @@ pub fn serves(provider: &str, model: &str) -> bool {
         _ => false,
     }
 }
-pub fn title_model(config: &Value, provider: &str) -> Option<String> {
-    let chosen = config["agents"]["autoTitle"]["models"][provider]
+/// Providers with a one-shot title adapter (see `completion::title`).
+pub const TITLE_PROVIDERS: &[&str] = &["claude", "codex", "opencode", "copilot", "pi"];
+
+/// Which harness writes a title, and with which model.
+///
+/// `agents.autoTitle.provider` names a fixed harness; blank (the default) is
+/// the titled agent's own provider, which is what Electron has always done.
+/// The model is `autoTitle.models[harness]` — an explicit per-harness choice
+/// that is passed EXACTLY, never swapped for another: if the CLI rejects it the
+/// call fails and the caller records that, rather than a title quietly written
+/// by a model nobody picked. Only the legacy single `autoTitle.model` (default
+/// `haiku`, a Claude alias) is filtered by [`serves`], because it predates
+/// multi-provider titling and is not a choice made for this harness.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitleTarget {
+    pub provider: String,
+    pub model: Option<String>,
+    /// True when the model came from `autoTitle.models[provider]`.
+    pub explicit: bool,
+}
+pub fn title_target(config: &Value, agent_provider: &str) -> TitleTarget {
+    let auto = &config["agents"]["autoTitle"];
+    let provider = auto["provider"]
         .as_str()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            config["agents"]["autoTitle"]["model"]
-                .as_str()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-        });
-    chosen
-        .filter(|model| serves(provider, model))
+        .unwrap_or(agent_provider)
+        .to_owned();
+    let chosen = auto["models"][provider.as_str()]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(model) = chosen {
+        return TitleTarget {
+            provider,
+            model: Some(model.into()),
+            explicit: true,
+        };
+    }
+    let model = auto["model"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && serves(&provider, s))
         .map(str::to_owned)
-        .or_else(|| (provider == "claude").then(|| "haiku".into()))
+        .or_else(|| (provider == "claude").then(|| "haiku".into()));
+    TitleTarget {
+        provider,
+        model,
+        explicit: false,
+    }
 }
 pub fn strip_ansi(raw: &str) -> String {
     static ANSI: OnceLock<regex::Regex> = OnceLock::new();
@@ -177,6 +212,19 @@ impl Failure {
             Self::Timeout => "timeout",
             Self::Network => "network-error",
             Self::Empty | Self::Error => "error",
+        }
+    }
+    /// Why a title call produced no model title, as recorded on the session.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Unsupported => "unsupported",
+            Self::Missing => "missing",
+            Self::Authentication => "unauthenticated",
+            Self::Limited => "limited",
+            Self::Timeout => "timeout",
+            Self::Network => "network-error",
+            Self::Empty => "empty",
+            Self::Error => "error",
         }
     }
 }

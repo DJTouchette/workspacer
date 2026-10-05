@@ -3,6 +3,7 @@
   "description": "Authoritative top-level spawn key spellings for the Rust bus gate. This registry rejects case aliases; it does not accept operations or grant authority. Historical Go snapshot remains unchanged.",
   "keys": [
     "afterDispatchId",
+    "autoTitle",
     "capability",
     "cols",
     "contextWindow",
@@ -59,7 +60,8 @@
     "op": "Conservative source closure includes the shared workflow normalizer operation read behind historical_reads=false; this reservation grants no operation.",
     "projectCwd": "The launch coordinator removes this caller key and derives project identity itself.",
     "targetHub": "The local launch coordinator refuses this selector without its complete remote admission adapter.",
-    "workflowReservationToken": "The launch coordinator removes this caller key and mints its own workflow admission token."
+    "workflowReservationToken": "The launch coordinator removes this caller key and mints its own workflow admission token.",
+    "autoTitle": "Native launch opt-in to hub-owned automatic naming of an unlabelled session; boolean only, grants no authority, and a launch label always wins."
   },
   "vocabulary": {
     "blocks": {
@@ -108,6 +110,12 @@
       "key": "workflowReservationToken",
       "alias": "WORKFLOWRESERVATIONTOKEN",
       "why": "The launch coordinator removes this caller key and mints its own workflow admission token."
+    },
+    {
+      "name": "autoTitle canonical spelling",
+      "key": "autoTitle",
+      "alias": "AUTOTITLE",
+      "why": "Native launch opt-in to hub-owned automatic naming of an unlabelled session; boolean only, grants no authority, and a launch label always wins."
     }
   ]
 }

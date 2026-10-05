@@ -294,14 +294,23 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
   // ONE harness the way the manager is — every agent is titled by its own —
   // so this selects a row to edit rather than choosing a backend, and all of
   // them stay live at once in `autoTitle.models`.
+  // `autoTitle.provider` pins one harness for every title ('' = each agent's
+  // own). Native Settings writes the same field; main and the hub both honour it.
+  const pinnedTitleProvider = (config.agents?.autoTitle?.provider ?? '').trim() as
+    AgentProvider | '';
   const [titleHarness, setTitleHarness] = useState<AgentProvider>(
-    config.agents?.defaultProvider ?? 'claude',
+    pinnedTitleProvider || (config.agents?.defaultProvider ?? 'claude'),
   );
   const autoTitle = config.agents?.autoTitle;
+  const setTitleProvider = (value: AgentProvider | '') => {
+    if (value) setTitleHarness(value);
+    save({ agents: { ...config.agents, autoTitle: { ...autoTitle, provider: value } } });
+  };
   // Keep any harness that already has a saved title model, so a configured
   // value stays visible (and editable) even after its CLI goes away.
   const visibleTitleProviders = visibleProviderOptions(TITLE_PROVIDERS, detectionOrNull, [
     titleHarness,
+    ...(pinnedTitleProvider ? [pinnedTitleProvider] : []),
     ...Object.keys(config.agents?.autoTitle?.models ?? {}),
   ]);
   // Keep-warm's buttons are the intersection of what keep-warm supports
@@ -479,6 +488,23 @@ const SessionSection: React.FC<SessionSectionProps> = ({ config, save }) => {
         the agent falls back to the first line of what you asked.
       </div>
 
+      <Row label="Title with">
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          <ModeButton
+            label="Agent’s own"
+            active={!pinnedTitleProvider}
+            onClick={() => setTitleProvider('')}
+          />
+          {visibleTitleProviders.map((p) => (
+            <ModeButton
+              key={p.value}
+              label={p.missing ? `${p.label}${NOT_INSTALLED_SUFFIX}` : p.label}
+              active={pinnedTitleProvider === p.value}
+              onClick={() => setTitleProvider(p.value)}
+            />
+          ))}
+        </div>
+      </Row>
       <Row label="Title model for">
         <div style={{ display: 'flex', gap: 4 }}>
           {visibleTitleProviders.map((p) => (

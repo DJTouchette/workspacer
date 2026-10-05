@@ -10,6 +10,9 @@
  * ghost-session suppression claude needs); this file owns the prompt and what
  * counts as a title.
  *
+ * `config.agents.autoTitle.provider` can pin one harness for every title; blank
+ * (the default) keeps the agent's own.
+ *
  * The model comes from `config.agents.autoTitle` — a title is a two-token task,
  * so it is kept cheap and is deliberately NOT the agent's own model. Because
  * every agent is titled by its OWN harness, that setting is a per-harness map
@@ -27,7 +30,7 @@
  */
 import type { AgentProvider } from './agentProviders';
 import { complete, resolveCompletionModel, completionSupported } from './directCompletion';
-import { resolveTitleModel } from '../lib/roleModels';
+import { resolveTitleTarget } from '../lib/roleModels';
 import { configService } from './configService';
 import { cleanTitle } from './sessionTitles';
 
@@ -145,21 +148,29 @@ export interface TitleRequest {
 /**
  * The model to title with, for THIS provider.
  *
- * Two layers, and both are load-bearing. `configured` has already been resolved
- * per-harness by [`resolveTitleModel`] — `autoTitle.models[provider]` first, the
- * legacy single field only when this harness can serve it — so on a configured
- * fleet it is already this provider's own id and passes straight through.
+ * `configured` has already been resolved per-harness by [`resolveTitleTarget`]:
+ * `autoTitle.models[provider]` (`explicit`), else the legacy single field only
+ * when this harness can serve it.
  *
- * `resolveCompletionModel` stays underneath it as the backstop, because the map
- * is user-written: someone can type a codex id into the claude row, or keep a
- * model the CLI has since retired. That downgrade is logged rather than
- * swallowed — a title quietly written by a different model than the user
- * configured is the sort of thing worth being able to grep for.
+ * An explicit per-harness choice is returned exactly. If it is a codex id typed
+ * into the claude row, or a model the CLI has since retired, `complete` refuses
+ * it and the agent falls back to its own first line with the reason logged —
+ * never a title quietly written by a model the user did not pick. Only the
+ * legacy field still goes through `resolveCompletionModel`'s logged downgrade,
+ * because its `'haiku'` default was never a choice made for this harness.
  *
  * Exported for tests — this is the provider seam, so it is the part worth
  * pinning.
  */
-export function titleModelFor(provider: AgentProvider, configured?: string): string | null {
+export function titleModelFor(
+  provider: AgentProvider,
+  configured?: string,
+  explicit = false,
+): string | null {
+  // A model the user picked for this harness is never swapped for another:
+  // `complete` refuses one the harness cannot serve, and the agent falls back
+  // to its own first line with that reason logged.
+  if (explicit && configured?.trim()) return configured.trim();
   const { model, downgraded } = resolveCompletionModel(provider, configured);
   if (downgraded) {
     console.log(
@@ -183,7 +194,10 @@ export async function generateAgentTitle(req: TitleRequest): Promise<string | nu
   const userMessage = (req.userMessage ?? '').trim();
   if (!userMessage) return null;
 
-  const provider = req.provider ?? 'claude';
+  // `agents.autoTitle.provider` may pin one harness for every title; blank
+  // keeps the agent's own (see lib/roleModels `resolveTitleTarget`).
+  const target = resolveTitleTarget(req.provider ?? 'claude');
+  const provider = target.provider;
   const fallback = cleanTitle(userMessage) ?? null;
   const degraded = () => fallback && clipWords(fallback, MAX_TITLE_CHARS * 2);
 
@@ -196,9 +210,9 @@ export async function generateAgentTitle(req: TitleRequest): Promise<string | nu
   const res = await complete({
     provider,
     prompt: buildTitlePrompt(userMessage, req.assistantReply),
-    // Per-harness first (autoTitle.models[provider]), then the legacy single
-    // field when this harness can serve it, then the harness's own default.
-    model: titleModelFor(provider, resolveTitleModel(provider)),
+    // Per-harness first (autoTitle.models[provider], exactly), then the legacy
+    // single field when this harness can serve it, then the harness's default.
+    model: titleModelFor(provider, target.model, target.explicit),
     timeoutMs: TIMEOUT_MS,
     // A title is a handful of words; a model that writes an essay gets cut off
     // rather than being allowed to stream one back.

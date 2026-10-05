@@ -1402,3 +1402,98 @@ The full source findings, limits, logs and Windows gates are in
 This is ready for the parent's Windows CI run, **not a Windows release pass**.
 The six real Windows helper scenarios and NSIS locked-file smoke remain required.
 No production app/state, provider session, release or #25 work was changed.
+
+## Automatic session titles (#25, 2026-10-05)
+
+Native sessions started without a name are now named after their first
+exchange, like desktop agents, by the **owning hub**. Native sends
+`autoTitle: true` on `agents.spawn` only when no label was typed. hub-rs records
+`autoTitle: {state: pending, prompt}` in the launch journal
+(`spawn_plan::resolve`; the prompt stays private, never in snapshots). The
+sessions service offers each published row to a bounded titler
+(`services/sessions/titles.rs`, 4 at a time, waiting offers kept). At the first
+turn boundary with an assistant reply (or a stop), it calls the shared
+`provider_utilities` generator and commits the outcome only for that launch
+generation, only while still pending and unlabelled
+(`Lifecycle::note_auto_title`). Display precedence is launch label > the user's
+cwd rename > automatic title, both for snapshots (`snapshots::with_auto_title`)
+and `sessions.recent`. Native's device-saved names still win over all of these
+in this client. Resume carries the recorded title. Peer rows are never
+re-labelled: a remote session is titled by its own hub.
+
+Configuration is the existing shared `agents.autoTitle` plus one new field,
+`provider` ('' = each agent's own harness, the default). The model is
+`models[harness]`, used exactly: the hub no longer swaps an explicit choice for
+a "servable" one, and desktop's titler now does the same (`resolveTitleTarget`,
+`titleModelFor(…, explicit)`). A rejected or failed call records
+`state: fallback` with its `reason` and shows the first line of the request; it
+is never reported as a model title. Off leaves launches pending, so turning
+titles back on names them at the next turn boundary from the original request.
+Desktop Settings → Session gained the matching **Title with** row.
+
+Native Settings → Agents: **Name sessions automatically** (switch) and
+**Title model** (Agent's own / Claude / Codex, a "Model for" chip while
+unpinned, and a dropdown of that harness's live catalog with a configured ID it
+does not list shown, never substituted). Each change writes one field,
+verified on readback; a refused write keeps the last confirmed state.
+
+Tests (no paid model; fake CLIs and fake generator):
+- hub-rs `tests/auto_titles.rs`: real bus + embedded engine, fake Claude
+  stream agent, fake `codex exec` titler. Covers pinned Codex with an exact
+  `--model`, prompt from the user's request + first reply, `agent.snapshot`
+  carrying the label, no re-title on later turns, a labelled launch never
+  called, a rejected model kept as `fallback/unsupported`, off-then-on titled
+  from the original request, history names, and the journal across a restart.
+  Run 5 extra times: 5/5 pass.
+- hub-rs `tests/agent_lifecycle.rs`: opt-in only without a label, non-boolean
+  refused, stale generation and duplicate commits dropped, label precedence,
+  reopen persistence. Lib tests cover `title_target` resolution, `suggest`
+  routing/fallback reasons and the legacy RPC honouring `provider`/off.
+- native `tests/auto_titles_hub.rs`: native controller + real Rust host + fake
+  CLIs; the unnamed launch's title reaches `view.sessions` and History.
+  `tests/projects_hub.rs` round-trips the settings through the real hub config;
+  `tests/protocol.rs` pins the `autoTitle` launch flag and a late label;
+  GPUI tests cover the settings controls, catalog dropdown and a refused save,
+  plus a saved name outranking a late hub title.
+- desktop: titler/roleModels/settings tests for `provider` and exact models;
+  spawn-key/support registries and the bus publication guard updated for the
+  new key and republish site.
+
+Full runs (four Cargo jobs, GPUI `--test-threads=1`, logs kept):
+native 350 passed, 1 ignored, Clippy `-D warnings` and rustfmt clean.
+hub-rs 896 passed, 2 ignored, rustfmt clean. capability-source-check tests and
+`--check` clean. TUI vs the built Rust backend: pass. Desktop typecheck
+clean, main vitest 3827 passed / 10 skipped, renderer 1938 passed. The first
+main-suite run also failed `managerTombstone` "is bounded…" at 6.1 s under
+load; it passed alone and in the full rerun.
+
+Real windows: private Xvfb `:131`, lavapipe, `native-harness serve` on port
+18131 with bounded fixture support (spawned sessions, a scripted reply and a
+deterministic fixture titler honouring the fixture hub's `autoTitle`), throwaway
+HOME/XDG, debug build. [Settings, dark](docs/ui-auto-titles-settings-dark.png),
+[Codex catalog menu](docs/ui-auto-titles-codex-model-menu.png),
+[pinned Codex saved](docs/ui-auto-titles-codex-pinned.png),
+[pending (project name)](docs/ui-auto-titles-pending.png) →
+[titled in sidebar and title pill](docs/ui-auto-titles-titled.png),
+[typed name kept](docs/ui-auto-titles-label-kept.png),
+[History](docs/ui-auto-titles-history.png),
+[all eight themes](docs/ui-auto-titles-all-themes.png),
+[Gruvbox 720×480](docs/ui-auto-titles-narrow-gruvbox.png),
+[Catppuccin Latte 900×500](docs/ui-auto-titles-short-latte.png).
+
+Limits: no real provider was called (no paid titles). Sessions launched by the
+desktop host's own `agents.spawn` (Electron-hosted hub) ignore the flag;
+Electron titles its agents in the renderer as before. Native's device-saved
+name is local, so the hub may still spend one title call for a session renamed
+only on this device before its first answer. The restart check reads the hub
+journal; the restarted embedded daemon had no rows for the fake sessions (no
+provider transcript), so restored history display was proven by the reopen
+test, not a restarted window. No Windows/macOS or hardware-GPU capture.
+
+Integration follow-up: title source e0f72be8 was imported as a sanitized squash,
+without its credential-bearing ancestry or `apps/desktop/remote-token` artifact.
+The Electron host now honors explicit native `autoTitle` requests on all spawn
+transports and journals one attempt before inference. A restart after a claimed
+but unfinished request marks it skipped, avoiding duplicate paid requests.
+Electron/web renderers adopt published host titles and do not request competing
+titles. Human names remain authoritative. Host tests use fake completion only.

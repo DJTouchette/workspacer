@@ -114,6 +114,17 @@ providers clears incompatible model/context choices and applies that provider's
 saved default access mode.
 These are provider-native permissions, separate from Workspacer plugin access.
 
+**Settings → Agents → Name sessions automatically** and **Title model** are
+the hub's shared `agents.autoTitle` (the same fields desktop Settings → Session
+edits), read when Settings opens and changed one field at a time with a
+readback check. A session you start without a name asks its hub for one
+(`autoTitle: true` on `agents.spawn`); after the first answer the owning hub
+writes one title with the chosen harness ("Agent's own" by default, or a pinned
+Claude/Codex) and that harness's model from its live catalog, records it with
+the launch, and the sidebar, title pill and History show it. A name you type at
+launch or save under Session details always wins. A model the CLI rejects is
+not swapped: the session keeps the first line of your request.
+
 **Settings → Agents → Child agents start with full access** is different: it
 is the hub's shared `agents.childFullAccess` (off unless you turn it on),
 read each time Settings opens and changed with a readback check. Children are

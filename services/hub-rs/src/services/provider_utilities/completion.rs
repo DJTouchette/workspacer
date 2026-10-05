@@ -52,17 +52,18 @@ pub fn binary(provider: &str, config: &Value) -> Option<PathBuf> {
 }
 pub async fn title(
     provider: &str,
+    model: Option<&str>,
     config: &Value,
     home: &Path,
     engine: Option<&EmbeddedClient>,
     prompt: &str,
 ) -> Outcome<String> {
-    if !["claude", "codex", "opencode", "copilot", "pi"].contains(&provider) {
+    if !text::TITLE_PROVIDERS.contains(&provider) {
         return Err(Failure::Unsupported);
     }
     let binary = binary(provider, config).ok_or(Failure::Missing)?;
     let argv = tools::launcher(provider, &binary).map_err(|_| Failure::Unsupported)?;
-    let model = text::title_model(config, provider);
+    let model = model.map(str::to_owned);
     if provider == "claude" {
         let engine = engine.ok_or(Failure::Unsupported)?;
         let value = tokio::time::timeout(

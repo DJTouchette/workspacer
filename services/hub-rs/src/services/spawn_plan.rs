@@ -413,6 +413,21 @@ pub fn resolve(
             metadata[key] = params[key].clone();
         }
     }
+    // Opt-in automatic naming (a client that has no name to give). A label the
+    // user typed always wins, so a labelled launch never owes a title. The
+    // opening request is kept, clipped, in the private journal: for providers
+    // that prepend instructions to the first turn, the conversation's first
+    // user message is not what the user asked.
+    match params.get("autoTitle") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => {}
+        Some(Value::Bool(true)) => {
+            if text(params, "label").trim().is_empty() {
+                metadata["autoTitle"] = json!({"state":"pending",
+                    "prompt":super::provider_utilities::clip_prompt(text(params, "message"))});
+            }
+        }
+        Some(_) => bail!("autoTitle must be a boolean"),
+    }
     let mut routing = json!({});
     for key in ["role", "capability", "decisionId"] {
         let value = text(params, key).trim();

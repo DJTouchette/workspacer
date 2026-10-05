@@ -349,6 +349,8 @@ export interface Config {
     autoTitle?: {
       /** Absent/true = on. */
       enabled?: boolean;
+      /** Harness that writes every title; ''/absent = each agent's own. */
+      provider?: AgentProvider | '';
       /** Legacy single model for the one-shot title call. Ships `'haiku'`, a
        *  claude alias, honoured only where it is servable. */
       model?: string;

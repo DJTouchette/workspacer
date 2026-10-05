@@ -102,6 +102,7 @@ function assertProviderInstalled(provider: AgentProvider): void {
 }
 
 export interface ManagedSpawnOptions {
+  autoTitle?: boolean;
   /** The managed backend to launch. 'claude' is only valid together with
    *  `transport: 'stream'` (the headless stream-json adapter) — PTY Claude
    *  spawns are dispatched to spawnClaudeAgent by the caller instead. */
@@ -489,6 +490,7 @@ async function spawnManaged(
     claudeSessionStore.setSpawnMeta(managedId, {
       cwd,
       label: opts.label,
+      autoTitle: opts.autoTitle,
       parentSessionId: opts.parentSessionId,
       // This flag remains the Fleet Manager/global-broadcast marker. Ordinary
       // parents receive only their own direct-child wakes via parentSessionId.
@@ -758,6 +760,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
     claudeSessionStore.setSpawnMeta(sessionId, {
       cwd,
       label: opts.label,
+      autoTitle: opts.autoTitle,
       parentSessionId: opts.parentSessionId,
       // Fleet Manager/global-broadcast marker; direct-child wakes do not require it.
       isWakeTarget: opts.manager,

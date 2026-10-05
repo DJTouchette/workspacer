@@ -8,6 +8,18 @@ pub(super) struct PickerItem {
     /// Test selector prefix: `model-option` or `effort-option`.
     kind: &'static str,
 }
+impl PickerItem {
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+    pub(super) fn new(id: impl Into<String>, label: impl Into<String>, kind: &'static str) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            kind,
+        }
+    }
+}
 impl SelectItem for PickerItem {
     type Value = String;
     fn title(&self) -> SharedString {

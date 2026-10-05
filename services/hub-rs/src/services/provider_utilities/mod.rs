@@ -54,6 +54,64 @@ impl Ping for NativePing {
         })
     }
 }
+/// The opening request as a title prompt can use it (same cap as the prompt).
+pub fn clip_prompt(message: &str) -> String {
+    text::clip(message.trim(), 1200)
+}
+/// Writes one title. The CLI implementation is the only one outside tests;
+/// the seam exists so title triggering can be proven without a model call.
+pub(crate) trait Generate: Send + Sync {
+    fn generate<'a>(
+        &'a self,
+        provider: &'a str,
+        model: Option<&'a str>,
+        config: &'a Value,
+        prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = completion::Outcome<String>> + Send + 'a>>;
+}
+struct Cli {
+    home: PathBuf,
+    engine: Option<EmbeddedClient>,
+}
+impl Generate for Cli {
+    fn generate<'a>(
+        &'a self,
+        provider: &'a str,
+        model: Option<&'a str>,
+        config: &'a Value,
+        prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = completion::Outcome<String>> + Send + 'a>>
+    {
+        Box::pin(completion::title(
+            provider,
+            model,
+            config,
+            &self.home,
+            self.engine.as_ref(),
+            prompt,
+        ))
+    }
+}
+/// One title attempt, reported truthfully: a fallback (the first line of the
+/// user's own message) is never presented as a model-written title.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TitleOutcome {
+    pub title: Option<String>,
+    /// `model`, `fallback`, or `none` when there was nothing to title from.
+    pub source: &'static str,
+    pub provider: String,
+    pub model: Option<String>,
+    pub reason: Option<&'static str>,
+}
+impl TitleOutcome {
+    pub fn wire(&self) -> Value {
+        let mut value = json!({"title":self.title,"source":self.source,"provider":self.provider,"model":self.model});
+        if let Some(reason) = self.reason {
+            value["reason"] = json!(reason);
+        }
+        value
+    }
+}
 struct Check {
     context: Context,
     automatic: bool,
@@ -67,7 +125,6 @@ struct Entry {
 pub struct Service {
     config: Arc<Config>,
     home: PathBuf,
-    engine: Option<EmbeddedClient>,
     owned: bool,
     startup_delay: Duration,
     activated: std::sync::atomic::AtomicBool,
@@ -78,16 +135,28 @@ pub struct Service {
     receiver: Mutex<Option<mpsc::Receiver<Check>>>,
     stop: watch::Sender<bool>,
     titles: tokio::sync::Semaphore,
+    generator: Arc<dyn Generate>,
 }
 impl Service {
     fn new(config: Arc<Config>, home: PathBuf, engine: Option<EmbeddedClient>) -> Arc<Self> {
+        let generator = Arc::new(Cli {
+            home: home.clone(),
+            engine: engine.clone(),
+        });
+        Self::with_generator(config, home, engine, generator)
+    }
+    pub(crate) fn with_generator(
+        config: Arc<Config>,
+        home: PathBuf,
+        engine: Option<EmbeddedClient>,
+        generator: Arc<dyn Generate>,
+    ) -> Arc<Self> {
         let (tx, rx) = mpsc::channel(32);
         let (stop, _) = watch::channel(false);
         Arc::new(Self {
             config,
             home,
             owned: engine.is_some(),
-            engine,
             startup_delay: Duration::from_secs(2),
             activated: std::sync::atomic::AtomicBool::new(false),
             activation: tokio::sync::Notify::new(),
@@ -97,6 +166,7 @@ impl Service {
             receiver: Mutex::new(Some(rx)),
             stop,
             titles: tokio::sync::Semaphore::new(4),
+            generator,
         })
     }
     fn context(&self, provider: Option<&str>) -> Context {
@@ -281,30 +351,86 @@ impl Service {
             )
         });
     }
+    /// Whether automatic titling is on in this hub's shared config.
+    pub fn titles_enabled(&self) -> bool {
+        self.config.get()["agents"]["autoTitle"]["enabled"] != false
+    }
+    /// Title an opening exchange with the configured harness and model.
+    /// `wait` queues for a slot instead of degrading to the fallback at once.
+    pub async fn suggest(
+        &self,
+        agent_provider: &str,
+        user: &str,
+        reply: &str,
+        wait: bool,
+    ) -> TitleOutcome {
+        let config = self.config.get();
+        let target = text::title_target(&config, agent_provider);
+        let fallback = text::fallback(user);
+        let outcome = |title: Option<String>, source, reason| TitleOutcome {
+            title,
+            source,
+            provider: target.provider.clone(),
+            model: target.model.clone(),
+            reason,
+        };
+        let degraded = |reason| match &fallback {
+            Some(title) => outcome(Some(title.clone()), "fallback", Some(reason)),
+            None => outcome(None, "none", Some(reason)),
+        };
+        if user.trim().is_empty() {
+            return outcome(None, "none", Some("empty"));
+        }
+        let _permit = if wait {
+            match self.titles.acquire().await {
+                Ok(permit) => permit,
+                Err(_) => return degraded("busy"),
+            }
+        } else {
+            match self.titles.try_acquire() {
+                Ok(permit) => permit,
+                Err(_) => return degraded("busy"),
+            }
+        };
+        let prompt = text::prompt(user, reply);
+        match self
+            .generator
+            .generate(&target.provider, target.model.as_deref(), &config, &prompt)
+            .await
+        {
+            Ok(raw) => match text::sanitize(&raw) {
+                Some(title) => outcome(Some(title), "model", None),
+                None => degraded("empty"),
+            },
+            Err(failure) => degraded(failure.reason()),
+        }
+    }
     async fn title(&self, request: &Value) -> Result<Value> {
         anyhow::ensure!(request.is_object(), "title request must be an object");
-        let config = self.config.get();
-        if config["agents"]["autoTitle"]["enabled"] == false {
+        if !self.titles_enabled() {
             return Ok(Value::Null);
         }
         let user = request["userMessage"].as_str().unwrap_or("").trim();
         if user.is_empty() {
             return Ok(Value::Null);
         }
-        let fallback = text::fallback(user);
         let provider = request["provider"].as_str().unwrap_or("claude");
-        let Ok(_permit) = self.titles.try_acquire() else {
-            return Ok(json!(fallback));
-        };
-        let prompt = text::prompt(user, request["assistantReply"].as_str().unwrap_or(""));
-        let output =
-            completion::title(provider, &config, &self.home, self.engine.as_ref(), &prompt).await;
-        Ok(json!(
-            output
-                .ok()
-                .and_then(|raw| text::sanitize(&raw))
-                .or(fallback)
-        ))
+        let outcome = self
+            .suggest(
+                provider,
+                user,
+                request["assistantReply"].as_str().unwrap_or(""),
+                false,
+            )
+            .await;
+        if outcome.source == "fallback" {
+            eprintln!(
+                "title: no {} title ({}); using the first line of the request",
+                outcome.provider,
+                outcome.reason.unwrap_or("failed")
+            );
+        }
+        Ok(json!(outcome.title))
     }
 }
 pub(crate) fn install(mut options: Options, config: Arc<Config>, home: PathBuf) -> Options {

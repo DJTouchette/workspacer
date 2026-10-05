@@ -635,6 +635,7 @@ export function registerHubCapabilities(): void {
       toolScope,
       pluginTools,
       label,
+      autoTitle,
       parentSessionId,
       mcpItemIds,
       escalationScrubbed: hubScrubbed,
@@ -696,6 +697,7 @@ export function registerHubCapabilities(): void {
       toolScope?: RemoteTokenScope;
       /** Accepted and ignored compatibility list; enabled plugin tools are ambient. */
       pluginTools?: string[];
+      autoTitle?: boolean;
       label?: string;
       parentSessionId?: string;
       mcpItemIds?: string[];
@@ -1028,6 +1030,9 @@ export function registerHubCapabilities(): void {
     // defaulting that straight to claude is how Settings could say codex while
     // every non-desktop path spawned a Claude manager. See lib/roleProviders
     // (TWIN: ipc.ts).
+    if (autoTitle !== undefined && typeof autoTitle !== 'boolean') {
+      throw new Error('agents.spawn: autoTitle must be a boolean');
+    }
     const provider = resolveSpawnProvider({ provider: reqProvider, manager });
     // THE ROUTING BLOCK, recorded as well as echoed. Every branch below passes
     // this same object to its spawner, which hands it to setSpawnMeta, which
@@ -1081,6 +1086,7 @@ export function registerHubCapabilities(): void {
         toolScope,
         pluginTools,
         label,
+        autoTitle,
         parentSessionId,
         cols,
         rows,
@@ -1133,6 +1139,7 @@ export function registerHubCapabilities(): void {
         toolScope,
         pluginTools,
         label,
+        autoTitle,
         parentSessionId,
         mcpItemIds,
         resultSchema,
@@ -1169,6 +1176,7 @@ export function registerHubCapabilities(): void {
       toolScope,
       pluginTools,
       label,
+      autoTitle,
       parentSessionId,
       cols,
       rows,

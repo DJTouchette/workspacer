@@ -270,6 +270,12 @@ const PASSTHROUGH: Record<string, { count: number; reason: string; proof: string
     reason: 'Seed/update path publishes a snapshot through the classified snapshot constructor.',
     proof: ['self.publish(row).await?'],
   },
+  'services/sessions/titles.rs: row': {
+    count: 1,
+    reason:
+      'A committed automatic title republishes the stored row through the same classified snapshot helper.',
+    proof: ['self.publish(row).await', '.note_auto_title(id,generation,record(&outcome))'],
+  },
   'services/terminals.rs: event': {
     count: 1,
     reason:

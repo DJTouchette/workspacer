@@ -783,6 +783,55 @@ async fn create_session_uses_real_capability_and_survives_stale_fleet() {
     }
 }
 
+/// An unnamed launch asks the owning hub to name it (`autoTitle`), and the
+/// name it later publishes is what the session shows. A typed label is sent
+/// as the name instead and never asks for one (see the test above).
+#[tokio::test]
+async fn unnamed_launch_requests_a_hub_title_and_shows_it_when_published() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([])).await;
+    view(&controller, |v| v.connected).await;
+    let mut request = launch_request();
+    request.label = "   ".into();
+    controller.command(Command::Create(request)).unwrap();
+    let spawn = hub.frame("call", Some("agents.spawn")).await;
+    assert_eq!(spawn.value["params"]["autoTitle"], true);
+    assert!(spawn.value["params"].get("label").is_none());
+    spawn
+        .result(json!({"sessionId":"new","messageQueued":true}))
+        .await;
+    spawn
+        .event(
+            "agent.snapshot",
+            json!({"sessionId":"new","provider":"codex","cwd":"/work/project","mode":"responding","autoTitle":{"state":"pending"}}),
+        )
+        .await;
+    let pending = view(&controller, |v| v.sessions.iter().any(|s| s.id == "new")).await;
+    assert_eq!(
+        pending
+            .sessions
+            .iter()
+            .find(|s| s.id == "new")
+            .unwrap()
+            .label,
+        ""
+    );
+    spawn
+        .event(
+            "agent.snapshot",
+            json!({"sessionId":"new","mode":"input","label":"Inspect the project","autoTitle":{"state":"titled","source":"model"}}),
+        )
+        .await;
+    view(&controller, |v| {
+        v.sessions
+            .iter()
+            .any(|s| s.id == "new" && s.label == "Inspect the project")
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn create_session_retains_unconfirmed_prompt_without_resending() {
     let mut hub = Hub::new().await;

@@ -141,6 +141,24 @@ pub fn with_cwd_name(mut row: Value, names: &Value) -> Value {
     row
 }
 
+/// Lowest-precedence name: a hub-written automatic title (see
+/// `sessions::titles`). A launch label and a user's cwd rename both win, so a
+/// late title can never replace a name a person gave.
+pub fn with_auto_title(mut row: Value) -> Value {
+    let unnamed = row["label"]
+        .as_str()
+        .is_none_or(|label| label.trim().is_empty());
+    if unnamed && row["hub"].as_str().unwrap_or("").is_empty() {
+        if let Some(title) = row["autoTitle"]["title"]
+            .as_str()
+            .filter(|title| !title.trim().is_empty())
+        {
+            row["label"] = json!(title);
+        }
+    }
+    row
+}
+
 fn parse_time(raw: &str) -> Option<time::OffsetDateTime> {
     time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).ok()
 }

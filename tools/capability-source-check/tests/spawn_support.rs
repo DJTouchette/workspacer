@@ -18,7 +18,7 @@ fn current_support_has_exact_source_closure_and_inverse_exceptions() {
     let report = scan(sources.clone()).unwrap();
     let index = Index::parse(sources.clone()).unwrap();
     let policy = policy();
-    assert_eq!(policy.cases.len(), 50);
+    assert_eq!(policy.cases.len(), 51);
     assert_eq!(
         spawn_support::check(&report, &index, &policy),
         Vec::<String>::new()

@@ -595,3 +595,96 @@ async fn child_access_setting_round_trips_through_the_hub() {
     host.shutdown().await.unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Settings → Agents → Name sessions automatically / Title model read and
+/// write the hub's shared `agents.autoTitle` one field at a time (deep-merged,
+/// verified on readback), so a harness's model survives switching the
+/// provider, and the legacy single `model` stays in step the way desktop
+/// Settings keeps it.
+#[tokio::test]
+async fn title_settings_round_trip_through_the_hub() {
+    use wks_native::features::TitleChange;
+    let root = std::env::temp_dir().join(format!(
+        "wks-native-titles-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut options = RustOptions::isolated(root.join("state")).unwrap();
+    options.home_dir = root.join("home");
+    std::fs::create_dir(&options.home_dir).unwrap();
+    options.usage_poll_on_boot = Some(false);
+    let config_file = options.config_dir.join("config.yaml");
+    let host = NativeHost::start(Mode::Rust(options)).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), host.ready())
+        .await
+        .unwrap()
+        .unwrap();
+    let controller = host.controller();
+    let mut views = controller.views.clone();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !views.borrow_and_update().connected {
+            views.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let read = run(&controller, Request::Titles { set: None }).await;
+    assert!(read.error.is_none(), "{:?}", read.error);
+    // Shared defaults: on, each agent's own harness, the legacy Claude alias.
+    assert_eq!(read.value["enabled"], true);
+    assert_eq!(read.value["provider"], "");
+    assert_eq!(read.value["legacyModel"], "haiku");
+    for change in [
+        TitleChange::Model {
+            provider: "claude".into(),
+            model: "claude-haiku-4-5".into(),
+        },
+        TitleChange::Provider("codex".into()),
+        TitleChange::Model {
+            provider: "codex".into(),
+            model: "gpt-5.4-mini".into(),
+        },
+        TitleChange::Enabled(false),
+    ] {
+        let saved = run(&controller, Request::Titles { set: Some(change) }).await;
+        assert!(saved.error.is_none(), "{:?}", saved.error);
+    }
+    let reread = run(&controller, Request::Titles { set: None }).await;
+    assert_eq!(reread.value["enabled"], false);
+    assert_eq!(reread.value["provider"], "codex");
+    assert_eq!(reread.value["models"]["codex"], "gpt-5.4-mini");
+    assert_eq!(
+        reread.value["models"]["claude"], "claude-haiku-4-5",
+        "a harness's model survives choosing another provider"
+    );
+    assert_eq!(reread.value["legacyModel"], "gpt-5.4-mini");
+    let text = std::fs::read_to_string(&config_file).unwrap();
+    assert!(text.contains("provider: codex"), "{text}");
+    // Back to each agent's own harness with titles on.
+    for change in [
+        TitleChange::Provider(String::new()),
+        TitleChange::Enabled(true),
+    ] {
+        assert!(
+            run(&controller, Request::Titles { set: Some(change) })
+                .await
+                .error
+                .is_none()
+        );
+    }
+    let last = run(&controller, Request::Titles { set: None }).await;
+    assert_eq!(
+        (
+            last.value["provider"].as_str(),
+            last.value["enabled"].as_bool()
+        ),
+        (Some(""), Some(true))
+    );
+    drop(views);
+    drop(controller);
+    host.shutdown().await.unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

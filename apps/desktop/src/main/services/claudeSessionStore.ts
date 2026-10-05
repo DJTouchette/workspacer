@@ -1,3 +1,4 @@
+import { hostAutoTitles, type HostTitle } from './hostAutoTitles';
 import { fleetReviewStore } from './fleetReviewStore';
 import {
   ManagerReplacementUnavailable,
@@ -445,6 +446,7 @@ export interface ClaudeSessionState {
   // Adoption metadata — set before first hook arrives so adopted cards can be
   // named and nested under the agent that spawned them.
   label?: string;
+  autoTitle?: HostTitle;
   parentSessionId?: string;
   /** Wake eligibility, NOT a role: true when this session may receive fleet
    *  wakes — it gets nudged when another agent blocks on a decision or a
@@ -756,6 +758,7 @@ class ClaudeSessionStore {
   setSpawnMeta(
     sessionId: string,
     meta: {
+      autoTitle?: boolean;
       label?: string;
       cwd?: string;
       parentSessionId?: string;
@@ -778,10 +781,12 @@ class ClaudeSessionStore {
     this.facadeTokenRevoked.delete(sessionId);
     if (meta.cwd && (meta.parentSessionId || meta.isWakeTarget))
       managerReplacementState.rememberChild({ sessionId, ...meta, cwd: meta.cwd });
+    hostAutoTitles.begin(sessionId, meta.autoTitle === true, meta.label);
     this.spawnMeta.set(sessionId, meta);
     // A restart-with-settings re-spawns onto an id that may still have a live
     // entry — refresh its settings in place so the pills track the request.
     const existing = this.sessions.get(sessionId);
+    if (existing) existing.autoTitle = hostAutoTitles.metadata(sessionId);
     if (existing && meta.provider) existing.provider = meta.provider;
     // Same reason, for the routing block: `createSession` is the only other
     // place meta is applied, and a re-spawn onto a LIVE id never reaches it, so
@@ -2103,6 +2108,7 @@ class ClaudeSessionStore {
       // of dropping it at this explicit mapping boundary.
       statusLine: snap.statusLine ?? existing?.statusLine,
       label: snap.label ?? existing?.label,
+      autoTitle: snap.autoTitle ?? existing?.autoTitle,
       parentSessionId: snap.parentSessionId ?? existing?.parentSessionId,
       provider: snap.provider ?? existing?.provider,
       transport: snap.transport ?? existing?.transport,
@@ -2488,6 +2494,8 @@ class ClaudeSessionStore {
       .records()
       .find((o) => o.successorSessionId === sessionId);
     if (replacement) session.managerReplacementOperationId = replacement.operationId;
+    session.autoTitle = hostAutoTitles.metadata(sessionId);
+    session.label ||= session.autoTitle?.title;
     this.sessions.set(sessionId, session);
     return session;
   }
@@ -2571,6 +2579,16 @@ class ClaudeSessionStore {
   }
 
   private pushUpdate(session: ClaudeSessionState): void {
+    try {
+      hostAutoTitles.offer(session, (title) => {
+        if (this.sessions.get(session.sessionId) !== session || session.hub) return;
+        session.autoTitle = title;
+        session.label ||= title.title;
+        this.pushUpdate(session);
+      });
+    } catch (error) {
+      console.warn('[hostAutoTitles] title admission unavailable', error);
+    }
     try {
       dispatchHistoryStore.queueObservation(session);
     } catch (err) {

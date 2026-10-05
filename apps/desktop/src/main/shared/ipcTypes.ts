@@ -632,6 +632,8 @@ export interface AppConfig {
     autoTitle?: {
       /** Absent/true = on. */
       enabled?: boolean;
+      /** Harness that writes every title; ''/absent = the agent's own. */
+      provider?: string;
       /** Legacy single model for the one-shot title call (a cheap one). */
       model?: string;
       /** Per-harness title models, keyed by provider (see lib/roleModels). */

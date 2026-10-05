@@ -951,6 +951,26 @@ describe('agents.spawn — dispatch', () => {
   // dispatched worker, /m, the web app), and none of them name a transport. An
   // explicit 'pty' has to survive it too, or the hybrid becomes unreachable
   // from everywhere except the local spawn dialog.
+  it.each([
+    ['claude', 'pty'],
+    ['claude', 'stream'],
+    ['codex', 'pty'],
+    ['codex', 'stream'],
+  ])(
+    'forwards explicit host naming for %s/%s and refuses non-booleans',
+    async (provider, transport) => {
+      await call('agents.spawn', { provider, transport, cwd: '/proj', autoTitle: true });
+      const spawn =
+        provider === 'claude' && transport === 'pty' ? spawnClaudeAgent : spawnManagedAgent;
+      expect(spawn.mock.calls.at(-1)![0]).toMatchObject({ autoTitle: true });
+      const before = spawn.mock.calls.length;
+      await expect(
+        call('agents.spawn', { provider, transport, cwd: '/proj', autoTitle: 'yes' }),
+      ).rejects.toThrow('autoTitle must be a boolean');
+      expect(spawn).toHaveBeenCalledTimes(before);
+    },
+  );
+
   it('forwards BOTH codex transports and leaves an omitted one to the shared resolver', async () => {
     await call('agents.spawn', { provider: 'codex', transport: 'stream', cwd: '/proj' });
     expect((spawnManagedAgent.mock.calls.at(-1)![0] as { transport?: string }).transport).toBe(

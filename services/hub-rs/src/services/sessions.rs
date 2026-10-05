@@ -1,5 +1,6 @@
 //! Session service over claudemon's in-process API and typed update stream.
 mod params;
+mod titles;
 use super::{layout::Layout, snapshots};
 use crate::{Handle, Options, protocol::Event};
 use anyhow::{Result, anyhow, bail};
@@ -34,6 +35,8 @@ struct Sessions {
     requests: Option<Arc<super::manager_requests::ManagerRequests>>,
     wakes: Option<Arc<super::wakes::Wakes>>,
     workflow_artifacts: Option<Arc<super::workflow_artifacts::Service>>,
+    /// Offers for the hub-owned automatic titler (see `titles`).
+    titles: Option<tokio::sync::mpsc::Sender<String>>,
 }
 
 pub(crate) async fn install(
@@ -44,7 +47,18 @@ pub(crate) async fn install(
         return Ok((options, None));
     };
     let updates = engine.subscribe()?;
+    let (title_offers, title_worker) = match (
+        options.provider_utilities.clone(),
+        options.launch_lifecycle.is_some(),
+    ) {
+        (Some(utilities), true) => {
+            let (tx, rx) = tokio::sync::mpsc::channel(256);
+            (Some(tx), Some((utilities, rx)))
+        }
+        _ => (None, None),
+    };
     let service = Arc::new(Sessions {
+        titles: title_offers,
         workflow_artifacts: options.workflow_artifacts.clone(),
         dismissals: Default::default(),
         confirmed: options.confirmed_controls.clone(),
@@ -111,7 +125,24 @@ pub(crate) async fn install(
             async move { service.call(method, params).await }
         });
     }
-    let task = tokio::spawn(service.observe(updates));
+    // The titler shares the observer's task, so stopping the session service
+    // (or dropping the runtime) also cancels any title call in flight.
+    let titles =
+        title_worker.map(|(utilities, offers)| service.clone().run_titles(utilities, offers));
+    let task = tokio::spawn(async move {
+        let observe = service.observe(updates);
+        let Some(titles) = titles else {
+            return observe.await;
+        };
+        tokio::pin!(observe, titles);
+        let mut titling = true;
+        loop {
+            tokio::select! {
+                result = &mut observe => return result,
+                _ = &mut titles, if titling => titling = false,
+            }
+        }
+    });
     Ok((options, Some(task)))
 }
 
@@ -262,6 +293,7 @@ impl Sessions {
         } else {
             row
         };
+        let row = snapshots::with_auto_title(row);
         match &self.workflow_artifacts {
             Some(service) => service.enrich(row),
             None => row,
@@ -331,6 +363,7 @@ impl Sessions {
     }
     async fn publish(&self, row: Value) -> Result<()> {
         let row = self.enrich(row);
+        self.offer_title(&row);
         if let Some(wakes) = &self.wakes {
             wakes.observe(&row, chrono::Utc::now().timestamp_millis());
         }
@@ -882,6 +915,7 @@ mod projection_tests {
             requests: None,
             wakes: None,
             workflow_artifacts: None,
+            titles: None,
         });
         let http = reqwest::Client::new();
         for (id, event) in [("worker", "SessionStart"), ("worker", "UserPromptSubmit")] {

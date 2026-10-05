@@ -581,6 +581,24 @@ impl Workspace {
 
         entries.push(Entry::new(
             S::Agents,
+            "auto-title",
+            "Name sessions automatically",
+            "After a session's first answer, the hub names it from what you asked. A name you type is never replaced. Saved in the hub's shared settings.",
+            "title name rename automatic auto session label haiku",
+            Layout::Row,
+            self.render_titles_switch(cx),
+        ));
+        entries.push(Entry::new(
+            S::Agents,
+            "title-model",
+            "Title model",
+            "Which provider and model write those names. Keep it cheap: a title is a few words.",
+            "title name automatic provider model haiku mini cheap claude codex",
+            Layout::Block,
+            self.render_title_model(cx),
+        ));
+        entries.push(Entry::new(
+            S::Agents,
             "child-access",
             "Child agents start with full access",
             "Agents your sessions start (through the spawn skill or Workspacer tools) skip the provider's own approval prompts: Claude runs in bypass-permissions mode, Codex with full access. Saved in the hub's shared settings, so every client of this hub sees it. Workspacer's own approval gate, tool access and your existing sessions are unchanged; a resumed session keeps its mode.",

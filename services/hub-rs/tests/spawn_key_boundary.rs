@@ -60,7 +60,7 @@ async fn every_recognized_spawn_root_requires_its_canonical_spelling_on_the_real
         tally.ran("deny");
     }
     tally
-        .require_every("recognized spawn root aliases", 5)
+        .require_every("recognized spawn root aliases", 6)
         .unwrap();
     // Unknown extension keys are still opaque to this spelling gate.
     assert_eq!(
