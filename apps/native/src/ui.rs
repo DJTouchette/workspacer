@@ -102,6 +102,9 @@ const CHAT_WIDTH: f32 = 900.;
 /// Bundled provider marks layered over gpui-component's icon set.
 /// Fade height above the conversation dock; within its 12px of transcript padding.
 const DOCK_FADE: f32 = 12.;
+/// Height the dock's cards keep however tall the composer grows, so an
+/// approval or question set stays visible and scrollable beside a big draft.
+const DOCK_CARDS_FLOOR: f32 = 72.;
 
 pub struct Assets;
 
@@ -504,6 +507,12 @@ pub struct Workspace {
     view: Arc<View>,
     composer: Entity<InputState>,
     composer_dock_bounds: gpui::Bounds<gpui::Pixels>,
+    /// The dock's composer layer, measured: the cards above it get the rest
+    /// of the dock's share of the window.
+    composer_layer_height: gpui::Pixels,
+    /// The title capsule's measured outer width: its notice island wraps
+    /// inside it.
+    title_bar_width: gpui::Pixels,
     header_bounds: gpui::Bounds<gpui::Pixels>,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
@@ -762,6 +771,8 @@ impl Workspace {
             view: Arc::new(View::default()),
             composer,
             composer_dock_bounds: Default::default(),
+            composer_layer_height: Default::default(),
+            title_bar_width: Default::default(),
             header_bounds: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
@@ -1498,6 +1509,14 @@ impl Render for Workspace {
             clock.and_then(|clock| clock.latest_completion_for(&self.view.transcript))
         };
         let dock_view = cx.entity().downgrade();
+        let composer_docked = selected.is_some() && self.view.child.is_none();
+        let composer_layer_view = cx.entity().downgrade();
+        let dock_share = window.viewport_size().height
+            * match (questions_pending, compact) {
+                (true, _) => 0.7,
+                (false, true) => 0.45,
+                (false, false) => 0.55,
+            };
         // Draft attachments with their thumbnails (images only; PDFs keep
         // the file chip). Loading and failure fall back to the name.
         let draft_files: Vec<features::DraftFile> = self
@@ -1611,45 +1630,79 @@ impl Render for Workspace {
         }
 
         let terminal_panel = self.render_terminal_panel(window, cx);
+        let title_bar = match self.render_child_title_bar(cx) {
+            Some(bar) => bar,
+            None => self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
+        };
+        let title_island = self.render_title_island(title_bar, notice, cx);
         // Transparent fade rather than a ruled strip: history scrolls softly
         // under the floating title pill instead of colliding with a hard edge.
-        let header = div().absolute().top_0().left_0().w_full().flex().justify_center()
-            .bg(gpui::linear_gradient(180., gpui::linear_color_stop(rgb(p.chat), 0.6), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
+        let header = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .flex()
+            .justify_center()
+            .bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(rgb(p.chat), 0.6),
+                gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.),
+            ))
             // Only the top chrome row drags, with later occluding title pills
             // and caption controls excluded by GPUI's hit test. Occluding the
             // drag surface itself keeps shell focus from cancelling OS moves.
-            .when(chrome::custom_caption(), |d| d.child(chrome::drag_region(div())
-                .debug_selector(|| "chat-drag-region".into())
-                .absolute().top_0().left_0().w_full().h(px(56.))))
-            .when(chrome::custom_caption(), |d| d.pr(px(chrome::CAPTION_WIDTH)))
-            .child(chrome::chat_column().relative().pt_3().pb_5().flex().flex_col().items_center().gap_2()
-                .child(canvas(move |bounds, _, cx| {
-                    cx.defer(move |cx| {
-                        let _ = header_view.update(cx, |this, cx| {
-                            if this.header_bounds != bounds {
-                                let delta = bounds.size.height - this.header_bounds.size.height;
-                                if !this.follow && delta != px(0.) {
-                                    let mut anchor = this.scroll_anchor();
-                                    anchor.offset_in_item += delta;
-                                    this.list.scroll_to(anchor);
-                                }
-                                this.header_bounds = bounds;
-                                cx.notify();
-                            }
-                        });
-                    });
-                }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
-                .child(match self.render_child_title_bar(cx) {
-                    Some(bar) => bar,
-                    None => self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
-                })
-                .when(!self.extras.notice.is_empty(), |d| d.child(div().px_5().text_color(rgb(p.warning)).child(self.extras.notice.clone())))
-                .when(!notice.is_empty(), |d| d.child(div().occlude().py_1().text_size(px(11.)).text_color(rgb(p.warning)).child(notice)))
-                .when(!self.view.connected && !self.view.transcript.rows.is_empty(), |d| d.child(self.render_connection_banner(cx)))
-                .when(self.view.transcript.omitted && !self.view.transcript.has_older, |d| d.child(div().occlude().rounded_md().bg(rgb(p.surface)).px_3().text_size(px(11.)).text_color(rgb(p.muted)).child("Showing recent messages. Open History to browse older retained messages.")))
-                .when(self.view.loading && !self.view.transcript.rows.is_empty(), |d| d.child(div().occlude().flex().items_center().gap_2().text_size(px(12.)).text_color(rgb(p.muted)).child(brand_spinner(12., p, "conversation-refresh")).child("Refreshing conversation…")))
-                .when(self.view.connected && !self.view.loading && self.view.notice.starts_with("Conversation unavailable:"), |d| d.child(self.button("retry-conversation", "Retry conversation", true).debug_selector(|| "retry-conversation".into()).on_click(cx.listener(|this, _, _, cx| this.command(Command::Refresh, cx)))))
-);
+            .when(chrome::custom_caption(), |d| {
+                d.child(
+                    chrome::drag_region(div())
+                        .debug_selector(|| "chat-drag-region".into())
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(56.)),
+                )
+            })
+            .when(chrome::custom_caption(), |d| {
+                d.pr(px(chrome::CAPTION_WIDTH))
+            })
+            .child(
+                chrome::chat_column()
+                    .relative()
+                    .pt_3()
+                    .pb_5()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                cx.defer(move |cx| {
+                                    let _ = header_view.update(cx, |this, cx| {
+                                        if this.header_bounds != bounds {
+                                            let delta =
+                                                bounds.size.height - this.header_bounds.size.height;
+                                            if !this.follow && delta != px(0.) {
+                                                let mut anchor = this.scroll_anchor();
+                                                anchor.offset_in_item += delta;
+                                                this.list.scroll_to(anchor);
+                                            }
+                                            this.header_bounds = bounds;
+                                            cx.notify();
+                                        }
+                                    });
+                                });
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
+                    .child(title_island),
+            );
 
         self.shell(window, cx)
             .child(sidebar)
@@ -1667,7 +1720,12 @@ impl Render for Workspace {
                 // out over the 12px above them (the transcript's spare padding).
                 .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center().pt(px(DOCK_FADE))
                     .bg(gpui::linear_gradient(0., gpui::linear_color_stop(rgb(p.chat), 1. - DOCK_FADE / (f32::from(self.composer_dock_bounds.size.height) + DOCK_FADE).max(DOCK_FADE * 2.)), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
-                    .child(chrome::chat_column().id("conversation-dock").relative().pt(px(if compact { 8. } else { 12. })).pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * match (questions_pending, compact) { (true, _) => 0.7, (false, true) => 0.45, (false, false) => 0.55 }).overflow_y_scroll().flex().flex_col().gap(px(if compact { 4. } else { 8. }))
+                    // Two layers under one measured frame (bug #26): the cards
+                    // scroll in their own region, capped at what the measured
+                    // composer leaves of the dock's share; the composer never
+                    // scrolls or clips. (Measuring inside a scroll container
+                    // would count as content: a phantom pt+pb scroll range.)
+                    .child(chrome::chat_frame().id("conversation-dock").debug_selector(|| "conversation-dock".into()).relative().flex().flex_col()
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
                         let _ = dock_view.update(cx, |this, cx| {
@@ -1678,12 +1736,15 @@ impl Render for Workspace {
                         });
                     });
                 }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
+                    // Gutters and the gap above the composer stay inside this
+                    // clip, so card shadows keep their room.
+                    .child(chrome::chat_column().id("conversation-dock-cards").debug_selector(|| "conversation-dock-cards".into()).flex_shrink_0().max_h((dock_share - self.composer_layer_height).max(px(DOCK_CARDS_FLOOR))).overflow_y_scroll().pt(px(if compact { 8. } else { 12. })).pb(px(if composer_docked { if compact { 4. } else { 8. } } else { 0. })).flex().flex_col().gap(px(if compact { 4. } else { 8. }))
                 .when(self.view.child.is_none(), |d| d.child(self.render_pending(window, cx)))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
                     let summary = approval.pointer("/toolInput/command").or_else(|| approval.pointer("/toolInput/file_path")).and_then(serde_json::Value::as_str).unwrap_or("").lines().next().unwrap_or("").to_owned();
                     let details = serde_json::to_string_pretty(approval.get("toolInput").or_else(|| approval.get("raw")).unwrap_or(approval)).unwrap_or_default();
-                    d.child(div().occlude().w_full().p(px(if compact { 8. } else { 12. })).rounded(px(p.panel_radius)).shadow(chrome::floating_shadow(p)).bg(rgb(p.surface)).flex_shrink_0().flex().flex_col().gap_2().text_size(px(12.))
+                    d.child(div().debug_selector(|| "approval-card".into()).occlude().w_full().p(px(if compact { 8. } else { 12. })).rounded(px(p.panel_radius)).shadow(chrome::floating_shadow(p)).bg(rgb(p.surface)).flex_shrink_0().flex().flex_col().gap_2().text_size(px(12.))
                         .child(div().flex().items_center().gap_2().text_color(rgb(p.warning)).child(status_dot(p.warning)).child(format!("Permission needed · {label}"))
                             .when(compact, |d| d.child(div().flex_1().min_w_0().truncate().text_color(rgb(p.text)).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(summary.clone())).child(self.button("approval-toggle-compact", if self.extras.approval_details { "Hide" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
                         .when(!compact, |d| d.child(div().flex().items_center().gap_2().child(div().flex_1().min_w_0().truncate().font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).child(if summary.is_empty() { "Review request details".to_owned() } else { summary })).child(self.button("approval-toggle", if self.extras.approval_details { "Hide details" } else { "Details" }, true).on_click(cx.listener(|this, _, _, cx| { this.extras.approval_details = !this.extras.approval_details; cx.notify(); })))))
@@ -1693,8 +1754,19 @@ impl Render for Workspace {
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
                 .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, window, cx)))
-                .children(self.render_child_bar(cx))
-                .when(selected.is_some() && self.view.child.is_none(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
+                .children(self.render_child_bar(cx)))
+                    .child(chrome::chat_column().relative().flex_shrink_0().pb(px(if compact { 8. } else { 16. }))
+                .child(canvas(move |bounds, _, cx| {
+                    cx.defer(move |cx| {
+                        let _ = composer_layer_view.update(cx, |this, cx| {
+                            if this.composer_layer_height != bounds.size.height {
+                                this.composer_layer_height = bounds.size.height;
+                                cx.notify();
+                            }
+                        });
+                    });
+                }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
+                .when(composer_docked, |d| d.child(div().debug_selector(|| "chat-composer-group".into()).w_full().flex_shrink_0().flex().flex_col().gap_2()
                     .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).key_context(if self.settings.enter_sends { "Composer ComposerEnter" } else { "Composer" }).occlude().bg(rgb(p.surface)).border_1()
                         .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) { rgb(p.accent).into() } else { gpui::Hsla::from(rgb(p.border)).opacity(0.55) })
                         .rounded(px(p.composer_radius)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
@@ -1706,14 +1778,14 @@ impl Render for Workspace {
                                 .children(selected.as_ref().and_then(|s| chrome::context_meter(s, p))))
                             .child(div().flex().items_center().gap_2()
                                 .when(working, |d| d.child(self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx))))))
-                                .child(self.primary_icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).size(px(32.)).rounded_full()
+                                .child(self.primary_icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).debug_selector(|| "composer-send".into()).size(px(32.)).rounded_full()
                                     .when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
                     .child(div().when(compact, |d| d.hidden()).occlude().bg(rgb(p.chat)).rounded_md().px_2().py_1().flex().items_center().justify_between().gap_2().text_size(px(10.)).text_color(rgb(p.muted))
                         .child(div().flex_1().min_w_0().flex().items_center().gap_2()
                             .when(animate_activity, |d| d.child(brand_spinner(12., p, "composer-activity")))
                             .child(div().truncate().child(activity.unwrap_or_else(|| if enabled { "Ready" } else { "Session unavailable" }.into()))))
                         .child(div().debug_selector(|| "composer-send-hint".into()).flex().gap_1().items_center().flex_shrink_0().child(keycap(if self.settings.enter_sends { "Enter" } else if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
-                        .when(!narrow, |d| d.child(if self.settings.enter_sends { "Shift Enter for a new line" } else { "Enter for a new line" })))))) )).children(terminal_panel))
+                        .when(!narrow, |d| d.child(if self.settings.enter_sends { "Shift Enter for a new line" } else { "Enter for a new line" }))))))) )).children(terminal_panel))
             .children(self.render_docked_viewer(window, cx))
             .into_any_element()
     }
@@ -5776,6 +5848,321 @@ mod tests {
         workspace.read_with(&visual, |this, _| {
             assert!(this.composer_dock_bounds.top() > px(180.));
             assert!(last_row.bottom() <= this.composer_dock_bounds.top());
+        });
+    }
+
+    /// Bug #26: a wheel over the conversation dock's gutters (its padding,
+    /// the gaps between cards) must never scroll the composer's top edge
+    /// under a clip, at any size, interface size or card/draft growth.
+    /// Scroll state survives renders, so each variant inherits the previous
+    /// one's wheels, as an intermittent real session would.
+    #[gpui::test]
+    fn conversation_dock_wheel_never_clips_the_composer_top(cx: &mut TestAppContext) {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                set_zoom(1.);
+            }
+        }
+        let _reset = Reset;
+        let _caption = CaptionPreview::new();
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let view = |approval: bool, questions: bool| {
+            let mut view = if questions {
+                question_state()
+            } else {
+                state("a")
+            };
+            if approval {
+                Arc::make_mut(&mut view.sessions)[0].approval = Some(serde_json::json!({
+                    "toolName": "Bash", "toolInput": {"command": "cargo test"}
+                }));
+            }
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 20,
+                first_seq: 1,
+                items: (0..20)
+                    .map(|i| Item {
+                        kind: "assistant_text".into(),
+                        text: format!("Message {i}\n\nA paragraph in the conversation."),
+                        ..Default::default()
+                    })
+                    .collect(),
+            });
+            Arc::new(view)
+        };
+        let wheels = |dock: gpui::Bounds<gpui::Pixels>, composer: gpui::Bounds<gpui::Pixels>| {
+            [
+                gpui::point(dock.left() + px(2.), composer.center().y),
+                gpui::point(dock.right() - px(2.), composer.top() + px(4.)),
+                gpui::point(dock.center().x, dock.top() + px(2.)),
+                gpui::point(dock.center().x, dock.bottom() - px(2.)),
+            ]
+        };
+        let mut checked = 0;
+        for zoom_steps in [0, 3] {
+            for _ in 0..zoom_steps {
+                visual.simulate_keystrokes("ctrl-=");
+            }
+            for (width, height) in [(1000., 700.), (720., 480.), (1600., 900.), (860., 560.)] {
+                for (approval, questions, files, draft) in [
+                    (false, false, false, ""),
+                    (true, false, false, ""),
+                    (false, true, false, ""),
+                    (false, false, true, "one\ntwo\nthree\nfour"),
+                ] {
+                    visual.simulate_resize(size(px(width), px(height)));
+                    visual.update(|window, cx| {
+                        workspace.update(cx, |this, cx| {
+                            this.update_view(view(approval, questions), window, cx);
+                            let attached = if files {
+                                vec![
+                                    ("screen.png".into(), "/remote/screen.png".into()),
+                                    ("spec.pdf".into(), "/remote/spec.pdf".into()),
+                                ]
+                            } else {
+                                vec![]
+                            };
+                            this.extras.attachments.insert("a".into(), attached);
+                            this.composer
+                                .update(cx, |input, cx| input.set_value(draft, window, cx));
+                        })
+                    });
+                    visual.run_until_parked();
+                    let case = format!(
+                        "{width}x{height} zoom+{zoom_steps} approval={approval} questions={questions} files={files}"
+                    );
+                    let dock = visual.debug_bounds("conversation-dock").unwrap();
+                    let cards = visual.debug_bounds("conversation-dock-cards").unwrap();
+                    let composer = visual.debug_bounds("chat-composer").unwrap();
+                    let send = visual.debug_bounds("composer-send").unwrap();
+                    // The composer sits below the cards' clip, never under it,
+                    // with Send inside the dock and the window.
+                    // (Half a pixel: layout rounds fractional card heights.)
+                    assert!(
+                        composer.top() >= cards.bottom() - px(0.5),
+                        "{case}: {composer:?} under {cards:?}"
+                    );
+                    assert!(
+                        composer.top() >= dock.top() + px(4.),
+                        "{case}: {composer:?} in {dock:?}"
+                    );
+                    assert!(
+                        send.bottom() <= dock.bottom() && dock.bottom() <= px(height),
+                        "{case}: {send:?} in {dock:?}"
+                    );
+                    checked += 1;
+                    for position in wheels(dock, composer) {
+                        for delta in [
+                            gpui::ScrollDelta::Lines(gpui::point(0., -3.)),
+                            gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-60.))),
+                        ] {
+                            visual.simulate_event(gpui::ScrollWheelEvent {
+                                position,
+                                delta,
+                                ..Default::default()
+                            });
+                            visual.run_until_parked();
+                            assert_eq!(
+                                visual.debug_bounds("chat-composer").unwrap(),
+                                composer,
+                                "{case}: wheel {delta:?} at {position:?} moved the composer"
+                            );
+                            assert_eq!(
+                                visual.debug_bounds("conversation-dock").unwrap(),
+                                dock,
+                                "{case}"
+                            );
+                        }
+                    }
+                    // Cards that do not fit scroll inside their own region:
+                    // a wheel over them reaches the approval actions.
+                    if approval {
+                        // (Debug bounds outlive their element; read it only here.)
+                        let card = visual.debug_bounds("approval-card").unwrap();
+                        visual.simulate_event(gpui::ScrollWheelEvent {
+                            position: card.center(),
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-2000.))),
+                            ..Default::default()
+                        });
+                        visual.run_until_parked();
+                        let card = visual.debug_bounds("approval-card").unwrap();
+                        assert!(
+                            card.bottom() <= cards.bottom() + px(0.5),
+                            "{case}: {card:?} in {cards:?}"
+                        );
+                        assert_eq!(
+                            visual.debug_bounds("chat-composer").unwrap(),
+                            composer,
+                            "{case}"
+                        );
+                    }
+                }
+            }
+            visual.simulate_keystrokes("ctrl-0");
+        }
+        assert_eq!(checked, 32);
+    }
+
+    /// Bug #27: conversation notices are part of the title capsule, an island
+    /// that grows beneath it with the capsule's surface, border, shadow and
+    /// curve; long text wraps at the capsule's width; dismissal is per text;
+    /// an error's retry stays with it. The capsule itself never moves.
+    #[gpui::test]
+    fn title_notices_grow_the_capsule_into_one_island(cx: &mut TestAppContext) {
+        let _caption = CaptionPreview::new();
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let with_notice = |notice: &str| {
+            let mut view = state("a");
+            view.notice = notice.into();
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 12,
+                first_seq: 1,
+                items: (0..12)
+                    .map(|i| Item {
+                        kind: "assistant_text".into(),
+                        text: format!("Message {i}"),
+                        ..Default::default()
+                    })
+                    .collect(),
+            });
+            Arc::new(view)
+        };
+        let show = |visual: &mut VisualTestContext, notice: &str| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(with_notice(notice), window, cx)
+                })
+            });
+            visual.run_until_parked();
+        };
+        let header = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.header_bounds.size.height)
+        };
+        for (width, height) in [(1000., 700.), (720., 480.), (1600., 900.)] {
+            visual.simulate_resize(size(px(width), px(height)));
+            show(&mut visual, "");
+            let bare = header(&mut visual);
+            let capsule = visual.debug_bounds("title-bar").unwrap();
+            for notice in [
+                "Change queued; the provider will apply it when ready",
+                "Model change accepted: claude-opus-5-5 · High effort",
+                "Model change refused: this provider cannot switch models while a turn is running, so the request was not applied and nothing changed in the session.",
+            ] {
+                show(&mut visual, notice);
+                let case = format!("{width}x{height} {notice:?}");
+                let island = visual.debug_bounds("title-island").unwrap();
+                let tray = visual.debug_bounds("title-island-notices").unwrap();
+                let bar = visual.debug_bounds("title-bar").unwrap();
+                let row = visual.debug_bounds("island-notice-status").unwrap();
+                // The capsule's outline stays put and only grows downward,
+                // so a long message wraps instead of widening it.
+                assert_eq!(island.origin, capsule.origin, "{case}");
+                assert_eq!(island.size.width, capsule.size.width, "{case}");
+                assert_eq!(bar.size.height, capsule.size.height - px(2.), "{case}");
+                // Attached: the tray starts where the capsule ends, inside
+                // the island, and holds the notice.
+                assert!(
+                    (tray.top() - bar.bottom()).abs() < px(1.),
+                    "{case}: {tray:?} {bar:?}"
+                );
+                assert!(
+                    tray.left() >= island.left() && tray.right() <= island.right() + px(0.5),
+                    "{case}"
+                );
+                assert!(
+                    tray.bottom() <= island.bottom(),
+                    "{case}: {tray:?} {island:?}"
+                );
+                assert!(
+                    row.top() >= tray.top() && row.bottom() <= tray.bottom(),
+                    "{case}: {row:?} {tray:?}"
+                );
+                // Clear of the app-drawn caption buttons and the window.
+                assert!(
+                    island.right() <= px(width - chrome::CAPTION_WIDTH),
+                    "{case}: {island:?}"
+                );
+                assert!(
+                    island.left() >= px(0.) && island.bottom() < px(height / 2.),
+                    "{case}: {island:?}"
+                );
+                // The header grows with it, so the transcript is pushed, not covered.
+                assert!(
+                    header(&mut visual) >= bare + tray.size.height - px(1.),
+                    "{case}"
+                );
+            }
+            // The long refusal wrapped onto several lines within the capsule width.
+            let row = visual.debug_bounds("island-notice-status").unwrap();
+            assert!(row.size.height > px(40.), "{width}x{height}: {row:?}");
+
+            // Dismissing hides that text; the island collapses to the capsule.
+            let dismiss = visual.debug_bounds("dismiss-status-notice").unwrap();
+            visual.simulate_click(dismiss.center(), gpui::Modifiers::default());
+            visual.run_until_parked();
+            assert_eq!(header(&mut visual), bare, "{width}x{height}: dismissed");
+            assert_eq!(visual.debug_bounds("title-bar").unwrap(), capsule);
+            // The same words again after the slot moved on are news again.
+            show(&mut visual, "");
+            show(
+                &mut visual,
+                "Model change accepted: claude-opus-5-5 · High effort",
+            );
+            assert!(
+                header(&mut visual) > bare,
+                "{width}x{height}: repeated notice"
+            );
+        }
+
+        // An unavailable conversation keeps its error and Retry attached,
+        // without a dismiss that would drop the only retry.
+        visual.simulate_resize(size(px(1000.), px(700.)));
+        show(&mut visual, "Conversation unavailable: hub timed out");
+        let island = visual.debug_bounds("title-island").unwrap();
+        let retry = visual.debug_bounds("retry-conversation").unwrap();
+        assert!(island.contains(&retry.center()), "{retry:?} in {island:?}");
+        let before = header(&mut visual);
+        let stale_dismiss = visual.debug_bounds("dismiss-status-notice").unwrap();
+        visual.simulate_click(stale_dismiss.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(
+            header(&mut visual),
+            before,
+            "no dismiss on an error with its retry"
+        );
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.extras.dismissed_notices.is_empty())
+        });
+        while commands.try_recv().is_ok() {}
+        visual.simulate_click(retry.center(), gpui::Modifiers::default());
+        assert!(matches!(commands.try_recv(), Ok(Command::Refresh)));
+
+        // Local feature notices share the island, each with its own tone row.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(with_notice(""), window, cx);
+                this.extras.notice = "Attachment failed: too large".into();
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let island = visual.debug_bounds("title-island").unwrap();
+        let feature = visual.debug_bounds("island-notice-feature").unwrap();
+        assert!(
+            island.contains(&feature.center()),
+            "{feature:?} in {island:?}"
+        );
+        let dismiss = visual.debug_bounds("dismiss-feature-notice").unwrap();
+        visual.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            // Dismissal hides it here; the slot's text is left to its owner.
+            assert_eq!(this.extras.notice, "Attachment failed: too large");
+            assert_eq!(
+                this.extras.dismissed_notices,
+                vec![("feature", "Attachment failed: too large".to_owned())]
+            );
         });
     }
 
