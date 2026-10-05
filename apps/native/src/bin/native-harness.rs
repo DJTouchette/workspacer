@@ -57,6 +57,10 @@ enum Command {
         /// Emit an unavailable-session navigation request for notice captures.
         #[arg(long)]
         missing_session_request: bool,
+        /// Give the first sessions pending question sets; answers print to
+        /// stderr and resolve the set.
+        #[arg(long)]
+        pending_questions: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -151,6 +155,7 @@ async fn main() -> Result<()> {
             turns,
             rich_transcript,
             missing_session_request,
+            pending_questions,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
@@ -160,6 +165,7 @@ async fn main() -> Result<()> {
                 turns.min(5000),
                 rich_transcript,
                 missing_session_request,
+                pending_questions,
             )
             .await?;
         }
