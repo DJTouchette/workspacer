@@ -2534,13 +2534,19 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let all = conv.snapshot_window("s1", None, None).unwrap();
-        assert_eq!((all.seq, all.first_seq, all.window_first_seq), (10, 1, Some(1)));
+        assert_eq!(
+            (all.seq, all.first_seq, all.window_first_seq),
+            (10, 1, Some(1))
+        );
         assert_eq!(all.items.len(), 10);
         // The newest page, with the first returned sequence past the log's
         // first: older retained items exist.
         let page = conv.snapshot_window("s1", None, Some(3)).unwrap();
         assert_eq!(text(&page), ["m7", "m8", "m9"]);
-        assert_eq!((page.seq, page.first_seq, page.window_first_seq), (10, 1, Some(8)));
+        assert_eq!(
+            (page.seq, page.first_seq, page.window_first_seq),
+            (10, 1, Some(8))
+        );
         // A limit past the log is the whole log.
         let wide = conv.snapshot_window("s1", None, Some(50)).unwrap();
         assert_eq!(wide.window_first_seq, Some(1));

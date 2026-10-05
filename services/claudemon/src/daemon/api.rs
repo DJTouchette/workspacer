@@ -2621,8 +2621,7 @@ mod tests {
                 }],
             );
         }
-        let (_, body) =
-            request(state.clone(), get("/sessions/paged/conversation?limit=2")).await;
+        let (_, body) = request(state.clone(), get("/sessions/paged/conversation?limit=2")).await;
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["seq"], 6);
         assert_eq!(v["first_seq"], 1);
