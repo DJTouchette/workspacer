@@ -4800,6 +4800,77 @@ mod tests {
         assert!(commands.try_recv().is_err());
     }
 
+    /// Bug #22: the New Agent footer is a panel inset by the form's gutters and
+    /// aligned with its cards, not a band at the window edge; it stays put while
+    /// the form scrolls, in every theme and at the smallest window.
+    #[gpui::test]
+    fn launch_footer_is_an_inset_panel_aligned_with_the_form(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_new_session(window, cx);
+                this.projects.cwd = "/work/api".into();
+            });
+        });
+        for (width, height) in [(720., 480.), (1000., 700.), (1400., 900.)] {
+            visual.simulate_resize(size(px(width), px(height)));
+            let gutter = px(if height < 620. { 12. } else { 20. });
+            for appearance in Appearance::ALL {
+                visual.update(|window, cx| {
+                    workspace.update(cx, |this, cx| this.set_appearance(appearance, window, cx))
+                });
+                visual.run_until_parked();
+                let label = appearance.label();
+                let footer = visual.debug_bounds("launch-footer").unwrap();
+                let content = visual.debug_bounds("launch-content").unwrap();
+                let start = visual.debug_bounds("launch-start").unwrap();
+                let status = visual.debug_bounds("launch-status").unwrap();
+                let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() <= px(1.);
+                assert!(
+                    near(footer.bottom(), px(height) - gutter),
+                    "{label} {width}x{height}: {footer:?} is not inset from the bottom"
+                );
+                assert!(
+                    near(footer.left(), content.left()) && near(footer.right(), content.right()),
+                    "{label} {width}x{height}: {footer:?} not aligned with {content:?}"
+                );
+                for (name, inner) in [("start", start), ("status", status)] {
+                    assert!(
+                        inner.left() > footer.left()
+                            && inner.right() < footer.right()
+                            && inner.top() > footer.top()
+                            && inner.bottom() < footer.bottom(),
+                        "{label} {width}x{height}: {name} {inner:?} outside {footer:?}"
+                    );
+                }
+                // Button and status share one centered row.
+                assert!(near(start.center().y, status.center().y), "{label}");
+            }
+        }
+        // Sticky: scrolling the form moves the cards, never the footer.
+        visual.simulate_resize(size(px(720.), px(480.)));
+        visual.run_until_parked();
+        let footer = visual.debug_bounds("launch-footer").unwrap();
+        let content = visual.debug_bounds("launch-content").unwrap();
+        visual.simulate_event(gpui::ScrollWheelEvent {
+            position: content.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-200.))),
+            ..Default::default()
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("launch-content").unwrap().top() < content.top());
+        assert_eq!(visual.debug_bounds("launch-footer").unwrap(), footer);
+        let start = visual.debug_bounds("launch-start").unwrap();
+        visual.simulate_click(start.center(), gpui::Modifiers::default());
+        let Some(Command::Create(request)) = next_effect(&mut commands) else {
+            panic!("expected one create command")
+        };
+        assert_eq!(request.cwd, "/work/api");
+        assert!(commands.try_recv().is_err());
+    }
+
     #[gpui::test]
     fn new_session_form_creates_once_and_keeps_failed_input(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);

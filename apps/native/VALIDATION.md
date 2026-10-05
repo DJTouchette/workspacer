@@ -1160,3 +1160,35 @@ The desktop compatibility commit `b06d652c` is retained and source-reviewed;
 its TS tests were not rerun because this checkout has no `node_modules`.
 The full evidence archive is `.workspacer/reports/native-feedback-evidence.tar.gz`;
 retain it before deleting this integration worktree.
+
+## New Agent footer panel (#22, 2026-10-05)
+
+Cause: `render_new_session` (`src/ui/launch.rs`) drew the sticky footer as a
+full-bleed strip in `p.base` with only a top hairline. The shell paints the page
+in `p.chat`, so the footer was a differently colored, square band flush with the
+window's bottom and right edges, under rounded `p.surface` cards and beside the
+inset rounded sidebar. Fix: the footer is now the shared `chrome::card` surface
+(`panel_radius`, `surface`, `border`) with the composer's `floating_shadow`,
+inside a wrapper that uses the form's own gutters (20px, or 12px in short
+windows), so its edges line up with the cards above. Content, Start/Continue,
+access/model readback, the error card, the keyboard shortcut and focus behavior
+are unchanged; the footer is still a flex sibling of the scroll area.
+
+`launch_footer_is_an_inset_panel_aligned_with_the_form` checks all eight themes
+at 720×480, 1000×700 and 1400×900: the panel is inset by the gutter, aligned with
+the form column, holds the status and Start on one row, stays fixed while the
+form scrolls, and Start still creates exactly one launch. It fails against the
+old strip styling. Full native suite: 343 passed, 1 ignored; strict Clippy and
+rustfmt clean (four Cargo jobs, `--test-threads=1`).
+
+Real windows: private Xvfb `:122`, lavapipe, `native-harness serve` on port
+18122, throwaway HOME/XDG, debug build. Before:
+[dark](docs/ui-launch-footer-before-dark.png). After:
+[dark](docs/ui-launch-footer-after-dark.png),
+[Catppuccin Latte 760×560](docs/ui-launch-footer-after-latte-narrow.png),
+[Gruvbox short 900×500](docs/ui-launch-footer-after-gruvbox-short.png),
+[all eight themes](docs/ui-launch-footer-all-themes.png). 720×480 was also
+inspected. Limits: the long-error and busy states were checked only by GPUI
+geometry tests, not captured. The `Ctrl Enter` keycap uses `p.surface`, so on
+the panel it reads as plain mono text, as it already does in the chat composer.
+No Windows/macOS or hardware-GPU capture.

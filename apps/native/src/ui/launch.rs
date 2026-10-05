@@ -263,7 +263,9 @@ impl Workspace {
                                 .disabled(busy),
                         ),
                 );
+        let gutter = if short { 12. } else { 20. };
         let content = div()
+            .debug_selector(|| "launch-content".into())
             .max_w(px(if wide { 980. } else { 720. }))
             .mx_auto()
             .py_2()
@@ -314,20 +316,20 @@ impl Workspace {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p(px(if short { 12. } else { 20. }))
+                    .p(px(gutter))
                     .when(chrome::custom_caption(), |d| {
                         d.pt(px(chrome::PAGE_CAPTION_INSET))
                     })
                     .child(content),
             )
             .child(
+                // The form's own gutters, so the footer panel lines up with
+                // the cards above it and floats on the page like the composer.
                 div()
                     .flex_shrink_0()
-                    .px_5()
-                    .py_3()
-                    .bg(rgb(p.base))
-                    .border_t_1()
-                    .border_color(rgb(p.border))
+                    .px(px(gutter))
+                    .pt_2()
+                    .pb(px(gutter))
                     // A flex row gives the footer a definite width, so a long
                     // error wraps instead of widening it.
                     .flex()
@@ -665,10 +667,16 @@ impl Workspace {
                         }),
                     ),
             );
-        div()
+        // The shared card surface, raised like the chat composer: the one
+        // action dock on this page, not a separate band at the window edge.
+        chrome::card(p)
+            .debug_selector(|| "launch-footer".into())
+            .shadow(chrome::floating_shadow(p))
             .flex_1()
             .min_w_0()
             .max_w(px(if wide { 980. } else { 720. }))
+            .px(px(if short { 12. } else { 16. }))
+            .py(px(if short { 8. } else { 12. }))
             .flex()
             .flex_col()
             .gap_2()
