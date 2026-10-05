@@ -1588,3 +1588,39 @@ answers queued. Keyboard activation of the dismiss relies on the shared
 follow-up: below 620 px the composer hint line was meant to hide, but
 `.flex()` after `.hidden()` re-displays it. It carries the Working/elapsed
 status, so it was left as is.
+
+### Independent integration review of #26/#27
+
+The original phantom-scroll fix and attached notices were merged from exact
+`f9db7c15`. Independent tests found two remaining ways to lose the conversation
+at a fixed 720×480 window: a long host refusal grew the header to 1504px, and
+12 attachments plus a four-line draft and questions grew the dock to 506px.
+The original zoom matrix resized with the scaled `px` helper, so its window grew
+along with the interface. The new regression holds raw GPUI window pixels fixed,
+applies real font scaling, and covers 100%, 125%, 150%, and 200%.
+
+Notices and attachment lists now have bounded scroll regions. At very short
+logical heights, ancillary padding and card space compact; text size and the
+Working/elapsed line remain intact. The header's budget uses actual rem gutters.
+The composer stays stationary; 200% prioritizes non-overlap and visible controls
+over a minimum transcript gap. Full notice text remains scrollable to its end.
+A dedicated test tabs away/back to Dismiss and activates it with Enter and Space,
+retaining the draft and emitting no session command.
+
+Real 200% inspection also caught a paint-only problem with an external input
+`max_h`: the text element retained its four-row minimum and painted over Send.
+The native composer instead adjusts the input's auto-grow row budget in place,
+with a small vendored setter preserving the document, cursor and undo state.
+An auto-grow viewport of one row remains multiline; otherwise existing newline
+text reached the single-line shaper. The final review report records executed
+checks, private window captures, and the required Windows CI follow-up.
+
+Private integration captures (forced Windows caption, Xvfb :98, fixture port
+18057, isolated HOME/XDG): [150% after gutter wheel](docs/ui-integration-dock-150.png),
+[200% final input/caret/Send](docs/ui-integration-dock-200.png),
+[attached notice at 720×480](docs/ui-integration-notice-720.png).
+The four-line draft was copied through the private X server's clipboard and
+retained exactly. One-row input caret tracking now resolves an offscreen EOF
+from its wrapped row and reveals it without impossible symmetric margins.
+The narrow action row reserves Send/Interrupt before the ancillary context meter.
+No real provider was called; actual Windows DPI/runtime remains a CI gate.

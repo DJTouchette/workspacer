@@ -295,9 +295,11 @@ impl Workspace {
         &mut self,
         bar: Stateful<Div>,
         status: String,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = self.appearance.palette();
+        let compact = unzoom(window.viewport_size().height) < 300.;
         let omitted = if self.view.transcript.omitted && !self.view.transcript.has_older {
             OMITTED_NOTICE
         } else {
@@ -344,11 +346,11 @@ impl Workspace {
                     .into_any_element()
             });
             let tone = notice_tone(&status);
-            rows.push(self.island_notice("status", status, tone, action, !retry, cx));
+            rows.push(self.island_notice("status", status, tone, action, !retry, compact, cx));
         }
         if show_feature {
             let tone = notice_tone(&feature);
-            rows.push(self.island_notice("feature", feature, tone, None, true, cx));
+            rows.push(self.island_notice("feature", feature, tone, None, true, compact, cx));
         }
         if self.view.loading && !self.view.transcript.rows.is_empty() {
             rows.push(self.island_notice(
@@ -357,6 +359,7 @@ impl Workspace {
                 Tone::Loading,
                 None,
                 false,
+                compact,
                 cx,
             ));
         }
@@ -374,6 +377,7 @@ impl Workspace {
                 Tone::Info,
                 Some(action),
                 true,
+                compact,
                 cx,
             ));
         }
@@ -448,9 +452,20 @@ impl Workspace {
                             d.w_full().max_w(px(420.))
                         }
                     })
+                    // Keep the full message scrollable without letting an
+                    // arbitrary host error cover the transcript and composer.
+                    .max_h(
+                        (window.viewport_size().height
+                            - self.composer_dock_bounds.size.height
+                            // pt_3 + pb_5 use two rems at the user's font size.
+                            - px(40.) - window.rem_size() * 2.
+                            - if unzoom(window.viewport_size().height) < 300. { gpui::px(0.) } else { gpui::px(24.) })
+                        .min(window.viewport_size().height * 0.35)
+                        .max(gpui::px(1.)),
+                    )
+                    .overflow_y_scroll()
                     .px_3()
-                    .pt_1()
-                    .pb_2()
+                    .when(!compact, |d| d.pt_1().pb_2())
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -469,6 +484,7 @@ impl Workspace {
 
     /// One island notice: tone icon and wrapped text, then its action and a
     /// dismiss (keyboard reachable, like every native control).
+    #[allow(clippy::too_many_arguments)]
     fn island_notice(
         &self,
         slot: &'static str,
@@ -476,21 +492,29 @@ impl Workspace {
         tone: Tone,
         action: Option<AnyElement>,
         dismissible: bool,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = self.appearance.palette();
         div()
             .debug_selector(move || format!("island-notice-{slot}"))
+            .flex_shrink_0()
             .w_full()
             .flex()
             .items_start()
             .gap_1()
-            .child(div().flex_1().min_w_0().py(px(5.)).child(notice_line(
-                text.clone(),
-                tone,
-                p,
-                SharedString::from(format!("island-notice-{slot}-icon")),
-            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .py(px(if compact { 0. } else { 5. }))
+                    .child(notice_line(
+                        text.clone(),
+                        tone,
+                        p,
+                        SharedString::from(format!("island-notice-{slot}-icon")),
+                    )),
+            )
             .children(action)
             .when(dismissible, |d| {
                 d.child(

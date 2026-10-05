@@ -107,7 +107,10 @@ impl InputMode {
         match self {
             InputMode::PlainText { multi_line, .. } => *multi_line,
             InputMode::CodeEditor { multi_line, .. } => *multi_line,
-            InputMode::AutoGrow { max_rows, .. } => *max_rows > 1,
+            // This is a multiline document even when its viewport is one
+            // row tall. Treating it as single-line sends embedded newlines
+            // to shape_line and changes Enter/scroll semantics on resize.
+            InputMode::AutoGrow { .. } => true,
         }
     }
 
@@ -323,6 +326,16 @@ mod tests {
         assert_eq!(mode.line_number(), false);
         assert_eq!(mode.max_rows(), 1);
         assert_eq!(mode.min_rows(), 1);
+    }
+
+    #[test]
+    fn one_visible_auto_grow_row_keeps_multiline_semantics() {
+        let mut mode = InputMode::auto_grow(1, 1);
+        assert!(mode.is_multi_line());
+        assert!(!mode.is_single_line());
+        mode.set_rows(12);
+        assert_eq!(mode.rows(), 1);
+        assert_eq!(mode.max_rows(), 1);
     }
 
     #[test]

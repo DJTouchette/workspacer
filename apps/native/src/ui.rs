@@ -1460,6 +1460,21 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = self.appearance.palette();
         let compact = window.viewport_size().height < px(620.);
+        // Input's auto-grow minimum belongs to its text element. Adjust that
+        // row budget itself, so caret scrolling and painting use the real
+        // viewport instead of overflowing an externally capped outer box.
+        let input_share = if unzoom(window.viewport_size().height) < 300. {
+            0.10
+        } else {
+            0.14
+        };
+        let input_rows = (f32::from(window.viewport_size().height) * input_share
+            / (f32::from(window.rem_size()) * 1.25))
+            .floor()
+            .clamp(1., 4.) as usize;
+        self.composer
+            .update(cx, |input, cx| input.set_auto_grow_rows(1, input_rows, cx));
+
         let narrow = window.viewport_size().width < px(900.);
         let selected = self
             .view
@@ -1517,6 +1532,21 @@ impl Render for Workspace {
                 (false, true) => 0.45,
                 (false, false) => 0.55,
             };
+        // Reserve a title row, one notice row and some readable transcript.
+        // Unlike the scaled UI units, the viewport remains physical pixels.
+        let cards_budget = (dock_share - self.composer_layer_height)
+            .max(px(DOCK_CARDS_FLOOR))
+            .min(
+                (window.viewport_size().height
+                    - px(104.)
+                    - gpui::px(24.)
+                    - self.composer_layer_height)
+                    .max(if unzoom(window.viewport_size().height) < 300. {
+                        gpui::px(24.)
+                    } else {
+                        px(24.)
+                    }),
+            );
         // Draft attachments with their thumbnails (images only; PDFs keep
         // the file chip). Loading and failure fall back to the name.
         let draft_files: Vec<features::DraftFile> = self
@@ -1634,7 +1664,7 @@ impl Render for Workspace {
             Some(bar) => bar,
             None => self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
         };
-        let title_island = self.render_title_island(title_bar, notice, cx);
+        let title_island = self.render_title_island(title_bar, notice, window, cx);
         // Transparent fade rather than a ruled strip: history scrolls softly
         // under the floating title pill instead of colliding with a hard edge.
         let header = div()
@@ -1738,7 +1768,7 @@ impl Render for Workspace {
                 }, |_, _, _, _| {}).absolute().top_0().left_0().size_full())
                     // Gutters and the gap above the composer stay inside this
                     // clip, so card shadows keep their room.
-                    .child(chrome::chat_column().id("conversation-dock-cards").debug_selector(|| "conversation-dock-cards".into()).flex_shrink_0().max_h((dock_share - self.composer_layer_height).max(px(DOCK_CARDS_FLOOR))).overflow_y_scroll().pt(px(if compact { 8. } else { 12. })).pb(px(if composer_docked { if compact { 4. } else { 8. } } else { 0. })).flex().flex_col().gap(px(if compact { 4. } else { 8. }))
+                    .child(chrome::chat_column().id("conversation-dock-cards").debug_selector(|| "conversation-dock-cards".into()).flex_shrink_0().max_h(cards_budget).overflow_y_scroll().pt(px(if compact { 8. } else { 12. })).pb(px(if composer_docked { if compact { 4. } else { 8. } } else { 0. })).flex().flex_col().gap(px(if compact { 4. } else { 8. }))
                 .when(self.view.child.is_none(), |d| d.child(self.render_pending(window, cx)))
                 .when_some(selected.as_ref().and_then(|s| s.approval.as_ref()), |d, approval| {
                     let label = approval.get("toolName").or_else(|| approval.get("tool")).and_then(serde_json::Value::as_str).unwrap_or("Tool");
@@ -1770,14 +1800,14 @@ impl Render for Workspace {
                     .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).key_context(if self.settings.enter_sends { "Composer ComposerEnter" } else { "Composer" }).occlude().bg(rgb(p.surface)).border_1()
                         .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) { rgb(p.accent).into() } else { gpui::Hsla::from(rgb(p.border)).opacity(0.55) })
                         .rounded(px(p.composer_radius)).shadow(chrome::floating_shadow(p)).p(px(if compact { 8. } else { 12. })).flex().flex_col().gap_2()
-                        .when(!draft_files.is_empty() || self.uploading(), |d| d.child(self.render_draft_attachments(draft_files, &draft_cwd, cx)))
+                        .when(!draft_files.is_empty() || self.uploading(), |d| d.child(div().id("composer-attachments-scroll").debug_selector(|| "composer-attachments-scroll".into()).max_h((window.viewport_size().height * if unzoom(window.viewport_size().height) < 300. { 0.05 } else { 0.10 }).min(px(80.))).overflow_y_scroll().child(self.render_draft_attachments(draft_files, &draft_cwd, cx))))
                         .child(Input::new(&self.composer).appearance(false).disabled(self.view.busy))
                         .child(div().flex().items_center().justify_between().gap_2()
-                            .child(div().flex().items_center().gap_1()
+                            .child(div().flex_1().min_w_0().overflow_hidden().flex().items_center().gap_1()
                                 .child(self.icon_button("attach-file", if self.uploading() { "Attaching file…" } else { "Attach a file (or paste an image)" }, IconName::Plus, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx)))))
                                 .children(selected.as_ref().and_then(|s| chrome::context_meter(s, p))))
-                            .child(div().flex().items_center().gap_2()
-                                .when(working, |d| d.child(self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx))))))
+                            .child(div().flex_shrink_0().flex().items_center().gap_2()
+                                .when(working, |d| d.child(if narrow { self.icon_button("stop", "Interrupt", IconName::WindowClose, enabled) } else { self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled) }.when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx))))))
                                 .child(self.primary_icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).debug_selector(|| "composer-send".into()).size(px(32.)).rounded_full()
                                     .when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.send(&SendMessage, window, cx))))))))
                     .child(div().when(compact, |d| d.hidden()).occlude().bg(rgb(p.chat)).rounded_md().px_2().py_1().flex().items_center().justify_between().gap_2().text_size(px(10.)).text_color(rgb(p.muted))
@@ -6002,6 +6032,140 @@ mod tests {
             visual.simulate_keystrokes("ctrl-0");
         }
         assert_eq!(checked, 32);
+    }
+
+    #[gpui::test]
+    fn short_physical_windows_bound_long_notices_and_many_attachments(cx: &mut TestAppContext) {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                set_zoom(1.);
+            }
+        }
+        let _reset = Reset;
+        let _caption = CaptionPreview::new();
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        for scale in [1., 1.25, 1.5, 2.] {
+            set_zoom(scale);
+            // Raw GPUI pixels: zoom must not enlarge the physical test window.
+            visual.simulate_resize(size(gpui::px(720.), gpui::px(480.)));
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.apply_typography(cx);
+                    let mut next = question_state();
+                    Arc::make_mut(&mut next.sessions)[0].merge(&serde_json::json!({
+                        "statusLine": {"contextUsedPct": 42.0, "contextWindowSize": 200000}
+                    }));
+                    next.notice = format!(
+                        "Model change refused: {}",
+                        "The host returned a detailed explanation. ".repeat(40)
+                    );
+                    this.update_view(Arc::new(next), window, cx);
+                    this.extras.attachments.insert(
+                        "a".into(),
+                        (0..12)
+                            .map(|i| {
+                                (
+                                    format!("document-{i}.pdf"),
+                                    format!("/remote/document-{i}.pdf"),
+                                )
+                            })
+                            .collect(),
+                    );
+                    this.composer.update(cx, |input, cx| {
+                        input.set_value("one\ntwo\nthree\nfour", window, cx)
+                    });
+                })
+            });
+            visual.run_until_parked();
+            let header = workspace.read_with(&visual, |this, _| this.header_bounds);
+            let dock = visual.debug_bounds("conversation-dock").unwrap();
+            let send = visual.debug_bounds("composer-send").unwrap();
+            assert!(
+                header.bottom() + gpui::px(if scale < 2. { 24. } else { 0. }) <= dock.top(),
+                "scale {scale}: header {header:?}, dock {dock:?}"
+            );
+            assert!(
+                send.bottom() <= gpui::px(480.)
+                    && send.top() > header.bottom()
+                    && send.right() <= gpui::px(720.),
+                "scale {scale}: send {send:?}, header {header:?}"
+            );
+            let before = visual.debug_bounds("chat-composer").unwrap();
+            assert!(
+                before.top() >= header.bottom() && before.bottom() <= gpui::px(480.),
+                "scale {scale}: composer {before:?}"
+            );
+            let tray = visual.debug_bounds("title-island-notices").unwrap();
+            visual.simulate_event(gpui::ScrollWheelEvent {
+                position: tray.center(),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.), gpui::px(-100_000.))),
+                ..Default::default()
+            });
+            visual.run_until_parked();
+            assert_eq!(visual.debug_bounds("chat-composer").unwrap(), before);
+            let message = visual.debug_bounds("island-notice-status").unwrap();
+            assert!(
+                message.bottom() <= tray.bottom() + gpui::px(1.),
+                "full notice can be scrolled to its end: {message:?} {tray:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn title_notice_dismiss_supports_tab_enter_and_space_without_sending(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        for key in ["enter", "space"] {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut next = state("a");
+                    next.notice = format!("Session created {key}");
+                    this.update_view(Arc::new(next), window, cx);
+                    this.composer
+                        .update(cx, |input, cx| input.set_value("KEEP_DRAFT", window, cx));
+                })
+            });
+            visual.run_until_parked();
+            let bounds = visual.debug_bounds("dismiss-status-notice").unwrap();
+            // Focus by mouse-down, then release outside so no click activates.
+            visual.simulate_mouse_down(
+                bounds.center(),
+                gpui::MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            visual.simulate_mouse_up(
+                gpui::point(gpui::px(0.), gpui::px(0.)),
+                gpui::MouseButton::Left,
+                gpui::Modifiers::default(),
+            );
+            visual.run_until_parked();
+            let focus = visual.update(|window, cx| window.focused(cx).unwrap());
+            workspace.read_with(&visual, |this, _| {
+                assert!(this.extras.dismissed_notices.is_empty())
+            });
+            visual.simulate_keystrokes("tab shift-tab");
+            visual.run_until_parked();
+            assert_eq!(
+                visual.update(|window, cx| window.focused(cx).unwrap()),
+                focus
+            );
+            visual.simulate_keystrokes(key);
+            visual.simulate_event(gpui::KeyUpEvent {
+                keystroke: gpui::Keystroke::parse(key).unwrap(),
+            });
+            visual.run_until_parked();
+            workspace.read_with(&visual, |this, cx| {
+                assert!(
+                    this.extras
+                        .dismissed_notices
+                        .iter()
+                        .any(|(slot, text)| *slot == "status"
+                            && text == &format!("Session created {key}"))
+                );
+                assert_eq!(this.composer.read(cx).value().as_str(), "KEEP_DRAFT");
+            });
+            assert!(commands.try_recv().is_err());
+        }
     }
 
     /// Bug #27: conversation notices are part of the title capsule, an island

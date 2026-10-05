@@ -428,6 +428,23 @@ impl InputState {
         self
     }
 
+    /// Change an auto-growing input's row budget without replacing its text,
+    /// selection or undo history. Constraining only the outer Input's height
+    /// leaves TextElement's auto-grow minimum larger than its viewport.
+    pub fn set_auto_grow_rows(&mut self, min_rows: usize, max_rows: usize, cx: &mut Context<Self>) {
+        let min_rows = min_rows.max(1);
+        let max_rows = max_rows.max(min_rows);
+        if matches!(self.mode, InputMode::AutoGrow { min_rows: min, max_rows: max, .. }
+            if min == min_rows && max == max_rows)
+        {
+            return;
+        }
+        self.mode = InputMode::auto_grow(min_rows, max_rows);
+        self.mode.update_auto_grow(&self.text_wrapper);
+        self.last_selected_range = None; // reveal the unchanged caret in its new viewport
+        cx.notify();
+    }
+
     /// Set Input to use [`InputMode::CodeEditor`] mode.
     ///
     /// Default options:

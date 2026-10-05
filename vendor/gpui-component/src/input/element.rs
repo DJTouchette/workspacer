@@ -170,6 +170,23 @@ impl TextElement {
             }
         }
 
+        let one_row = state.mode.is_auto_grow() && state.mode.max_rows() == 1;
+        if one_row {
+            // The caret can be on the first line beyond this tiny viewport,
+            // including EOF where the old off-screen loop has no following
+            // line to discover it. Locate its wrapped row before scrolling;
+            // the next frame shapes its exact horizontal position.
+            let position = |offset| {
+                point(
+                    px(0.),
+                    text_wrapper.offset_to_display_point(offset).row as f32 * line_height,
+                )
+            };
+            cursor_pos.get_or_insert_with(|| position(cursor));
+            cursor_start.get_or_insert_with(|| position(selected_range.start));
+            cursor_end.get_or_insert_with(|| position(selected_range.end));
+        }
+
         if let (Some(cursor_pos), Some(cursor_start), Some(cursor_end)) =
             (cursor_pos, cursor_start, cursor_end)
         {
@@ -189,16 +206,18 @@ impl TextElement {
 
                 // If we change the scroll_offset.y, GPUI will render and trigger the next run loop.
                 // So, here we just adjust offset by `line_height` for move smooth.
-                scroll_offset.y =
-                    if scroll_offset.y + cursor_pos.y > bounds.size.height - top_bottom_margin {
-                        // cursor is out of bottom
-                        scroll_offset.y - line_height
-                    } else if scroll_offset.y + cursor_pos.y < top_bottom_margin {
-                        // cursor is out of top
-                        (scroll_offset.y + line_height).min(px(0.))
-                    } else {
-                        scroll_offset.y
-                    };
+                scroll_offset.y = if one_row {
+                    // No spare line exists for symmetric top/bottom margins.
+                    -cursor_pos.y
+                } else if scroll_offset.y + cursor_pos.y > bounds.size.height - top_bottom_margin {
+                    // cursor is out of bottom
+                    scroll_offset.y - line_height
+                } else if scroll_offset.y + cursor_pos.y < top_bottom_margin {
+                    // cursor is out of top
+                    (scroll_offset.y + line_height).min(px(0.))
+                } else {
+                    scroll_offset.y
+                };
 
                 if state.selection_reversed {
                     if scroll_offset.x + cursor_start.x < px(0.) {
