@@ -4156,6 +4156,81 @@ mod tests {
         workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Projects));
     }
 
+    /// Settings → Agents shows the hub's child-agent access setting as read
+    /// (never assumed), and the switch asks the hub to change it.
+    #[gpui::test]
+    fn child_agent_full_access_is_a_hub_setting_toggled_from_agents(cx: &mut TestAppContext) {
+        use wks_native::features::{Request, RequestState};
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_screen(Screen::Settings, window, cx);
+                this.settings_section = settings::SettingsSection::Agents;
+            })
+        });
+        let read = std::iter::from_fn(|| commands.try_recv().ok())
+            .any(|c| matches!(c, Command::Request(Request::ChildAccess { set: None })));
+        assert!(read, "opening Settings reads the hub's setting");
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("setting-child-access").is_some());
+        // The Agents card is taller than the default test window.
+        visual.simulate_resize(size(px(1000.), px(1600.)));
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.extras.child_access, None)
+        });
+        let mut next = state("a");
+        next.requests.insert(
+            "child-access".into(),
+            RequestState {
+                number: 1,
+                request: Request::ChildAccess { set: None },
+                loading: false,
+                value: Arc::new(
+                    serde_json::json!({"childFullAccess":false,"fleetFullAccess":true}),
+                ),
+                error: None,
+            },
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(next), window, cx))
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.extras.child_access, Some((false, true)))
+        });
+        let switch = visual.debug_bounds("child-access-switch").unwrap();
+        visual.simulate_click(
+            gpui::point(switch.left() + px(12.), switch.center().y),
+            gpui::Modifiers::none(),
+        );
+        visual.run_until_parked();
+        let set = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+            Command::Request(Request::ChildAccess { set }) => Some(set),
+            _ => None,
+        });
+        assert_eq!(set, Some(Some(true)));
+        // A refused save leaves the last confirmed value in place.
+        let mut refused = state("a");
+        refused.requests.insert(
+            "child-access".into(),
+            RequestState {
+                number: 2,
+                request: Request::ChildAccess { set: Some(true) },
+                loading: false,
+                value: Arc::new(serde_json::Value::Null),
+                error: Some("operator scope required".into()),
+            },
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(refused), window, cx);
+                assert_eq!(this.extras.child_access, Some((false, true)));
+            })
+        });
+    }
+
     #[gpui::test]
     fn settings_categories_and_search_filter_preferences(cx: &mut TestAppContext) {
         let (workspace, mut visual, _, _updates) = fixture(cx);

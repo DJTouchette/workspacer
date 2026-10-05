@@ -3,7 +3,8 @@
 //! keywords.
 use super::*;
 use gpui::AnyElement;
-use gpui_component::switch::Switch;
+use gpui_component::{Disableable, switch::Switch};
+use wks_native::features::Request;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsSection {
@@ -545,6 +546,15 @@ impl Workspace {
         }
 
         entries.push(Entry::new(
+            S::Agents,
+            "child-access",
+            "Child agents start with full access",
+            "Agents your sessions start (through the spawn skill or Workspacer tools) skip the provider's own approval prompts: Claude runs in bypass-permissions mode, Codex with full access. Saved in the hub's shared settings, so every client of this hub sees it. Workspacer's own approval gate, tool access and your existing sessions are unchanged; a resumed session keeps its mode.",
+            "child subagent spawn worker full access bypass permissions yolo approvals prompts",
+            Layout::Block,
+            self.render_child_access(cx),
+        ));
+        entries.push(Entry::new(
             S::Chat,
             "merge-turn",
             "One card per turn",
@@ -702,6 +712,66 @@ impl Workspace {
             self.render_update_card(cx),
         ));
         entries
+    }
+
+    fn render_child_access(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let state = self.view.requests.get("child-access");
+        let pending = state.is_some_and(|s| s.loading);
+        let can_write = self.view.connected && !self.demo && !pending;
+        let current = self.extras.child_access;
+        let error = state.filter(|s| !s.loading).and_then(|s| s.error.clone());
+        let (status, tone) = match (current, &error) {
+            (_, Some(error)) => (
+                format!("Couldn't reach the hub's setting: {error}"),
+                chrome::Tone::Error,
+            ),
+            (None, None) if pending || self.view.connected => {
+                ("Reading the hub's setting…".to_owned(), chrome::Tone::Loading)
+            }
+            (None, None) => (
+                "Connect to a hub to change this.".to_owned(),
+                chrome::Tone::Info,
+            ),
+            (Some((true, _)), None) => (
+                "On: new child agents skip provider approval prompts.".to_owned(),
+                chrome::Tone::Warning,
+            ),
+            (Some((false, true)), None) => (
+                "Off. Fleet Manager workers still start with full access (the hub's Fleet setting).".to_owned(),
+                chrome::Tone::Info,
+            ),
+            (Some((false, false)), None) => (
+                "Off: child agents ask before edits and commands, as their provider does.".to_owned(),
+                chrome::Tone::Info,
+            ),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .debug_selector(|| "child-access-switch".into())
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        Switch::new("settings-child-access")
+                            .checked(current.is_some_and(|(on, _)| on))
+                            .disabled(!can_write || current.is_none())
+                            .tooltip("Child agents start with full access")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.request(
+                                    Request::ChildAccess {
+                                        set: Some(*checked),
+                                    },
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+            .child(chrome::notice_line(status, tone, p, "child-access-status"))
     }
 
     fn render_entry(&self, entry: Entry, first: bool) -> Div {

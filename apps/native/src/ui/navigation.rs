@@ -122,6 +122,18 @@ impl Workspace {
         if screen == Screen::Projects {
             self.load_projects(cx);
         }
+        // The hub's child-agent access setting is shown fresh each visit.
+        if screen == Screen::Settings
+            && !self.demo
+            && self.view.connected
+            && !self
+                .view
+                .requests
+                .get("child-access")
+                .is_some_and(|s| s.loading)
+        {
+            self.request(wks_native::features::Request::ChildAccess { set: None }, cx);
+        }
         // An outcome belongs to the screen it happened on; a pending
         // keep-on-device offer stays until it is answered.
         if self.projects.fallback.is_none() {

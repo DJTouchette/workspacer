@@ -543,3 +543,55 @@ async fn project_identity_and_icon_round_trip_through_the_hub() {
     host.shutdown().await.unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Settings → Agents → Child agents start with full access reads and writes
+/// the hub's shared `agents.childFullAccess` (deep-merged, verified on
+/// readback) and leaves the rest of `agents` alone.
+#[tokio::test]
+async fn child_access_setting_round_trips_through_the_hub() {
+    let root = std::env::temp_dir().join(format!(
+        "wks-native-child-access-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut options = RustOptions::isolated(root.join("state")).unwrap();
+    options.home_dir = root.join("home");
+    std::fs::create_dir(&options.home_dir).unwrap();
+    options.usage_poll_on_boot = Some(false);
+    let config_file = options.config_dir.join("config.yaml");
+    let host = NativeHost::start(Mode::Rust(options)).unwrap();
+    tokio::time::timeout(Duration::from_secs(30), host.ready())
+        .await
+        .unwrap()
+        .unwrap();
+    let controller = host.controller();
+    let mut views = controller.views.clone();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !views.borrow_and_update().connected {
+            views.changed().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let read = run(&controller, Request::ChildAccess { set: None }).await;
+    assert!(read.error.is_none(), "{:?}", read.error);
+    assert_eq!(read.value["childFullAccess"], false, "off unless chosen");
+    let on = run(&controller, Request::ChildAccess { set: Some(true) }).await;
+    assert!(on.error.is_none(), "{:?}", on.error);
+    assert_eq!(on.value["childFullAccess"], true);
+    let text = std::fs::read_to_string(&config_file).unwrap();
+    assert!(text.contains("childFullAccess: true"), "{text}");
+    let reread = run(&controller, Request::ChildAccess { set: None }).await;
+    assert_eq!(reread.value["childFullAccess"], true);
+    assert_eq!(reread.value["fleetFullAccess"], false);
+    let off = run(&controller, Request::ChildAccess { set: Some(false) }).await;
+    assert!(off.error.is_none(), "{:?}", off.error);
+    assert_eq!(off.value["childFullAccess"], false);
+    drop(views);
+    drop(controller);
+    host.shutdown().await.unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

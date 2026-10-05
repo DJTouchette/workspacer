@@ -114,6 +114,19 @@ providers clears incompatible model/context choices and applies that provider's
 saved default access mode.
 These are provider-native permissions, separate from Workspacer plugin access.
 
+**Settings → Agents → Child agents start with full access** is different: it
+is the hub's shared `agents.childFullAccess` (off unless you turn it on),
+read each time Settings opens and changed with a readback check. Children are
+launched by the hub, so the choice applies to every client of that hub. When
+on, a NEW agent whose parent is one of the hub's own sessions (started
+through the spawn skill or Workspacer tools) skips its provider's approval
+prompts: Claude in bypass-permissions mode, Codex with full access. Parentless,
+unknown- or remote-parent, manager and resumed launches keep their own mode,
+running sessions are never changed, and paired/remote dispatch does not take
+it. Workspacer's approval gate, tool access and tokens are unaffected. The
+Rust hub (`--local`, `workspacer serve`) and the desktop app's launchers both
+honor it; Fleet Manager workers follow the separate `agents.fleetFullAccess`.
+
 The launch targets connect to an existing hub by default; use `--local` to own a
 local backend.
 For a different hub, pass `ARGS="--bus wss://host/bus --token-file /path/to/token"`.

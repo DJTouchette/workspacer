@@ -84,6 +84,12 @@ pub enum Request {
     BrowseFolders {
         path: String,
     },
+    /// The hub's shared `agents.childFullAccess`: read (`None`) or set and
+    /// verified on readback. Children are launched by the hub, so this is
+    /// hub configuration, not a device preference.
+    ChildAccess {
+        set: Option<bool>,
+    },
     /// Downloaded project icons (`iconFile`) from the hub's
     /// `<configDir>/project-icons/`, as small PNGs keyed by file name.
     ProjectIcons {
@@ -126,6 +132,7 @@ impl Request {
             Self::InspectProject { .. } => "project-inspect",
             Self::BrowseFolders { .. } => "project-browse",
             Self::ProjectIcons { .. } => "project-icons",
+            Self::ChildAccess { .. } => "child-access",
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -202,6 +209,26 @@ impl Request {
             }
             Self::InspectProject { path } => inspect_project(backend, path).await,
             Self::BrowseFolders { path } => backend.call("fs.listDir", json!({"path":path})).await,
+            Self::ChildAccess { set } => {
+                let config = match set {
+                    // `agents` deep-merges on save, so only this key changes.
+                    Some(enabled) => {
+                        let saved = backend
+                            .call("config.save", json!({"agents":{"childFullAccess":enabled}}))
+                            .await?;
+                        ensure!(
+                            (saved["agents"]["childFullAccess"] == true) == *enabled,
+                            "The hub did not save the setting (its config may be busy); try again"
+                        );
+                        saved
+                    }
+                    None => backend.call("config.get", json!({})).await?,
+                };
+                Ok(json!({
+                    "childFullAccess": config["agents"]["childFullAccess"] == true,
+                    "fleetFullAccess": config["agents"]["fleetFullAccess"] == true,
+                }))
+            }
             Self::ProjectIcons { files } => {
                 let mut icons = serde_json::Map::new();
                 for file in files.iter().take(16) {

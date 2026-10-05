@@ -32,6 +32,10 @@ pub(super) struct Extras {
     /// The session's model, context window and effort when Change model
     /// opened, so Apply sends only what the user actually changed.
     pub model_base: Option<(String, Option<u64>, String)>,
+    /// The hub's `agents.childFullAccess` / `fleetFullAccess` as last read or
+    /// saved; `None` until read. Never assumed from a pending toggle.
+    pub child_access: Option<(bool, bool)>,
+    pub child_access_receipt: u64,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -59,6 +63,8 @@ impl Extras {
             _update_timer: None,
             update_handoff: 0,
             model_base: None,
+            child_access: None,
+            child_access_receipt: 0,
         }
     }
 }
@@ -248,6 +254,18 @@ impl Workspace {
                         }
                     })
                     .detach();
+            }
+        }
+        if let Some(state) = next.requests.get("child-access")
+            && !state.loading
+            && state.number > self.extras.child_access_receipt
+        {
+            self.extras.child_access_receipt = state.number;
+            if state.error.is_none() {
+                self.extras.child_access = Some((
+                    state.value["childFullAccess"] == true,
+                    state.value["fleetFullAccess"] == true,
+                ));
             }
         }
         if let Some(state) = next.requests.get("upload")
