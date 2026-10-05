@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-05",
+  "scope": [
+    23,
+    24,
+    25
+  ],
+  "verdict": "LOCAL_REVIEW_PASSED_PLATFORM_CI_REQUIRED",
+  "releaseReady": false,
+  "validatedImplementationCommit": "0bd06f90b0eb64af98ce1bafbec5caf2a1da7464",
+  "baseline": "e23a2375764984badecbf917b8246f60c46d4165",
+  "integration": {
+    "updaterFixtureCorrection": "882c06d0",
+    "titleSourceExact": "e0f72be8",
+    "titleImport": "84054272 (sanitized squash, no source ancestry)",
+    "titleAttribution": "Original native automatic agent titles worker; source author Damien Touchette <djtouchette1993@gmail.com>",
+    "crossPlatformExact": "b287b5c7",
+    "crossPlatformMerge": "e94dfc48",
+    "finalBoundedCorrections": "0bd06f90"
+  },
+  "findingsFixed": [
+    {
+      "finding": "Four updater fixtures inherited the CI runner restrictive job instead of a controlled fixture job.",
+      "fix": "Each of six cases runs in its own child admitted via stdin only after assigning a permissive kill-on-close/breakaway job. Restrictive nested-job refusal case retained. Panics retain fixture state/logs and report paths plus handoff errors.",
+      "evidence": "Windows failure logs reviewed; fixture source reviewed; Windows runtime rerun remains mandatory."
+    },
+    {
+      "finding": "Electron renderers could pay for a second title already owned by the Rust hub.",
+      "fix": "Preserve autoTitle in sparse remote snapshots, suppress renderer inference for all host states, adopt published results, fence late renderer responses and preserve human names.",
+      "evidence": "22 renderer title tests plus full renderer suite."
+    },
+    {
+      "finding": "Electron-hosted agents.spawn ignored native autoTitle requests.",
+      "fix": "All provider/transport spawn routes forward boolean opt-in before session registration. Host journal claims each attempt before inference, fences labels/respawns, persists completion and restores reattached titles. Corrupt journal evidence cannot authorize another request.",
+      "evidence": "Real registered capability tests cover Claude/Codex stream/PTY; fake-completion host unit tests cover once, boundaries, configuration, foreign rows, labels, respawn, crash claims, reattach and corruption. Full main3836 passed."
+    },
+    {
+      "finding": "GPUI tests posted real WinRT notifications; last unfinished CI test ended a background child turn.",
+      "fix": "Merge Opus test-only alert recording seam and once/disabled assertions; production OS posting retained.",
+      "evidence": "Combined Linux native suite passed. AV root is strongly supported by last flushed test and source path, not confirmed by Windows debugger stack; rerun required."
+    },
+    {
+      "finding": "Platform-specific caption bounds and macOS modifier mapping made two tests invalid.",
+      "fix": "Click image backdrop within its measured bounds; use secondary-a/c for platform select/copy.",
+      "evidence": "Forced-caption original negative exit101 and combined fixed positive exit0; macOS run pending."
+    },
+    {
+      "finding": "CDB startup stack-and-quit command could exit before running tests.",
+      "fix": "Install sxe AV exception command at initial breakpoint then continue; leave full CI suite and all six updater gates intact.",
+      "evidence": "Microsoft CDB/SXE reference checked; PowerShell syntax parsed; actual Windows diagnostics not run."
+    }
+  ],
+  "checks": [
+    {
+      "name": "native-full",
+      "result": "359 passed, 1 ignored; Windows handoff target explicitly platform-skipped",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/native-full.log",
+      "sha256": "1bbad5f3c7558734b2aa5b59c3146b8673d42d4f43a58fc1dd66d5644a1218d2"
+    },
+    {
+      "name": "hub-full",
+      "result": "896 passed, 2 ignored",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/hub-full.log",
+      "sha256": "14aa4e673d2347f3fca34ef72e50193673217f68ea95ce69d613a9e13f087a9f"
+    },
+    {
+      "name": "desktop-main-final",
+      "result": "3836 passed, 10 skipped",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/desktop-main-final.log",
+      "sha256": "ebbf7161ded4774ea04675cee65360ed9a1cfa926653d7065d9c63c716748779"
+    },
+    {
+      "name": "desktop-full",
+      "result": "main 3835 passed/10 skipped before final refinements; full renderer 1943 passed; headroom 6 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/desktop-full.log",
+      "sha256": "b3fb874261742ac5f1f4bd8a14d2a8704282138441eee9543df09e6383d3e169"
+    },
+    {
+      "name": "title-renderer-final",
+      "result": "22 passed including host-ownership arrival race",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/title-renderer-final.log",
+      "sha256": "51a606bb88687e1c3ceb4b07da830054488921a8b6ec6fb0295998c3d02c6db0"
+    },
+    {
+      "name": "title-focused-final",
+      "result": "242 passed; subsequent host reattach refinement covered by final full main suite",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/title-focused-final.log",
+      "sha256": "56fef776e9702299f46bb3bf68c52d784b82477b4f7faf3bb93d0e1ec41da1cb"
+    },
+    {
+      "name": "native-clippy",
+      "result": "strict all-targets ui-tests passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/native-clippy.log",
+      "sha256": "a00138ffa0dd9c1b01e456c498ac07f04ffc36022bed283857eceab208dcf515"
+    },
+    {
+      "name": "source-check",
+      "result": "capability source/authority/support contracts passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/source-check.log",
+      "sha256": "cc56681ed3d9a9e0b0caaf7dbfa01af0aaaaf661da937797daef420fe24435c1"
+    },
+    {
+      "name": "desktop-typecheck-final",
+      "result": "main and renderer passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/desktop-typecheck-final.log",
+      "sha256": "271544227d6cb6e30cd10dab1f45ab8e273be68a48295c208a6971717c47d0b9"
+    },
+    {
+      "name": "caption-combined",
+      "result": "forced app-caption image backdrop regression passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/caption-combined.log",
+      "sha256": "fb1840603f29145ef62d2a8ecfed5d9d97a5ed4a4223a53cabfe4b4234d5ff2c"
+    },
+    {
+      "name": "fmt",
+      "result": "native workspace cargo fmt --check passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "doc-drift",
+      "result": "component documentation drift passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/doc-drift.log",
+      "sha256": "8e88b91fd3a8b343a71136629ee8b699be15ca9f9fefabfb46ff7579eb94b7a1"
+    },
+    {
+      "name": "rivet-docs",
+      "result": "66 existing retired-Go reference errors, unchanged curated docs",
+      "exitCode": 1,
+      "log": ".workspacer/reports/native-platform-ci-logs/rivet-docs.log",
+      "sha256": "3e791301d9803b515b0f041c6cc805ef7019c822e274bd4277fb685c6f0f9b96"
+    },
+    {
+      "name": "desktop prettier format:check",
+      "result": "passed after shared title edits; final two test files and host service formatted separately",
+      "exitCode": 0
+    },
+    {
+      "name": "PowerShell parse",
+      "result": "PowerShell 7.6.6 Linux parser accepted updater helper and corrected Windows diagnostic script; not Windows runtime execution",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-platform-ci-logs/powershell-parse.log"
+    }
+  ],
+  "matrix": [
+    {
+      "item": 23,
+      "sourceReview": "Updater job independence/handshake and all six assertions reviewed; production fail-closed behavior preserved",
+      "localTests": "359 native tests plus full896 hub tests green; Windows fixture skipped on Linux",
+      "runtimeEvidence": "Previous Windows first success and restrictive-job cases passed, four inherited-job cases failed; corrected six-case run pending",
+      "limitation": "Windows candidate must report 6 passed,0 failed,0 filtered out plus real NSIS locked-file failure and unlocked retry"
+    },
+    {
+      "item": 24,
+      "sourceReview": "Question picker preserved by clean automatic merge; no question implementation edits in this follow-up",
+      "localTests": "Full combined native suite including question/draft/fencing regressions passed",
+      "runtimeEvidence": "Prior independent Xvfb logs/captures retained in native-update-review.json",
+      "limitation": "No new question visual run this follow-up"
+    },
+    {
+      "item": 25,
+      "sourceReview": "Reviewed Rust journal/title provider resolution/native config plus Electron compatibility additions",
+      "localTests": "Fake-CLI native auto_titles_hub and hub auto_titles suites ran as part of full suites; full desktop/targeted ownership tests passed",
+      "runtimeEvidence": "Independently inspected worker settings screenshot for layout; own fake-provider bus integration tests verify native title delivery. No paid model calls.",
+      "limitation": "No new real-window title capture from integration; worker artifacts retained with provenance, not claimed as independently captured"
+    }
+  ],
+  "historyAudit": {
+    "baseline": "e23a2375",
+    "newReachableCommitsChecked": 7,
+    "allNewTreesExcludeTrackedRemoteToken": true,
+    "pathHistorySinceBaselineEmpty": true,
+    "contaminatedAncestor": "a8b266ab",
+    "isAncestorExitCode": 1,
+    "credentialContentReadOrPrinted": false,
+    "ownUntrackedTestTokenRemoved": true,
+    "mainUserOwnedTokenTouched": false
+  },
+  "requiredPlatformGates": [
+    "native-client Windows full GPUI suite passes, without skip/bypass",
+    "native-client and rust-native-preview updater fixture reports exactly 6 passed,0 failed,0 filtered out",
+    "Windows NSIS installer locked-file scenario fails nonzero and unlocked retry succeeds",
+    "macOS native-client full suite passes using platform modifiers"
+  ],
+  "limitations": [
+    "Actual Windows and macOS candidate runtime evidence remains pending; Linux compilation/syntax do not prove these platforms.",
+    "Shared hub full test build retains preexisting unused super import warning in src/cli/compat.rs; strict native Clippy passes.",
+    "Curated Rivet docs checker retains66 preexisting references to retired Go tree."
+  ],
+  "references": [
+    "https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/cdb-command-line-options",
+    "https://learn.microsoft.com/en-us/windows-hardware/drivers/debuggercmds/sx--sxd--sxe--sxi--sxn--sxr--sx---set-exceptions-"
+  ],
+  "published": false
+}

@@ -171,5 +171,8 @@
   },
   "blockers": [
     "Windows runtime and real locked-file installer validation are required release gates, owned by parent."
-  ]
+  ],
+  "followupReport": ".workspacer/reports/native-platform-ci-review.json",
+  "latestValidatedImplementationCommit": "0bd06f90b0eb64af98ce1bafbec5caf2a1da7464",
+  "latestVerdict": "LOCAL_REVIEW_PASSED_PLATFORM_CI_REQUIRED"
 }
