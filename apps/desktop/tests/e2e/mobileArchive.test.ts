@@ -172,3 +172,91 @@ test('a view token sees the archive but cannot change it', async ({ page }) => {
     native.close();
   }
 });
+
+test('a delayed boot archive read cannot undo a newer pushed archive or flash its row', async ({
+  page,
+}) => {
+  let release: (() => void) | undefined;
+  let forwardedArchive = false;
+  await page.routeWebSocket('**/bus?*', (socket) => {
+    const server = socket.connectToServer();
+    const reads = new Set<string>();
+    socket.onMessage((message) => {
+      const frame = JSON.parse(String(message));
+      if (frame.method === 'sessionArchive.get') reads.add(String(frame.id));
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      const frame = JSON.parse(String(message));
+      if (reads.has(String(frame.id)) && frame.op === 'result') {
+        release = () => socket.send(message);
+        return;
+      }
+      if (frame.event?.type === 'sessionArchive.changed') forwardedArchive = true;
+      socket.send(message);
+    });
+  });
+  await page.addInitScript(() => {
+    (window as any).sawArchivedRow = false;
+    new MutationObserver(() => {
+      if (document.querySelector('.agent[data-agent="ws2"]')) (window as any).sawArchivedRow = true;
+    }).observe(document, { childList: true, subtree: true });
+  });
+  await page.setViewportSize(IPHONE);
+  await page.goto(`${hub.url}/m?token=${HOST_TOKEN}`);
+  await expect.poll(() => !!release).toBe(true);
+  const native = await nativeClient();
+  try {
+    await native.call('sessionArchive.set', { sessionId: 'ws2', archived: true });
+    await expect.poll(() => forwardedArchive).toBe(true);
+    release!();
+    await expect(card(page, 'ws1')).toBeVisible();
+    await expect(card(page, 'ws2')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).sawArchivedRow)).toBe(false);
+  } finally {
+    native.close();
+  }
+});
+
+test('late replies from archive/restore/archive do not settle the newest optimistic choice', async ({
+  page,
+}) => {
+  const releases: Array<() => void> = [];
+  await page.routeWebSocket('**/bus?*', (socket) => {
+    const server = socket.connectToServer();
+    const writes = new Set<string>();
+    socket.onMessage((message) => {
+      const frame = JSON.parse(String(message));
+      if (frame.method === 'sessionArchive.set') writes.add(String(frame.id));
+      server.send(message);
+    });
+    server.onMessage((message) => {
+      const frame = JSON.parse(String(message));
+      if (frame.event?.type === 'sessionArchive.changed') return;
+      if (writes.has(String(frame.id)) && frame.op === 'result') {
+        releases.push(() => socket.send(message));
+        return;
+      }
+      socket.send(message);
+    });
+  });
+  await openClient(page);
+  await card(page, 'ws2').locator('[data-open="ws2"]').click();
+  for (const name of [
+    'Archive (hide from fleet)',
+    'Restore from archive',
+    'Archive (hide from fleet)',
+  ]) {
+    await page.locator('#moreBtn').click();
+    await page.getByRole('button', { name, exact: true }).click();
+  }
+  await expect.poll(() => releases.length).toBe(3);
+  releases[0]();
+  releases[1]();
+  await page.locator('#moreBtn').click();
+  await expect(
+    page.getByRole('button', { name: 'Restore from archive', exact: true }),
+  ).toBeVisible();
+  releases[2]();
+  for (const m of LIFECYCLE) expect(hub.callsTo(m), m).toEqual([]);
+});

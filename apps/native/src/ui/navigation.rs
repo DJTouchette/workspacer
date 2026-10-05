@@ -75,6 +75,9 @@ impl Workspace {
     }
 
     pub(super) fn visible_sessions(&self, cx: &App) -> Vec<usize> {
+        if self.archive_loading() {
+            return Vec::new();
+        }
         let query = self.search.read(cx).value().to_lowercase();
         let sessions = &self.view.sessions;
         // Project and search each match a lineage, so workers in their own

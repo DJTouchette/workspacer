@@ -710,7 +710,7 @@ impl Workspace {
                         .text_size(px(12.))
                         .child(if !self.view.connected {
                             self.connection_copy().label
-                        } else if self.view.sessions_loading {
+                        } else if self.view.sessions_loading || self.archive_loading() {
                             "Loading sessions…"
                         } else if filtered {
                             "No matching sessions"
@@ -720,7 +720,7 @@ impl Workspace {
                         .child(div().text_color(rgb(p.muted)).text_size(px(11.)).child(
                             if !self.view.connected {
                                 self.connection_copy().description
-                            } else if self.view.sessions_loading {
+                            } else if self.view.sessions_loading || self.archive_loading() {
                                 "Checking your workspace for sessions."
                             } else if filtered {
                                 "Try another search or clear the filters."

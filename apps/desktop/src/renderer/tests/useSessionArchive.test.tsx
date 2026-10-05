@@ -133,3 +133,83 @@ describe('useSessionArchive', () => {
     expect(hub.api.sessionArchiveGet).not.toHaveBeenCalled();
   });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+describe('archive operation fencing', () => {
+  it('ignores a pre-disconnect read arriving before the reset-version reconnect read', async () => {
+    const old = deferred<SessionArchiveDoc>();
+    const fresh = deferred<SessionArchiveDoc>();
+    hub.api.sessionArchiveGet.mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
+    const { result } = renderHook(() => useSessionArchive());
+    act(() => {
+      hub.setConnected(false);
+      hub.setConnected(true);
+    });
+    await act(async () => old.resolve({ version: 90, archived: { stale: 1 } }));
+    await act(async () => fresh.resolve({ version: 0, archived: { fresh: 1 } }));
+    expect([...result.current.archived]).toEqual(['fresh']);
+  });
+  it('only the last same-value operation can settle archive/restore/archive', async () => {
+    const { result } = renderHook(() => useSessionArchive());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    const first = deferred<SessionArchiveDoc>();
+    const second = deferred<SessionArchiveDoc>();
+    const third = deferred<SessionArchiveDoc>();
+    hub.api.sessionArchiveSet
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third.promise);
+    let a!: Promise<void>, b!: Promise<void>, c!: Promise<void>;
+    act(() => {
+      a = result.current.setArchived('z', true);
+      b = result.current.setArchived('z', false);
+      c = result.current.setArchived('z', true);
+    });
+    await act(async () => {
+      first.resolve({ version: 2, archived: { z: 1 } });
+      await a;
+    });
+    await act(async () => {
+      second.resolve({ version: 3, archived: {} });
+      await b;
+    });
+    expect(result.current.archived.has('z')).toBe(true);
+    await act(async () => {
+      third.resolve({ version: 4, archived: { z: 1 } });
+      await c;
+    });
+    expect(result.current.archived.has('z')).toBe(true);
+  });
+});
+
+describe('archive hydration', () => {
+  it('keeps first paint pending until shared visibility is known', async () => {
+    const first = deferred<SessionArchiveDoc>();
+    hub.api.sessionArchiveGet.mockReturnValueOnce(first.promise);
+    const { result } = renderHook(() => useSessionArchive());
+    expect(result.current.ready).toBe(false);
+    await act(async () => first.resolve({ version: 1, archived: { hidden: 1 } }));
+    expect(result.current.ready).toBe(true);
+    expect(result.current.archived.has('hidden')).toBe(true);
+  });
+  it('lets an authoritative reconnect event reset versions before its read returns', async () => {
+    const { result } = renderHook(() => useSessionArchive());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    const fresh = deferred<SessionArchiveDoc>();
+    hub.api.sessionArchiveGet.mockReturnValueOnce(fresh.promise);
+    act(() => {
+      hub.setConnected(false);
+      hub.setConnected(true);
+      hub.emit({ version: 0, archived: { reset: 1 } });
+    });
+    await act(async () => fresh.resolve({ version: 0, archived: {} }));
+    expect([...result.current.archived]).toEqual(['reset']);
+  });
+});

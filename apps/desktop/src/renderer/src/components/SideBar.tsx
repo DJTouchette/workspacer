@@ -301,6 +301,7 @@ interface SideBarProps {
    *  archived agent keeps running and keeps its card in the layout; only the
    *  sidebar stops listing it (until the Archived view is opened). */
   archivedSessionIds?: ReadonlySet<string>;
+  archiveLoading?: boolean;
   /** Archive or restore a card's session — visibility only, never a stop.
    *  Absent when this hub has no shared archive: no menu item is offered. */
   onSetArchived?: (sessionId: string, archived: boolean) => void;
@@ -335,6 +336,7 @@ const SideBar: React.FC<SideBarProps> = ({
   onOpenHistory,
   onOpenSettings,
   archivedSessionIds,
+  archiveLoading = false,
   onSetArchived,
 }) => {
   // Attention comes from the single feed (the spine), so a card's waiting state
@@ -371,7 +373,9 @@ const SideBar: React.FC<SideBarProps> = ({
   useEffect(() => {
     if (showArchived && archivedCount === 0) setShowArchived(false);
   }, [showArchived, archivedCount]);
-  const listed = agents.filter((a) => a.global || isArchived(a) === showArchived);
+  const listed = agents.filter(
+    (a) => a.global || (!archiveLoading && isArchived(a) === showArchived),
+  );
   const archiveMenuItem = (agentId: string) => {
     const agent = agents.find((a) => a.id === agentId);
     const key = agent && archiveKeyOf(agent);
@@ -870,6 +874,11 @@ const SideBar: React.FC<SideBarProps> = ({
           padding: '2px 0 10px',
         }}
       >
+        {archiveLoading && (
+          <div role="status" style={{ padding: '8px 16px', color: 'var(--wks-text-muted)' }}>
+            Loading sessions…
+          </div>
+        )}
         {/* The pinned Overview doesn't count — with no real agents the feed is
             empty (the app shows the Overview workspace) and this hint explains. */}
         {showArchived && (
@@ -902,7 +911,7 @@ const SideBar: React.FC<SideBarProps> = ({
             </span>
           </div>
         )}
-        {!showArchived && archivedCount > 0 && listed.every((a) => a.global) && (
+        {!archiveLoading && !showArchived && archivedCount > 0 && listed.every((a) => a.global) && (
           <div
             style={{
               padding: '8px 16px',
@@ -915,7 +924,7 @@ const SideBar: React.FC<SideBarProps> = ({
             Every session is archived. Open Archived below to restore one.
           </div>
         )}
-        {agents.every((a) => a.global) && (
+        {!archiveLoading && agents.every((a) => a.global) && (
           <div
             style={{
               padding: '8px 16px',

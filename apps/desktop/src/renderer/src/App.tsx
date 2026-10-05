@@ -2874,6 +2874,7 @@ function App() {
                     onOpenHistory={openSessionsPane}
                     onOpenSettings={openSettings}
                     archivedSessionIds={sessionArchive.archived}
+                    archiveLoading={!sessionArchive.ready}
                     onSetArchived={sessionArchive.available ? handleSetArchived : undefined}
                   />
                 </ErrorBoundary>

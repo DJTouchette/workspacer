@@ -391,6 +391,7 @@ struct Worker {
     sessions: BTreeMap<String, Session>,
     jobs: FuturesUnordered<BoxFuture<'static, Completion>>,
     epoch: u64,
+    archive_resync: bool,
     selection: u64,
     fleet_pending: bool,
     fleet_overlay: BTreeMap<String, Value>,
@@ -432,6 +433,7 @@ impl Worker {
             sessions: BTreeMap::new(),
             jobs: FuturesUnordered::new(),
             epoch: 0,
+            archive_resync: true,
             selection: 0,
             fleet_pending: false,
             fleet_overlay: BTreeMap::new(),
@@ -872,14 +874,16 @@ impl Worker {
             return;
         };
         let version = document["version"].as_i64().unwrap_or(0);
-        if self
-            .view
-            .session_archive
-            .as_ref()
-            .is_some_and(|held| held["version"].as_i64().unwrap_or(0) >= version)
+        if !self.archive_resync
+            && self
+                .view
+                .session_archive
+                .as_ref()
+                .is_some_and(|held| held["version"].as_i64().unwrap_or(0) >= version)
         {
             return;
         }
+        self.archive_resync = false;
         self.view.session_archive = Some(Arc::new(document));
         self.dirty = true;
     }
@@ -937,6 +941,7 @@ impl Worker {
         match event {
             Event::Connected => {
                 self.epoch += 1;
+                self.archive_resync = true;
                 self.view.connected = true;
                 self.view.power_paused = false;
                 self.view.notice.clear();

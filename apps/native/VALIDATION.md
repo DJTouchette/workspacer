@@ -1624,3 +1624,25 @@ retained exactly. One-row input caret tracking now resolves an offscreen EOF
 from its wrapped row and reveals it without impossible symmetric margins.
 The narrow action row reserves Send/Interrupt before the ancillary context meter.
 No real provider was called; actual Windows DPI/runtime remains a CI gate.
+
+### Shared archive integration review (#28)
+
+Merged exact `8bf632b5` and mobile follow-up `c08e7057`. The archive is hub-owned
+visibility state, separate from claudemon's age-derived archived flag. Review
+added read/connection fencing and operation identity in the web hook, and a
+loading state until the first archive read settles. Native accepts the first
+fresh document after reconnect even when its version was reset. Native writes
+serialize per session, including migration: restoring during an in-flight legacy
+archive now queues the restore after acknowledgement. Disconnect drops uncertain
+optimistic state; the next connection re-reads authority and can retry migration.
+No archive path stops, deletes, selects another session or clears the draft.
+
+Independent tests reproduced both web-hook races before the fix. The fixed hook
+and sidebar tests pass, as do native migration/restore and real-WebSocket reset
+regressions. Real isolated-hub Playwright runs passed both `/app` archive tests
+and all five `/m` archive tests. Two added mobile cases delay a boot read behind
+a newer event and hold all three archive/restore/archive replies; neither stale
+response changes the latest visibility. Tests also verify view-token write
+refusal, shared restore, retained layout/conversation, and zero lifecycle calls.
+Final combined counts and platform limits are recorded in
+[the integration report](../../.workspacer/reports/native-feedback-26-28-review.json).

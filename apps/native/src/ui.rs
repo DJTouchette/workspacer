@@ -1828,6 +1828,7 @@ mod tests {
     use gpui_component::Root;
     use wks_native::{
         controller::Receipt,
+        features::Request,
         model::{ConversationSnapshot, Item, Session, Transcript},
     };
 
@@ -9986,12 +9987,129 @@ mod tests {
                 view.session_archive = archive_doc(2, &["a"]);
                 this.update_view(Arc::new(view), window, cx);
                 // Now the hub holds it: the device copy is gone, still hidden.
-                assert!(this.settings.archived.get("test").is_none());
+                assert!(!this.settings.archived.contains_key("test"));
                 assert_eq!(this.visible_sessions(cx), vec![1]);
             })
         });
         assert!(Settings::load(&path).unwrap().archived.is_empty());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[gpui::test]
+    fn archive_restore_during_migration_serializes_writes_and_preserves_the_latest_click(
+        cx: &mut TestAppContext,
+    ) {
+        use wks_native::controller::ArchiveReceipt;
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.settings_path = None;
+                this.settings
+                    .archived
+                    .insert("test".into(), vec!["a".into()]);
+                let mut next = state("a");
+                next.session_archive = archive_doc(1, &[]);
+                this.update_view(Arc::new(next), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("retain draft", window, cx));
+                this.toggle_archive("a", cx); // restore while migration write is in flight
+                assert!(!this.archived("a"));
+            })
+        });
+        let first = archive_effects(&mut commands);
+        assert!(
+            matches!(&first[..], [Command::Request(Request::SetArchive { session, archived: true })] if session == "a")
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.session_archive = archive_doc(2, &["a"]);
+                next.archive_receipts.push_back(ArchiveReceipt {
+                    number: 1,
+                    session: "a".into(),
+                    archived: true,
+                    error: None,
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert!(!this.archived("a"));
+                this.toggle_archive("a", cx); // archive then restore while restore is in flight
+                this.toggle_archive("a", cx);
+                assert!(!this.archived("a"));
+            })
+        });
+        let second = archive_effects(&mut commands);
+        assert!(
+            matches!(&second[..], [Command::Request(Request::SetArchive { session, archived: false })] if session == "a")
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.session_archive = archive_doc(3, &[]);
+                next.archive_receipts.push_back(ArchiveReceipt {
+                    number: 2,
+                    session: "a".into(),
+                    archived: false,
+                    error: None,
+                });
+                this.update_view(Arc::new(next), window, cx);
+                assert!(!this.archived("a"));
+                assert!(this.extras.archive_pending.is_empty());
+                assert_eq!(this.composer.read(cx).value().as_str(), "retain draft");
+                assert_eq!(this.view.selected.as_deref(), Some("a"));
+            })
+        });
+        assert!(archive_effects(&mut commands).is_empty());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.toggle_archive("a", cx);
+                let mut offline = state("a");
+                offline.connected = false;
+                offline.session_archive = archive_doc(3, &[]);
+                this.update_view(Arc::new(offline), window, cx);
+                assert!(this.extras.archive_pending.is_empty());
+                assert!(this.extras.archive_migrating.is_empty());
+            })
+        });
+        let sent = archive_effects(&mut commands);
+        assert!(matches!(
+            &sent[..],
+            [Command::Request(Request::SetArchive { archived: true, .. })]
+        ));
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.toggle_archive("a", cx);
+                assert!(this.extras.notice.contains("Reconnect"));
+                assert_eq!(this.composer.read(cx).value().as_str(), "retain draft");
+            })
+        });
+        assert!(archive_effects(&mut commands).is_empty());
+    }
+
+    #[gpui::test]
+    fn archive_first_read_hides_rows_until_visibility_is_known(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut next = state("a");
+                next.requests.insert(
+                    "archive",
+                    wks_native::features::RequestState {
+                        number: 1,
+                        request: Request::Archive,
+                        loading: true,
+                        value: Arc::new(serde_json::Value::Null),
+                        error: None,
+                    },
+                );
+                this.update_view(Arc::new(next.clone()), window, cx);
+                assert!(this.visible_sessions(cx).is_empty());
+                next.session_archive = archive_doc(1, &["a"]);
+                this.update_view(Arc::new(next), window, cx);
+                assert_eq!(this.visible_sessions(cx), vec![1]);
+            })
+        });
     }
 
     #[gpui::test]

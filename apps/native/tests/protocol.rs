@@ -2454,3 +2454,48 @@ async fn shared_archive_is_read_on_connect_followed_live_and_changed_only_by_its
         assert!(!called(&seen, method), "archive sent {method}");
     }
 }
+
+#[tokio::test]
+async fn archive_reconnect_accepts_a_reset_version_without_replaying_old_visibility() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let (_, sender) = serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(json!([session("a")])),
+            "sessionArchive.get" => Some(json!({"version":90,"archived":{"a":1}})),
+            _ => Some(json!({})),
+        },
+        |seen| called(seen, "sessionArchive.get"),
+    )
+    .await;
+    view(&controller, |v| {
+        v.session_archive
+            .as_ref()
+            .is_some_and(|d| d["version"] == 90)
+    })
+    .await;
+    sender.send(Message::Close(None)).await.unwrap();
+    view(&controller, |v| !v.connected).await;
+    serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => Some(json!([session("a")])),
+            "sessionArchive.get" => Some(json!({"version":0,"archived":{}})),
+            _ => Some(json!({})),
+        },
+        |seen| called(seen, "sessionArchive.get"),
+    )
+    .await;
+    let next = view(&controller, |v| {
+        v.connected
+            && v.session_archive
+                .as_ref()
+                .is_some_and(|d| d["version"] == 0)
+    })
+    .await;
+    assert_eq!(
+        next.session_archive.as_ref().unwrap()["archived"],
+        json!({})
+    );
+}

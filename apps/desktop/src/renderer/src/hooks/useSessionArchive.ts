@@ -24,6 +24,8 @@ export interface SessionArchiveState {
   /** The hub answered: archive/restore is possible. False for a hub that
    *  predates shared archives (the sidebar then shows everything, no action). */
   available: boolean;
+  /** First archive read has settled; avoid briefly showing archived rows. */
+  ready: boolean;
   /** Archive (true) or restore (false). Rejects — after rolling back — when
    *  the hub refuses or is unreachable. */
   setArchived: (sessionId: string, archived: boolean) => Promise<void>;
@@ -42,10 +44,13 @@ function isDoc(value: unknown): value is SessionArchiveDoc {
 
 export function useSessionArchive(enabled = true): SessionArchiveState {
   const [doc, setDoc] = useState<SessionArchiveDoc | null>(null);
-  const [pending, setPending] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const [ready, setReady] = useState(false);
+  const [pending, setPending] = useState<ReadonlyMap<string, { archived: boolean; op: number }>>(
+    new Map(),
+  );
+  const operation = useRef(0);
+  const connectionEpoch = useRef(0);
   const versionRef = useRef(-1);
-  /** Accept the next read unconditionally (set on every (re)connect). */
-  const resyncRef = useRef(true);
 
   const apply = useCallback((next: unknown, force = false) => {
     if (!isDoc(next)) return;
@@ -55,39 +60,51 @@ export function useSessionArchive(enabled = true): SessionArchiveState {
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
     const api = window.electronAPI;
-    if (!api.sessionArchiveGet) return;
+    if (!enabled || !api.sessionArchiveGet) {
+      setReady(true);
+      return;
+    }
     let alive = true;
     let loaded = false;
+    let readSequence = 0;
+    let eventSequence = 0;
     const read = () => {
-      resyncRef.current = true;
-      api
-        .sessionArchiveGet?.()
+      const seq = ++readSequence;
+      const eventsAtRead = eventSequence;
+      api.sessionArchiveGet!()
         .then((next) => {
-          if (!alive) return;
-          apply(next, resyncRef.current);
-          resyncRef.current = false;
+          if (!alive || seq !== readSequence) return;
+          apply(next, eventSequence === eventsAtRead);
           loaded = true;
         })
-        // An older hub has no provider for it, or the socket is down: keep
-        // the last known archive (or none) and try again on reconnect.
-        .catch(() => {});
+        // Old hubs show all sessions after refusal; reconnect tries again.
+        .catch(() => {})
+        .finally(() => {
+          if (alive && seq === readSequence) setReady(true);
+        });
     };
-    read();
     const offChanged = api.onSessionArchiveChanged?.((next) => {
-      resyncRef.current = false;
-      apply(next);
+      ++eventSequence;
+      apply(next, !loaded);
+      loaded = true;
+      setReady(true);
     });
+    read();
     let connected = true;
     const offStatus = api.onHubStatus?.((status) => {
-      // Every reconnect re-reads (changes made meanwhile have no replay), and
-      // so does the first connect when the boot-time read could not get out.
+      if (!status.connected) {
+        ++readSequence;
+        ++connectionEpoch.current;
+        loaded = false;
+        setPending(new Map());
+      }
       if (status.connected && (!connected || !loaded)) read();
       connected = status.connected;
     });
     return () => {
       alive = false;
+      ++readSequence;
       offChanged?.();
       offStatus?.();
     };
@@ -97,16 +114,19 @@ export function useSessionArchive(enabled = true): SessionArchiveState {
     async (sessionId: string, archived: boolean) => {
       const api = window.electronAPI;
       if (!api.sessionArchiveSet) throw new Error('This hub cannot archive sessions');
-      setPending((prev) => new Map(prev).set(sessionId, archived));
+      const op = ++operation.current;
+      const epoch = connectionEpoch.current;
+      setPending((prev) => new Map(prev).set(sessionId, { archived, op }));
       const settle = () =>
         setPending((prev) => {
-          if (prev.get(sessionId) !== archived) return prev; // a newer click owns it
+          if (prev.get(sessionId)?.op !== op) return prev; // a newer click owns it
           const next = new Map(prev);
           next.delete(sessionId);
           return next;
         });
       try {
-        apply(await api.sessionArchiveSet(sessionId, archived));
+        const next = await api.sessionArchiveSet(sessionId, archived);
+        if (epoch === connectionEpoch.current) apply(next);
       } finally {
         settle();
       }
@@ -117,11 +137,11 @@ export function useSessionArchive(enabled = true): SessionArchiveState {
   const archived = useMemo(() => {
     const ids = new Set(doc ? Object.keys(doc.archived) : []);
     for (const [id, value] of pending) {
-      if (value) ids.add(id);
+      if (value.archived) ids.add(id);
       else ids.delete(id);
     }
     return ids;
   }, [doc, pending]);
 
-  return { archived, available: doc !== null, setArchived };
+  return { archived, available: doc !== null, ready, setArchived };
 }
