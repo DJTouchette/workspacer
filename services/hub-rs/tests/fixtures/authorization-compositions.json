@@ -118,6 +118,7 @@
     "routing.preview",
     "routing.select",
     "search.project",
+    "sessionArchive.set",
     "sessions.attachTerminal",
     "sessions.delete",
     "sessions.load",
@@ -165,6 +166,7 @@
     "remote.sharingInfo",
     "replay.close",
     "routing.preferences.get",
+    "sessionArchive.get",
     "sessions.conversation",
     "sessions.detachTerminal",
     "sessions.list",
@@ -253,7 +255,8 @@
       "claude.signal",
       "push.subscribe",
       "push.unsubscribe",
-      "files.upload"
+      "files.upload",
+      "sessionArchive.set"
     ]
   }
 }

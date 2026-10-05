@@ -694,6 +694,8 @@ async fn live_harness_targets_and_cleans_up_only_its_disposable_session() {
                             json!({"ok":true})
                         }
                         "usage.report" => json!({"providers":[]}),
+                        // Read on every connect; archiving is never a mutation here.
+                        "sessionArchive.get" => json!({"version":0,"archived":{}}),
                         other => panic!("unexpected live harness method {other}"),
                     };
                     if ws
@@ -2289,4 +2291,166 @@ async fn guarded_save_on_an_old_hub_never_falls_back_to_an_unconditional_write()
         .await;
     assert!(timeout(DEADLINE, save).await.unwrap().unwrap().is_err());
     assert!(hub.frames.try_recv().is_err(), "no plain fs.write fallback");
+}
+
+/// Serve the fake hub until `done` says the expected calls arrived, answering
+/// each call with `answer`. Returns every frame seen, for "never sent" checks.
+async fn serve_until(
+    hub: &mut Hub,
+    mut answer: impl FnMut(&Value) -> Option<Value>,
+    mut done: impl FnMut(&[Value]) -> bool,
+) -> (Vec<Value>, mpsc::Sender<Message>) {
+    let mut seen = Vec::new();
+    let mut sender = None;
+    timeout(DEADLINE, async {
+        loop {
+            let frame = hub.frames.recv().await.unwrap();
+            if frame.send.is_closed() {
+                continue;
+            }
+            sender = Some(frame.send.clone());
+            if frame.value["op"] == "call"
+                && let Some(result) = answer(&frame.value)
+            {
+                frame.result(result).await;
+            }
+            seen.push(frame.value);
+            if done(&seen) {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("expected hub frames");
+    (seen, sender.unwrap())
+}
+
+fn called(seen: &[Value], method: &str) -> bool {
+    seen.iter()
+        .any(|f| f["op"] == "call" && f["method"] == method)
+}
+
+#[tokio::test]
+async fn shared_archive_is_read_on_connect_followed_live_and_changed_only_by_its_own_call() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = || Some(json!([session("a"), session("b")]));
+    let (mut seen, sender) = serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessions.snapshots" => fleet(),
+            "sessionArchive.get" => Some(json!({"version":3,"archived":{"a":1}})),
+            _ => Some(json!({})),
+        },
+        |seen| {
+            called(seen, "sessionArchive.get")
+                && seen.iter().any(|f| {
+                    f["op"] == "subscribe"
+                        && f["topics"]
+                            .as_array()
+                            .is_some_and(|t| t.iter().any(|t| t == "sessionArchive.changed"))
+                })
+        },
+    )
+    .await;
+    let read = view(&controller, |v| v.session_archive.is_some()).await;
+    assert_eq!(read.session_archive.as_ref().unwrap()["version"], 3);
+
+    // Another client (the web) archives b: the change arrives as an event.
+    sender
+        .send(event(
+            "sessionArchive.changed",
+            json!({"version":4,"archived":{"a":1,"b":2}}),
+        ))
+        .await
+        .unwrap();
+    view(&controller, |v| {
+        v.session_archive
+            .as_ref()
+            .is_some_and(|d| d["version"] == 4)
+    })
+    .await;
+    // A late, older document never undoes a newer one.
+    sender
+        .send(event(
+            "sessionArchive.changed",
+            json!({"version":2,"archived":{}}),
+        ))
+        .await
+        .unwrap();
+    sender
+        .send(event("agent.snapshot", session("c")))
+        .await
+        .unwrap();
+    let after = view(&controller, |v| v.sessions.iter().any(|s| s.id == "c")).await;
+    assert_eq!(after.session_archive.as_ref().unwrap()["version"], 4);
+
+    // Restoring b is exactly one sessionArchive.set — and nothing else.
+    controller
+        .command(Command::Request(
+            wks_native::features::Request::SetArchive {
+                session: "b".into(),
+                archived: false,
+            },
+        ))
+        .unwrap();
+    let (more, _) = serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessionArchive.set" => {
+                assert_eq!(f["params"], json!({"sessionId":"b","archived":false}));
+                Some(json!({"version":5,"archived":{"a":1}}))
+            }
+            _ => Some(json!({})),
+        },
+        |seen| called(seen, "sessionArchive.set"),
+    )
+    .await;
+    seen.extend(more);
+    let restored = view(&controller, |v| {
+        v.session_archive
+            .as_ref()
+            .is_some_and(|d| d["version"] == 5)
+            && !v.archive_receipts.is_empty()
+    })
+    .await;
+    let receipt = restored.archive_receipts.back().unwrap();
+    assert_eq!((receipt.session.as_str(), receipt.archived), ("b", false));
+    assert!(receipt.error.is_none());
+
+    // A reply that does not hold the change is a failure, never a success.
+    controller
+        .command(Command::Request(
+            wks_native::features::Request::SetArchive {
+                session: "c".into(),
+                archived: true,
+            },
+        ))
+        .unwrap();
+    let (more, _) = serve_until(
+        &mut hub,
+        |f| match f["method"].as_str().unwrap_or("") {
+            "sessionArchive.set" => Some(json!({"version":6,"archived":{"a":1}})),
+            _ => Some(json!({})),
+        },
+        |seen| called(seen, "sessionArchive.set"),
+    )
+    .await;
+    seen.extend(more);
+    let refused = view(&controller, |v| v.archive_receipts.len() == 2).await;
+    assert!(
+        refused.archive_receipts[1]
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("did not save"))
+    );
+
+    for method in [
+        "claude.signal",
+        "claude.gate",
+        "agents.close",
+        "sessions.delete",
+    ] {
+        assert!(!called(&seen, method), "archive sent {method}");
+    }
 }

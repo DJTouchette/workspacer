@@ -119,6 +119,16 @@ pub enum Request {
     ProjectIcons {
         files: Vec<String>,
     },
+    /// The hub's shared archived-session document (`sessionArchive.get`):
+    /// which sessions every client of this hub hides from its normal list.
+    Archive,
+    /// Archive or restore one session on the hub. View state only: it never
+    /// stops, signals or forgets the session. Its own key, and never
+    /// superseded, so archiving two sessions quickly keeps both.
+    SetArchive {
+        session: String,
+        archived: bool,
+    },
 }
 
 /// One change to `agents.autoTitle`; everything else in it is left alone.
@@ -269,6 +279,8 @@ impl Request {
             Self::ProjectIcons { .. } => "project-icons",
             Self::ChildAccess { .. } => "child-access",
             Self::Titles { .. } => "titles",
+            Self::Archive => "archive",
+            Self::SetArchive { .. } => "archive-set",
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -357,6 +369,22 @@ impl Request {
                 Ok(json!({"status":status?,"staged":staged?,"unstaged":unstaged?}))
             }
             Self::Recent => backend.call("sessions.recent", json!({})).await,
+            Self::Archive => archive_document(backend.call("sessionArchive.get", json!({})).await?),
+            Self::SetArchive { session, archived } => {
+                let document = archive_document(
+                    backend
+                        .call(
+                            "sessionArchive.set",
+                            json!({"sessionId":session,"archived":archived}),
+                        )
+                        .await?,
+                )?;
+                ensure!(
+                    archive_contains(&document, session) == *archived,
+                    "The hub did not save the archive change; try again"
+                );
+                Ok(document)
+            }
             Self::Projects => {
                 let mut revision = backend.project_write().await;
                 let config = backend.call("config.get", json!({})).await?;
@@ -781,6 +809,20 @@ pub struct RequestState {
     pub loading: bool,
     pub value: Arc<Value>,
     pub error: Option<String>,
+}
+
+/// A `sessionArchive` document: `{version, archived: {sessionId: archivedAtMs}}`.
+pub fn archive_document(value: Value) -> Result<Value> {
+    ensure!(
+        value["version"].as_i64().is_some() && value["archived"].is_object(),
+        "The hub returned no session archive."
+    );
+    Ok(value)
+}
+
+/// Whether a `sessionArchive` document hides `session`.
+pub fn archive_contains(document: &Value, session: &str) -> bool {
+    document["archived"].get(session).is_some()
 }
 
 /// Notification transitions, never historical state inferred on initial connection.

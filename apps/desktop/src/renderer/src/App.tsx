@@ -90,6 +90,7 @@ import { useUiMode } from './hooks/useUiMode';
 import { useTheme } from './hooks/useTheme';
 import { useSessionLifecycle } from './hooks/useSessionLifecycle';
 import { useRecentSessions } from './hooks/useRecentSessions';
+import { useSessionArchive } from './hooks/useSessionArchive';
 import {
   filterResumableSessions,
   layoutSessionIds,
@@ -589,6 +590,25 @@ function App() {
     reconcileAgents,
     appCwdRef,
   });
+
+  // The hub's shared session archive: hidden from the sidebar here because it
+  // was archived here, in the native client, or in another browser. Never a
+  // lifecycle action — archived cards stay in the layout, running if they were.
+  // Read from boot, so restored archived cards never flash into the list.
+  const sessionArchive = useSessionArchive();
+  const { setArchived: setSessionArchived } = sessionArchive;
+  const handleSetArchived = useCallback(
+    (sessionId: string, archived: boolean) => {
+      setSessionArchived(sessionId, archived).catch((error: unknown) =>
+        postNotification({
+          title: archived ? 'Could not archive session' : 'Could not restore session',
+          body: error instanceof Error ? error.message : String(error),
+          source: 'workspacer',
+        }),
+      );
+    },
+    [setSessionArchived],
+  );
 
   // Resumable daemon sessions (all providers, incl. archived) with no card in
   // the current layout. Uncapped: the Sessions pane browses the full list and
@@ -2853,6 +2873,8 @@ function App() {
                     width={sidebarOverlay ? undefined : sidebarWidth}
                     onOpenHistory={openSessionsPane}
                     onOpenSettings={openSettings}
+                    archivedSessionIds={sessionArchive.archived}
+                    onSetArchived={sessionArchive.available ? handleSetArchived : undefined}
                   />
                 </ErrorBoundary>
               )}

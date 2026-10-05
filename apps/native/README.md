@@ -560,8 +560,12 @@ be expanded, and attachment controls share the composer action row.
   conversation; Resume opens a launch form with its identity, known model/context,
   and Ask permissions. Creation is explicit. Claude and Codex resumes are supported.
   **Session…** renames, archives/restores, and offers a confirmed **End session**;
-  Interrupt remains a separate control. Names and archives are client-local and
-  scoped to the connection. Archiving does not stop an agent or delete history.
+  Interrupt remains a separate control. Names are client-local and scoped to the
+  connection. Archives are the hub's shared `sessionArchive` document, so a
+  session archived here also leaves the web sidebar (and the other way round);
+  against an older hub without it they stay on this device, and device-only
+  archives move to the hub the first time it offers one. Archiving does not stop
+  an agent or delete history.
 - **Changes** is a Git-style review: the diff fills the page with old and new
   line numbers, hunk headers, added/removed tints and +/− counts, and the
   repository's files sit on the right. **Changed** lists `git status` with

@@ -44,6 +44,7 @@ pub mod remote_admin;
 pub mod remote_dispatch;
 pub mod routing;
 pub mod search;
+pub mod session_archive;
 pub mod session_facade;
 pub mod sessions;
 pub mod snapshots;
@@ -300,7 +301,11 @@ pub(crate) fn install(
 ) -> anyhow::Result<Options> {
     let layout = Arc::new(layout::Layout::open(
         Some(directory.join("layout.json")),
-        handle,
+        handle.clone(),
+    ));
+    let archive = Arc::new(session_archive::SessionArchive::open(
+        Some(directory.join("session-archive.json")),
+        Some(handle),
     ));
     options.layout = Some(layout.clone());
     let get = layout.clone();
@@ -312,6 +317,18 @@ pub(crate) fn install(
         .handler("layout.set", move |caller, params| {
             let service = layout.clone();
             async move { service.set(&caller, params) }
+        });
+    // Archive is shared view state, like the layout: every client of this hub
+    // hides the same sessions. It never touches a session's lifecycle.
+    let get = archive.clone();
+    let options = options
+        .handler("sessionArchive.get", move |_, _| {
+            let service = get.clone();
+            async move { Ok(service.get()) }
+        })
+        .handler("sessionArchive.set", move |_, params| {
+            let service = archive.clone();
+            async move { tokio::task::spawn_blocking(move || service.set(params)).await? }
         });
     let mut prefs = usage_prefs::UsagePrefs::open(Some(directory.join("usage-pacing.json")));
     if let Some(routing) = options.routing.clone() {

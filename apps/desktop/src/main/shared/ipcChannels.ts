@@ -185,6 +185,9 @@ export const IPC = {
   LAYOUT_GET: 'layout:get',
   LAYOUT_SET: 'layout:set',
   LAYOUT_CHANGED: 'layout:changed', // push (main → renderer)
+  // Shared session archive (hub-owned); changes ride the generic HUB_EVENT feed.
+  SESSION_ARCHIVE_GET: 'session-archive:get',
+  SESSION_ARCHIVE_SET: 'session-archive:set',
 
   // ── Config ──
   CONFIG_GET: 'config:get',

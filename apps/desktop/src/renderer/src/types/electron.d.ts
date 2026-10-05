@@ -64,6 +64,16 @@ export interface LayoutDoc<T = unknown> {
   data: T | null;
 }
 
+/** The hub's shared archived-session document (`sessionArchive.get`): the
+ *  sessions every client of this hub hides from its normal list, each with
+ *  the epoch-ms it was archived. Visibility only — archiving never stops,
+ *  signals or forgets a session. Unrelated to a daemon row's `archived` flag
+ *  (stopped and idle past seven days). */
+export interface SessionArchiveDoc {
+  version: number;
+  archived: Record<string, number>;
+}
+
 /** Git-repo detection for a directory (worktree spawn support). */
 export interface WorktreeInfo {
   /** Absent on old hosts: never infer directory validity from isRepo=false. */
@@ -483,6 +493,11 @@ export interface ElectronAPI extends RoutingAPI {
   layoutGet: () => Promise<LayoutDoc>;
   layoutSet: (data: unknown) => Promise<LayoutDoc>;
   onLayoutChanged: (callback: (doc: LayoutDoc) => void) => () => void;
+  // Shared session archive (hub-owned). Optional: a hub that predates it
+  // answers "no provider", and the sidebar then simply shows everything.
+  sessionArchiveGet?: () => Promise<SessionArchiveDoc>;
+  sessionArchiveSet?: (sessionId: string, archived: boolean) => Promise<SessionArchiveDoc>;
+  onSessionArchiveChanged?: (callback: (doc: SessionArchiveDoc) => void) => () => void;
   /** A facade agent asked to open a visible terminal (open_terminal →
    *  terminals.open); the renderer opens the pane, nested under parentSessionId. */
   onFacadeOpenTerminal: (

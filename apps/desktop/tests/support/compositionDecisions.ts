@@ -588,6 +588,16 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'sessionArchive.set': {
+    reason:
+      "adds or removes one opaque `sessionId` in the hub's own session-archive.json, which every client reads only to decide which sidebar rows to LIST. WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; the id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no stop, signal, close or delete is reachable from it, and an archived session keeps running. Restoring is the same call with archived:false",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId'],
+      },
+    ],
+  },
   'usage.setPacingSchedule': {
     reason:
       "the only caller value is `schedule`, a closed two-word enum validated before anything is written, and what it SELECTS is which of two curve words internal/limits already implements. WRITE-THEN-INTERPRET: the one thing it writes is the hub's own usage-pacing.json, and the only reader of that file is usageprefs.Open at boot plus usage.report's projection \u2014 no interpreter reads it as config, code, argv or policy, and it can hold nothing but one of two words this build compiled in. WIDEN-THEN-USE: it changes no grant, no root set, no permission mode, no approval gate and no session, and the one guard that might have consulted it does not \u2014 routing.select reads Matrix.PaceConfig() straight off routing.yaml, which this method cannot write, so the ceilings that govern spawns are untouched by it. Its gate is identity rather than confinement, because there is no path here to confine: usagePrefsTrusted refuses plugin tokens and the view/triage tiers, and the method is admitted to no scoped tier",
@@ -1270,6 +1280,13 @@ export const parameterDecisions: Record<
   string,
   Record<string, { kind: string; reason: string }>
 > = {
+  'sessionArchive.set': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        'selects which opaque id the archive document lists; bounded text, never a path, and never resolved to a process',
+    },
+  },
   'agents.dispatchPrepare': {
     cwd: {
       kind: 'path',
@@ -1651,6 +1668,7 @@ export const actors: string[] = [
   'routing.preview',
   'routing.select',
   'search.project',
+  'sessionArchive.set',
   'sessions.attachTerminal',
   'sessions.delete',
   'sessions.load',

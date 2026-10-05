@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import {
+  Archive,
   Plus,
   ChevronLeft,
   ChevronRight,
@@ -296,6 +297,20 @@ interface SideBarProps {
   onOpenHistory?: () => void;
   /** Open the Settings pane — the quiet footer row beside History. */
   onOpenSettings?: () => void;
+  /** Session ids the hub's shared archive hides from the normal list. An
+   *  archived agent keeps running and keeps its card in the layout; only the
+   *  sidebar stops listing it (until the Archived view is opened). */
+  archivedSessionIds?: ReadonlySet<string>;
+  /** Archive or restore a card's session — visibility only, never a stop.
+   *  Absent when this hub has no shared archive: no menu item is offered. */
+  onSetArchived?: (sessionId: string, archived: boolean) => void;
+}
+
+/** The session id an agent card archives under: its live session, or the one
+ *  a stopped card last held (so a resumable card can still be tucked away). */
+export function archiveKeyOf(agent: AgentWorkspace): string | undefined {
+  if (agent.global) return undefined;
+  return agent.sessionId || agent.lastSessionId || undefined;
 }
 
 const SideBar: React.FC<SideBarProps> = ({
@@ -319,6 +334,8 @@ const SideBar: React.FC<SideBarProps> = ({
   width,
   onOpenHistory,
   onOpenSettings,
+  archivedSessionIds,
+  onSetArchived,
 }) => {
   // Attention comes from the single feed (the spine), so a card's waiting state
   // and the rail tile's amber dot can never disagree.
@@ -341,6 +358,35 @@ const SideBar: React.FC<SideBarProps> = ({
   const [filter, setFilter] = useState('');
   // The pinned global workspace — reached via the brand header, not a feed row.
   const overviewAgent = agents.find((a) => a.global);
+
+  // Archived sessions leave the normal list but stay in the layout, running
+  // if they were; the Archived view lists only them, for restoring.
+  const isArchived = (agent: AgentWorkspace) => {
+    const key = archiveKeyOf(agent);
+    return !!key && !!archivedSessionIds?.has(key);
+  };
+  const archivedCount = agents.filter(isArchived).length;
+  const [showArchived, setShowArchived] = useState(false);
+  // Restoring the last one returns to the normal list rather than an empty view.
+  useEffect(() => {
+    if (showArchived && archivedCount === 0) setShowArchived(false);
+  }, [showArchived, archivedCount]);
+  const listed = agents.filter((a) => a.global || isArchived(a) === showArchived);
+  const archiveMenuItem = (agentId: string) => {
+    const agent = agents.find((a) => a.id === agentId);
+    const key = agent && archiveKeyOf(agent);
+    if (!onSetArchived || !agent || !key) return null;
+    const archived = isArchived(agent);
+    return (
+      <ContextMenuItem
+        label={archived ? 'Restore' : 'Archive'}
+        onClick={() => {
+          setContextMenu(null);
+          onSetArchived(key, !archived);
+        }}
+      />
+    );
+  };
 
   // claudeSpinner keyframes for the working card's provider-tinted status ring.
   useEffect(() => {
@@ -598,7 +644,7 @@ const SideBar: React.FC<SideBarProps> = ({
             width: '100%',
           }}
         >
-          {agents.map(railTile)}
+          {agents.filter((a) => !isArchived(a)).map(railTile)}
         </div>
 
         {contextMenu && (
@@ -625,6 +671,7 @@ const SideBar: React.FC<SideBarProps> = ({
                 setContextMenu(null);
               }}
             />
+            {archiveMenuItem(contextMenu.agentId)}
             <ContextMenuItem
               label="Terminate"
               danger
@@ -788,7 +835,7 @@ const SideBar: React.FC<SideBarProps> = ({
       <RemoteNodesBar />
 
       {/* Filter — only worth showing once there's a handful of agents. */}
-      {agents.filter((a) => !a.global).length > 4 && (
+      {listed.filter((a) => !a.global).length > 4 && (
         <div style={{ padding: '2px 12px 6px' }}>
           <input
             value={filter}
@@ -811,6 +858,7 @@ const SideBar: React.FC<SideBarProps> = ({
       )}
 
       <div
+        data-testid="sidebar-feed"
         style={{
           flex: 1,
           overflowY: 'auto',
@@ -824,6 +872,49 @@ const SideBar: React.FC<SideBarProps> = ({
       >
         {/* The pinned Overview doesn't count — with no real agents the feed is
             empty (the app shows the Overview workspace) and this hint explains. */}
+        {showArchived && (
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setShowArchived(false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') setShowArchived(false);
+            }}
+            title="Back to the session list"
+            style={{
+              margin: '0 12px',
+              padding: '5px 6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: '0.66rem',
+              fontFamily: 'var(--wks-font-mono)',
+              color: 'var(--wks-text-secondary)',
+              cursor: 'pointer',
+              userSelect: 'none',
+              borderBottom: '1px solid var(--wks-border-subtle)',
+            }}
+          >
+            <ChevronLeft size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+            <span>Archived · {archivedCount}</span>
+            <span style={{ marginLeft: 'auto', color: 'var(--wks-text-faint)' }}>
+              right-click to restore
+            </span>
+          </div>
+        )}
+        {!showArchived && archivedCount > 0 && listed.every((a) => a.global) && (
+          <div
+            style={{
+              padding: '8px 16px',
+              fontFamily: 'var(--wks-font-mono)',
+              fontSize: '0.68rem',
+              color: 'var(--wks-text-faint)',
+              lineHeight: 1.6,
+            }}
+          >
+            Every session is archived. Open Archived below to restore one.
+          </div>
+        )}
         {agents.every((a) => a.global) && (
           <div
             style={{
@@ -850,15 +941,18 @@ const SideBar: React.FC<SideBarProps> = ({
           // Apply the name/provider filter (nav rows like Overview always shown).
           const q = filter.trim().toLowerCase();
           const shown = q
-            ? agents.filter(
+            ? listed.filter(
                 (a) =>
                   a.global ||
                   a.name.toLowerCase().includes(q) ||
                   (a.provider ?? 'claude').toLowerCase().includes(q),
               )
-            : agents;
+            : listed;
           // Build a set of all known agent ids for fast parent-resolution checks.
           const agentIds = new Set(shown.map((a) => a.id));
+          // A parent that is merely archived (or filtered out) still exists:
+          // its children list as roots here but are not orphans.
+          const knownIds = new Set(agents.map((a) => a.id));
           const shownById = new Map(shown.map((a) => [a.id, a]));
           // A worker dispatched by a worker (a grandchild of the manager) still
           // needs a home. Mirror the mobile PWA's fleetRoster(): walk the
@@ -926,7 +1020,7 @@ const SideBar: React.FC<SideBarProps> = ({
             // this card as its own root instead of dropping it — the same
             // dangling-parent fact, read here per-card instead of for grouping.
             // `!!agent.parentId` excludes the ordinary case (no parent at all).
-            const isOrphaned = !!agent.parentId && !agentIds.has(agent.parentId);
+            const isOrphaned = !!agent.parentId && !knownIds.has(agent.parentId);
             const cardState = hubOffline ? ('done' as const) : cardStateOf(agent);
             const stats = withRecordedUsage(
               (agent.sessionId && statsBySession[agent.sessionId]) || deriveSessionStats(snap),
@@ -1572,7 +1666,7 @@ const SideBar: React.FC<SideBarProps> = ({
                   live cards always keep the top. The border belongs to the
                   strip, not the rows, so one rule separates it from the feed
                   however many rows are showing. */}
-              {(onOpenSettings || onOpenHistory) && (
+              {(onOpenSettings || onOpenHistory || archivedCount > 0) && (
                 <div
                   style={{
                     margin: 'auto 12px 0',
@@ -1591,6 +1685,17 @@ const SideBar: React.FC<SideBarProps> = ({
                       label="History"
                       title="Browse and resume past sessions in your projects"
                       onClick={onOpenHistory}
+                    />
+                  )}
+                  {/* Only once something is archived: the list it opens is
+                      the one place archived sessions stay reachable. */}
+                  {archivedCount > 0 && !showArchived && (
+                    <FooterRow
+                      icon={<Archive size={12} strokeWidth={1.75} style={{ flexShrink: 0 }} />}
+                      label="Archived"
+                      title="Sessions hidden from this list — still running if they were. Restore from here."
+                      onClick={() => setShowArchived(true)}
+                      trailing={<span>{archivedCount}</span>}
                     />
                   )}
                   {onOpenSettings && (
@@ -1638,6 +1743,7 @@ const SideBar: React.FC<SideBarProps> = ({
               setContextMenu(null);
             }}
           />
+          {archiveMenuItem(contextMenu.agentId)}
           <ContextMenuItem
             label="Terminate"
             danger
