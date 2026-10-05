@@ -496,7 +496,7 @@ impl Workspace {
         size: f32,
     ) -> Div {
         let p = self.appearance.palette();
-        let light = self.appearance == Appearance::Light;
+        let light = !self.appearance.is_dark();
         let (bg, fg): (gpui::Hsla, gpui::Hsla) = match project.and_then(|p| p.color) {
             Some(color) => {
                 let solid: gpui::Hsla = rgb(color).into();

@@ -1,6 +1,9 @@
 //! Code highlighting colors that follow the native appearance. Dark and Light
 //! use the same GitHub Default palettes as the desktop chat (shiki
 //! github-dark-default / github-light-default); Nord uses the Nord syntax set.
+//! The Omarchy ports use their themes' editor conventions (Tokyo Night,
+//! Catppuccin, Gruvbox Material, Everforest) with Omarchy's colors.toml hues;
+//! Latte's tokens are darkened slightly to stay readable on its code blocks.
 use gpui_component::highlighter::{HighlightTheme, SyntaxColors};
 use std::sync::Arc;
 use wks_native::appearance::Appearance;
@@ -59,11 +62,81 @@ const NORD: Syntax = Syntax {
     heading: "#88c0d0",
 };
 
+const TOKYO_NIGHT: Syntax = Syntax {
+    foreground: "#c0caf5",
+    keyword: "#bb9af7",
+    string: "#9ece6a",
+    escape: "#89ddff",
+    comment: "#6a73a0",
+    function: "#7aa2f7",
+    constant: "#ff9e64",
+    kind: "#2ac3de",
+    tag: "#f7768e",
+    heading: "#7aa2f7",
+};
+
+const CATPPUCCIN_MOCHA: Syntax = Syntax {
+    foreground: "#cdd6f4",
+    keyword: "#cba6f7",
+    string: "#a6e3a1",
+    escape: "#f5c2e7",
+    comment: "#9399b2",
+    function: "#89b4fa",
+    constant: "#fab387",
+    kind: "#f9e2af",
+    tag: "#f38ba8",
+    heading: "#89b4fa",
+};
+
+const GRUVBOX_MATERIAL: Syntax = Syntax {
+    foreground: "#d4be98",
+    keyword: "#ea6962",
+    string: "#a9b665",
+    escape: "#e78a4e",
+    comment: "#928374",
+    function: "#89b482",
+    constant: "#d3869b",
+    kind: "#d8a657",
+    tag: "#e78a4e",
+    heading: "#7daea3",
+};
+
+const EVERFOREST: Syntax = Syntax {
+    foreground: "#d3c6aa",
+    keyword: "#e67e80",
+    string: "#a7c080",
+    escape: "#e69875",
+    comment: "#859289",
+    function: "#83c092",
+    constant: "#d699b6",
+    kind: "#dbbc7f",
+    tag: "#e69875",
+    heading: "#7fbbb3",
+};
+
+const CATPPUCCIN_LATTE: Syntax = Syntax {
+    foreground: "#4c4f69",
+    keyword: "#8839ef",
+    string: "#3d7f26",
+    escape: "#b8418e",
+    comment: "#6c6f85",
+    function: "#1e66f5",
+    constant: "#c0480a",
+    kind: "#9a5e0a",
+    tag: "#d20f39",
+    heading: "#1e66f5",
+};
+
 fn syntax(appearance: Appearance) -> &'static Syntax {
     match appearance {
         Appearance::Dark => &GITHUB_DARK,
         Appearance::Light => &GITHUB_LIGHT,
         Appearance::Nord => &NORD,
+        Appearance::TokyoNight => &TOKYO_NIGHT,
+        Appearance::Catppuccin => &CATPPUCCIN_MOCHA,
+        Appearance::Gruvbox => &GRUVBOX_MATERIAL,
+        Appearance::Everforest => &EVERFOREST,
+        Appearance::CatppuccinLatte => &CATPPUCCIN_LATTE,
     }
 }
 
@@ -111,10 +184,10 @@ fn colors(s: &Syntax) -> SyntaxColors {
 }
 
 pub(super) fn highlight_theme(appearance: Appearance) -> Arc<HighlightTheme> {
-    let base = if appearance == Appearance::Light {
-        HighlightTheme::default_light()
-    } else {
+    let base = if appearance.is_dark() {
         HighlightTheme::default_dark()
+    } else {
+        HighlightTheme::default_light()
     };
     let s = syntax(appearance);
     let mut theme = (*base).clone();
@@ -141,5 +214,86 @@ mod tests {
             highlight_theme(Appearance::Dark).style("keyword"),
             highlight_theme(Appearance::Light).style("keyword")
         );
+    }
+
+    fn hex(color: &str) -> u32 {
+        u32::from_str_radix(color.trim_start_matches('#'), 16).unwrap()
+    }
+
+    fn luminance(color: u32) -> f64 {
+        let channel = |shift: u32| {
+            let c = ((color >> shift) & 0xff) as f64 / 255.;
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+
+    fn contrast(a: u32, b: u32) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    fn over(rgba: u32, under: u32) -> u32 {
+        let alpha = (rgba & 0xff) as f64 / 255.;
+        let mix = |shift: u32| {
+            let top = ((rgba >> (shift + 8)) & 0xff) as f64;
+            let bottom = ((under >> shift) & 0xff) as f64;
+            ((top * alpha + bottom * (1. - alpha)).round() as u32) << shift
+        };
+        mix(16) | mix(8) | mix(0)
+    }
+
+    /// Highlighted code stays readable on its block and the chat, and still
+    /// reads once a selection tints the background beneath the glyphs.
+    #[test]
+    fn omarchy_syntax_tokens_read_on_code_blocks_and_under_selection() {
+        for appearance in &Appearance::ALL[3..] {
+            let p = appearance.palette();
+            let s = syntax(*appearance);
+            for (name, color) in [
+                ("foreground", s.foreground),
+                ("keyword", s.keyword),
+                ("string", s.string),
+                ("escape", s.escape),
+                ("comment", s.comment),
+                ("function", s.function),
+                ("constant", s.constant),
+                ("type", s.kind),
+                ("tag", s.tag),
+                ("heading", s.heading),
+            ] {
+                let (plain, selected) = if name == "comment" {
+                    (3., 2.2)
+                } else {
+                    (4., 3.)
+                };
+                for (surface, fill) in [("code block", p.code_block), ("chat", p.chat)] {
+                    let ratio = contrast(hex(color), fill);
+                    assert!(
+                        ratio >= plain,
+                        "{appearance:?} {name} on {surface}: {ratio:.2}"
+                    );
+                    let ratio = contrast(hex(color), over(p.selection, fill));
+                    assert!(
+                        ratio >= selected,
+                        "{appearance:?} selected {name} on {surface}: {ratio:.2}"
+                    );
+                }
+            }
+        }
+        // The shipped themes keep their published palettes; selected code
+        // must at least stay visible on them.
+        for appearance in &Appearance::ALL[..3] {
+            let p = appearance.palette();
+            let s = syntax(*appearance);
+            for color in [s.foreground, s.keyword, s.string, s.function, s.comment] {
+                let ratio = contrast(hex(color), over(p.selection, p.code_block));
+                assert!(ratio >= 1.8, "{appearance:?} selected {color}: {ratio:.2}");
+            }
+        }
     }
 }

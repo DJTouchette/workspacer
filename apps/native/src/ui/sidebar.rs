@@ -223,6 +223,18 @@ impl Workspace {
             )
     }
 
+    /// The footer's connection note. A healthy connection is the norm and
+    /// gets none; only the fixture or a lost/paused connection is named.
+    pub(super) fn footer_connection_label(&self) -> Option<&'static str> {
+        if self.demo {
+            Some("Demo")
+        } else if !self.view.connected {
+            Some(self.connection_copy().label)
+        } else {
+            None
+        }
+    }
+
     /// Open a provider-native subagent as its own (read-only) chat.
     pub(super) fn open_sidebar_child(&mut self, parent: &str, agent: &str, cx: &mut Context<Self>) {
         if !self.view.connected {
@@ -486,11 +498,9 @@ impl Workspace {
                         this.show_screen(Screen::Settings, window, cx)
                     })),
             )
-            .child(div().py_1().child(status_dot(if self.view.connected {
-                p.success
-            } else {
-                p.warning
-            })))
+            .when(!self.view.connected, |d| {
+                d.child(div().py_1().child(status_dot(p.warning)))
+            })
             .into_any_element()
     }
 
@@ -1007,21 +1017,21 @@ impl Workspace {
                             })),
                     )
                     .child(div().flex_1())
-                    .child(
-                        div()
-                            .text_size(px(10.))
-                            .text_color(rgb(p.muted))
-                            .child(if self.demo {
-                                "Demo"
-                            } else {
-                                self.connection_copy().label
-                            }),
-                    )
-                    .child(status_dot(if self.view.connected {
-                        p.success
-                    } else {
-                        p.warning
-                    })),
+                    // A healthy connection is the norm and needs no label;
+                    // only a fixture or a lost/paused connection is called out.
+                    .when_some(self.footer_connection_label(), |d, label| {
+                        d.child(
+                            div()
+                                .debug_selector(|| "sidebar-connection-status".into())
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .text_size(px(10.))
+                                .text_color(rgb(p.muted))
+                                .child(label)
+                                .when(!self.view.connected, |d| d.child(status_dot(p.warning))),
+                        )
+                    }),
             )
             .child(
                 div()

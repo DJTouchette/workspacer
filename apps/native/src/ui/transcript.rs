@@ -277,21 +277,7 @@ impl Workspace {
     fn toggle_chat(&self, key: String, label: String, cx: &mut Context<Self>) -> Stateful<Div> {
         self.button(SharedString::from(format!("toggle-{key}")), label, true)
             .debug_selector(|| "chat-section-toggle".into())
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.chat.open.len() > 2048 {
-                    this.chat.open.clear();
-                }
-                this.pause_follow();
-                let anchor = this.scroll_anchor();
-                let value = this.chat.open.entry(key.clone()).or_insert(false);
-                *value = !*value;
-                this.list.splice(
-                    0..this.view.transcript.rows.len(),
-                    this.view.transcript.rows.len(),
-                );
-                this.list.scroll_to(anchor);
-                cx.notify();
-            }))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_open(key.clone(), false, cx)))
     }
     pub(super) fn render_chat_row(
         &mut self,
@@ -321,9 +307,16 @@ impl Workspace {
                 d.debug_selector(|| "chat-content-column".into())
             });
         if let Some(span) = group {
-            body = body
-                .child(self.render_work_card(span, window, cx))
-                .child(self.timestamp_footer(None, row.timestamp_ms).px_3());
+            body = body.child(self.render_work_card(span, window, cx)).when(
+                row.timestamp_ms.is_some(),
+                |d| {
+                    d.child(meta_spacing(
+                        self.timestamp_footer(None, row.timestamp_ms)
+                            .debug_selector(|| "work-card-timestamp".into())
+                            .px_3(),
+                    ))
+                },
+            );
         } else {
             body = body.child(self.render_message(row, "live", false, window, cx));
         }
@@ -504,7 +497,25 @@ impl Workspace {
         let timestamp = row
             .timestamp_ms
             .or_else(|| row.timestamp.as_deref().and_then(timing::parse_timestamp));
+        let has_meta = duration.is_some() || timestamp.is_some();
         let mut footer = self.timestamp_footer(duration.map(Into::into), timestamp);
+        // A fleet/supervisor wake arrives as a user turn but is not the user
+        // speaking: it renders as its own card, named for its worker(s).
+        if row.role == "You"
+            && !continued
+            && let Some(fleet) = content::fleet(&row.text)
+        {
+            let session = self.view.selected.clone().unwrap_or_default();
+            let key = format!("{namespace}:{session}:{}", row.key);
+            let card = self.render_fleet_card(&key, fleet, row.copy_text(), window, cx);
+            return div()
+                .w_full()
+                .py_1()
+                .flex()
+                .flex_col()
+                .child(card)
+                .when(has_meta, |d| d.child(meta_spacing(footer.px_3())));
+        }
         if row.tool.is_none() && row.role == "Assistant" {
             // Hover-only copy lives on the metadata line so it reserves no row.
             let session = self.view.selected.clone().unwrap_or_default();
@@ -530,11 +541,20 @@ impl Workspace {
                 )
                 .child(footer);
         }
+        // Tool cards span the column edge to edge; inset their metadata to
+        // the same right edge as messages and work cards.
+        let footer = footer.when(row.tool.is_some(), |d| d.px_3());
+        let footer = if has_meta {
+            meta_spacing(footer)
+        } else {
+            footer
+        };
         self.render_message_content(row, namespace, continued, window, cx)
             .child(footer)
     }
 
-    /// Quiet, right-aligned metadata below a message or work card.
+    /// Quiet, right-aligned metadata below a message or work card; place it
+    /// with `meta_spacing` so it never touches the card above or below.
     fn timestamp_footer(&self, duration: Option<SharedString>, timestamp: Option<i64>) -> Div {
         div()
             .debug_selector(|| "message-timestamp-footer".into())
@@ -852,89 +872,6 @@ impl Workspace {
         if continued || !matches!(row.role.as_str(), "You" | "Assistant") {
             return body.child(literal(key, &row.text, window, cx));
         }
-        if row.role == "You"
-            && let Some(fleet) = content::fleet(&row.text)
-        {
-            body = body.child(div().font_weight(FontWeight::SEMIBOLD).child(fleet.title));
-            for (entry_index, (label, id)) in fleet.entries.into_iter().enumerate() {
-                body = body.child(literal(
-                    format!("{key}-entry-{entry_index}"),
-                    &fleet.summaries[entry_index],
-                    window,
-                    cx,
-                ));
-                let reply = format!("Re: session:{id} ({label}) — ");
-                let exists = self.view.sessions.iter().any(|s| s.id == id);
-                let target = id.clone();
-                body = body.child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            self.button(
-                                SharedString::from(format!("{key}-worker-{id}")),
-                                format!("Open {label}"),
-                                exists,
-                            )
-                            .when(exists, |d| {
-                                d.on_click(cx.listener(move |this, _, _, cx| {
-                                    this.command(Command::Select(target.clone()), cx)
-                                }))
-                            }),
-                        )
-                        .child(
-                            self.button(
-                                SharedString::from(format!("{key}-reply-{id}")),
-                                "Reply",
-                                true,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| this.prefill(&reply, window, cx),
-                            )),
-                        ),
-                );
-            }
-            for (i, (title, report)) in fleet.reports.iter().enumerate() {
-                body = body.child(
-                    div()
-                        .p_3()
-                        .bg(rgb(p.surface))
-                        .rounded_md()
-                        .child(title.clone())
-                        .child(if title.starts_with("Structured result") {
-                            self.render_result(
-                                &format!("{key}-report-{i}"),
-                                title,
-                                report,
-                                window,
-                                cx,
-                            )
-                            .into_any_element()
-                        } else {
-                            self.render_raw(&format!("{key}-report-{i}"), report, window, cx)
-                                .into_any_element()
-                        }),
-                );
-            }
-            let original = format!("{key}-original");
-            let expanded = self.chat.open.get(&original).copied().unwrap_or(false);
-            body = body.child(
-                self.toggle_chat(
-                    original.clone(),
-                    if expanded {
-                        "Hide original wake"
-                    } else {
-                        "Show original wake"
-                    }
-                    .into(),
-                    cx,
-                ),
-            );
-            if expanded {
-                body = body.child(self.render_raw(&original, &fleet.text, window, cx));
-            }
-            return body;
-        }
         let cwd = self
             .selected_session()
             .map(|s| s.cwd.clone())
@@ -1169,7 +1106,7 @@ impl Workspace {
                 }))
         })
     }
-    fn render_raw(
+    pub(super) fn render_raw(
         &self,
         key: &str,
         text: &str,
@@ -1264,7 +1201,7 @@ impl Workspace {
             .when(text.lines().count()>1000,|d|d.child("Showing the first 1,000 lines. Copy or open the selectable diff for all lines."))
             .when(expanded,|d|d.child(self.render_raw(&raw_key,text,window,cx)))
     }
-    fn prefill(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn prefill(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.composer.read(cx).value().to_string();
         let value = if draft.is_empty() {
             text.into()
@@ -1394,4 +1331,13 @@ impl Workspace {
         }
         body
     }
+}
+
+/// Breathing room around a timestamp/duration line: it belongs to the content
+/// above (a smaller gap) and is set apart from whatever follows.
+pub(super) const META_GAP_ABOVE: f32 = 6.;
+pub(super) const META_GAP_BELOW: f32 = 8.;
+
+fn meta_spacing(footer: Div) -> Div {
+    footer.mt(px(META_GAP_ABOVE)).mb(px(META_GAP_BELOW))
 }

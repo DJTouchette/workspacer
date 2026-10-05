@@ -728,10 +728,126 @@ pub fn assistant_blocks(text: &str) -> Vec<AssistantBlock> {
     blocks
 }
 
+/// What a fleet/supervisor wake reports; drives the native card's tone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FleetKind {
+    Finished,
+    /// "Worker FAILED": every worker in the wake died.
+    Failed,
+    Escalated,
+    CatchUp,
+    Blocked,
+    Threshold,
+    Progress,
+}
+
+/// One worker line of a wake, following desktop `shared/fleetMessages.ts`
+/// (`ENTRY_RE`): `label (session:<id>, cwd <path>|approval|question)` and
+/// the optional ` — stopped/killed`, ` — FAILED: …`, ` — crossed: …`,
+/// ` — NEEDS A DECISION` and ` — last reply: …` / ` — reports: …` tails.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FleetEntry {
+    pub label: String,
+    pub session_id: String,
+    pub cwd: Option<String>,
+    /// "approval" or "question": what the agent was blocked on when woken.
+    pub blocked_on: Option<String>,
+    pub stopped: bool,
+    pub failed: Option<String>,
+    pub crossed: Option<String>,
+    pub needs_decision: bool,
+    pub last_reply: Option<String>,
+    /// A still-running worker's own progress line.
+    pub note: Option<String>,
+}
+
+impl FleetEntry {
+    fn parse(body: &str) -> Option<Self> {
+        let (label, rest) = body.split_once(" (session:")?;
+        let (id, rest) = rest.split_once(", ")?;
+        if label.is_empty()
+            || id.is_empty()
+            || id.len() > 200
+            || !id
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
+            return None;
+        }
+        let mut entry = FleetEntry {
+            label: label.into(),
+            session_id: id.into(),
+            ..Default::default()
+        };
+        let tail = if let Some(tail) = ["approval)", "question)"]
+            .iter()
+            .find_map(|b| rest.strip_prefix(b).map(|t| (&b[..b.len() - 1], t)))
+        {
+            entry.blocked_on = Some(tail.0.into());
+            tail.1
+        } else {
+            let cwd = rest.strip_prefix("cwd ")?;
+            // Non-greedy like the regex: the first ')' whose remainder is a
+            // valid tail, so a path containing ')' still parses.
+            let (at, tail) = cwd
+                .match_indices(')')
+                .map(|(at, _)| (at, &cwd[at + 1..]))
+                .find(|(at, tail)| *at > 0 && Self::tail(&mut FleetEntry::default(), tail))?;
+            entry.cwd = Some(cwd[..at].into());
+            tail
+        };
+        Self::tail(&mut entry, tail).then_some(entry)
+    }
+
+    /// Fold the ` — …` segments, in their fixed order, into `self`.
+    fn tail(&mut self, mut rest: &str) -> bool {
+        const SEP: &str = " — ";
+        let segment = |rest: &str| -> Option<(String, usize)> {
+            let body = rest.strip_prefix(SEP)?;
+            let end = body.find(SEP).unwrap_or(body.len());
+            Some((body[..end].to_owned(), SEP.len() + end))
+        };
+        if let Some(r) = rest.strip_prefix(" — stopped/killed")
+            && (r.is_empty() || r.starts_with(SEP))
+        {
+            self.stopped = true;
+            rest = r;
+        }
+        for (prefix, slot) in [("FAILED: ", 0), ("crossed: ", 1)] {
+            if let Some((body, used)) = segment(rest)
+                && let Some(value) = body.strip_prefix(prefix)
+                && !value.is_empty()
+            {
+                *(if slot == 0 {
+                    &mut self.failed
+                } else {
+                    &mut self.crossed
+                }) = Some(value.into());
+                rest = &rest[used..];
+            }
+        }
+        if let Some(r) = rest.strip_prefix(" — NEEDS A DECISION")
+            && (r.is_empty() || r.starts_with(SEP))
+        {
+            self.needs_decision = true;
+            rest = r;
+        }
+        if let Some(reply) = rest.strip_prefix(" — last reply: ") {
+            self.last_reply = Some(reply.into());
+            rest = "";
+        } else if let Some(note) = rest.strip_prefix(" — reports: ") {
+            self.note = Some(note.into());
+            rest = "";
+        }
+        rest.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fleet {
+    pub kind: FleetKind,
     pub title: String,
-    pub entries: Vec<(String, String)>,
+    pub entries: Vec<FleetEntry>,
     pub summaries: Vec<String>,
     pub reports: Vec<(String, String)>,
     pub text: String,
@@ -739,17 +855,23 @@ pub struct Fleet {
 pub fn fleet(text: &str) -> Option<Fleet> {
     let mut lines = text.lines();
     let header = lines.next()?;
-    let title = match header {
-        "[fleet] Worker finished:" => "Worker finished",
-        "[fleet] Worker FAILED — did not complete:" => "Worker failed",
-        "[fleet] Worker escalated — blocked and did not complete:" => "Worker escalated",
-        "[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:" => {
-            "Worker catch-up"
+    let (kind, title) = match header {
+        "[fleet] Worker finished:" => (FleetKind::Finished, "Worker finished"),
+        "[fleet] Worker FAILED — did not complete:" => (FleetKind::Failed, "Worker failed"),
+        "[fleet] Worker escalated — blocked and did not complete:" => {
+            (FleetKind::Escalated, "Worker escalated")
         }
-        "[supervisor] An agent is now blocked on a decision:" => "Decision needed",
-        "[fleet] A threshold you asked to be told about has been crossed:" => "Threshold reached",
+        "[fleet] Catch-up — these workers finished while you were idle and you may have missed the wake:" => {
+            (FleetKind::CatchUp, "Worker catch-up")
+        }
+        "[supervisor] An agent is now blocked on a decision:" => {
+            (FleetKind::Blocked, "Decision needed")
+        }
+        "[fleet] A threshold you asked to be told about has been crossed:" => {
+            (FleetKind::Threshold, "Threshold reached")
+        }
         "[fleet] Progress update from a worker — it is STILL RUNNING; this is NOT a completion:" => {
-            "Worker progress · still running"
+            (FleetKind::Progress, "Worker progress · still running")
         }
         _ => return None,
     };
@@ -759,18 +881,7 @@ pub fn fleet(text: &str) -> Option<Fleet> {
         let Some(bullet) = line.strip_prefix("- ") else {
             break;
         };
-        let (label, rest) = bullet.split_once(" (session:")?;
-        let (id, detail) = rest.split_once(", ")?;
-        if !detail.contains(')')
-            || id.is_empty()
-            || id.len() > 200
-            || !id
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-        {
-            return None;
-        }
-        entries.push((label.into(), id.into()));
+        entries.push(FleetEntry::parse(bullet)?);
         summaries.push(bullet.to_owned());
     }
     if entries.is_empty() {
@@ -788,6 +899,7 @@ pub fn fleet(text: &str) -> Option<Fleet> {
         }
     }
     Some(Fleet {
+        kind,
         title: title.into(),
         entries,
         summaries,
@@ -1298,9 +1410,74 @@ mod tests {
     fn fleet_wakes_preserve_results_and_never_misidentify_cwd_as_session_id() {
         let text = "[fleet] Worker finished:\n- Builder (session:child-1, cwd /repo) — last reply: Done\n\nStructured result — Builder (session:child-1):\n{\"ok\":true}\n\nFull final message — Builder (session:child-1):\nAll the details";
         let message = fleet(text).unwrap();
-        assert_eq!(message.entries, vec![("Builder".into(), "child-1".into())]);
+        assert_eq!(message.kind, FleetKind::Finished);
+        assert_eq!(message.entries.len(), 1);
+        assert_eq!(
+            (
+                message.entries[0].label.as_str(),
+                message.entries[0].session_id.as_str()
+            ),
+            ("Builder", "child-1")
+        );
+        assert_eq!(message.entries[0].cwd.as_deref(), Some("/repo"));
+        assert_eq!(message.entries[0].last_reply.as_deref(), Some("Done"));
         assert_eq!(message.text, text);
         assert!(fleet("[fleet] Worker finished:\n- malformed").is_none());
+    }
+
+    /// Every wake the shared contract builds (the strings desktop, hub and
+    /// mobile agree on) parses into the same entry fields here.
+    #[test]
+    fn fleet_wakes_parse_every_contract_case() {
+        let contract: Value =
+            serde_json::from_str(include_str!("../../../contracts/fleet-message-cases.json"))
+                .unwrap();
+        let text = |v: &Value| v.as_str().map(str::to_owned);
+        for case in contract["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let message = fleet(case["expected"].as_str().unwrap())
+                .unwrap_or_else(|| panic!("{name}: not recognized"));
+            let kind = match case["kind"].as_str().unwrap() {
+                "worker-finished" if message.kind == FleetKind::Failed => FleetKind::Failed,
+                "worker-finished" => FleetKind::Finished,
+                "worker-escalated" => FleetKind::Escalated,
+                "catch-up" => FleetKind::CatchUp,
+                "blocked" => FleetKind::Blocked,
+                "threshold" => FleetKind::Threshold,
+                "progress" => FleetKind::Progress,
+                other => panic!("{name}: unknown kind {other}"),
+            };
+            assert_eq!(message.kind, kind, "{name}");
+            let expected = case["entries"].as_array().unwrap();
+            assert_eq!(message.entries.len(), expected.len(), "{name}");
+            for (got, want) in message.entries.iter().zip(expected) {
+                assert_eq!(got.label, want["label"].as_str().unwrap(), "{name}");
+                assert_eq!(
+                    got.session_id,
+                    want["sessionId"].as_str().unwrap(),
+                    "{name}"
+                );
+                // A blocked line names what it waits on in the cwd's place.
+                let cwd = want["blockedOn"]
+                    .is_null()
+                    .then(|| want["cwd"].as_str().unwrap_or("?"));
+                assert_eq!(got.cwd.as_deref(), cwd, "{name}");
+                assert_eq!(got.blocked_on, text(&want["blockedOn"]), "{name}");
+                assert_eq!(got.stopped, want["stopped"] == true, "{name}");
+                assert_eq!(got.failed, text(&want["failed"]), "{name}");
+                assert_eq!(got.crossed, text(&want["crossed"]), "{name}");
+                assert_eq!(got.needs_decision, want["needsDecision"] == true, "{name}");
+                assert_eq!(got.last_reply, text(&want["lastReply"]), "{name}");
+                assert_eq!(got.note, text(&want["note"]), "{name}");
+            }
+        }
+        // The supervisor's live shape, and a path that contains ')'.
+        let blocked = fleet("[supervisor] An agent is now blocked on a decision:\n- Native editor · terminal · Git (session:023b82ea-a24d-48cf-a52b-bb6514e63e19, approval)\nRun a /supervise pass").unwrap();
+        assert_eq!(blocked.entries[0].blocked_on.as_deref(), Some("approval"));
+        assert_eq!(blocked.entries[0].label, "Native editor · terminal · Git");
+        let odd = fleet("[fleet] Worker finished:\n- W (session:w, cwd /a (b)/c) — last reply: ok")
+            .unwrap();
+        assert_eq!(odd.entries[0].cwd.as_deref(), Some("/a (b)/c"));
     }
     #[test]
     fn markdown_file_links_resolve_against_the_remote_project() {

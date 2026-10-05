@@ -994,7 +994,18 @@ impl Workspace {
             .iter()
             .find(|m| m.id == self.model_choice)
             .map(|m| m.windows.clone())
-            .unwrap_or_else(|| self.context_window.into_iter().collect());
+            .unwrap_or_else(|| {
+                // A custom ID's windows are unknown: offer the one chosen and,
+                // on Change model, the session's current one, so picking
+                // Default never removes the other choice.
+                let session = (self.screen == Screen::Model && !self.new_session)
+                    .then(|| self.selected_session().and_then(|s| s.context_window))
+                    .flatten();
+                let mut windows: Vec<u64> =
+                    self.context_window.into_iter().chain(session).collect();
+                windows.dedup();
+                windows
+            });
         div()
             .flex()
             .flex_col()
@@ -1008,41 +1019,22 @@ impl Workspace {
                 )
             })
             .when(!windows.is_empty(), |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap_2()
-                        .when(self.model_choice == "__custom", |d| {
-                            d.child(
-                                self.button("default-context", "Default", !busy)
-                                    .when(self.context_window.is_none(), |d| {
-                                        d.bg(rgb(p.selected)).text_color(rgb(p.accent))
-                                    })
-                                    .when(!busy, |d| {
-                                        d.on_click(cx.listener(|this, _, _, cx| {
-                                            this.context_window = None;
-                                            cx.notify();
-                                        }))
-                                    }),
-                            )
-                        })
-                        .children(windows.into_iter().map(|tokens| {
-                            self.button("context", "", !busy)
-                                .id(("context", tokens as usize))
-                                .child(context_label(tokens))
-                                .when(self.context_window == Some(tokens), |d| {
-                                    d.bg(rgb(p.selected)).text_color(rgb(p.accent))
-                                })
-                                .when(!busy, |d| {
-                                    d.on_click(cx.listener(move |this, _, _, cx| {
-                                        this.context_window = Some(tokens);
-                                        cx.notify();
-                                    }))
-                                })
-                        })),
-                )
+                let options = (self.model_choice == "__custom")
+                    .then(|| (None, "Default".to_owned()))
+                    .into_iter()
+                    .chain(windows.into_iter().map(|t| (Some(t), context_label(t))))
+                    .collect();
+                d.child(div().flex().child(self.segmented_enabled(
+                    "context-window",
+                    options,
+                    self.context_window,
+                    !busy,
+                    |this, tokens, _, cx| {
+                        this.context_window = tokens;
+                        cx.notify();
+                    },
+                    cx,
+                )))
             })
     }
 
