@@ -315,7 +315,7 @@ pub async fn call(method: &str, params: Value) -> Result<Value> {
                 .map(|r| r.stdout.trim().to_owned())
                 .filter(|s| !s.is_empty() && s != "HEAD");
             Ok(
-                json!({"branch":branch,"files":porcelain(body),"upstream":upstream,"ahead":ahead,"behind":behind}),
+                json!({"branch":branch,"files":porcelain(body),"upstream":upstream,"ahead":ahead,"behind":behind,"root":root}),
             )
         }
         "git.log" => {

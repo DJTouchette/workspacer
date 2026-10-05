@@ -4,6 +4,7 @@ pub mod backend;
 pub mod bus;
 pub mod child_agents;
 pub mod controller;
+pub mod diff;
 pub mod features;
 pub mod harness;
 pub mod host;
@@ -15,6 +16,7 @@ pub mod navigation;
 pub mod projects;
 pub mod reading;
 pub mod remote;
+pub mod terminal;
 pub mod transcript;
 
 pub mod timing;

@@ -48,6 +48,10 @@ pub async fn serve_with_transcript(
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut streaming = false;
             let mut remaining = 0;
+            // Editor saves land in memory; nothing touches the disk.
+            let mut written: BTreeMap<String, String> = BTreeMap::new();
+            // Fixture shells: id → (cwd, typed line). They only echo.
+            let mut shells: BTreeMap<String, (String, String)> = BTreeMap::new();
             loop {
                 tokio::select! {
                     _ = tick.tick(), if streaming => {
@@ -90,10 +94,44 @@ pub async fn serve_with_transcript(
                                         {"sessionId":"past-session","provider":"codex","name":"Yesterday’s investigation","cwd":"/workspaces/project-1","mode":"stopped","transport":"stream"}
                                     ]),
                                     "fs.readImage" => preview_image(),
-                                    "fs.read" => json!({"path":frame["params"]["path"],"contents":"fn main() {\n    restore_workspace();\n    start();\n}\n","size":58}),
+                                    "fs.read" => {
+                                        let path = frame["params"]["path"].as_str().unwrap_or_default();
+                                        let contents = written.get(path).cloned().unwrap_or_else(|| "fn main() {\n    restore_workspace();\n    start();\n}\n".into());
+                                        json!({"path":path,"contents":contents,"size":contents.len()})
+                                    }
+                                    "fs.write" => {
+                                        let path = frame["params"]["path"].as_str().unwrap_or_default().to_owned();
+                                        written.insert(path, frame["params"]["contents"].as_str().unwrap_or_default().to_owned());
+                                        json!({"ok":true})
+                                    }
+                                    "fs.listEntries" => fixture_listing(frame["params"]["path"].as_str().unwrap_or_default()),
+                                    "terminals.create" => {
+                                        let shell = format!("fixture-shell-{}", shells.len() + 1);
+                                        shells.insert(shell.clone(), (frame["params"]["cwd"].as_str().unwrap_or_default().to_owned(), String::new()));
+                                        json!({"sessionId":shell})
+                                    }
+                                    "sessions.attachTerminal" => {
+                                        if let Some((cwd, _)) = shells.get(id) {
+                                            let topic = format!("pty.bytes.{id}");
+                                            let banner = format!("\x1b[2mFixture shell (echo only; nothing runs) in\x1b[0m {cwd}\r\n\x1b[32m$\x1b[0m ");
+                                            if topics.contains(&topic) && socket.send(event(&topic, json!(base64_bytes(banner.as_bytes())))).await.is_err() { return; }
+                                            json!({"ok":true})
+                                        } else { json!({"ok":false,"error":"no PTY buffer for that session"}) }
+                                    }
+                                    "sessions.terminalInput" => {
+                                        let bytes = frame["params"]["bytesB64"].as_str().and_then(|b| { use base64::Engine; base64::engine::general_purpose::STANDARD.decode(b).ok() }).unwrap_or_default();
+                                        if let Some((cwd, line)) = shells.get_mut(id) {
+                                            let output = fixture_echo(cwd, line, &bytes);
+                                            let topic = format!("pty.bytes.{id}");
+                                            if topics.contains(&topic) && socket.send(event(&topic, json!(base64_bytes(&output)))).await.is_err() { return; }
+                                        }
+                                        json!({"ok":true})
+                                    }
+                                    "sessions.terminalKeepalive" => json!({"ok":shells.contains_key(id)}),
+                                    "sessions.detachTerminal" | "sessions.terminalResize" => json!({"ok":true}),
                                     "desktop.htmlCardReadDiff" => json!({"ok":true,"path":frame["params"]["target"],"before":"start();","after":"restore_workspace();\nstart();"}),
                                     "git.numstat" => json!({"files":[{"path":"src/main.rs","added":2,"deleted":1}]}),
-                                    "git.status" => json!({"branch":"feature/native-basics","files":[{"path":"src/main.rs","staged":" ","unstaged":"M"},{"path":"README.md","staged":"M","unstaged":" "},{"path":"tests/session.rs","staged":"?","unstaged":"?"}]}),
+                                    "git.status" => json!({"branch":"feature/native-basics","root":frame["params"]["cwd"],"files":[{"path":"src/main.rs","staged":" ","unstaged":"M"},{"path":"README.md","staged":"M","unstaged":" "},{"path":"tests/session.rs","staged":"?","unstaged":"?"}]}),
                                     "git.diff" => json!({"diff":"diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"}),
                                     "providers.checkAll" => json!([{"provider":"claude","found":true},{"provider":"codex","found":false}]),
                                     "desktop.providerReadiness" => json!({"state":"unchecked"}),
@@ -146,6 +184,70 @@ pub async fn serve_with_transcript(
             }
         });
     }
+}
+
+fn base64_bytes(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// A small synthetic project for the file explorer, under any folder.
+fn fixture_listing(path: &str) -> Value {
+    let path = path.trim_end_matches('/');
+    let entry =
+        |name: &str, dir: bool| json!({"name":name,"path":format!("{path}/{name}"),"isDir":dir});
+    let entries = match path.rsplit('/').next().unwrap_or_default() {
+        "src" => vec![
+            entry("main.rs", false),
+            entry("lib.rs", false),
+            entry("viewer.rs", false),
+        ],
+        "tests" => vec![entry("session.rs", false)],
+        "docs" => vec![entry("guide.md", false)],
+        _ => vec![
+            entry("docs", true),
+            entry("src", true),
+            entry("tests", true),
+            entry("Cargo.toml", false),
+            entry("README.md", false),
+        ],
+    };
+    json!({"path":path,"entries":entries,"includeIgnored":false})
+}
+
+/// The fixture shell's echo of typed bytes: Enter answers `pwd`/`ls` and
+/// says every other command was not run.
+fn fixture_echo(cwd: &str, line: &mut String, bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &byte in bytes {
+        match byte {
+            b'\r' | b'\n' => {
+                let command = std::mem::take(line);
+                let answer = match command.trim() {
+                    "" => String::new(),
+                    "pwd" => format!("{cwd}\r\n"),
+                    "ls" => "\x1b[1;34mdocs\x1b[0m  \x1b[1;34msrc\x1b[0m  \x1b[1;34mtests\x1b[0m  Cargo.toml  README.md\r\n".into(),
+                    other => format!("fixture: {other}: not run (this fixture starts no processes)\r\n"),
+                };
+                out.extend(format!("\r\n{answer}\x1b[32m$\x1b[0m ").into_bytes());
+            }
+            0x7f | 0x08 => {
+                if line.pop().is_some() {
+                    out.extend(b"\x08 \x08");
+                }
+            }
+            0x03 => {
+                line.clear();
+                out.extend(b"^C\r\n\x1b[32m$\x1b[0m ");
+            }
+            byte if byte >= 0x20 => {
+                line.push(byte as char);
+                out.push(byte);
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Two Claude logins and Codex, shaped like the hub's `usage.report`.

@@ -43,6 +43,8 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 url = "2"
 unicode-general-category = "1.1"
 qrcodegen = "1"
+# Per-agent terminal emulation (src/terminal.rs); already in the tree via claudemon.
+vt100 = "0.15"
 
 # Watching a popped-out window for X11 DestroyNotify (src/ui/window_destroy.rs);
 # already in the tree through GPUI.

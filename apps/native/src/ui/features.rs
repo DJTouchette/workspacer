@@ -26,7 +26,6 @@ pub(super) struct Extras {
     pub sent_attachments: HashMap<String, Vec<(String, String)>>,
     pub history_page: usize,
     pub history_scroll: gpui::ScrollHandle,
-    pub diff_scroll: gpui::ScrollHandle,
     pub question_signature: String,
     pub answers: Vec<Entity<InputState>>,
     /// Background update checks (started by the app, never by tests).
@@ -61,7 +60,6 @@ impl Extras {
             sent_attachments: HashMap::new(),
             history_page: 0,
             history_scroll: gpui::ScrollHandle::new(),
-            diff_scroll: gpui::ScrollHandle::new(),
             question_signature: String::new(),
             answers: Vec::new(),
             _update_timer: None,
@@ -694,7 +692,6 @@ impl Workspace {
                 "Session history",
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
-            Screen::Changes => ("Changes", None),
             Screen::History => (
                 "Conversation history",
                 Some("A snapshot of retained conversation history. Live messages continue in chat.".into()),
@@ -711,31 +708,6 @@ impl Workspace {
             _ => ("", None),
         };
         let trailing = match self.screen {
-            Screen::Changes => {
-                let cwd = self
-                    .view
-                    .requests
-                    .get("changes")
-                    .and_then(|state| match &state.request {
-                        Request::Changes { cwd } => Some(cwd.clone()),
-                        _ => None,
-                    })
-                    .or_else(|| self.selected_session().map(|s| s.cwd.clone()));
-                cwd.map(|cwd| {
-                    self.quiet_button(
-                        "changes-refresh",
-                        "Refresh",
-                        IconName::Redo,
-                        self.view.connected,
-                    )
-                    .when(self.view.connected, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            this.request(Request::Changes { cwd: cwd.clone() }, cx)
-                        }))
-                    })
-                    .into_any_element()
-                })
-            }
             Screen::Recent => Some(
                 self.quiet_button(
                     "history-refresh",
@@ -752,7 +724,6 @@ impl Workspace {
         };
         let body = match self.screen {
             Screen::Recent => self.render_recent(cx),
-            Screen::Changes => self.render_changes(cx),
             Screen::History => self.render_history(window, cx),
             Screen::Session => self.render_session(cx),
             Screen::Setup => self.render_setup(cx),
@@ -1142,103 +1113,6 @@ impl Workspace {
                     p,
                     "session-notice",
                 ))
-            })
-    }
-    fn render_changes(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
-        let state = self.view.requests.get("changes");
-        let cwd = state
-            .and_then(|state| match &state.request {
-                Request::Changes { cwd } => Some(cwd.clone()),
-                _ => None,
-            })
-            .or_else(|| self.selected_session().map(|s| s.cwd.clone()));
-        let Some(cwd) = cwd else {
-            return empty_note("Select a session or request a project review first.", p);
-        };
-        let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
-        let files = value["files"].as_array().cloned().unwrap_or_default();
-        let diff = self
-            .view
-            .requests
-            .get("diff")
-            .filter(|s| matches!(&s.request, Request::Diff { cwd: c, .. } if c == &cwd));
-        let open_diff = diff.and_then(|state| match &state.request {
-            Request::Diff { path, staged, .. } => Some((path.clone(), *staged)),
-            _ => None,
-        });
-        let chip = |id: &'static str, label: &'static str, color: u32, active: bool| {
-            chrome::interactive_control(div().id(id), p, true)
-                .debug_selector(move || id.into())
-                .px_2()
-                .py(px(2.))
-                .rounded_full()
-                .text_size(px(chrome::scale::CAPTION))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(rgb(color))
-                .bg(gpui::Hsla::from(rgb(color)).opacity(if active { 0.22 } else { 0.1 }))
-                .hover(move |s| s.bg(gpui::Hsla::from(rgb(color)).opacity(0.22)))
-                .child(label)
-        };
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .min_w_0()
-                    .text_size(px(chrome::scale::META))
-                    .text_color(rgb(p.muted))
-                    .child(Icon::new(IconName::Folder).size(px(13.)).flex_shrink_0())
-                    .child(div().min_w_0().truncate().font_family(mono_font()).child(cwd.clone()))
-                    .child(div().flex_shrink_0().text_color(rgb(p.disabled)).child("·"))
-                    .child(div().flex_shrink_0().text_color(rgb(p.accent)).child(value["branch"].as_str().unwrap_or("Repository").to_owned())),
-            )
-            .child(div().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child("Working tree changes, including edits made outside this session. Choose a change to see its diff."))
-            .child(self.feature_message("changes"))
-            .when(files.is_empty() && state.is_some_and(|s| !s.loading && s.error.is_none()), |d| d.child(empty_note("No uncommitted changes.", p)))
-            .when(!files.is_empty(), |d| d.child(chrome::card(p).overflow_hidden().flex().flex_col()
-                .children(files.into_iter().take(1000).enumerate().map(|(ix, file)| {
-                    let path = file["path"].as_str().unwrap_or("").to_owned();
-                    let staged = file["staged"].as_str().unwrap_or(" ");
-                    let unstaged = file["unstaged"].as_str().unwrap_or(" ");
-                    let untracked = staged == "?" || unstaged == "?";
-                    let c = cwd.clone(); let file_path = path.clone(); let c2 = c.clone(); let path2 = path.clone();
-                    let viewing = open_diff.as_ref().is_some_and(|(p, _)| p == &path);
-                    let (name, dir) = match path.rsplit_once(['/', '\\']) {
-                        Some((dir, name)) => (name.to_owned(), format!("{dir}/")),
-                        None => (path.clone(), String::new()),
-                    };
-                    div().id(("changed-file", ix)).px_4().py(px(10.)).flex().items_center().gap_3()
-                        .when(ix > 0, |d| d.border_t_1().border_color(rgb(p.border)))
-                        .when(viewing, |d| d.bg(rgb(p.selected)))
-                        .child(Icon::new(IconName::File).size(px(14.)).flex_shrink_0().text_color(rgb(if viewing { p.accent } else { p.muted })))
-                        .child(div().flex_1().min_w_0().flex().items_baseline().gap_2().overflow_hidden()
-                            .child(div().flex_shrink_0().text_size(px(chrome::scale::BODY)).font_weight(FontWeight::MEDIUM).child(name))
-                            .child(div().min_w_0().truncate().font_family(mono_font()).text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(dir)))
-                        .when(untracked || !unstaged.trim().is_empty(), |d| d.child(chip("diff-working", if untracked { "New file" } else { "Unstaged" }, if untracked { p.success } else { p.warning }, viewing && open_diff.as_ref().is_some_and(|(_, s)| !*s))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.extras.diff_scroll.set_offset(gpui::point(px(0.), px(0.)));
-                                this.request(Request::Diff { cwd: c.clone(), path: file_path.clone(), staged: false, untracked }, cx);
-                            }))))
-                        .when(!untracked && !staged.trim().is_empty(), |d| d.child(chip("diff-staged", "Staged", p.accent, viewing && open_diff.as_ref().is_some_and(|(_, s)| *s))
-                            .on_click(cx.listener(move |this, _, _, cx| this.request(Request::Diff { cwd: c2.clone(), path: path2.clone(), staged: true, untracked: false }, cx)))))
-                }))))
-            .when_some(diff, |d, state| {
-                let text = state.value["diff"].as_str().unwrap_or("");
-                let (path, which) = if let Request::Diff { path, staged, .. } = &state.request { (path.clone(), if *staged { "Staged" } else { "Working tree" }) } else { (String::new(), "") };
-                d.child(chrome::card(p).overflow_hidden().flex().flex_col()
-                    .child(div().px_4().py_2().flex().items_center().gap_2().border_b_1().border_color(rgb(p.border)).bg(rgb(p.code_header))
-                        .child(div().flex_1().min_w_0().truncate().font_family(mono_font()).text_size(px(chrome::scale::META)).child(path))
-                        .child(div().flex_shrink_0().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(which)))
-                    .child(div().px_4().when(state.loading || state.error.is_some(), |d| d.py_2()).child(self.feature_message("diff")))
-                    .when(text.is_empty() && !state.loading && state.error.is_none(), |d| d.child(empty_note("No text diff available. The file may be binary or have changed since refresh.", p)))
-                    .when(!text.is_empty(), |d| d.child(div().id("diff-content").max_h(px(500.)).overflow_y_scroll().track_scroll(&self.extras.diff_scroll).font_family(gpui_component::Theme::global(cx).mono_font_family.clone()).text_size(px(chrome::scale::META)).bg(rgb(p.code_block)).px_4().py_3()
-                        .children(text.lines().take(3000).map(|line| div().text_color(rgb(if line.starts_with("+++") || line.starts_with("---") { p.muted } else if line.starts_with('+') { p.success } else if line.starts_with('-') { p.error } else if line.starts_with("@@") { p.accent } else { p.prose })).child(line.to_owned())))))
-                    .when(text.lines().count() > 3000, |d| d.child(div().px_4().py_2().child(chrome::notice_line("Showing the first 3,000 diff lines. Review the full file in your editor.", chrome::Tone::Info, p, "diff-cap")))))
             })
     }
     fn render_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {

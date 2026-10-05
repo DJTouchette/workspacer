@@ -320,12 +320,13 @@ Transcript rendering is described below.
   the system browser; any other scheme is refused with a visible notice. File
   links (Markdown, HTML cards, tool file targets, image thumbnails) resolve
   relative paths against the session's cwd, keep `:line[:col]`, `:a-b` and
-  `#L12` anchors, and open the read-only file viewer: syntax-highlighted,
-  selectable, searchable (Ctrl+F) source with line numbers (≤1 MiB, ≤50,000
-  lines), or the image (≤2 MiB source, shown at ≤2560 px). Files are read by
-  the connected hub on the machine that runs the session, never from this
-  client's disk, so a remote hub's paths are never opened locally; `~`,
-  foreign `file://` hosts and relative paths without a cwd are refused.
+  `#L12` anchors, and open the file editor: syntax-highlighted, editable,
+  searchable (Ctrl+F) source with line numbers (≤1 MiB, ≤50,000 lines), or
+  the image (≤2 MiB source, shown at ≤2560 px, read-only). Files are read and
+  saved by the connected hub on the machine that runs the session, never on
+  this client's disk, so a remote hub's paths are never opened or written
+  locally; `~`, foreign `file://` hosts and relative paths without a cwd are
+  refused.
   Markdown images render as labels, not client-side loads. HTML cards keep
   only `a href` web/file destinations and `img src` session image files (a
   label, never loaded); other schemes, remote images and every other
@@ -356,6 +357,33 @@ Transcript rendering is described below.
   session on the connected hub. **Dock** (or the window's own close button)
   brings it back beside the chat; ✕ closes it. Closing the main window quits
   as before and closes a popped-out viewer with it.
+- **Editing and saving.** The source is editable. A dot beside the title and
+  "Unsaved changes" mark edits; **Save** (Ctrl/Cmd+S) writes them through the
+  hub (`fs.write`) only if the file still holds what the editor loaded
+  (checked with `fs.read` first), then reads the file back to confirm. If the
+  file changed on disk, nothing is written: **Overwrite**, **Reload from
+  disk** (drops your edits) or **Keep editing**. A file that can no longer be
+  read (moved, deleted) offers Overwrite to write it there anyway. Unsaved
+  edits are never dropped silently: opening another file (explorer, Back, a
+  document link), a new chat link, ✕/Esc/the backdrop, and closing the main
+  window all ask **Save / Discard changes / Keep editing** first. Switching
+  sessions keeps the editor and its edits; Pop out and Dock carry unsaved
+  edits and an in-flight save with them. The check is not atomic: the
+  compare and the write are two hub calls with no lock, so another program
+  writing between them is silently overwritten (the read-back only catches a
+  write after ours). It protects against saving over a file that changed
+  while you edited, not against a concurrent writer. Saves are limited to
+  4 MiB. Quit (Ctrl+Shift+Q / ⌘Q) is
+  explicit and does not ask.
+- **Files.** The folder button in the title bar (Ctrl/Cmd+Shift+E, `g f`)
+  opens the editor on the selected session's folder with a file explorer
+  beside the source; the editor's own folder button shows or hides it. Folders
+  are listed lazily by the hub (`fs.listEntries`), one request at a time, and
+  cached for the window. Every file is listed, tracked or not, except `.git`;
+  git-ignored entries (build output, dependencies) are hidden until **Show
+  ignored**, and the tree says so. A hub older than this option keeps hiding
+  them. Choosing a file opens it in the same editor, docked, as a sheet or in
+  its popped-out window, so the explorer works as a small editor window.
 - `.md`/`.markdown` files (any case) open as a rendered document with a
   **Preview / Source** toggle (Ctrl+Shift+V). The preview uses the chat's
   Markdown renderer at a 760 px reading measure: headings, paragraphs, lists,
@@ -494,6 +522,9 @@ editing; this is Vim-style app navigation, not a modal text editor.
 | `Ctrl/Cmd+,` | Settings, including with Vim disabled |
 | `Ctrl/Cmd+Enter` | Send, start the agent, or pin the focused project-path field |
 | `Enter` / `Shift+Enter` | With **Send messages with Enter**: send / new line in the composer |
+| `Ctrl/Cmd+Shift+E`, `g f` | Files: the editor on the selected session's folder |
+| ``Ctrl/Cmd+` ``, `g t` | Show or hide the selected agent's terminal |
+| `Ctrl/Cmd+S` | Save the file in the editor |
 
 The existing `Ctrl/Cmd+N`, `Ctrl/Cmd+L`, `Ctrl/Cmd+R`, and `Alt+Up/Down` shortcuts
 remain available. Settings and Projects never send a hidden composer draft.
@@ -513,11 +544,37 @@ be expanded, and attachment controls share the composer action row.
   **Session…** renames, archives/restores, and offers a confirmed **End session**;
   Interrupt remains a separate control. Names and archives are client-local and
   scoped to the connection. Archiving does not stop an agent or delete history.
-- **Changes** shows the current repository’s staged, unstaged and untracked files.
-  Select a file’s change type to read its colored unified diff. This is working-tree
-  state, including edits outside the selected session, not an attribution claim.
-  Errors, clean trees and binary/no-text diffs have separate messages. Display is
-  capped at 3,000 diff lines with an explicit notice.
+- **Changes** is a Git-style review: the diff fills the page with old and new
+  line numbers, hunk headers, added/removed tints and +/− counts, and the
+  repository's files sit on the right. **Changed** lists `git status` with
+  status letters (M, A, D, R, ?, U); choosing one shows its diff (the working
+  tree when it has unstaged changes, with an Unstaged/Staged switch when it has
+  both; untracked files diff against nothing). **Files** shows the whole
+  project tree from the repository root (`git.status` reports the root; an
+  older hub falls back to the session folder), with changed files and the
+  folders holding them marked; choosing any file opens it in the editor, as
+  does **Open in editor** on a diff. Paths are joined under the repository root
+  and refused if they would leave it; the hub still contains every diff and
+  read. This is working-tree state, including edits outside the selected
+  session, not an attribution claim. Diffs show up to 20,000 lines, scroll
+  sideways for long lines, and say when they are cut short.
+- **Terminal.** The terminal button in the title bar (Ctrl/Cmd+\`, `g t`)
+  opens the selected agent's own interactive shell under the conversation:
+  the hub starts its login shell in the agent's folder (`terminals.create`)
+  and streams it (`sessions.attachTerminal`, `pty.bytes.<id>`); keys,
+  paste (Ctrl+Shift+V) and resizes go back to it. Each agent has one shell.
+  Hiding the terminal keeps it running; reopening the agent's terminal, or
+  selecting that agent again while the panel is open, re-attaches to the same
+  shell and replays its screen. A restart of this client re-attaches too (the
+  agent → shell pairing is remembered per hub under `native-terminals/`).
+  While the terminal has focus every key goes to the shell, except
+  Ctrl+\` (hide), Ctrl+Shift+C/V (copy screen / paste), Ctrl+Shift+E and
+  Quit. **Pop out** moves it into a resizable window of its own (its keys
+  are its own); **Dock under the chat** brings it back. Restart ends the shell
+  and starts a new one in the same folder. Shell sessions never appear in the
+  session list. Scrollback keeps 5,000 lines (mouse wheel; full-screen
+  programs get arrow keys). Copy takes the visible screen; there is no mouse
+  selection or mouse reporting yet. ANSI colours follow the selected theme.
 - **Agent setup** is available in Settings, the welcome state and the launch form.
   It reports installed CLIs and allows an explicit connection check (which may use
   provider allowance). Sign-in stays with each CLI. A setup detour preserves a
@@ -568,7 +625,7 @@ be expanded, and attachment controls share the composer action row.
   relaunches with the same arguments. Other platforms link to the release page.
 
 Normal-mode shortcuts: `g h` session history, `g d` changes, `g a` setup,
-`g e` session actions, and `g m` model. `Esc` returns from a secondary view;
+`g e` session actions, `g m` model, `g f` files/editor and `g t` terminal. `Esc` returns from a secondary view;
 text inputs retain ordinary editing and paste behavior.
 
 [Changes preview](docs/ui-changes.png) · [Setup at minimum size](docs/ui-setup.png) · [Compact approval](docs/ui-compact-approval.png)
@@ -745,7 +802,12 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui.rs` | GPUI views, virtualization, keyboard dispatch, drafts |
 | `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
 | `src/links.rs` | Chat link classification, path/line resolution, preview bounds and errors |
-| `src/ui/file_viewer.rs` | Link routing and the read-only file/image/Markdown viewer (docked, sheet, popped-out window) |
+| `src/ui/file_viewer.rs` | Link routing and the file editor / image / Markdown viewer (docked, sheet, popped-out window), saves and unsaved-edit guards |
+| `src/ui/explorer.rs` | Lazy, cached file tree shared by the editor and the review |
+| `src/ui/review.rs` | Git-style Changes review with the file explorer on the right |
+| `src/diff.rs` | Unified diff parsing into numbered rows |
+| `src/terminal.rs` | Per-agent shell protocol: output feed, key encoding, emulator, remembered shells |
+| `src/ui/terminal.rs` | Terminal panel and popped-out terminal window |
 | `src/ui/settings.rs` | Categorized, searchable settings |
 | `src/remote.rs` | Tailscale sharing and pairing state, phone links, QR modules |
 | `src/ui/remote.rs` | Settings → Remote panel |
@@ -780,9 +842,11 @@ The native equivalents use existing screens:
 | `agents` / `agentwatch`, `inspector` | Open the conversation/session list or selected-session details. |
 | `command.run_action` | Apply supported session navigation, new-session form, settings, review and inspector actions. Decision and session-control verbs are refused. |
 
-Native has no terminal pane, browser pane, plugin renderer, guide pane, library,
-analytics dashboard, board, editor, Ask or context pane. Requests for those
-surfaces show an explicit unsupported notice. The most recent unsupported terminal request retains `cwd`,
+The `new-terminal` / `toggle-terminal` actions show or toggle the selected
+agent's own terminal (no command is run). Native does not open hub terminal
+panes or run `facade.openTerminal` commands, and has no browser pane, plugin
+renderer, guide pane, library, analytics dashboard, board, Ask or context
+pane. Requests for those surfaces show an explicit unsupported notice. The most recent unsupported terminal request retains `cwd`,
 `command`, `label` and `parentSessionId` behind **Copy request**; no hidden shell
 is created and the command is not run. Guide requests offer an explicit link to
 native documentation. These are pre-existing native UI gaps, not substitutes for

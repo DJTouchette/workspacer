@@ -112,6 +112,11 @@ impl Workspace {
                         self.load_models(false, cx);
                     }
                 }
+                Effect::Terminal { toggle } => {
+                    if toggle || !self.terminal.open {
+                        self.toggle_terminal(window, cx);
+                    }
+                }
                 Effect::PreviousAgent => self.move_selection(-1, cx),
                 Effect::NextAgent => self.move_selection(1, cx),
                 Effect::NextAttention => {

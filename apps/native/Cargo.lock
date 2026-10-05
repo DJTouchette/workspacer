@@ -10056,6 +10056,7 @@ dependencies = [
  "tokio-tungstenite",
  "unicode-general-category",
  "url",
+ "vt100",
  "workspacer-hub",
  "x11rb",
 ]

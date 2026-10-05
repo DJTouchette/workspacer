@@ -37,6 +37,7 @@ fn install_with_git(mut options: Options, home: PathBuf, git: GitCommand) -> Opt
             let git = git.clone();
             async move {
                 if method == "fs.listEntries" {
+                    let include_ignored = include_ignored(&params)?;
                     let listing = tokio::task::spawn_blocking(move || {
                         let path = paths::canonicalize(Path::new(path_parameter(&params)?))?;
                         DirectoryListing::read(path)
@@ -44,8 +45,15 @@ fn install_with_git(mut options: Options, home: PathBuf, git: GitCommand) -> Opt
                     .await??;
                     // The command future stays in the owned handler: cancelling
                     // it drops the process-group/job guard before hub teardown.
-                    let ignored = git_ignored_async(&listing.path, &listing.names, git).await;
-                    return tokio::task::spawn_blocking(move || listing.finish(&ignored)).await?;
+                    let ignored = if include_ignored {
+                        BTreeSet::new()
+                    } else {
+                        git_ignored_async(&listing.path, &listing.names, git).await
+                    };
+                    return tokio::task::spawn_blocking(move || {
+                        listing.finish(&ignored, include_ignored)
+                    })
+                    .await?;
                 }
                 tokio::task::spawn_blocking(move || call(method, params, &home)).await?
             }
@@ -120,11 +128,25 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
             Ok(json!({"path":path,"parent":path.parent().unwrap_or(&path),"home":home,"dirs":dirs}))
         }
         "fs.listEntries" => {
+            let include_ignored = include_ignored(&params)?;
             let listing = DirectoryListing::read(path)?;
-            let ignored = git_ignored(&listing.path, &listing.names);
-            listing.finish(&ignored)
+            let ignored = if include_ignored {
+                BTreeSet::new()
+            } else {
+                git_ignored(&listing.path, &listing.names)
+            };
+            listing.finish(&ignored, include_ignored)
         }
         _ => bail!("unknown filesystem method"),
+    }
+}
+/// `fs.listEntries` hides git-ignored entries unless asked; `.git` is
+/// always omitted.
+fn include_ignored(params: &Value) -> Result<bool> {
+    match params.get("includeIgnored") {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(include)) => Ok(*include),
+        _ => bail!("includeIgnored must be a boolean"),
     }
 }
 fn path_parameter(params: &Value) -> Result<&str> {
@@ -167,7 +189,7 @@ impl DirectoryListing {
             names,
         })
     }
-    fn finish(self, ignored: &BTreeSet<String>) -> Result<Value> {
+    fn finish(self, ignored: &BTreeSet<String>, include_ignored: bool) -> Result<Value> {
         let mut result = Vec::new();
         for entry in self.entries {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -184,7 +206,7 @@ impl DirectoryListing {
                 .cmp(&a["isDir"].as_bool())
                 .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
         });
-        Ok(json!({"path":self.path,"entries":result}))
+        Ok(json!({"path":self.path,"entries":result,"includeIgnored":include_ignored}))
     }
 }
 pub fn read(path: &Path) -> Result<Value> {
@@ -553,6 +575,32 @@ mod listing_process_tests {
                 }
             );
             assert_eq!(result["entries"][0]["isDir"], true);
+            assert_eq!(result["includeIgnored"], false);
+            // Explicitly including ignored entries never consults git.
+            let all = client
+                .call(
+                    "fs.listEntries",
+                    json!({"path":root.path(),"includeIgnored":true}),
+                )
+                .await
+                .unwrap();
+            let names: Vec<_> = all["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["name"].as_str().unwrap())
+                .collect();
+            assert_eq!(names, vec!["folder", "ignored", "visible"]);
+            assert_eq!(all["includeIgnored"], true);
+            assert!(
+                client
+                    .call(
+                        "fs.listEntries",
+                        json!({"path":root.path(),"includeIgnored":"yes"}),
+                    )
+                    .await
+                    .is_err()
+            );
             tokio::task::spawn_blocking(move || hub.shutdown())
                 .await
                 .unwrap()

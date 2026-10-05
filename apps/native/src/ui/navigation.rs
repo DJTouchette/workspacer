@@ -170,7 +170,7 @@ impl Workspace {
         }
     }
 
-    fn focus_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn focus_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.new_session {
             if self.projects.picker_open {
                 self.project_query
@@ -464,6 +464,26 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &PageUp, window, cx| this.page(-1., window, cx)))
             .on_action(cx.listener(|this, _: &PageDown, window, cx| this.page(1., window, cx)))
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.command(Command::Refresh, cx)))
+            .on_action(
+                cx.listener(|this, _: &OpenEditor, window, cx| {
+                    this.open_selected_editor(window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &ToggleTerminal, window, cx| {
+                    this.toggle_terminal(window, cx)
+                }),
+            )
+    }
+
+    /// The editor on the selected session's folder.
+    pub(super) fn open_selected_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.selected_session().cloned() else {
+            self.extras.notice = "Select a session to browse its files.".into();
+            cx.notify();
+            return;
+        };
+        self.open_editor(&session.id, &session.cwd, window, cx);
     }
 
     pub(super) fn render_projects(&self, window: &Window, cx: &mut Context<Self>) -> Div {

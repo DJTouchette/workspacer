@@ -136,6 +136,13 @@ async fn review_reads_and_mutations_use_the_selected_repository_and_cwd() {
     .unwrap();
     assert!(diff["diff"].as_str().unwrap().contains("+root"));
     call("git.stage", json!({"cwd":sub})).await.unwrap();
+    // Paths are relative to the work tree, which status names for clients
+    // that asked from a subdirectory.
+    let from_sub = call("git.status", json!({"cwd":sub})).await.unwrap();
+    assert_eq!(
+        std::fs::canonicalize(from_sub["root"].as_str().unwrap()).unwrap(),
+        std::fs::canonicalize(root).unwrap()
+    );
     let status = call("git.status", json!({"cwd":root})).await.unwrap();
     let files = status["files"].as_array().unwrap();
     assert!(
