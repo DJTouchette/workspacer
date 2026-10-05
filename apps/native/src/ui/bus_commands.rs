@@ -10,6 +10,12 @@ pub(super) struct UiState {
     payload: Option<serde_json::Value>,
     guide: bool,
 }
+#[cfg(test)]
+impl UiState {
+    pub(super) fn payload_for_test(&mut self, payload: serde_json::Value) {
+        self.payload = Some(payload);
+    }
+}
 impl Workspace {
     pub(super) fn apply_ui_requests(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.ui_bus.warning != self.view.ui_request_warning {
@@ -63,8 +69,11 @@ impl Workspace {
                         self.show_screen(Screen::Conversation, window, cx);
                         self.command(Command::Select(id), cx);
                     } else {
-                        self.ui_bus.notice =
-                            format!("Requested session {id} is unavailable on this hub.");
+                        // The full ID stays in the copyable request payload.
+                        self.ui_bus.notice = format!(
+                            "Requested session {} is unavailable on this hub.",
+                            wks_native::transcript::head(&id, 8)
+                        );
                     }
                 }
                 Effect::Conversation => self.show_screen(Screen::Conversation, window, cx),
@@ -142,13 +151,101 @@ impl Workspace {
             }
         }
     }
+    /// A hub navigation request the window could not apply: a quiet card in
+    /// the sidebar with its tone icon, the request copy action and dismiss.
     pub(super) fn render_ui_notice(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
-        let payload = self.ui_bus.payload.clone();
-        div().px_3().pb_3().text_size(px(12.)).text_color(rgb(p.warning)).child(self.ui_bus.notice.clone())
-   .child(div().flex().flex_wrap().gap_2().mt_2()
-    .when(payload.as_ref().is_some_and(|p|p.as_object().is_some_and(|p|!p.is_empty())),|d|d.child(self.button("copy-ui-request","Copy request",true).on_click(cx.listener(move|_,_,_,cx|{if let Some(payload)=&payload && let Ok(text)=serde_json::to_string_pretty(payload){cx.write_to_clipboard(ClipboardItem::new_string(text));}}))))
-    .when(self.ui_bus.guide,|d|d.child(self.button("native-guide","Read native guide",true).on_click(|_,_,cx|cx.open_url("https://github.com/DJTouchette/workspacer/blob/main/apps/native/README.md"))))
-    .child(self.button("dismiss-ui-request","Dismiss",true).on_click(cx.listener(|this,_,_,cx|{this.ui_bus.notice.clear();this.ui_bus.payload=None;cx.notify();}))))
+        let payload = self
+            .ui_bus
+            .payload
+            .clone()
+            .filter(|p| p.as_object().is_some_and(|p| !p.is_empty()));
+        let tone = match chrome::notice_tone(&self.ui_bus.notice) {
+            // Requests that could not be applied are not app failures.
+            chrome::Tone::Error | chrome::Tone::Success => chrome::Tone::Warning,
+            tone => tone,
+        };
+        div().px_3().pb_3().child(
+            chrome::card(p)
+                .debug_selector(|| "sidebar-ui-notice".into())
+                .rounded(px(p.control_radius))
+                .pl_3()
+                .pr_1()
+                .py_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_1()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .pt_2()
+                                .text_color(rgb(p.text))
+                                .child(chrome::notice_line(
+                                    self.ui_bus.notice.clone(),
+                                    tone,
+                                    p,
+                                    "sidebar-ui-notice-icon",
+                                )),
+                        )
+                        .child(
+                            self.icon_button("dismiss-ui-request", "Dismiss", IconName::Close, true)
+                                .debug_selector(|| "dismiss-ui-request".into())
+                                .size(px(24.))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.ui_bus.notice.clear();
+                                    this.ui_bus.payload = None;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .when(payload.is_some() || self.ui_bus.guide, |d| {
+                    d.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1()
+                            // Align the quiet buttons' text with the message
+                            // past the tone icon.
+                            .ml(px(13.))
+                            .when_some(payload, |d, payload| {
+                                d.child(
+                                    self.quiet_button(
+                                        "copy-ui-request",
+                                        "Copy request",
+                                        IconName::Copy,
+                                        true,
+                                    )
+                                    .debug_selector(|| "copy-ui-request".into())
+                                    .py_1()
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        if let Ok(text) = serde_json::to_string_pretty(&payload) {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                        }
+                                    })),
+                                )
+                            })
+                            .when(self.ui_bus.guide, |d| {
+                                d.child(
+                                    self.quiet_button(
+                                        "native-guide",
+                                        "Read native guide",
+                                        IconName::BookOpen,
+                                        true,
+                                    )
+                                    .py_1()
+                                    .on_click(|_, _, cx| {
+                                        cx.open_url("https://github.com/DJTouchette/workspacer/blob/main/apps/native/README.md")
+                                    }),
+                                )
+                            }),
+                    )
+                }),
+        )
     }
 }

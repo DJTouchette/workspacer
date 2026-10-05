@@ -96,7 +96,7 @@ fn account_header(account: &Account, p: Palette) -> Div {
 }
 
 /// The full card: every account, every window, compact. Shown on hover.
-fn usage_card(accounts: &[Account], p: Palette) -> Div {
+fn usage_card(accounts: &[Account], error: Option<&str>, p: Palette) -> Div {
     div()
         .w(px(280.))
         .p_3()
@@ -115,6 +115,9 @@ fn usage_card(accounts: &[Account], p: Palette) -> Div {
                 .flex_col()
                 .gap(px(6.))
                 .child(account_header(account, p))
+                .when_some(account.unmeasured.as_ref(), |d, state| {
+                    d.child(unmeasured_line(state, p, 10.))
+                })
                 .child(
                     div()
                         .flex()
@@ -142,6 +145,21 @@ fn usage_card(accounts: &[Account], p: Palette) -> Div {
                         })),
                 )
         }))
+        .when_some(error, |d, error| {
+            d.child(unmeasured_line(
+                &usage::Unmeasured {
+                    state: if accounts.is_empty() {
+                        "Usage unavailable"
+                    } else {
+                        "Last refresh failed"
+                    },
+                    reason: error.to_owned(),
+                    error: true,
+                },
+                p,
+                10.,
+            ))
+        })
         .child(
             div()
                 .text_size(px(10.))
@@ -150,8 +168,28 @@ fn usage_card(accounts: &[Account], p: Palette) -> Div {
         )
 }
 
+/// "Sign in again · oauth token expired": why an account has no reading.
+fn unmeasured_line(state: &usage::Unmeasured, p: Palette, size: f32) -> Div {
+    div()
+        .text_size(px(size))
+        .line_height(gpui::relative(1.4))
+        .text_color(rgb(p.muted))
+        .child(
+            div()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(rgb(if state.error { p.warning } else { p.muted }))
+                .child(state.state),
+        )
+        .child(state.reason.clone())
+}
+
+fn unmeasured_tone(state: &usage::Unmeasured, p: Palette) -> u32 {
+    if state.error { p.warning } else { p.disabled }
+}
+
 struct UsageHover {
     accounts: Vec<Account>,
+    error: Option<String>,
     palette: Palette,
 }
 
@@ -160,7 +198,11 @@ impl Render for UsageHover {
         div()
             .pl_2()
             .debug_selector(|| "usage-hover-card".into())
-            .child(usage_card(&self.accounts, self.palette))
+            .child(usage_card(
+                &self.accounts,
+                self.error.as_deref(),
+                self.palette,
+            ))
     }
 }
 
@@ -171,12 +213,19 @@ impl Workspace {
         (!accounts.is_empty()).then_some((accounts, now))
     }
 
-    /// One line per account with its most pressing window. Hover shows every
-    /// window; click opens the detail modal.
+    /// One line per account with its most pressing window, or the reason it
+    /// has none. Hover shows every window; click opens the detail modal. A
+    /// failed report read with nothing to show says so rather than vanishing.
     pub(super) fn render_usage_strip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let p = self.appearance.palette();
-        let (accounts, _) = self.usage_accounts()?;
+        let accounts = self.usage_accounts().map(|(a, _)| a).unwrap_or_default();
+        let error = self.view.usage_error.clone();
+        if accounts.is_empty() && error.is_none() {
+            return None;
+        }
         let hover = accounts.clone();
+        let hover_error = error.clone();
+        let row = || div().flex().items_center().gap_2().text_size(px(11.));
         Some(
             div()
                 .id("sidebar-usage")
@@ -191,47 +240,81 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(5.))
-                .children(accounts.iter().map(|account| {
-                    let w = account.primary();
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(11.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(chrome::brand_badge(
-                                    &account.provider,
-                                    account.title.clone(),
-                                    p,
-                                    11.,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_size(px(10.))
-                                .text_color(rgb(p.muted))
-                                .child(w.label),
-                        )
-                        .child(div().w(px(56.)).flex_shrink_0().child(meter(w, 4., p)))
-                        .child(
-                            div()
-                                .w(px(30.))
-                                .flex_shrink_0()
-                                .flex()
-                                .justify_end()
-                                .text_size(px(10.))
-                                .text_color(rgb(color(w, p)))
-                                .child(format!("{}%", w.pct.round() as u64)),
-                        )
+                .when(accounts.is_empty(), |d| {
+                    d.child(
+                        row()
+                            .debug_selector(|| "sidebar-usage-error".into())
+                            .child(
+                                Icon::new(IconName::TriangleAlert)
+                                    .size(px(11.))
+                                    .text_color(rgb(p.warning)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child("Usage unavailable"),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(p.muted))
+                                    .child("Retry"),
+                            ),
+                    )
+                })
+                .children(accounts.iter().enumerate().map(|(ix, account)| {
+                    let name = div()
+                        .flex_1()
+                        .min_w_0()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(chrome::brand_badge(
+                            &account.provider,
+                            account.title.clone(),
+                            p,
+                            11.,
+                        ));
+                    match (account.primary(), &account.unmeasured) {
+                        (Some(w), _) => row()
+                            .child(name)
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(p.muted))
+                                    .child(w.label),
+                            )
+                            .child(div().w(px(56.)).flex_shrink_0().child(meter(w, 4., p)))
+                            .child(
+                                div()
+                                    .w(px(30.))
+                                    .flex_shrink_0()
+                                    .flex()
+                                    .justify_end()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(color(w, p)))
+                                    .child(format!("{}%", w.pct.round() as u64)),
+                            ),
+                        (None, state) => row()
+                            .debug_selector(move || format!("sidebar-usage-unmeasured-{ix}"))
+                            .child(name)
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(px(10.))
+                                    .text_color(rgb(state
+                                        .as_ref()
+                                        .map_or(p.disabled, |s| unmeasured_tone(s, p))))
+                                    .child(state.as_ref().map_or("No reading", |s| s.state)),
+                            ),
+                    }
                 }))
                 .tooltip(move |_, cx| {
                     AnyView::from(cx.new(|_| UsageHover {
                         accounts: hover.clone(),
+                        error: hover_error.clone(),
                         palette: p,
                     }))
                 })
@@ -325,7 +408,10 @@ impl Workspace {
                     .flex_col()
                     .gap_3()
                     .child(account_header(account, p))
-                    .when_some(account.failure.clone(), |d, failure| {
+                    .when_some(account.unmeasured.as_ref(), |d, state| {
+                        d.child(unmeasured_line(state, p, 12.))
+                    })
+                    .when_some(account.failure.clone().filter(|_| account.unmeasured.is_none()), |d, failure| {
                         d.child(
                             div()
                                 .text_size(px(11.))
@@ -375,7 +461,27 @@ impl Workspace {
                             })
                     }))
             }))
-            .when(accounts.is_empty(), |d| {
+            .when_some(self.view.usage_error.clone(), |d, error| {
+                d.child(
+                    div()
+                        .debug_selector(|| "usage-modal-error".into())
+                        .px_5()
+                        .py_3()
+                        .border_t_1()
+                        .border_color(rgb(p.border))
+                        .child(chrome::notice_line(
+                            if accounts.is_empty() {
+                                format!("Usage unavailable: {error}")
+                            } else {
+                                format!("Last refresh failed; showing the previous reading. {error}")
+                            },
+                            chrome::Tone::Warning,
+                            p,
+                            "usage-modal-error-icon",
+                        )),
+                )
+            })
+            .when(accounts.is_empty() && self.view.usage_error.is_none(), |d| {
                 d.child(
                     div()
                         .px_5()

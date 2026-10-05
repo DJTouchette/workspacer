@@ -420,14 +420,21 @@ impl Element for Inline {
 
         let text_layout = self.styled_text.layout().clone();
         self.paint_code_backgrounds(&text_layout, window);
-        self.styled_text
-            .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
 
         // layout selections
         let (is_selectable, is_selection, selection) =
             self.layout_selections(&text_layout, window, cx);
 
         state.selection = selection;
+
+        // Workspacer: the selection is painted under the glyphs (after code
+        // backgrounds, before text), as Input does. Painting it on top hid
+        // selected text whenever the theme's selection color was opaque.
+        if let Some(selection) = &state.selection {
+            Self::paint_selection(selection, &text_layout, &bounds, window, cx);
+        }
+        self.styled_text
+            .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
 
         if is_selection || is_selectable {
             window.set_cursor_style(CursorStyle::IBeam, &hitbox);
@@ -437,10 +444,6 @@ impl Element for Inline {
         let mouse_position = window.mouse_position();
         if let Some(_) = Self::link_for_position(&text_layout, &self.links, mouse_position) {
             window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
-        }
-
-        if let Some(selection) = &state.selection {
-            Self::paint_selection(selection, &text_layout, &bounds, window, cx);
         }
 
         // mouse move, update hovered link

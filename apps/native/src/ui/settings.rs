@@ -141,6 +141,20 @@ impl Workspace {
         on_pick: impl Fn(&mut Self, T, &mut Window, &mut Context<Self>) + Clone + 'static,
         cx: &mut Context<Self>,
     ) -> Div {
+        self.segmented_enabled(id, options, selected, true, on_pick, cx)
+    }
+
+    /// `segmented` that can be disabled as a whole (while a request runs).
+    /// Every option shares one height and centers its label.
+    pub(super) fn segmented_enabled<T: Copy + PartialEq + 'static>(
+        &self,
+        id: &'static str,
+        options: Vec<(T, String)>,
+        selected: T,
+        enabled: bool,
+        on_pick: impl Fn(&mut Self, T, &mut Window, &mut Context<Self>) + Clone + 'static,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.appearance.palette();
         div()
             .flex_shrink_0()
@@ -154,20 +168,32 @@ impl Workspace {
             .children(options.into_iter().enumerate().map(|(ix, (value, label))| {
                 let active = value == selected;
                 let on_pick = on_pick.clone();
-                chrome::interactive_control(div().id((id, ix)), p, true)
+                chrome::interactive_control(div().id((id, ix)), p, enabled)
                     .debug_selector(move || format!("{id}-{ix}"))
+                    .h(px(28.))
+                    .min_w(px(44.))
                     .px_3()
-                    .py(px(3.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .rounded_full()
                     .text_size(px(12.))
+                    .line_height(px(16.))
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(if active { p.text } else { p.muted }))
+                    .text_color(rgb(match (enabled, active) {
+                        (false, _) => p.disabled,
+                        (true, true) => p.text,
+                        (true, false) => p.muted,
+                    }))
                     .when(active, |d| d.bg(rgb(p.selected)))
-                    .hover(move |s| s.text_color(rgb(p.text)))
                     .child(label)
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| on_pick(this, value, window, cx)),
-                    )
+                    .when(enabled, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.text_color(rgb(p.text)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                on_pick(this, value, window, cx)
+                            }))
+                    })
             }))
     }
 
@@ -181,15 +207,20 @@ impl Workspace {
             .flex_col()
             .gap_2()
             .child(
+                // Eight palettes: equal tiles that wrap rather than one row
+                // squeezed to unreadable previews in a narrow window.
                 div()
+                    .debug_selector(|| "theme-picker".into())
                     .flex()
+                    .flex_wrap()
                     .gap_2()
                     .children(Appearance::ALL.into_iter().map(|appearance| {
                         let colors = appearance.palette();
                         let active = self.appearance == appearance;
                         chrome::interactive_control(div().id(appearance.label()), p, true)
-                            .flex_1()
-                            .min_w_0()
+                            .debug_selector(move || format!("theme-{}", appearance.label()))
+                            .w(px(148.))
+                            .flex_shrink_0()
                             .rounded(px(p.panel_radius))
                             .overflow_hidden()
                             .cursor_pointer()
@@ -251,6 +282,9 @@ impl Workspace {
                                     .justify_between()
                                     .child(
                                         div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
                                             .text_size(px(12.))
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(rgb(if active { p.accent } else { p.text }))
@@ -281,8 +315,8 @@ impl Workspace {
             S::Appearance,
             "theme",
             "Theme",
-            "Dark, Light or Nord. Press t in Normal mode to cycle.",
-            "palette color colour dark light nord mode",
+            "Dark, Light, Nord, or Omarchy's Tokyo Night, Catppuccin Mocha and Latte, Gruvbox and Everforest. Press t in Normal mode to cycle.",
+            "palette color colour dark light nord mode omarchy tokyo night catppuccin mocha latte gruvbox everforest",
             Layout::Block,
             themes,
         ));

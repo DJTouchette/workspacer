@@ -3,6 +3,7 @@ mod children;
 mod chrome;
 mod features;
 mod file_viewer;
+mod fleet_card;
 mod launch;
 mod markdown;
 mod navigation;
@@ -119,6 +120,12 @@ impl gpui::AssetSource for Assets {
             "lucide/user-round.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
                 "../assets/icons/lucide/user-round.svg"
             )))),
+            "lucide/reply.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icons/lucide/reply.svg"
+            )))),
+            "lucide/megaphone.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/icons/lucide/megaphone.svg"
+            )))),
             _ => gpui_component_assets::Assets.load(path),
         }
     }
@@ -132,10 +139,10 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
     typography::register_fonts(cx);
     use gpui_component::{Theme, ThemeMode};
     Theme::change(
-        if appearance == Appearance::Light {
-            ThemeMode::Light
-        } else {
+        if appearance.is_dark() {
             ThemeMode::Dark
+        } else {
+            ThemeMode::Light
         },
         window,
         cx,
@@ -156,15 +163,17 @@ pub fn configure_theme(appearance: Appearance, window: Option<&mut Window>, cx: 
     theme.colors.muted = rgb(p.surface).into();
     theme.colors.muted_foreground = rgb(p.muted).into();
     theme.colors.switch = rgb(p.selected).into();
-    theme.colors.switch_thumb = rgb(if appearance == Appearance::Light {
-        p.surface
-    } else {
+    theme.colors.switch_thumb = rgb(if appearance.is_dark() {
         p.text
+    } else {
+        p.surface
     })
     .into();
     theme.colors.popover = rgb(p.surface).into();
     theme.colors.popover_foreground = rgb(p.text).into();
-    theme.colors.selection = rgb(p.selected).into();
+    // Text selection is translucent and painted beneath the glyphs (see the
+    // vendored Inline patch), so selected text keeps its syntax colors.
+    theme.colors.selection = gpui::rgba(p.selection).into();
     theme.highlight_theme = syntax::highlight_theme(appearance);
     theme.font_size = px(15.);
     theme.font_family = "Inter".into();
@@ -4061,7 +4070,7 @@ mod tests {
                     assert_eq!(this.view.selected.as_deref(), Some("a"));
                     assert_eq!(this.composer.read(cx).value().as_ref(), "Keep my draft");
                     let theme = gpui_component::Theme::global(cx);
-                    assert_eq!(theme.is_dark(), appearance != Appearance::Light);
+                    assert_eq!(theme.is_dark(), appearance.is_dark());
                     assert_eq!(
                         theme.colors.background,
                         gpui::Hsla::from(rgb(appearance.palette().base))
@@ -8404,5 +8413,492 @@ mod tests {
             Command::ResumePowerPause(42)
         ));
         assert!(commands.try_recv().is_err());
+    }
+
+    /// The 2026-10-04 fleet: a Codex manager in the repo checkout and Claude
+    /// workers in their own worktrees, as `sessions.snapshots` reports them.
+    fn fleet_sessions() -> Vec<Session> {
+        let worker = |id: &str, label: &str, tree: &str| Session {
+            id: id.into(),
+            label: label.into(),
+            provider: "claude".into(),
+            model: "claude-opus-4-5".into(),
+            parent_session_id: "manager".into(),
+            cwd: format!("/home/u/.workspacer/worktrees/workspacer/{tree}"),
+            state: "responding".into(),
+            ..Default::default()
+        };
+        vec![
+            worker(
+                "worker-3",
+                "Native themes · visuals · usage",
+                "native-themes-visuals-usage",
+            ),
+            worker(
+                "worker-2",
+                "Native controls · projects · Codex",
+                "native-controls-projects-codex",
+            ),
+            worker(
+                "worker-1",
+                "Native editor · terminal · Git",
+                "native-editor-terminal-git",
+            ),
+            Session {
+                id: "unrelated".into(),
+                label: "Other project".into(),
+                cwd: "/home/u/Work/other".into(),
+                state: "input".into(),
+                ..Default::default()
+            },
+            Session {
+                id: "manager".into(),
+                label: "Fleet manager".into(),
+                provider: "codex".into(),
+                cwd: "/home/u/Work/worky/workspacer".into(),
+                state: "input".into(),
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[gpui::test]
+    fn worktree_workers_stay_nested_under_their_manager_when_its_project_is_open(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("manager");
+                next.sessions = Arc::new(fleet_sessions());
+                this.update_view(Arc::new(next), window, cx);
+                // No filter: every session, workers under their manager.
+                assert_eq!(this.visible_sessions(cx), vec![3, 4, 0, 1, 2]);
+                // The manager's project was the hiding case (sidebar said 1).
+                this.project_filter = Some("/home/u/Work/worky/workspacer".into());
+                assert_eq!(this.visible_sessions(cx), vec![4, 0, 1, 2]);
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let manager = visual.debug_bounds("sidebar-session-0").unwrap();
+        for (ix, selector) in [
+            (1, "sidebar-session-1"),
+            (2, "sidebar-session-2"),
+            (3, "sidebar-session-3"),
+        ] {
+            let worker = visual.debug_bounds(selector).unwrap();
+            assert!(
+                worker.left() > manager.left() + px(8.),
+                "worker {ix} is not indented"
+            );
+            assert!(worker.top() >= manager.bottom());
+        }
+        assert!(
+            visual.debug_bounds("sidebar-session-4").is_none(),
+            "unrelated project leaked in"
+        );
+        // Selecting a worker keeps the manager's project filter: it belongs there.
+        let worker = visual.debug_bounds("sidebar-session-1").unwrap();
+        visual.simulate_click(worker.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(matches!(commands.try_recv().unwrap(), Command::Select(id) if id == "worker-3"));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("worker-3");
+                next.sessions = Arc::new(fleet_sessions());
+                this.update_view(Arc::new(next), window, cx);
+                this.show_screen(Screen::Conversation, window, cx);
+                assert_eq!(
+                    this.project_filter.as_deref(),
+                    Some("/home/u/Work/worky/workspacer")
+                );
+                // Searching one worker shows it under its manager only.
+                this.search
+                    .update(cx, |input, cx| input.set_value("controls", window, cx));
+                assert_eq!(this.visible_sessions(cx), vec![4, 1]);
+            })
+        });
+    }
+
+    fn fleet_wake_view(wake: &str, approval: bool) -> View {
+        let mut view = state("manager");
+        let mut sessions = fleet_sessions();
+        if approval {
+            sessions[2].approval = Some(serde_json::json!({"toolName":"Bash"}));
+        }
+        view.sessions = Arc::new(sessions);
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 2,
+            first_seq: 1,
+            items: vec![
+                Item {
+                    kind: "user_message".into(),
+                    text: "Keep going with the plan.".into(),
+                    ..Default::default()
+                },
+                Item {
+                    kind: "user_message".into(),
+                    text: wake.into(),
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    ..Default::default()
+                },
+            ],
+        });
+        view
+    }
+
+    const BLOCKED_WAKE: &str = "[supervisor] An agent is now blocked on a decision:\n- Native editor · terminal · Git (session:worker-1, approval)\nRun a /supervise pass now.";
+
+    #[gpui::test]
+    fn fleet_wakes_render_as_named_worker_cards_not_user_bubbles(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(fleet_wake_view(BLOCKED_WAKE, true)), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("My draft", window, cx));
+                let fleet = wks_native::transcript::fleet(BLOCKED_WAKE).unwrap();
+                // Named for the worker, not "You", and never its raw UUID.
+                assert_eq!(this.fleet_title(&fleet), "Native editor · terminal · Git");
+            })
+        });
+        visual.run_until_parked();
+        let card = visual.debug_bounds("fleet-card").unwrap();
+        let column = visual.debug_bounds("chat-content-column").unwrap();
+        // A full-width card, not a right-aligned 85% user bubble.
+        assert!(card.size.width >= column.size.width - px(8.));
+        assert!(visual.debug_bounds("fleet-card-status").is_some());
+        let header = visual.debug_bounds("fleet-card-header").unwrap();
+        assert!(header.size.height <= px(56.), "header {:?}", header.size);
+        // Compact icon actions, not wide text buttons.
+        let open = visual.debug_bounds("fleet-entry-open-0").unwrap();
+        let reply = visual.debug_bounds("fleet-entry-reply-0").unwrap();
+        assert!(open.size.width <= px(32.) && reply.size.width <= px(32.));
+        // The whole single-worker card stays compact.
+        assert!(card.size.height <= px(140.), "card {:?}", card.size);
+        // Approval vs resolved follows the live session.
+        let status = |this: &Workspace| {
+            let fleet = wks_native::transcript::fleet(BLOCKED_WAKE).unwrap();
+            let live = this.view.sessions.iter().find(|s| s.id == "worker-1");
+            fleet_card::entry_status(
+                fleet.kind,
+                &fleet.entries[0],
+                live,
+                this.appearance.palette(),
+            )
+            .0
+        };
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(status(this), "Needs approval")
+        });
+        // Open selects the direct worker; Reply keeps the draft.
+        visual.simulate_click(open.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(
+            matches!(next_effect(&mut commands), Some(Command::Select(id)) if id == "worker-1")
+        );
+        visual.simulate_click(reply.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(
+                this.composer.read(cx).value().as_ref(),
+                "My draft\nRe: session:worker-1 (Native editor · terminal · Git) — "
+            );
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(fleet_wake_view(BLOCKED_WAKE, false)), window, cx);
+                assert_eq!(status(this), "Resolved");
+            })
+        });
+        // The original wake is a secondary disclosure.
+        visual.run_until_parked();
+        let toggle = visual.debug_bounds("fleet-toggle-Original wake").unwrap();
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(this.chat.open.values().any(|open| *open));
+        });
+    }
+
+    #[gpui::test]
+    fn multi_worker_wakes_share_a_title_and_guard_foreign_sessions(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _) = fixture(cx);
+        let wake = "[fleet] Worker finished:\n- Native controls (session:worker-2, cwd /home/u/.workspacer/worktrees/workspacer/native-controls-projects-codex) — last reply: Done\n- Someone else's (session:foreign, cwd /x) — FAILED: API failed\nReview each.";
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = fleet_wake_view(wake, false);
+                let sessions = Arc::make_mut(&mut view.sessions);
+                sessions.push(Session {
+                    id: "foreign".into(),
+                    parent_session_id: "another-manager".into(),
+                    ..Default::default()
+                });
+                this.update_view(Arc::new(view), window, cx);
+                let fleet = wks_native::transcript::fleet(wake).unwrap();
+                assert_eq!(this.fleet_title(&fleet), "2 sessions");
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("fleet-entry-status-0").is_some());
+        assert!(visual.debug_bounds("fleet-entry-status-1").is_some());
+        assert!(visual.debug_bounds("fleet-card-status").is_none());
+        // Another manager's worker cannot be opened from this conversation.
+        let foreign = visual.debug_bounds("fleet-entry-open-1").unwrap();
+        visual.simulate_click(foreign.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(next_effect(&mut commands).is_none());
+        let own = visual.debug_bounds("fleet-entry-open-0").unwrap();
+        visual.simulate_click(own.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(
+            matches!(next_effect(&mut commands), Some(Command::Select(id)) if id == "worker-2")
+        );
+    }
+
+    #[gpui::test]
+    fn ordinary_user_messages_keep_their_bubble(cx: &mut TestAppContext) {
+        // A fresh window: no card has ever rendered (see debug_bounds note).
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let view = fleet_wake_view("[fleet] Worker finished: not a bullet list", false);
+                this.update_view(Arc::new(view), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("fleet-card").is_none());
+        assert!(visual.debug_bounds("last-transcript-row").is_some());
+    }
+
+    #[gpui::test]
+    fn timestamps_keep_clear_space_from_neighbouring_cards(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        let stamp = Some(chrono::Utc::now().to_rfc3339());
+        let mut view = state("a");
+        view.transcript.snapshot(ConversationSnapshot {
+            seq: 3,
+            first_seq: 1,
+            items: vec![
+                Item {
+                    kind: "tool_use".into(),
+                    id: "snap".into(),
+                    name: "mcp__workspacer__get_snapshot".into(),
+                    input: serde_json::json!({"sessionId":"x"}),
+                    timestamp: stamp.clone(),
+                    ..Default::default()
+                },
+                Item {
+                    kind: "tool_result".into(),
+                    tool_use_id: "snap".into(),
+                    text: "ok".into(),
+                    timestamp: stamp.clone(),
+                    ..Default::default()
+                },
+                Item {
+                    kind: "assistant_text".into(),
+                    text: "Approved it.".into(),
+                    timestamp: stamp.clone(),
+                    ..Default::default()
+                },
+            ],
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+        let card = visual.debug_bounds("tool-activity-group").unwrap();
+        let footer = visual.debug_bounds("work-card-timestamp").unwrap();
+        let next = visual.debug_bounds("last-transcript-row").unwrap();
+        let above = footer.top() - card.bottom();
+        let below = next.top() - footer.bottom();
+        assert!(
+            above >= px(transcript::META_GAP_ABOVE - 0.5),
+            "card→time {above:?}"
+        );
+        assert!(
+            below >= px(transcript::META_GAP_BELOW - 0.5),
+            "time→next {below:?}"
+        );
+        // Deliberate, not huge.
+        assert!(
+            above <= px(12.) && below <= px(20.),
+            "{above:?} / {below:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn context_window_choices_are_one_even_row(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut next = state("a");
+                let sessions = Arc::make_mut(&mut next.sessions);
+                sessions[0].provider = "codex".into();
+                sessions[0].model = "gpt-6.1-sol".into();
+                sessions[0].context_window = Some(1_000_000);
+                this.update_view(Arc::new(next), window, cx);
+                this.open_feature(Screen::Model, window, cx);
+                assert_eq!(this.model_choice, "__custom");
+            })
+        });
+        visual.run_until_parked();
+        let default = visual.debug_bounds("context-window-0").unwrap();
+        let million = visual.debug_bounds("context-window-1").unwrap();
+        assert_eq!(default.size.height, million.size.height);
+        assert_eq!(default.top(), million.top());
+        assert!(default.size.height <= px(32.), "{:?}", default.size);
+        visual.simulate_click(default.center(), gpui::Modifiers::default());
+        workspace.read_with(&visual, |this, _| assert_eq!(this.context_window, None));
+        visual.simulate_click(million.center(), gpui::Modifiers::default());
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.context_window, Some(1_000_000))
+        });
+    }
+
+    // GPUI never clears `debug_bounds` between frames (vendor/gpui Frame::
+    // clear), so an element that disappeared still reports its old bounds.
+    // Absence is asserted on the state that decides it, presence on bounds.
+    #[gpui::test]
+    fn sidebar_footer_omits_a_healthy_connection_and_flags_a_lost_one(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(state("a")), window, cx);
+                assert_eq!(this.footer_connection_label(), None);
+                let mut next = state("a");
+                next.connected = false;
+                this.update_view(Arc::new(next), window, cx);
+                assert!(this.footer_connection_label().is_some());
+                this.demo = true;
+                assert_eq!(this.footer_connection_label(), Some("Demo"));
+                this.demo = false;
+            })
+        });
+        visual.run_until_parked();
+        let status = visual.debug_bounds("sidebar-connection-status").unwrap();
+        let sidebar = visual.debug_bounds("session-sidebar").unwrap();
+        assert!(sidebar.contains(&status.center()));
+    }
+
+    #[gpui::test]
+    fn unavailable_request_notice_is_a_compact_card_with_actions(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.ui_bus.notice =
+                    "Requested session 00d2709e is unavailable on this hub.".into();
+                this.ui_bus.payload_for_test(
+                    serde_json::json!({"sessionId":"00d2709e-977f-4dea-af7d-e33ba01e90ec"}),
+                );
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+        let sidebar = visual.debug_bounds("session-sidebar").unwrap();
+        let notice = visual.debug_bounds("sidebar-ui-notice").unwrap();
+        assert!(notice.left() >= sidebar.left() && notice.right() <= sidebar.right());
+        let copy = visual.debug_bounds("copy-ui-request").unwrap();
+        let dismiss = visual.debug_bounds("dismiss-ui-request").unwrap();
+        assert!(notice.contains(&copy.center()) && notice.contains(&dismiss.center()));
+        assert!(copy.size.height <= px(34.), "copy {:?}", copy.size);
+        assert!(dismiss.size.height <= px(28.), "dismiss {:?}", dismiss.size);
+        // Dismiss sits in the header row, not under the message.
+        assert!(dismiss.top() < copy.top());
+        visual.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| assert!(this.ui_bus.notice.is_empty()));
+    }
+
+    #[gpui::test]
+    fn sidebar_usage_lists_unmeasured_logins_and_read_failures(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        let now = chrono::Utc::now().timestamp();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.usage = Some(Arc::new(serde_json::json!({"providers":[
+                    {"provider":"claude","accounts":[{"label":"default","is_default":true,"source":"oauth_poll",
+                        "failure":{"kind":"needs_reauth","detail":"oauth token expired"},
+                        "windows":{"five_hour":{"used_percent":{"state":"unknown","reason":"NeedsReauth"}}}}]},
+                    {"provider":"codex","accounts":[{"label":"pro","is_default":true,"windows":{
+                        "seven_day":{"used_percent":{"state":"ok","value":9.0},"resets_at":now + 86_400,"is_current":true}}}]}
+                ]})));
+                this.update_view(Arc::new(next), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let strip = visual.debug_bounds("sidebar-usage").unwrap();
+        let claude = visual.debug_bounds("sidebar-usage-unmeasured-0").unwrap();
+        assert!(strip.contains(&claude.center()));
+        // The measured Codex row sits below it, so both providers show.
+        assert!(strip.size.height > claude.size.height + px(8.));
+        // A failed read with nothing cached says so instead of vanishing.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("a");
+                next.usage_error = Some("usage report did not arrive".into());
+                this.update_view(Arc::new(next), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("sidebar-usage-error").is_some());
+    }
+
+    #[gpui::test]
+    fn theme_picker_offers_all_eight_palettes_within_a_narrow_window(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _) = fixture(cx);
+        visual.simulate_resize(size(px(720.), px(600.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_screen(Screen::Settings, window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let picker = visual.debug_bounds("theme-picker").unwrap();
+        let window_width = visual.update(|window, _| window.viewport_size().width);
+        let selectors = [
+            "theme-Dark",
+            "theme-Light",
+            "theme-Nord",
+            "theme-Tokyo Night",
+            "theme-Catppuccin Mocha",
+            "theme-Gruvbox",
+            "theme-Everforest",
+            "theme-Catppuccin Latte",
+        ];
+        for (appearance, selector) in Appearance::ALL.into_iter().zip(selectors) {
+            assert_eq!(selector, format!("theme-{}", appearance.label()));
+            let tile = visual
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{appearance:?} tile missing"));
+            assert!(tile.right() <= window_width, "{appearance:?} tile clipped");
+            assert!(
+                picker.contains(&tile.center()),
+                "{appearance:?} outside the picker"
+            );
+        }
+        // 't' in Normal mode cycles through every palette and back.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                for appearance in Appearance::ALL.iter().cycle().skip(1).take(8) {
+                    let index = Appearance::ALL
+                        .iter()
+                        .position(|a| *a == this.appearance)
+                        .unwrap();
+                    this.set_appearance(
+                        Appearance::ALL[(index + 1) % Appearance::ALL.len()],
+                        window,
+                        cx,
+                    );
+                    assert_eq!(this.appearance, *appearance);
+                }
+            })
+        });
     }
 }

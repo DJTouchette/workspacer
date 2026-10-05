@@ -227,6 +227,8 @@ pub struct View {
     pub loading_older: bool,
     /// The last `usage.report` read; kept across failed refreshes.
     pub usage: Option<Arc<Value>>,
+    /// Why the latest `usage.report` read failed; cleared by the next success.
+    pub usage_error: Option<String>,
     /// When set, `transcript` is this subagent's conversation, not the
     /// selected session's; the parent stays `selected`.
     pub child: Option<ChildTarget>,
@@ -1248,10 +1250,17 @@ impl Worker {
                 self.usage_pending = false;
                 // Older hubs lack usage.report; a failed refresh keeps the last
                 // reading, whose rolled-over windows drop out on their own.
-                if let Ok(report) = result {
-                    self.view.usage = Some(Arc::new(report));
-                    self.dirty = true;
+                match result {
+                    Ok(report) => {
+                        self.view.usage = Some(Arc::new(report));
+                        self.view.usage_error = None;
+                    }
+                    Err(error) => {
+                        self.view.usage_error =
+                            Some(crate::transcript::head(&error.to_string(), 200))
+                    }
                 }
+                self.dirty = true;
             }
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;

@@ -76,22 +76,27 @@ impl Workspace {
 
     pub(super) fn visible_sessions(&self, cx: &App) -> Vec<usize> {
         let query = self.search.read(cx).value().to_lowercase();
-        let visible: Vec<_> = self
-            .view
-            .sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| {
-                !self.archived(&s.id)
-                    && self
-                        .project_filter
-                        .as_ref()
-                        .is_none_or(|path| wks_native::projects::same_dir(&s.cwd, path))
-                    && (self.session_title(s).to_lowercase().contains(&query)
-                        || s.cwd.to_lowercase().contains(&query))
-            })
-            .map(|(ix, _)| ix)
-            .collect();
+        let sessions = &self.view.sessions;
+        // Project and search each match a lineage, so workers in their own
+        // worktrees stay nested under a manager the filter matched.
+        let in_project = wks_native::navigation::lineage_filter(
+            sessions,
+            |ix| !self.archived(&sessions[ix].id),
+            |ix| {
+                self.project_filter
+                    .as_ref()
+                    .is_none_or(|path| wks_native::projects::same_dir(&sessions[ix].cwd, path))
+            },
+        );
+        let visible = wks_native::navigation::lineage_filter(
+            sessions,
+            |ix| in_project.binary_search(&ix).is_ok(),
+            |ix| {
+                let s = &sessions[ix];
+                self.session_title(s).to_lowercase().contains(&query)
+                    || s.cwd.to_lowercase().contains(&query)
+            },
+        );
         wks_native::navigation::session_tree(&self.view.sessions, &visible)
             .into_iter()
             .map(|(ix, _)| ix)
@@ -109,10 +114,16 @@ impl Workspace {
         }
         if screen == Screen::Conversation
             && self.project_filter.as_ref().is_some_and(|path| {
-                !self.view.sessions.iter().any(|s| {
-                    Some(&s.id) == self.view.selected.as_ref()
-                        && wks_native::projects::same_dir(&s.cwd, path)
-                })
+                // A worker belongs to its manager's project for this check.
+                let sessions = &self.view.sessions;
+                !sessions
+                    .iter()
+                    .position(|s| Some(&s.id) == self.view.selected.as_ref())
+                    .is_some_and(|ix| {
+                        std::iter::once(ix)
+                            .chain(wks_native::navigation::ancestors(sessions, ix))
+                            .any(|ix| wks_native::projects::same_dir(&sessions[ix].cwd, path))
+                    })
             })
         {
             self.project_filter = None;

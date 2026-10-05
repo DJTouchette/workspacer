@@ -332,6 +332,50 @@ pub fn sidebar_width(preferred: f32, viewport: f32) -> f32 {
     preferred.clamp(200., (viewport * 0.4).clamp(200., 520.))
 }
 
+/// The ancestors of `ix`, nearest first, following `parent_session_id`
+/// through `sessions`. Stops at a missing parent or a cycle.
+pub fn ancestors(sessions: &[Session], ix: usize) -> Vec<usize> {
+    let mut chain = Vec::new();
+    let mut current = ix;
+    while let Some(parent) = sessions.iter().position(|s| {
+        !sessions[current].parent_session_id.is_empty()
+            && s.id == sessions[current].parent_session_id
+    }) {
+        if parent == ix || chain.contains(&parent) {
+            break;
+        }
+        chain.push(parent);
+        current = parent;
+    }
+    chain
+}
+
+/// Filters apply to whole lineages, not single rows: spawned workers run in
+/// their own worktree folders, so a project or search that matches the parent
+/// would otherwise drop its children (and a match on a child would show it
+/// with no parent). A row is kept when `eligible` allows it and it, or one of
+/// its ancestors, `matches`; the eligible ancestors of every kept row are kept
+/// too, as context, so nesting survives filtering.
+pub fn lineage_filter(
+    sessions: &[Session],
+    eligible: impl Fn(usize) -> bool,
+    matches: impl Fn(usize) -> bool,
+) -> Vec<usize> {
+    let chains: Vec<_> = (0..sessions.len())
+        .map(|ix| ancestors(sessions, ix))
+        .collect();
+    let mut keep = vec![false; sessions.len()];
+    for ix in (0..sessions.len()).filter(|&ix| eligible(ix)) {
+        if matches(ix) || chains[ix].iter().any(|&a| eligible(a) && matches(a)) {
+            keep[ix] = true;
+            for &a in chains[ix].iter().filter(|&&a| eligible(a)) {
+                keep[a] = true;
+            }
+        }
+    }
+    (0..sessions.len()).filter(|&ix| keep[ix]).collect()
+}
+
 /// Stable parent-first order; missing/filtered parents become roots. A visited
 /// set also keeps malformed cycles visible without recursing indefinitely.
 pub fn session_tree(sessions: &[Session], visible: &[usize]) -> Vec<(usize, usize)> {
@@ -391,6 +435,89 @@ mod sidebar_tests {
             vec![(1, 0), (0, 1), (2, 0)]
         );
     }
+    fn located(id: &str, parent: &str, cwd: &str, label: &str) -> Session {
+        Session {
+            id: id.into(),
+            parent_session_id: parent.into(),
+            cwd: cwd.into(),
+            label: label.into(),
+            ..Default::default()
+        }
+    }
+
+    /// The fleet shape seen 2026-10-04: a manager in the repo checkout and
+    /// workers in isolated worktrees, listed newest first.
+    fn fleet() -> Vec<Session> {
+        let trees = "/home/u/.workspacer/worktrees/workspacer";
+        vec![
+            located(
+                "w3",
+                "mgr",
+                &format!("{trees}/native-themes"),
+                "Native themes",
+            ),
+            located(
+                "w2",
+                "mgr",
+                &format!("{trees}/native-controls"),
+                "Native controls",
+            ),
+            located(
+                "w1",
+                "mgr",
+                &format!("{trees}/native-editor"),
+                "Native editor",
+            ),
+            located("other", "", "/home/u/Work/other", "Other project"),
+            located("mgr", "", "/home/u/Work/worky/workspacer", "Fleet manager"),
+        ]
+    }
+
+    #[test]
+    fn workers_in_worktrees_nest_under_their_manager_through_filters() {
+        let sessions = fleet();
+        let all = lineage_filter(&sessions, |_| true, |_| true);
+        assert_eq!(
+            session_tree(&sessions, &all),
+            vec![(3, 0), (4, 0), (0, 1), (1, 1), (2, 1)]
+        );
+        // The project filter on the manager's checkout keeps its workers.
+        let project = lineage_filter(
+            &sessions,
+            |_| true,
+            |ix| crate::projects::same_dir(&sessions[ix].cwd, "/home/u/Work/worky/workspacer"),
+        );
+        assert_eq!(
+            session_tree(&sessions, &project),
+            vec![(4, 0), (0, 1), (1, 1), (2, 1)]
+        );
+        // Searching one worker shows it under its manager, not its siblings.
+        let search = lineage_filter(
+            &sessions,
+            |_| true,
+            |ix| sessions[ix].label.contains("controls"),
+        );
+        assert_eq!(session_tree(&sessions, &search), vec![(4, 0), (1, 1)]);
+        // An ineligible (archived) manager leaves its workers as roots.
+        let archived = lineage_filter(&sessions, |ix| ix != 4, |_| true);
+        assert_eq!(
+            session_tree(&sessions, &archived),
+            vec![(0, 0), (1, 0), (2, 0), (3, 0)]
+        );
+        assert_eq!(ancestors(&sessions, 0), vec![4]);
+    }
+
+    #[test]
+    fn lineage_filter_survives_cycles() {
+        let sessions = vec![session("a", "b"), session("b", "a"), session("c", "c")];
+        assert_eq!(ancestors(&sessions, 0), vec![1]);
+        assert_eq!(ancestors(&sessions, 2), Vec::<usize>::new());
+        assert_eq!(
+            lineage_filter(&sessions, |_| true, |ix| ix == 0),
+            vec![0, 1]
+        );
+    }
+
     #[test]
     fn orphans_self_links_and_cycles_remain_visible_once() {
         let sessions = vec![

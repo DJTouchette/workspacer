@@ -91,4 +91,12 @@ Native interaction polish also patches:
   `Search` action could not, because the source input is not in the
   rendered dispatch tree until the next frame. Search behavior is unchanged.
 
+- Selection under the glyphs (`text/inline.rs`): upstream `Inline::paint`
+  painted the text and then the selection quads on top, so any opaque
+  `theme.selection` (native once used its row-highlight color) hid the
+  selected text entirely — selected code blocks became blank rectangles.
+  Selection is now painted after inline-code backgrounds and before the text,
+  matching the order `input/element.rs` already uses. Native also keeps the
+  selection color translucent, per palette.
+
 Reapply these interaction changes explicitly when upgrading the component.
