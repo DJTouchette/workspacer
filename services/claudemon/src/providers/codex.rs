@@ -1960,6 +1960,9 @@ async fn run_session(
     // yet (there's no thread to update), but the HTTP call already returned 200 —
     // stash it here and apply it the instant we subscribe rather than dropping it.
     let mut pending_switch: Option<crate::session::ModelSwitch> = None;
+    // The running turn, which `turn/interrupt` must name.
+    let mut turns = TurnTracker::default();
+    let mut interrupt_req: Option<u64> = None;
     // Poll `thread/loaded/list` until the TUI's thread appears, then rejoin it —
     // retrying the resume until we're actually subscribed. Bounded by a deadline
     // so a TUI that never creates a thread (or died at startup) can't busy-poll
@@ -1985,6 +1988,17 @@ async fn run_session(
                         let line = line.trim();
                         if line.is_empty() { continue; }
                         let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+                        if interrupt_req.is_some() && value.get("id").and_then(Value::as_u64) == interrupt_req {
+                            if let Some(err) = value.get("error") {
+                                tracing::warn!(session = %session_id, error = %err, "codex turn/interrupt refused");
+                            }
+                            interrupt_req = None;
+                        }
+                        if let (Some(turn), Some(tid)) = (turns.observe(&value), thread_id.as_deref()) {
+                            req_id += 1;
+                            interrupt_req = Some(req_id);
+                            let _ = out_tx.send(turn_interrupt_request(req_id, tid, &turn));
+                        }
                         let applied = store.with_generation(session_id, evidence.generation, || handle_message(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
@@ -2041,6 +2055,7 @@ async fn run_session(
                         note_user_send(store, session_id, &mut cur_mode);
                     }).is_none() { break DriverExit::Superseded; }
                     let sent = with_instructions(&mut pending_instructions, text);
+                    turns.sent_turn();
                     match &thread_id {
                         Some(tid) => {
                             req_id += 1;
@@ -2063,14 +2078,16 @@ async fn run_session(
             intr = irx.recv() => match intr {
                 Some(()) => {
                     // Only meaningful once we're subscribed to the TUI's
-                    // thread; before that there is no turn to interrupt.
-                    if let Some(tid) = &thread_id {
-                        if subscribed {
-                            req_id += 1;
-                            let _ = out_tx.send(json!({
-                                "jsonrpc": "2.0", "id": req_id, "method": "turn/interrupt",
-                                "params": { "threadId": tid }
-                            }));
+                    // thread; before that there is no turn to interrupt. A
+                    // turn still starting is interrupted when its id arrives.
+                    if let Some(tid) = thread_id.as_deref().filter(|_| subscribed) {
+                        match turns.request_interrupt() {
+                            Some(turn) => {
+                                req_id += 1;
+                                interrupt_req = Some(req_id);
+                                let _ = out_tx.send(turn_interrupt_request(req_id, tid, &turn));
+                            }
+                            None => tracing::debug!(session = %session_id, "codex interrupt: no running turn yet"),
                         }
                     }
                 }
@@ -2551,6 +2568,94 @@ fn turn_start_request(id: u64, thread_id: &str, text: &str, policy: &TurnPolicy)
     json!({ "jsonrpc": "2.0", "id": id, "method": "turn/start", "params": params })
 }
 
+/// The in-flight turn's id. `turn/interrupt` requires it alongside the thread
+/// id (checked against `codex app-server generate-json-schema`, 0.159): a bare
+/// `{threadId}` is rejected as invalid params, so Stop silently did nothing.
+/// An interrupt requested between our `turn/start` and the turn's id arriving
+/// is held and sent the moment the id is known; one requested while no turn is
+/// running or starting is dropped rather than aimed at a future turn.
+#[derive(Debug, Default)]
+struct TurnTracker {
+    active: Option<String>,
+    /// A `turn/start` of ours has not yet produced a turn id.
+    starting: bool,
+    interrupt_wanted: bool,
+    /// Last finished turn, so a late `turn/start` response cannot revive it.
+    finished: Option<String>,
+}
+
+impl TurnTracker {
+    fn sent_turn(&mut self) {
+        self.starting = true;
+    }
+
+    /// Fold one app-server message. Returns a held interrupt's turn id once
+    /// that turn is known.
+    fn observe(&mut self, value: &Value) -> Option<String> {
+        let method = value.get("method").and_then(Value::as_str);
+        let turn_id = |v: Option<&Value>| {
+            v.and_then(|v| v.get("turn"))
+                .and_then(|t| t.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        match method {
+            Some("turn/started") => {
+                let id = turn_id(value.get("params"))?;
+                self.started(id)
+            }
+            Some("turn/completed" | "turn/failed") => {
+                let id = turn_id(value.get("params"))
+                    .or_else(|| {
+                        value
+                            .pointer("/params/turnId")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .or_else(|| self.active.clone());
+                if id.is_none() || self.active == id {
+                    self.active = None;
+                }
+                self.finished = id;
+                self.starting = false;
+                self.interrupt_wanted = false;
+                None
+            }
+            None if value.get("result").is_some() => {
+                let id = turn_id(value.get("result"))?;
+                if self.finished.as_deref() == Some(id.as_str()) || self.active.is_some() {
+                    return None;
+                }
+                self.started(id)
+            }
+            _ => None,
+        }
+    }
+
+    fn started(&mut self, id: String) -> Option<String> {
+        self.starting = false;
+        self.active = Some(id.clone());
+        std::mem::take(&mut self.interrupt_wanted).then_some(id)
+    }
+
+    /// The turn to interrupt now, or `None` (held until the starting turn's id
+    /// arrives, or dropped when nothing is running).
+    fn request_interrupt(&mut self) -> Option<String> {
+        if let Some(id) = &self.active {
+            return Some(id.clone());
+        }
+        self.interrupt_wanted = self.starting;
+        None
+    }
+}
+
+fn turn_interrupt_request(id: u64, thread_id: &str, turn_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "turn/interrupt",
+        "params": { "threadId": thread_id, "turnId": turn_id }
+    })
+}
+
 fn send_turn(
     out_tx: &mpsc::UnboundedSender<Value>,
     id: u64,
@@ -2921,6 +3026,47 @@ class Server(http.server.BaseHTTPRequestHandler):
             body = json.dumps(value).encode()
             length = bytes([len(body)]) if len(body) < 126 else b'\x7e' + struct.pack('!H', len(body))
             self.connection.sendall(b'\x81' + length + body)
+        def recv():
+            head = self.rfile.read(2)
+            if len(head) < 2: return None
+            size = head[1] & 0x7f
+            if size == 126: size = struct.unpack('!H', self.rfile.read(2))[0]
+            elif size == 127: size = struct.unpack('!Q', self.rfile.read(8))[0]
+            mask = self.rfile.read(4) if head[1] & 0x80 else b'\0\0\0\0'
+            data = bytearray(self.rfile.read(size))
+            for i in range(size): data[i] ^= mask[i % 4]
+            if head[0] & 0x0f == 8: return None
+            return data.decode() if head[0] & 0x0f == 1 else ''
+        if mode in ('interrupt_turn', 'interrupt_held'):
+            # Codex 0.159's TurnInterruptParams require threadId AND turnId;
+            # anything else is refused exactly like the real app-server.
+            send({'id': 2, 'result': {}})
+            log = open(os.environ['WKS_FAKE_DIR'] + '/requests', 'a')
+            turn = {'id': 'turn-7', 'items': [], 'status': 'inProgress'}
+            while True:
+                text = recv()
+                if text is None: return
+                for line in text.split('\n'):
+                    if not line.strip(): continue
+                    msg = json.loads(line)
+                    log.write(line + '\n'); log.flush()
+                    method = msg.get('method')
+                    if method == 'turn/start':
+                        if mode == 'interrupt_turn':
+                            send({'id': msg['id'], 'result': {'turn': turn}})
+                        else:
+                            # The turn's id arrives late: the test interrupts
+                            # inside this gap, so the driver has to hold it.
+                            send({'id': msg['id'], 'result': {}})
+                            time.sleep(.6)
+                        send({'method': 'turn/started', 'params': {'threadId': 'fixture-thread', 'turn': turn}})
+                    elif method == 'turn/interrupt':
+                        params = msg.get('params') or {}
+                        if params.get('threadId') != 'fixture-thread' or params.get('turnId') != 'turn-7':
+                            send({'id': msg['id'], 'error': {'code': -32602, 'message': 'Invalid request: missing field `turnId`'}})
+                            continue
+                        send({'id': msg['id'], 'result': {}})
+                        send({'method': 'turn/completed', 'params': {'threadId': 'fixture-thread', 'turn': dict(turn, status='interrupted')}})
         # Resume id is preseeded by the test: no real thread sidecar is written.
         send({'id': 2, 'result': {}})
         send({'method': 'turn/started', 'params': {}})
@@ -3015,6 +3161,146 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             ("successor", DriverExit::InputClosed),
         ] {
             fake_driver_case(mode, expected).await;
+        }
+    }
+
+    #[test]
+    fn turn_tracker_names_the_running_turn_and_holds_an_early_interrupt() {
+        let started = json!({"method":"turn/started","params":{"threadId":"t","turn":{"id":"u1"}}});
+        let completed = json!({"method":"turn/completed","params":{"threadId":"t","turn":{"id":"u1","status":"completed"}}});
+        let mut turns = TurnTracker::default();
+        // Idle: nothing to interrupt, and nothing is aimed at a later turn.
+        assert_eq!(turns.request_interrupt(), None);
+        assert_eq!(turns.observe(&started), None, "idle interrupt was dropped");
+        assert_eq!(turns.request_interrupt().as_deref(), Some("u1"));
+        assert_eq!(turns.observe(&completed), None);
+        assert_eq!(turns.request_interrupt(), None);
+        // A late turn/start response cannot revive the finished turn.
+        assert_eq!(
+            turns.observe(&json!({"id":5,"result":{"turn":{"id":"u1"}}})),
+            None
+        );
+        assert_eq!(turns.request_interrupt(), None);
+
+        // Interrupt between our turn/start and the turn's id: held, then sent.
+        turns.sent_turn();
+        assert_eq!(turns.request_interrupt(), None);
+        assert_eq!(
+            turns
+                .observe(&json!({"method":"turn/started","params":{"turn":{"id":"u2"}}}))
+                .as_deref(),
+            Some("u2")
+        );
+        // The response may also carry the id first.
+        let mut turns = TurnTracker::default();
+        turns.sent_turn();
+        assert_eq!(turns.request_interrupt(), None);
+        assert_eq!(
+            turns
+                .observe(&json!({"id":9,"result":{"turn":{"id":"u3","status":"inProgress"}}}))
+                .as_deref(),
+            Some("u3")
+        );
+        assert_eq!(
+            turn_interrupt_request(4, "t", "u3")["params"],
+            json!({"threadId":"t","turnId":"u3"})
+        );
+    }
+
+    /// Stop on a running Codex turn reaches the app-server as a
+    /// `turn/interrupt` naming the turn, and the turn actually ends. The fake
+    /// refuses a request without `turnId`, as Codex 0.159 does.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn interrupt_stops_the_running_codex_turn() {
+        for mode in ["interrupt_turn", "interrupt_held"] {
+            let fake = FakeAppServer::new(mode);
+            let log = fake.dir.join("requests");
+            let store = SessionStore::new();
+            let conv = ConversationStore::new();
+            let sid = "interrupt-fixture";
+            store.register_managed(sid, fake.dir.to_str().unwrap(), "codex");
+            let generation = store.claim_generation(sid);
+            let (task_store, task_conv) = (store.clone(), conv.clone());
+            let dir = fake.dir.to_str().unwrap().to_owned();
+            let (bin, extras) = (fake.bin.clone(), fake.extras.clone());
+            let task = tokio::spawn(async move {
+                let mut evidence = DriverEvidence::new(sid, generation);
+                let _ = run_session(
+                    &task_store,
+                    &task_conv,
+                    sid,
+                    &dir,
+                    None,
+                    None,
+                    None,
+                    &bin,
+                    false,
+                    true,
+                    Some("fixture-thread".into()),
+                    &Facade::default(),
+                    &extras,
+                    &mut evidence,
+                )
+                .await;
+            });
+            let requests = || std::fs::read_to_string(&log).unwrap_or_default();
+            // Sendable once the driver registers its channels.
+            let mut sent = false;
+            for _ in 0..500 {
+                if matches!(
+                    store.submit_message(sid, "long task".into()),
+                    crate::session::store::MessageOutcome::Sent
+                ) {
+                    sent = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            assert!(sent, "{mode}: message accepted");
+            let started_turn = || requests().contains("\"turn/start\"");
+            for _ in 0..500 {
+                if started_turn() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            assert!(started_turn(), "{mode}: turn/start sent");
+            if mode == "interrupt_turn" {
+                for _ in 0..500 {
+                    if store.get(sid).unwrap().mode == SessionMode::Responding {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }
+            assert!(store.interrupt_managed(sid), "{mode}: interrupt routed");
+            for _ in 0..500 {
+                if requests().contains("\"turn/interrupt\"")
+                    && store.get(sid).unwrap().mode == SessionMode::Input
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let sent: Vec<Value> = requests()
+                .lines()
+                .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                .filter(|v| v["method"] == "turn/interrupt")
+                .collect();
+            assert_eq!(sent.len(), 1, "{mode}: one interrupt, {sent:?}");
+            assert_eq!(
+                sent[0]["params"],
+                json!({"threadId":"fixture-thread","turnId":"turn-7"}),
+                "{mode}"
+            );
+            assert_eq!(
+                store.get(sid).unwrap().mode,
+                SessionMode::Input,
+                "{mode}: the interrupted turn ended"
+            );
+            store.terminate_managed(sid);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(8), task).await;
         }
     }
 
