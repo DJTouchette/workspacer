@@ -160,11 +160,15 @@ test('a web archive reaches the native listener and never stops the agent', asyn
   const native = await nativeClient(new URL(hub.url).port);
   try {
     const feed = await openApp(page);
-    await menuItem(page, feed.getByText('archive-me'), 'Archive');
-    await expect(feed.getByText('archive-me')).toHaveCount(0, { timeout: 10_000 });
+    await feed.getByText('keep-me').click();
+    const composer = page.locator('textarea:visible').first();
+    await composer.fill('KEEP_ARCHIVED_CONVERSATION_DRAFT', { timeout: 15_000 });
+    await menuItem(page, feed.getByText('keep-me'), 'Archive');
+    await expect(feed.getByText('keep-me')).toHaveCount(0, { timeout: 10_000 });
+    await expect(composer).toHaveValue('KEEP_ARCHIVED_CONVERSATION_DRAFT');
 
-    await expect.poll(() => native.events.some((d) => d?.archived?.ws2 > 0)).toBe(true);
-    expect((await native.call('sessionArchive.get', {})).archived.ws2).toBeGreaterThan(0);
+    await expect.poll(() => native.events.some((d) => d?.archived?.ws1 > 0)).toBe(true);
+    expect((await native.call('sessionArchive.get', {})).archived.ws1).toBeGreaterThan(0);
     for (const method of LIFECYCLE) expect(hub.callsTo(method), method).toEqual([]);
   } finally {
     native.close();

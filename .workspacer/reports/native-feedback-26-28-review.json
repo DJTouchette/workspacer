@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-05",
+  "scope": [
+    26,
+    27,
+    28
+  ],
+  "verdict": "LOCAL_REVIEW_PASSED_PLATFORM_CI_REQUIRED",
+  "releaseReady": false,
+  "validatedImplementationCommit": "7dcd9a8be9d0c52c2615ed8882cc57b41fef78f0",
+  "baseline": "d6d943ee52d3d467505678447028b9aa3e7d96d9",
+  "inputs": {
+    "composerAndNoticesExact": "f9db7c15",
+    "archiveBaseExact": "8bf632b5",
+    "archiveMobileFinalExact": "c08e7057"
+  },
+  "integration": {
+    "composerNoticeMerge": "e41a20be",
+    "denseComposerFix": "1157d9b6",
+    "sharedArchiveMerge": "8c420382",
+    "mobileArchiveMerge": "ada9b306",
+    "archiveRaceFix": "7dcd9a8b"
+  },
+  "matrix": [
+    {
+      "item": 26,
+      "sourceCheck": "Reviewed measuring canvas, independent card scroll area, composer/input row budgets, action-row width, actual rem gutters, and vendored one-row multiline/caret behavior.",
+      "testsExecuted": [
+        "Original worker 32-case wheel matrix in full suite",
+        "New fixed physical720x480 at100/125/150/200% with real font scaling, questions,12 attachments,4-line draft,long notice and live context meter; no header/dock overlap, composer and Send inside window",
+        "Full combined native suite370 pass",
+        "Existing editor/terminal/question/updater regressions passed"
+      ],
+      "actualVisualInteraction": "Private Xvfb :98, fixture18057, forced Windows caption, isolated HOME/XDG. Inspected150% before/after gutter wheel;200% four-line typing, Home/End, current caret and fully visible Send. Private clipboard retained the exact four-line draft. Final combined binary capture is recorded separately below.",
+      "fixes": "Bound notice and attachment scroll areas, shrink ancillary card space at extreme density, reserve Send/Interrupt width, adjust auto-grow rows rather than an unsafe external max-height. One-row auto-grow stays multiline and resolves/reveals offscreen EOF caret.",
+      "negativeEvidence": [
+        {
+          "log": ".workspacer/reports/native-dock-review-logs/budget-negative.log",
+          "exitCode": 101,
+          "finding": "Unbounded long notice grew header to1504px; attachments+draft+questions made dock506px at480px window height."
+        },
+        {
+          "image": ".workspacer/reports/native-dock-review-rig/visual/dense-200-conversation.png",
+          "finding": "An intermediate external max_h passed box checks but text painted over the action row; rejected after real-window inspection."
+        }
+      ],
+      "captures": [
+        "apps/native/docs/ui-integration-dock-150.png",
+        "apps/native/docs/ui-integration-dock-200.png"
+      ],
+      "limitations": "Linux/lavapipe with forced caption and interface scaling; not actual Windows DPI. At200% the transcript may have zero reserved gap; ancillary regions scroll. No real provider calls."
+    },
+    {
+      "item": 27,
+      "sourceCheck": "Reviewed capsule/notice width, shared border/surface, tone/actions, per-slot exact-text dismissal, reappearance, retry preservation, and header budget.",
+      "testsExecuted": [
+        "title_notices_grow_the_capsule_into_one_island",
+        "title_notice_dismiss_supports_tab_enter_and_space_without_sending",
+        "short_physical_windows_bound_long_notices_and_many_attachments verifies full notice scroll-to-end"
+      ],
+      "actualVisualInteraction": "Inspected real attached model feedback at1000x700 and720x480; draft retained. Dedicated GPUI test tabs away/back to Dismiss then activates Enter/Space with no session command.",
+      "captures": [
+        "apps/native/docs/ui-integration-notice-720.png"
+      ],
+      "limitations": "Keyboard dismissal is GPUI evidence; physical click/capture is Linux. No automatic dismissal/action introduced."
+    },
+    {
+      "item": 28,
+      "sourceCheck": "Reviewed hub-owned persisted sessionArchive.get/set/changed, view-read/operator-write authority, separation from daemon archived bit, native migration, web/mobile hydration and visibility, retained sessions/drafts and hidden-parent child handling.",
+      "testsExecuted": [
+        "Full shared hub901 and native370 suites",
+        "Full desktop main3836 and renderer1963 suites",
+        "/app real-hub archive2 cases",
+        "/m real-hub archive5 cases including controlled delayed-read/newer-event and three held mutation replies",
+        "Raw view token get accepted and set refused; zero lifecycle calls; shared layout/conversation retained",
+        "Native real-WebSocket reconnect accepts reset version; native restore-during-migration serializes requests and preserves draft"
+      ],
+      "fixes": "Web read/connection sequences and pending operation identity; no first-paint archived-row flash. Native first-authoritative reconnect document can lower version. One write per session preserves queued latest intent, including restore during migration. Disconnect clears uncertain optimistic ownership and permits migration retry; shared offline toggles explain reconnect requirement.",
+      "negativeEvidence": {
+        "log": ".workspacer/reports/native-archive-review-logs/hook-negative.log",
+        "exitCode": 1,
+        "result": "Both newly added stale-read and ABA regressions failed on the handoff hook, then passed after corrections."
+      },
+      "captures": [
+        "apps/desktop/test-results/appArchive-a-native-archiv-5105e-urvives-reload-and-restores-app/web-sidebar-after-native-archive.png",
+        "apps/desktop/test-results/appArchive-a-native-archiv-5105e-urvives-reload-and-restores-app/web-sidebar-archived-view.png",
+        ".workspacer/reports/native-archive-mobile-artifacts/mobileArchive-a-native-arc-89b27-load-and-Restore-returns-it-mobile/m-archived-filter.png"
+      ],
+      "limitations": "The complete mobile suite was worker evidence; independent run here covers all five archive cases plus a capture repeat. Attention/inbox intentionally retain archived sessions. Native/browser cross-client proof combines actual native-controller integration with real browser and native-shaped bus clients."
+    }
+  ],
+  "checks": [
+    {
+      "name": "native-final",
+      "result": "370 passed, 1 existing ignored; Windows helper target explicitly platform-skipped",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/native-final.log",
+      "sha256": "c64cbe9e6d69dbc13c7aebd16e7e49bb69cc0613146c337ad872af48395199ea"
+    },
+    {
+      "name": "hub-full",
+      "result": "901 passed, 2 existing ignored",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/hub-full.log",
+      "sha256": "63fb5b6e7a109c12e07ba9b60f95da8365eec455b27603441cee27efb7328c67"
+    },
+    {
+      "name": "desktop-main",
+      "result": "3836 passed, 10 existing skipped; bounded two workers",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/desktop-main.log",
+      "sha256": "335ccd98138cd93048b6ecc22f23d85edb5decc5be622746d0cd0232b15afeff"
+    },
+    {
+      "name": "renderer-full",
+      "result": "1963 passed; bounded two workers",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/renderer-full.log",
+      "sha256": "5989042aa083f3614be54fb937fd272471850b61edfbb4d591c653d48b56b71d"
+    },
+    {
+      "name": "mobile-archive-e2e",
+      "result": "5 passed against an isolated real hub, including delayed-read and ABA races",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/mobile-archive-e2e.log",
+      "sha256": "62efb8db479c8db5165e97a04361ecebf0fac48fec9b3e7cb116956bdd35a99f"
+    },
+    {
+      "name": "app-archive-e2e",
+      "result": "2 passed against an isolated real hub; shared restore and layout retention",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/app-archive-e2e.log",
+      "sha256": "7636c135a8ad6c2d72c6fbad494ffcd5d584ded5223db08f4282717476298ea3"
+    },
+    {
+      "name": "mobile-capture",
+      "result": "1 archive scenario repeated successfully to retain independent screenshot",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/mobile-capture.log",
+      "sha256": "3b1f93bd7f3208b3391b174087c8aa2d6a8ac1a902752cb13599d7ef11ce5d80"
+    },
+    {
+      "name": "hooks-fixed",
+      "result": "18 hook/sidebar tests passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/hooks-fixed.log",
+      "sha256": "50cf65673e431738bc3b7e035b0a493f8d6b33281527c30a5dbbb34f685b9de5"
+    },
+    {
+      "name": "native-archive-final",
+      "result": "Native archive UI, real hub and real WebSocket archive tests passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/native-archive-final.log",
+      "sha256": "2866fd96a63dc3f2161a2e20f099aa5f7fe262cc2c261de57f49d5686a7ad524"
+    },
+    {
+      "name": "source-guard",
+      "result": "123 methods, 124 dangerous-binding classifications, 23 opaque methods, zero errors",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/source-guard.log",
+      "sha256": "2d383574a5828275541c0d835a0caf4924c704364d3d494d85e66fe0a884009a"
+    },
+    {
+      "name": "typecheck",
+      "result": "Desktop main and renderer typechecks passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/typecheck.log",
+      "sha256": "271544227d6cb6e30cd10dab1f45ab8e273be68a48295c208a6971717c47d0b9"
+    },
+    {
+      "name": "format",
+      "result": "Full desktop Prettier check passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/format.log",
+      "sha256": "4e67ae2bc705829515b3daa64407293af2d57e9e5db4f2de12ef12a7462ca4f5"
+    },
+    {
+      "name": "rustfmt",
+      "result": "Native workspace plus three touched vendored input files passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/rustfmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "clippy-final",
+      "result": "Strict native all-targets ui-tests Clippy passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/clippy-final.log",
+      "sha256": "73531c8ad96f6c8fc033db2b69a2494e4ccd9f46cc03dfacdf4bb99e73f092ea"
+    },
+    {
+      "name": "native-build",
+      "result": "Final combined native application and harness built",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/native-build.log",
+      "sha256": "76c4f71adfa91ada1a9915da6dff03d82bd7991d861279d5c491e1a97553026a"
+    },
+    {
+      "name": "doc-drift",
+      "result": "Component documentation drift check passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/doc-drift.log",
+      "sha256": "8e88b91fd3a8b343a71136629ee8b699be15ca9f9fefabfb46ff7579eb94b7a1"
+    },
+    {
+      "name": "rivet-docs",
+      "result": "66 preexisting retired-Go reference errors in unchanged curated docs",
+      "exitCode": 1,
+      "log": ".workspacer/reports/native-archive-review-logs/rivet-docs.log",
+      "sha256": "3e791301d9803b515b0f041c6cc805ef7019c822e274bd4277fb685c6f0f9b96"
+    },
+    {
+      "name": "headroom",
+      "result": "6 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-archive-review-logs/headroom.log"
+    }
+  ],
+  "standaloneVendorTest": {
+    "command": "cargo test --manifest-path apps/native/Cargo.toml -p gpui-component --lib input::mode::tests",
+    "exitCode": 101,
+    "reason": "Cargo refuses dependency-package tests needing dev-dependencies outside workspace membership. This is not reported as a pass. Native GPUI tests and real200% typing exercise the new one-row behavior.",
+    "log": ".workspacer/reports/native-dock-review-logs/input-mode-tests.log"
+  },
+  "historyAudit": {
+    "baseline": "d6d943ee",
+    "newReachableCommitTreesChecked": 11,
+    "trackedRemoteTokenAbsentFromEveryNewTree": true,
+    "pathHistorySinceBaselineEmpty": true,
+    "contaminatedAncestor": "a8b266ab",
+    "isAncestorExitCode": 1,
+    "credentialContentReadOrPrinted": false,
+    "ownUntrackedTestTokenRemovedWithoutReading": true,
+    "mainUserOwnedTokenTouched": false
+  },
+  "requiredBeforeRelease": [
+    "Parent must run native-client Windows/macOS CI on the exact candidate, including full GPUI coverage.",
+    "Windows updater six-case and real installer gates remain enabled and must stay green; local Linux reports a platform skip."
+  ],
+  "limitations": [
+    "No Windows/macOS runtime or physical Windows DPI run locally.",
+    "One existing native test, two hub tests and ten desktop-main tests remain skipped/ignored.",
+    "Curated Rivet checker retains66 preexisting retired-Go path errors."
+  ],
+  "priorReview": ".workspacer/reports/native-platform-ci-review.json",
+  "published": false,
+  "userStateChanged": false
+}
