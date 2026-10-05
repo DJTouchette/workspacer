@@ -26,6 +26,7 @@ const CATALOG: &[&str] = &[
     "fs.listDir",
     "fs.read",
     "fs.write",
+    "fs.compareWrite",
     "fs.listEntries",
 ];
 const FULL: &[&str] = &[

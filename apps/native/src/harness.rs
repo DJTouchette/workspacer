@@ -99,6 +99,17 @@ pub async fn serve_with_transcript(
                                         let contents = written.get(path).cloned().unwrap_or_else(|| "fn main() {\n    restore_workspace();\n    start();\n}\n".into());
                                         json!({"path":path,"contents":contents,"size":contents.len()})
                                     }
+                                    "fs.compareWrite" => {
+                                        let path = frame["params"]["path"].as_str().unwrap_or_default().to_owned();
+                                        let current = written.get(&path).cloned().unwrap_or_else(|| "fn main() {\n    restore_workspace();\n    start();\n}\n".into());
+                                        if frame["params"]["force"] != true && frame["params"]["expected"].as_str() != Some(&current) {
+                                            json!({"saved":false,"conflict":"changed","current":current})
+                                        } else {
+                                            let contents = frame["params"]["contents"].as_str().unwrap_or_default().to_owned();
+                                            written.insert(path, contents.clone());
+                                            json!({"saved":true,"contents":contents,"size":contents.len()})
+                                        }
+                                    }
                                     "fs.write" => {
                                         let path = frame["params"]["path"].as_str().unwrap_or_default().to_owned();
                                         written.insert(path, frame["params"]["contents"].as_str().unwrap_or_default().to_owned());

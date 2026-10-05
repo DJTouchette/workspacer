@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -27,6 +27,7 @@ fn install_with_git(mut options: Options, home: PathBuf, git: GitCommand) -> Opt
         "desktop.readFileBytes",
         "desktop.filePickerList",
         "fs.write",
+        "fs.compareWrite",
         "app.getCwd",
         "app.supervisorHome",
     ] {
@@ -97,23 +98,7 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
                 json!({"name":path.file_name().unwrap_or_default().to_string_lossy(),"dataBase64":base64::engine::general_purpose::STANDARD.encode(bytes)}),
             )
         }
-        "fs.write" => {
-            let text = match params.get("contents") {
-                None | Some(Value::Null) => "",
-                Some(v) => v.as_str().ok_or_else(|| anyhow!("contents must be text"))?,
-            };
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o644);
-            }
-            create_directory_tree(path.parent().ok_or_else(|| anyhow!("path has no parent"))?)?;
-            let mut file = options.open(&path)?;
-            file.write_all(text.as_bytes())?;
-            Ok(json!({"ok":true}))
-        }
+        "fs.write" | "fs.compareWrite" => write(&path, &params, method == "fs.compareWrite"),
         "fs.listDir" => {
             let mut dirs = Vec::new();
             for entry in std::fs::read_dir(&path)? {
@@ -140,6 +125,103 @@ pub fn call(method: &str, params: Value, home: &Path) -> Result<Value> {
         _ => bail!("unknown filesystem method"),
     }
 }
+/// Serialize cooperating writers across clients AND hub processes, on the
+/// opened inode (also covers symlink/hardlink aliases). Never truncate before
+/// acquiring the lock and checking the expected contents. External programs
+/// that ignore advisory locks can still race this operation.
+fn write(path: &Path, params: &Value, guarded: bool) -> Result<Value> {
+    let text = match params.get("contents") {
+        None | Some(Value::Null) if !guarded => "",
+        Some(Value::String(text)) => text,
+        _ => bail!("contents must be text"),
+    };
+    let (expected, force) = if guarded {
+        let expected = params
+            .get("expected")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("expected must be text"))?;
+        let force = match params.get("force") {
+            None => false,
+            Some(Value::Bool(force)) => *force,
+            _ => bail!("force must be a boolean"),
+        };
+        if text.len() > 5 * 1024 * 1024 || expected.len() > 5 * 1024 * 1024 {
+            bail!("editor save exceeds 5 MiB");
+        }
+        (expected, force)
+    } else {
+        ("", true)
+    };
+    create_directory_tree(path.parent().ok_or_else(|| anyhow!("path has no parent"))?)?;
+    let mut options = std::fs::OpenOptions::new();
+    options
+        .read(guarded)
+        .write(true)
+        .create(force)
+        .truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o644)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if guarded && !force => {
+            return Ok(json!({"saved":false,"conflict":"unreadable","error":error.to_string()}));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if !file.metadata()?.is_file() {
+        bail!("not a regular file");
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match fs2::FileExt::try_lock_exclusive(&file) {
+            Ok(()) => break,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+            {
+                if std::time::Instant::now() >= deadline {
+                    bail!("file is locked by another writer");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if guarded && !force {
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(5 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes != expected.as_bytes() {
+            let current = match String::from_utf8(bytes) {
+                Ok(current) if !current.contains('\0') && current.len() <= 5 * 1024 * 1024 => {
+                    current
+                }
+                _ => {
+                    return Ok(
+                        json!({"saved":false,"conflict":"unreadable","error":"The file is no longer editable UTF-8 text within 5 MiB."}),
+                    );
+                }
+            };
+            return Ok(json!({"saved":false,"conflict":"changed","current":current}));
+        }
+    }
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(text.as_bytes())?;
+    file.set_len(text.len() as u64)?;
+    file.sync_data()?;
+    Ok(if guarded {
+        json!({"saved":true,"contents":text,"size":text.len()})
+    } else {
+        json!({"ok":true})
+    })
+}
+
 /// `fs.listEntries` hides git-ignored entries unless asked; `.git` is
 /// always omitted.
 fn include_ignored(params: &Value) -> Result<bool> {

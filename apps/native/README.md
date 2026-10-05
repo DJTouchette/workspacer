@@ -359,22 +359,19 @@ Transcript rendering is described below.
   as before and closes a popped-out viewer with it.
 - **Editing and saving.** The source is editable. A dot beside the title and
   "Unsaved changes" mark edits; **Save** (Ctrl/Cmd+S) writes them through the
-  hub (`fs.write`) only if the file still holds what the editor loaded
-  (checked with `fs.read` first), then reads the file back to confirm. If the
-  file changed on disk, nothing is written: **Overwrite**, **Reload from
-  disk** (drops your edits) or **Keep editing**. A file that can no longer be
-  read (moved, deleted) offers Overwrite to write it there anyway. Unsaved
-  edits are never dropped silently: opening another file (explorer, Back, a
-  document link), a new chat link, ✕/Esc/the backdrop, and closing the main
-  window all ask **Save / Discard changes / Keep editing** first. Switching
-  sessions keeps the editor and its edits; Pop out and Dock carry unsaved
-  edits and an in-flight save with them. The check is not atomic: the
-  compare and the write are two hub calls with no lock, so another program
-  writing between them is silently overwritten (the read-back only catches a
-  write after ours). It protects against saving over a file that changed
-  while you edited, not against a concurrent writer. Saves are limited to
-  4 MiB. Quit (Ctrl+Shift+Q / ⌘Q) is
-  explicit and does not ask.
+  owning hub (`fs.compareWrite`) only if the file still holds what the editor
+  loaded, then reads the file back to confirm. The host checks and writes under
+  an OS file lock shared with ordinary `fs.write` calls, so competing editor
+  saves cannot both replace the same base. Older hubs refuse the save; update
+  the hub to enable editing. If the file changed, nothing is written:
+  **Overwrite**, **Reload from disk** (drops your edits) or **Keep editing**.
+  A file that can no longer be read (moved, deleted) offers Overwrite to write it
+  there anyway. Opening another file, a new chat link, ✕/Esc/the backdrop,
+  main-window close and Quit (Ctrl+Shift+Q / ⌘Q) all ask **Save / Discard changes /
+  Keep editing** first. Switching sessions keeps the editor; Pop out and Dock
+  carry unsaved edits and in-flight saves. Saves are limited to 4 MiB.
+  The host lock coordinates Workspacer writers, including separate hub
+  processes; programs that ignore advisory locks can still race a save.
 - **Files.** The folder button in the title bar (Ctrl/Cmd+Shift+E, `g f`)
   opens the editor on the selected session's folder with a file explorer
   beside the source; the editor's own folder button shows or hides it. Folders

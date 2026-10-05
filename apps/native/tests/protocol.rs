@@ -2213,3 +2213,31 @@ async fn rapid_touches_keep_every_receipt_and_maximum_recency_across_writes() {
         state["projects"]
     );
 }
+
+#[tokio::test]
+async fn guarded_save_on_an_old_hub_never_falls_back_to_an_unconditional_write() {
+    use wks_native::{backend::Backend, features::Request};
+    let mut hub = Hub::new().await;
+    let (backend, events) = Backend::connect(hub.config.clone());
+    connected(&events).await;
+    let save = tokio::spawn(async move {
+        Request::SaveFile {
+            session: "remote-session".into(),
+            path: "/remote/project/source.rs".into(),
+            contents: "mine".into(),
+            base: "base".into(),
+            force: false,
+        }
+        .run(&backend)
+        .await
+    });
+    let frame = hub.frame("call", None).await;
+    assert_eq!(frame.value["method"], "fs.compareWrite");
+    assert_eq!(frame.value["params"]["path"], "/remote/project/source.rs");
+    assert_eq!(frame.value["params"]["expected"], "base");
+    frame
+        .result(json!({"ok":false,"error":"unknown method fs.compareWrite"}))
+        .await;
+    assert!(timeout(DEADLINE, save).await.unwrap().unwrap().is_err());
+    assert!(hub.frames.try_recv().is_err(), "no plain fs.write fallback");
+}

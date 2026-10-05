@@ -469,12 +469,8 @@ async fn save_project(
     Ok(project_snapshot(&saved, &mut revision))
 }
 
-/// Compare-and-write through the hub, then read the file back: an editor
-/// must never report a save the file does not hold. This is not atomic. The
-/// compare and the write are separate calls with no lock, so another writer
-/// landing between them is silently overwritten (the read-back then shows
-/// our own text). The read-back only catches a write after ours. The check
-/// stops the common stale-editor case, not concurrent writers.
+/// Compare and write under the owning host's file lock. The distinct method
+/// makes old hubs fail safely instead of ignoring a new conditional parameter.
 async fn save_file(
     backend: &Backend,
     path: &str,
@@ -488,30 +484,31 @@ async fn save_file(
         crate::links::size(contents.len() as u64),
         crate::links::size(crate::links::MAX_EDITABLE_BYTES as u64)
     );
-    if !force {
-        match backend.call("fs.read", json!({"path":path})).await {
-            Ok(current) => {
-                let current = current["contents"].as_str().unwrap_or_default();
-                if current != base {
-                    return Ok(json!({"saved":false,"conflict":"changed","current":current}));
-                }
-            }
-            Err(error) => {
-                return Ok(
-                    json!({"saved":false,"conflict":"unreadable","error":error.to_string()}),
-                );
-            }
-        }
-    }
-    backend
-        .call("fs.write", json!({"path":path,"contents":contents}))
+    let saved = backend
+        .call(
+            "fs.compareWrite",
+            json!({
+                "path":path,"contents":contents,"expected":base,"force":force
+            }),
+        )
         .await?;
-    let written = backend.call("fs.read", json!({"path":path})).await?;
-    ensure!(
-        written["contents"].as_str() == Some(contents),
-        "The hub accepted the save, but the file now holds different contents (another program may have written it). Reload to see it."
-    );
-    Ok(json!({"saved":true,"size":written["size"],"contents":contents}))
+    if saved["saved"] == true {
+        ensure!(
+            saved["contents"].as_str() == Some(contents),
+            "The hub returned an invalid save acknowledgement."
+        );
+        let readback = backend.call("fs.read", json!({"path":path})).await?;
+        ensure!(
+            readback["contents"].as_str() == Some(contents),
+            "The file changed again after saving. Reload to see the current contents."
+        );
+    } else {
+        ensure!(
+            saved["saved"] == false && saved["conflict"].is_string(),
+            "The hub does not support guarded editor saves. Update the hub and try again."
+        );
+    }
+    Ok(saved)
 }
 
 /// `exists` comes from listing the folder; `git` from `git.status`, whose

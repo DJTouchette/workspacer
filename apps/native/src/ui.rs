@@ -445,7 +445,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-shift-q", Quit, None),
     ]);
-    cx.on_action(|_: &Quit, cx| cx.quit());
 }
 
 pub struct Workspace {
@@ -640,6 +639,23 @@ impl Workspace {
                 }
             },
         ));
+        // Quit is application-wide (including editor/terminal popouts), but
+        // shares the main window's unsaved-document guard. Defer to avoid
+        // borrowing a window already in the key-dispatch stack.
+        let quitting = cx.entity().downgrade();
+        let main = window.window_handle();
+        App::on_action(cx, move |_: &Quit, cx| {
+            let quitting = quitting.clone();
+            cx.defer(move |cx| {
+                if let Some(workspace) = quitting.upgrade() {
+                    let _ = main.update(cx, |_, window, cx| {
+                        if workspace.update(cx, |ws, cx| ws.confirm_window_close(window, cx)) {
+                            cx.quit();
+                        }
+                    });
+                }
+            });
+        });
         let mut incoming = controller.views.clone();
         let updates = cx.spawn_in(window, async move |this, cx| {
             while incoming.changed().await.is_ok() {
@@ -9412,6 +9428,15 @@ mod tests {
         assert!(!allowed);
         assert!(visual.debug_bounds("file-viewer-unsaved").is_some());
         click(&mut visual, "file-viewer-prompt-cancel");
+        // Both platform Quit shortcuts use exactly the same guard.
+        for key in ["ctrl-shift-q", "cmd-q"] {
+            visual.update(|window, cx| pane.read(cx).focus_content(window, cx));
+            visual.simulate_keystrokes(key);
+            visual.run_until_parked();
+            assert!(pane.read_with(&visual, |p, _| p.asking()), "{key} must ask");
+            assert!(pane.read_with(&visual, |p, _| p.dirty()));
+            click(&mut visual, "file-viewer-prompt-cancel");
+        }
         // The backdrop asks as well; Discard then closes.
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| this.close_file_viewer(window, cx))

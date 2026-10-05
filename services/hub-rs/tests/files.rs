@@ -356,3 +356,109 @@ fn canonical_walk_accepts_exact_fixture_link_budget_and_refuses_one_more() {
         "{error}"
     );
 }
+
+#[test]
+fn guarded_save_serializes_competing_editors_and_preserves_plain_write() {
+    use std::sync::{Arc, Barrier};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("source.rs");
+    std::fs::write(&path, "base").unwrap();
+    let barrier = Arc::new(Barrier::new(12));
+    let outcomes = std::thread::scope(|scope| {
+        let handles = (0..12)
+            .map(|i| {
+                let barrier = barrier.clone();
+                let path = &path;
+                let home = root.path();
+                scope.spawn(move || {
+                    barrier.wait();
+                    files::call(
+                        "fs.compareWrite",
+                        json!({"path":path,"contents":format!("edit-{i}"),"expected":"base"}),
+                        home,
+                    )
+                    .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let winners = outcomes
+        .iter()
+        .filter(|v| v["saved"] == true)
+        .collect::<Vec<_>>();
+    assert_eq!(winners.len(), 1, "exactly one editor may replace the base");
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(winners[0]["contents"], saved);
+    for loser in outcomes.iter().filter(|v| v["saved"] == false) {
+        assert_eq!(loser["current"], saved);
+    }
+    for invalid in [
+        json!({"contents":1,"expected":"base"}),
+        json!({"contents":"bad"}),
+        json!({"contents":"bad","expected":"base","force":"yes"}),
+    ] {
+        let mut params = invalid;
+        params["path"] = json!(path);
+        assert!(files::call("fs.compareWrite", params, root.path()).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    }
+    let forced = files::call(
+        "fs.compareWrite",
+        json!({"path":path,"contents":"forced","expected":"base","force":true}),
+        root.path(),
+    )
+    .unwrap();
+    assert_eq!(forced["saved"], true);
+    assert_eq!(
+        files::call(
+            "fs.write",
+            json!({"path":path,"contents":"plain"}),
+            root.path()
+        )
+        .unwrap(),
+        json!({"ok":true})
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "plain");
+}
+
+#[test]
+fn ordinary_write_waits_for_the_same_os_lock_without_truncating() {
+    use std::{fs::OpenOptions, sync::mpsc, time::Duration};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("source.rs");
+    std::fs::write(&path, "base").unwrap();
+    let held = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&held).unwrap();
+    let (send, receive) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let path = &path;
+        let home = root.path();
+        scope.spawn(move || {
+            send.send(files::call(
+                "fs.write",
+                json!({"path":path,"contents":"plain"}),
+                home,
+            ))
+            .unwrap();
+        });
+        assert!(receive.recv_timeout(Duration::from_millis(100)).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "base");
+        fs2::FileExt::unlock(&held).unwrap();
+        assert_eq!(
+            receive
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap(),
+            json!({"ok":true})
+        );
+    });
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "plain");
+}
