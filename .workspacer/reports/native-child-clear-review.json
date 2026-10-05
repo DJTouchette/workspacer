@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-05",
+  "scope": [
+    29
+  ],
+  "verdict": "LOCAL_REVIEW_PASSED_PLATFORM_CI_REQUIRED",
+  "releaseReady": false,
+  "baseline": "7dc4a0549eca9aa5a6ed81f8d87eae7c6bb09780",
+  "sourceExact": "9bf2c978",
+  "mergeCommit": "0c3cc722",
+  "validatedImplementationCommit": "ba6e0ad9a8aa391a6c7c22c5345a1ca2917354fc",
+  "findingsFixed": [
+    {
+      "problem": "Taking the latest32 provider children could evict old running or approval-waiting work.",
+      "fix": "Keep retained unfinished children, then other unfinished children, then recent terminal children; preserve source order. At saturation show Child list capped and explain where to inspect full activity."
+    },
+    {
+      "problem": "A native approval wait did not prevent its Workspacer parent being classified finished.",
+      "fix": "Only explicitly terminal native children permit parent Clear; pending/unknown children remain visible. Pending statuses use warning/muted colors rather than completed success styling."
+    },
+    {
+      "problem": "A click painted from an old finished snapshot could clear a child that had since resumed or requested approval.",
+      "fix": "Revalidate current clearability and work fingerprint at click time; no lifecycle/archive/selection side effects."
+    },
+    {
+      "problem": "New finish/tool-count evidence made rows visible without retiring the prior clear mark, allowing an older replay to hide them again.",
+      "fix": "Remove the old mark on positive work evidence, including active/pending work; activity-only and late provider tool-count backfills do not revive old work."
+    },
+    {
+      "problem": "Parent/agent strings joined with slash could collide.",
+      "fix": "Encode the provider parent/agent pair as a JSON tuple in the device-local key; preserve the separate session-id namespace."
+    },
+    {
+      "problem": "Explicitly older run or same-run finish timestamps could regress provider state.",
+      "fix": "Preserve the newer retained state when timestamps prove staleness; fresh active status without ordering proof is not latched terminal."
+    },
+    {
+      "problem": "Pending fleet read preserved child arrays but rolled completed tool count9 back to2.",
+      "fix": "Overlay parsed numeric counter evidence through all supported aliases, alongside bounded subagent/workflow projections. Extended protocol regression failed before this correction and passes after it."
+    }
+  ],
+  "checks": [
+    {
+      "name": "native-final",
+      "result": "386 passed, 1 existing ignored",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/native-final.log",
+      "sha256": "c1567b5351b9ac2cc0841eef2c607e6133ff931575ed922fb67e1ff5d9531328"
+    },
+    {
+      "name": "no-default-final",
+      "result": "205 passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/no-default-final.log",
+      "sha256": "eeb093f31084c900dc1ff1f73646e083db9abfbd7f730eb86b4b7c62aab019cf"
+    },
+    {
+      "name": "no-default-ui-final",
+      "result": "371 passed, 1 existing ignored; UI without Rust hub",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/no-default-ui-final.log",
+      "sha256": "e495ebd696684bd2f44c904576b5617734af1d00890101b581dbd54ea1783575"
+    },
+    {
+      "name": "clippy-final",
+      "result": "Strict native all-targets/ui-tests passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/clippy-final.log",
+      "sha256": "d2d71625eea7957fbd6753ee7ff0c9242a148274d62f4f69dc6b2fcab194f282"
+    },
+    {
+      "name": "build-final",
+      "result": "Native application and lifecycle harness built",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/build-final.log",
+      "sha256": "4ef777e57b7355ac9cdce9ba1726f17c8fef7824ebc6d11b60e1dc96faacc37d"
+    },
+    {
+      "name": "overlay-fixed",
+      "result": "Real-WebSocket child/workflow/counter replay regression passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/overlay-fixed.log",
+      "sha256": "e52e3b73942da3def993998b5000e04e6df6f60a35ea91366e07ba2bd5d61e07"
+    },
+    {
+      "name": "visual-focus",
+      "result": "Private real-window smoke passed; child regions painted354/501/462 distinct colors",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/visual-focus.log",
+      "sha256": "e899ef534258443a2a176058754c4b44b4eeef4563b35e3075454ab653d2017c"
+    },
+    {
+      "name": "source-guard",
+      "result": "123 methods, 124 dangerous bindings, 23 opaque methods, zero errors",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/source-guard.log",
+      "sha256": "2d383574a5828275541c0d835a0caf4924c704364d3d494d85e66fe0a884009a"
+    },
+    {
+      "name": "format and Python syntax",
+      "result": "cargo fmt --check and smoke.py py_compile passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/fmt-final.log"
+    },
+    {
+      "name": "documentation drift",
+      "result": "passed",
+      "exitCode": 0,
+      "log": ".workspacer/reports/native-child-clear-logs/doc-drift-final.log"
+    }
+  ],
+  "negativeControl": {
+    "log": ".workspacer/reports/native-child-clear-logs/overlay-negative.log",
+    "exitCode": 101,
+    "observed": "Expected tool count9, received2 after delayed fleet read; fixed test preserves9 and completed workflow status."
+  },
+  "visualAndInteraction": {
+    "rig": ".workspacer/reports/native-child-clear-rig",
+    "display": ":99",
+    "fixture": "127.0.0.1:18067 --rich-transcript --child-lifecycle",
+    "platform": "Linux Xvfb/lavapipe, forced Windows caption, isolated HOME/XDG; no real provider",
+    "focusEvidence": "Decoded RGB hashes of all three completed-provider row regions are identical before and after parent/sibling focus changes.",
+    "paintRegionAnalysis": ".workspacer/reports/native-child-clear-logs/paint-region-analysis.json",
+    "interactionAudit": {
+      "clearedKeys": [
+        "agent:[\"demo-0000\",\"fixture-native-audit\"]"
+      ],
+      "observedMethods": [
+        "config.get",
+        "sessionArchive.get",
+        "sessions.conversation",
+        "sessions.snapshots",
+        "sessions.subagentConversation",
+        "usage.report"
+      ],
+      "forbiddenMutations": 0,
+      "privateProcessesStopped": true,
+      "selectedClearedChildShown": true,
+      "returnHidesClearedChild": true,
+      "parentDraftPreserved": true
+    },
+    "captures": [
+      "apps/native/docs/ui-child-clear-integration-focus.png",
+      "apps/native/docs/ui-child-clear-integration-open.png",
+      "apps/native/docs/ui-child-clear-integration-return.png"
+    ],
+    "draft": "KEEP_CHILD_FINAL_DRAFT retained after Clear, focus changes, inline inspection, Open as chat and return.",
+    "methodAuditLog": ".workspacer/reports/native-child-clear-rig/harness.log",
+    "diagnosticCorrection": "An initial visual impression of blank rows was disproved by identical raw pixels. Temporary GPUI paint instrumentation and speculative row width/clipping edits were discarded; no vendored GPUI change remains."
+  },
+  "limits": [
+    "Provider inventory remains bounded to32; more than32 unfinished children cannot all fit. Previously retained unfinished rows have priority and the parent visibly reports the cap.",
+    "The clear store retains512 marks per hub; oldest marks are evicted at that bound.",
+    "Missing ordering telemetry cannot prove a same-ID new run or stale event; activity-only/backfilled metadata is deliberately not treated as new work.",
+    "Workspacer stopped-session visibility remains governed by existing hub/history policy. Provider clears have no new History restore action; their inline record remains accessible.",
+    "No actual Windows/macOS runtime or Windows DPI validation locally; final platform CI is still required."
+  ],
+  "historyAudit": {
+    "baseline": "7dc4a054",
+    "newReachableTreesChecked": 3,
+    "allExcludeTrackedRemoteToken": true,
+    "contaminatedAncestor": "a8b266ab",
+    "isAncestorExitCode": 1,
+    "credentialContentsRead": false
+  },
+  "privateProcessesStopped": true,
+  "userRuntimeStateChanged": false,
+  "published": false,
+  "nextAction": "Parent runs platform CI on the final candidate, then publishes the user-requested additional nightly."
+}
