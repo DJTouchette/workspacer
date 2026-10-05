@@ -719,6 +719,77 @@ async fn fleet_full_access_follows_recorded_ancestry_and_current_config_for_each
         fixture.coordinator.lifecycle.close().await;
     }
 }
+/// `agents.childFullAccess`: the user's explicit choice that NEW child
+/// launches of this hub's own sessions bypass provider approvals. Off by
+/// default; never for parentless, unknown-parent, foreign-parent or resumed
+/// launches; it wins over the parent's request like fleetFullAccess.
+#[tokio::test]
+async fn child_full_access_applies_only_to_new_children_of_local_sessions() {
+    for provider in ["claude", "codex"] {
+        let fixture = Fixture::new(None);
+        fixture.parents.write().unwrap().insert(
+            "foreign".into(),
+            json!({"sessionId":"foreign","hub":"peer"}),
+        );
+        let (mut parent, mut child) = (String::new(), String::new());
+        for role in [
+            "parent",
+            "child",
+            "default",
+            "orphan",
+            "unknown",
+            "foreign",
+            "resume",
+            "grandchild",
+        ] {
+            let enabled = role != "default";
+            fixture
+                .config
+                .save(
+                    json!({"agents":{"childFullAccess":enabled,"fleetFullAccess":false},
+                        "claude":{"skipPermissionsDefault":false,"defaultPermissionMode":"default"}}),
+                    true,
+                )
+                .unwrap();
+            let mut params = json!({"provider":provider,"transport":"stream","cwd":fixture.project,
+                "skipPermissions":false,"permissionMode":"default","trackTask":false});
+            match role {
+                "child" | "default" => params["parentSessionId"] = json!(parent),
+                "grandchild" => params["parentSessionId"] = json!(child),
+                "unknown" => params["parentSessionId"] = json!("absent"),
+                "foreign" => params["parentSessionId"] = json!("foreign"),
+                "resume" => {
+                    params["parentSessionId"] = json!(parent);
+                    params["resumeSessionId"] = json!("resumed-child");
+                }
+                _ => (),
+            }
+            let result = fixture.coordinator.spawn_sanitized(params).await.unwrap();
+            match role {
+                "parent" => parent = result["sessionId"].as_str().unwrap().to_owned(),
+                "child" => child = result["sessionId"].as_str().unwrap().to_owned(),
+                _ => (),
+            }
+            let full = matches!(role, "child" | "grandchild");
+            assert_eq!(result["fullAccess"], full, "{provider}/{role}");
+            let plans = fixture.fake.plans.lock().unwrap();
+            let plan = plans.last().unwrap();
+            assert_eq!(plan.full_access, full, "{provider}/{role}: admitted plan");
+            let expected = match (provider, full) {
+                ("claude", true) => "bypassPermissions",
+                ("claude", false) => "default",
+                (_, true) => "yolo",
+                (_, false) => "ask",
+            };
+            assert_eq!(
+                plan.metadata["settings"]["permissionMode"], expected,
+                "{provider}/{role}"
+            );
+        }
+        fixture.coordinator.close().await;
+        fixture.coordinator.lifecycle.close().await;
+    }
+}
 #[cfg(unix)]
 #[tokio::test]
 async fn symlink_project_workflow_spawns_with_canonical_or_legacy_manager_and_task_metadata() {

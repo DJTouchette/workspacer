@@ -72,14 +72,35 @@ fn profile_model(args: &[String]) -> Option<String> {
     model
 }
 
+/// What the host knows about a launch's recorded parent. Permission
+/// preference only: no token scope or host authority is inferred from it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Lineage {
+    /// A Fleet Manager is an ancestor (`agents.fleetFullAccess`).
+    pub fleet: bool,
+    /// The parent is a known session of this hub (`agents.childFullAccess`).
+    pub local_child: bool,
+}
+
+impl From<bool> for Lineage {
+    fn from(fleet: bool) -> Self {
+        Self {
+            fleet,
+            local_child: false,
+        }
+    }
+}
+
 pub fn resolve(
     params: &Value,
     config: &Value,
     profile: Option<&Profile>,
     home: &Path,
     new_id: &str,
-    fleet_parent: bool,
+    lineage: impl Into<Lineage>,
 ) -> Result<Plan> {
+    let lineage = lineage.into();
+    let fleet_parent = lineage.fleet;
     if !params.is_object() {
         bail!("spawn parameters must be an object");
     }
@@ -268,6 +289,19 @@ pub fn resolve(
     );
     let mut mode = text(params, "permissionMode").to_owned();
     if config["agents"]["fleetFullAccess"] == true && (manager || fleet_parent) {
+        skip = true;
+        mode.clear();
+    }
+    // The user's explicit "child agents start with full access" choice. It
+    // is the provider's own approval policy (Claude bypassPermissions, Codex
+    // full access), never a Workspacer approval gate, facade scope or token
+    // grant. Only NEW launches whose recorded parent is a session of this hub
+    // take it; resumes and running sessions keep what they were started with.
+    if config["agents"]["childFullAccess"] == true
+        && lineage.local_child
+        && resume.is_empty()
+        && !manager
+    {
         skip = true;
         mode.clear();
     }

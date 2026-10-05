@@ -313,6 +313,27 @@ impl SpawnCoordinator {
         }
         input
     }
+    /// Whether `id` names a session this hub recorded (live or ended) rather
+    /// than a federated peer's or an unknown one.
+    fn is_local_session(&self, id: &str) -> bool {
+        if id.trim().is_empty() {
+            return false;
+        }
+        let row = self.workflow.owner_snapshot(id).or_else(|| {
+            self.lifecycle
+                .records()
+                .get(id)
+                .map(|record| record.metadata.clone())
+        });
+        let row = row.or_else(|| {
+            self.replacements
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|state| state.metadata(id))
+        });
+        row.is_some_and(|row| row["hub"].as_str().is_none_or(str::is_empty))
+    }
     fn has_fleet_ancestor(&self, parent: &str) -> bool {
         let records = self.lifecycle.records();
         let replacements = self.replacements.lock().unwrap().clone();
@@ -366,7 +387,11 @@ impl SpawnCoordinator {
     ) -> Result<Plan> {
         audit.begin_resolution();
         let profile = self.profiles.get(text(params, "profileId"));
-        let fleet = self.has_fleet_ancestor(text(params, "parentSessionId"));
+        let parent = text(params, "parentSessionId");
+        let fleet = spawn_plan::Lineage {
+            fleet: self.has_fleet_ancestor(parent),
+            local_child: self.is_local_session(parent),
+        };
         let plan = spawn_plan::resolve(params, config, profile.as_ref(), &self.home, id, fleet)?;
         let mut resolved_params = effective(params, &plan, project);
         let mut scrubbed = audit.check(&mut resolved_params)?;
