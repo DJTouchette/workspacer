@@ -1,0 +1,1449 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-05",
+  "workerSession": "9da7ef26-0aca-46b3-81c9-e4d2ac0afc38",
+  "worktree": "/home/djtouchette/.workspacer/worktrees/workspacer/native-feedback-integration",
+  "branch": "integrate/native-feedback-21",
+  "validatedImplementationCommit": "2e8bfa097875126b6e7fd6fb1269b173ff186117",
+  "verdict": "PASS_WITH_DOCUMENTED_LIMITS",
+  "readyForParentReleaseChecks": true,
+  "blockers": [],
+  "integratedInputs": {
+    "base": "ee597ce9",
+    "controls": "c929bce8",
+    "editor": "c4352a85",
+    "themesFinal": "cfc6014a"
+  },
+  "integrationCommits": [
+    "9004dcea",
+    "89b2a22a",
+    "9cc31028",
+    "77dee8d1",
+    "2e8bfa09"
+  ],
+  "fixesByIntegrator": [
+    "Resolved both merges preserving controls, editor/terminal and all theme/fleet additions.",
+    "Host fs.compareWrite with cooperating OS lock, strict input validation, stale refusal, old-hub fail-closed protocol and plain fs.write compatibility.",
+    "Application Quit shares main-window unsaved guard, including popped-out documents.",
+    "Terminal popouts refresh palette/font rendering with the main window across all eight themes.",
+    "Bounded claudemon rustfmt repair requested by parent.",
+    "Expanded isolated visual fixture and real two-shell regression."
+  ],
+  "environment": {
+    "platform": "Linux X11 private Xvfb :96, software Vulkan/lavapipe",
+    "fixture": "127.0.0.1:18037; native-harness serve --sessions 6 --turns 0 --rich-transcript; optional --missing-session-request",
+    "state": "HOME and XDG directories under .workspacer/reports/native-feedback-rig only",
+    "cargoJobs": 4,
+    "targetCache": "/home/djtouchette/.workspacer/worktrees/workspacer/native-editor-terminal-git/apps/native/target (settled cache reused with permission)",
+    "paidModelCalls": 0,
+    "productionSessionsMutated": false,
+    "pushedOrReleased": false,
+    "cleanup": "Owned fixture app, harness and Xvfb stopped after capture. Real-hub tests joined shutdown; production processes were untouched."
+  },
+  "checks": [
+    {
+      "name": "native-full-final",
+      "command": "cargo test --locked --manifest-path apps/native/Cargo.toml --features ui-tests -- --test-threads=1",
+      "log": ".workspacer/reports/native-feedback-logs/release-native.log",
+      "exit": 0,
+      "result": "342 passed, 1 ignored; lib152, UI142, background3, projects3, protocol38, real Rust hub4"
+    },
+    {
+      "name": "native-strict-clippy",
+      "command": "cargo clippy --locked --manifest-path apps/native/Cargo.toml --all-targets --features ui-tests -- -D warnings",
+      "log": ".workspacer/reports/native-feedback-logs/final-clippy.log",
+      "exit": 0,
+      "result": "passed"
+    },
+    {
+      "name": "host-affected",
+      "command": "cargo test --locked --manifest-path services/hub-rs/Cargo.toml --test files --test git --test agent_spawn --test models --test snapshots -- --test-threads=1",
+      "log": ".workspacer/reports/native-feedback-logs/hub-affected-2.log",
+      "exit": 0,
+      "result": "files10, git8, agent_spawn17, models6, snapshots10 passed"
+    },
+    {
+      "name": "host-files-library",
+      "command": "cargo test --locked --manifest-path services/hub-rs/Cargo.toml --lib services::files -- --test-threads=1",
+      "log": ".workspacer/reports/native-feedback-logs/hub-files-lib.log",
+      "exit": 0,
+      "result": "5 passed"
+    },
+    {
+      "name": "federation-routing",
+      "command": "cargo test --locked --manifest-path services/hub-rs/Cargo.toml --lib federation_routing_tests -- --test-threads=1",
+      "log": ".workspacer/reports/native-feedback-logs/federation-routing.log",
+      "exit": 0,
+      "result": "2 passed"
+    },
+    {
+      "name": "fake-codex-provider",
+      "command": "cargo test --locked --manifest-path services/claudemon/Cargo.toml providers::codex::tests -- --test-threads=1",
+      "log": ".workspacer/reports/native-feedback-logs/codex-provider.log",
+      "exit": 0,
+      "result": "69 passed, 1 ignored; includes known/early turn interrupt and request schema enforcement"
+    },
+    {
+      "name": "real-distinct-shells",
+      "command": "cargo test --locked --manifest-path apps/native/Cargo.toml --features ui-tests --test rust_hub -- --test-threads=1",
+      "log": ".workspacer/reports/native-feedback-logs/terminal-two-shells.log",
+      "exit": 0,
+      "result": "4 passed; repeated in final full suite"
+    },
+    {
+      "name": "shared-strict-clippy-baseline",
+      "command": "cargo clippy --locked --manifest-path services/hub-rs/Cargo.toml --all-targets -- -D warnings",
+      "log": ".workspacer/reports/native-feedback-logs/hub-clippy.log",
+      "exit": 101,
+      "result": "245 existing library-test findings; checked cited files.rs lines are unchanged baseline tests; no new save-method finding"
+    },
+    {
+      "name": "formatting",
+      "command": "cargo fmt --manifest-path <apps/native|services/hub-rs|services/claudemon>/Cargo.toml --check; git diff --check",
+      "exit": 0,
+      "result": "All passed; claudemon baseline formatting repaired in 89b2a22a"
+    }
+  ],
+  "matrix": [
+    {
+      "item": 1,
+      "title": "Readable selected code",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "vendor/gpui-component/src/text/inline.rs",
+          "apps/native/src/ui.rs",
+          "apps/native/src/appearance.rs",
+          "apps/native/src/ui/syntax.rs"
+        ]
+      },
+      "testsExecuted": [
+        "appearance::tests::every_theme_meets_core_contrast",
+        "ui::syntax::tests::omarchy_syntax_tokens_read_on_code_blocks_and_under_selection",
+        "ui::tests::chat_markdown_follows_the_appearance_syntax_theme"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/tokyo-selection-drag.png",
+          ".workspacer/reports/native-feedback-rig/visual/editor-selection-readable.png"
+        ],
+        "observed": "Dragged across real chat code in Tokyo Night and editable source in Latte: glyphs and syntax remain visible. Source paints selection before text; all eight selection tokens are translucent."
+      },
+      "limitations": "Linux/X11 with software Vulkan; no Windows/macOS or hardware-GPU run."
+    },
+    {
+      "item": 2,
+      "title": "Editable source and safe host save",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/file_viewer.rs",
+          "apps/native/src/features.rs",
+          "services/hub-rs/src/services/files.rs",
+          "services/hub-rs/src/provider_relay/methods.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::editor_saves_through_the_hub_and_never_drops_unsaved_edits",
+        "guarded_save_serializes_competing_editors_and_preserves_plain_write",
+        "ordinary_write_waits_for_the_same_os_lock_without_truncating",
+        "guarded_save_on_an_old_hub_never_falls_back_to_an_unconditional_write",
+        "editor_explorer_and_agent_terminal_round_trip_through_the_owned_hub"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/editor-dirty.png",
+          ".workspacer/reports/native-feedback-rig/visual/editor-saved.png",
+          ".workspacer/reports/native-feedback-rig/visual/quit-unsaved-guard.png",
+          ".workspacer/reports/native-feedback-rig/visual/editor-popout-quit.png"
+        ],
+        "observed": "Edited and saved through the fixture bus; dirty indicator cleared only on acknowledgement. Ctrl+Shift+Q prompted before quitting in main editor and popout. Real owned-hub test saved, rejected stale content, forced overwrite; twelve competing host saves produced exactly one winner. Older hub refusal sends no unconditional write."
+      },
+      "limitations": "OS advisory lock coordinates fs.write/fs.compareWrite on the opened file, including multiple clients/processes; outside writers ignoring the lock or replacing the inode can still race. Readback detects some later changes. No filesystem-wide atomic CAS or crash-atomic replacement claim. Old hubs require upgrade for editor saves. Remote-shaped paths tested over a fake WebSocket and real embedded hub; no TLS remote machine exercised. Cmd+Q covered by GPUI regression, not macOS runtime."
+    },
+    {
+      "item": 3,
+      "title": "Project tree and minimal editor window",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/explorer.rs",
+          "apps/native/src/ui/file_viewer.rs",
+          "apps/native/src/ui/navigation.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::editor_explorer_lists_the_session_folder_and_opens_files",
+        "ui::tests::unsaved_edits_move_with_the_editor_into_its_own_window"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/explorer-open.png",
+          ".workspacer/reports/native-feedback-rig/visual/editor-source.png",
+          ".workspacer/reports/native-feedback-rig/visual/editor-popout-quit.png"
+        ],
+        "observed": "Expanded src, opened main.rs in the editor, moved the dirty editor to a 1050x760 window and returned/closed it without an external editor. Lazy host listings and owned document state remain intact."
+      },
+      "limitations": "Linux/X11 with software Vulkan; no Windows/macOS or hardware-GPU run."
+    },
+    {
+      "item": 4,
+      "title": "Styled unavailable-session notice",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/bus_commands.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::unavailable_request_notice_is_a_compact_card_with_actions"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/unavailable-notice.png",
+          ".workspacer/reports/native-feedback-rig/visual/notice-dismissed.png"
+        ],
+        "observed": "Real command.focus_agent bus event requested a missing fixture session. Card had themed border, icon, spacing and actions. Copy request returned the full missing-feedback-session JSON, then Dismiss removed it."
+      },
+      "limitations": "Fixture request only; clipboard evidence is native-feedback-rig/notice-clipboard.txt. No production navigation was triggered."
+    },
+    {
+      "item": 5,
+      "title": "Persistent terminal per agent",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/terminal.rs",
+          "apps/native/src/controller.rs",
+          "apps/native/src/ui/terminal.rs",
+          "apps/native/src/ui/typography.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::agent_terminal_takes_keys_and_follows_the_selected_agent",
+        "editor_explorer_and_agent_terminal_round_trip_through_the_owned_hub"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/terminal-first-agent.png",
+          ".workspacer/reports/native-feedback-rig/visual/terminal-second-agent.png",
+          ".workspacer/reports/native-feedback-rig/visual/terminal-replay-final.png",
+          ".workspacer/reports/native-feedback-rig/visual/terminal-popout-latte-confirmed.png"
+        ],
+        "observed": "Typed pwd into two agent terminals with distinct cwd, hid/reopened a terminal with output replay, and popped it out. Tokyo Night to Latte changed the existing popout immediately after integration fix. The real embedded-hub regression used two distinct shell IDs/cwd, executed arithmetic+pwd, reattached with retained output, and restarted the first shell."
+      },
+      "limitations": "Visual fixture is explicitly echo-only; real shell execution is proven by the isolated owned-hub regression. No terminal IME composition, mouse selection/reporting, Windows ConPTY or TLS host run. Ctrl+Shift+C copies the screen; normal Ctrl+C reaches the shell. Eight-theme popout refresh also covered by GPUI interaction test."
+    },
+    {
+      "item": 6,
+      "title": "Remove conversation refresh toolbar action",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/transcript.rs",
+          "apps/native/src/ui/navigation.rs"
+        ]
+      },
+      "testsExecuted": [
+        "Complete native suite regression coverage; no dedicated negative assertion for removed button"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/theme-tokyo-night-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/model-catalog-ready.png",
+          ".workspacer/reports/native-feedback-rig/visual/review-changed.png"
+        ],
+        "observed": "Conversation title toolbar has no refresh button. Model-catalog retry and Changes refresh remain. Keyboard refresh remains available."
+      },
+      "limitations": "Linux/X11 with software Vulkan; no Windows/macOS or hardware-GPU run."
+    },
+    {
+      "item": 7,
+      "title": "Git diff and right-hand file explorer",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/review.rs",
+          "apps/native/src/diff.rs",
+          "apps/native/src/links.rs",
+          "services/hub-rs/src/services/git.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::review_shows_git_diffs_beside_a_right_hand_file_explorer",
+        "services/hub-rs/tests/git.rs (8 tests)",
+        "shared_active_path_contract"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/review-changed.png",
+          ".workspacer/reports/native-feedback-rig/visual/review-all-files.png"
+        ],
+        "observed": "Changes displayed old/new line numbers, hunk header, addition/deletion colors and a right-hand Changed/Files tree. Toggled Files and expanded docs. GPUI test selected an all-files entry into source editor; actual source opening also exercised from the shared explorer."
+      },
+      "limitations": "Real Git tests validate root and path behavior; visual diff is deterministic fixture data. No remote TLS Git host or platform-specific filesystem run."
+    },
+    {
+      "item": 8,
+      "title": "Codex Interrupt targets active turn",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "services/claudemon/src/providers/codex.rs",
+          "apps/native/src/controller.rs",
+          "apps/native/src/backend.rs"
+        ]
+      },
+      "testsExecuted": [
+        "providers::codex::tests::interrupt_stops_the_running_codex_turn",
+        "providers::codex::tests::turn_tracker_names_the_running_turn_and_holds_an_early_interrupt",
+        "69 Codex provider tests passed, 1 existing ignored",
+        "end_model_and_question_controls_use_structured_contracts"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/codex-control.png",
+          ".workspacer/reports/native-feedback-rig/visual/codex-interrupt-clicked.png"
+        ],
+        "observed": "Clicked native Codex Interrupt in the fixture. Independently ran fake app-server regression requiring both threadId and turnId: known-turn and early-held interrupts ended the running turn. Source drops idle interrupts and ignores the tested late completed-turn response."
+      },
+      "limitations": "No paid Codex/Claude request made. End-of-turn proof is from the real Codex driver against a fake app-server, not from the visual fixture (whose rich status is synthetic). No assertion that every future provider schema or arbitrary reordering is covered."
+    },
+    {
+      "item": 9,
+      "title": "Clipboard images and removable thumbnails",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/features.rs",
+          "apps/native/src/ui/navigation.rs",
+          "apps/native/src/features.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::draft_images_preview_as_thumbnails_and_stay_removable",
+        "ui::tests::failed_attachment_send_keeps_original_draft_and_file",
+        "attachment_upload_is_bound_to_original_session_and_checks_limits"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/attachment-thumbnail.png",
+          ".workspacer/reports/native-feedback-rig/visual/attachment-removed.png"
+        ],
+        "observed": "Set image/png on the isolated X11 clipboard, pasted into composer, inspected a thumbnail and clicked its removal button. No Paste image button appears."
+      },
+      "limitations": "Fixture thumbnail endpoint serves a deterministic sample image. Encoding, binding to the original session, receipt races and failures are checked separately by native tests. No Wayland/macOS/Windows clipboard run."
+    },
+    {
+      "item": 10,
+      "title": "Clickable model and effort picker",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/transcript.rs",
+          "apps/native/src/ui/features.rs",
+          "apps/native/src/ui/launch.rs",
+          "apps/native/src/launch.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::title_model_chip_switches_model_and_effort_without_substitution",
+        "ui::tests::model_picker_keyboard_selection_and_provider_reset",
+        "catalogs_are_scoped_and_late_provider_results_do_not_replace_selection",
+        "services/hub-rs/tests/models.rs (6 tests)"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/model-catalog-ready.png",
+          ".workspacer/reports/native-feedback-rig/visual/model-efforts.png",
+          ".workspacer/reports/native-feedback-rig/visual/model-queued.png",
+          ".workspacer/reports/native-feedback-rig/visual/model-narrow.png"
+        ],
+        "observed": "Clicked title model, opened model and effort lists, chose Medium and applied; queued-provider feedback appeared. Custom exact model remains visible and narrow layout stays usable."
+      },
+      "limitations": "Catalog and queued acknowledgement in X11 are fixtures. Provider-specific catalog/parameter routing, refusal and stale-result behavior are tested; no paid live model switch."
+    },
+    {
+      "item": 11,
+      "title": "Spawn another agent from populated project",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/projects.rs",
+          "apps/native/src/ui/navigation.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::projects_with_running_agents_can_start_another"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/projects.png",
+          ".workspacer/reports/native-feedback-rig/visual/spawn-another.png"
+        ],
+        "observed": "A project with a running session retains New agent action; clicking it opened a project-seeded launch form while existing sessions remained navigable."
+      },
+      "limitations": "No new paid agent was launched from the visual form. GPUI/controller regressions verify emitted launch behavior."
+    },
+    {
+      "item": 12,
+      "title": "Shared project name and icon",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/projects.rs",
+          "apps/native/src/ui/projects.rs",
+          "apps/native/src/features.rs",
+          "apps/native/src/ui/sidebar.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::project_identity_edits_the_shared_registry_and_shows_everywhere",
+        "project_identity_and_icon_round_trip_through_the_hub",
+        "projects_round_trip_through_the_hubs_shared_config",
+        "overlapping_project_writes_queue_and_every_change_survives"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/project-identity-form.png",
+          ".workspacer/reports/native-feedback-rig/visual/project-identity-saved.png"
+        ],
+        "observed": "Edited project-0 to Integration Lab with IL icon. Save confirmation, project row and session sidebar reflected it. Real hub regression exercises icon download and shared config roundtrip; aliases and wholesale projects writes reviewed."
+      },
+      "limitations": "Visual fixture config is in memory per connection. Durable shared persistence and icon HTTP behavior come from real isolated-hub tests. No desktop/TUI UI session was mutated."
+    },
+    {
+      "item": 13,
+      "title": "Even context-window segments",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/settings.rs",
+          "apps/native/src/ui/launch.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::context_window_choices_are_one_even_row"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/context-segments-custom.png",
+          ".workspacer/reports/native-feedback-rig/visual/context-default-keeps-1m.png",
+          ".workspacer/reports/native-feedback-rig/visual/model-narrow.png"
+        ],
+        "observed": "Custom model showed equally sized centered Default/1M segments. Choosing Default retained 1M. Rechecked at 760x640 with model/effort layout."
+      },
+      "limitations": "Linux/X11 with software Vulkan; no Windows/macOS or hardware-GPU run."
+    },
+    {
+      "item": 14,
+      "title": "All measured and unavailable usage accounts",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/usage.rs",
+          "apps/native/src/ui/usage.rs",
+          "apps/native/src/controller.rs",
+          "services/hub-rs/src/services/limits.rs"
+        ]
+      },
+      "testsExecuted": [
+        "usage::tests::unmeasured_logins_are_explicit_and_unmetered_ones_are_left_out",
+        "ui::tests::sidebar_usage_lists_unmeasured_logins_and_read_failures",
+        "ui::tests::sidebar_shows_measured_usage_windows_per_account"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/theme-tokyo-night-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-latte-chat.png"
+        ],
+        "observed": "Sidebar showed Claude, Claude work Sign in again, and Codex together. Reviewed usage.report projection, per-account unknown/error handling and minute refresh."
+      },
+      "limitations": "No production quota/account poll was requested. Fixtures and tests establish rendering of the actual report shape; providers with no quota windows and the unattributed transcript bucket remain omitted deliberately. This does not repair missing data in an older hub."
+    },
+    {
+      "item": 15,
+      "title": "Remove healthy Connected footer label",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/sidebar.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::sidebar_footer_omits_a_healthy_connection_and_flags_a_lost_one"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/theme-dark-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-latte-chat.png"
+        ],
+        "observed": "All inspected healthy-theme footers show Settings without Connected or a green connection dot. Disconnection indication remains tested."
+      },
+      "limitations": "Linux/X11 with software Vulkan; no Windows/macOS or hardware-GPU run."
+    },
+    {
+      "item": 16,
+      "title": "Five Omarchy theme ports plus three existing themes",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/appearance.rs",
+          "apps/native/src/ui/syntax.rs",
+          "apps/native/src/ui/settings.rs",
+          "apps/native/src/ui.rs",
+          "apps/native/src/ui/terminal.rs"
+        ]
+      },
+      "testsExecuted": [
+        "appearance::tests::every_theme_meets_core_contrast",
+        "ui::syntax::tests::omarchy_syntax_tokens_read_on_code_blocks_and_under_selection",
+        "ui::tests::theme_picker_offers_all_eight_palettes_within_a_narrow_window",
+        "ui::tests::switching_themes_preserves_session_and_draft",
+        "ui::tests::agent_terminal_takes_keys_and_follows_the_selected_agent"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/theme-dark-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-light-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-nord-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-tokyo-night-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-gruvbox-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-everforest-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-latte-chat.png",
+          ".workspacer/reports/native-feedback-rig/visual/theme-picker-narrow-scrolled.png",
+          ".workspacer/reports/native-feedback-rig/visual/terminal-popout-latte-confirmed.png"
+        ],
+        "observed": "Read Omarchy SKILL/theming guide and five stock colors.toml files without changing system config. Inspected all eight palettes across chat/fleet/terminal captures, wrapping+scrolling picker, and actual popout theme change. Terminal palette refresh bug fixed."
+      },
+      "limitations": "Existing named Dark/Light/Nord contrast exceptions retained (Dark primary label 3.68; Light success on base 3.00; Nord error on cards 2.46). New palettes pass stricter tests. No hardware GPU or non-Linux platform verification."
+    },
+    {
+      "item": 17,
+      "title": "Persistent Enter versus Ctrl/Cmd+Enter setting",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/navigation.rs",
+          "apps/native/src/ui/settings.rs",
+          "apps/native/src/ui.rs",
+          "apps/native/src/ui/navigation.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::enter_sends_setting_swaps_send_and_newline_in_the_composer_only"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/enter-setting-on.png",
+          ".workspacer/reports/native-feedback-rig/visual/enter-draft-newline.png",
+          ".workspacer/reports/native-feedback-rig/visual/enter-sent.png"
+        ],
+        "observed": "Changed Keyboard setting, typed two lines with Shift+Enter, sent with Enter and observed the two-line message plus cleared draft. Later app launches retained Enter in composer hints."
+      },
+      "limitations": "GPUI regression covers focus, composition guard and working/blocked states; no real IME, macOS Cmd or Windows key runtime. Existing Ctrl+Enter path remained covered by full native suite."
+    },
+    {
+      "item": 18,
+      "title": "Shared child-agent full-access setting",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/settings.rs",
+          "apps/native/src/features.rs",
+          "services/hub-rs/src/services/agent_spawn.rs",
+          "apps/desktop/src/main/services/fleetPermissions.ts",
+          "apps/desktop/src/main/services/claudeSpawn.ts",
+          "apps/desktop/src/main/services/managedSpawn.ts"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::child_agent_full_access_is_a_hub_setting_toggled_from_agents",
+        "child_access_setting_round_trips_through_the_hub",
+        "child_full_access_applies_only_to_new_children_of_local_sessions"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/agents-off-confirmed.png",
+          ".workspacer/reports/native-feedback-rig/visual/agents-on-confirmed.png"
+        ],
+        "observed": "Agents setting began off, toggled on through config.save/readback and displayed its scope. Reviewed local known-parent/new-child restrictions and retained desktop compatibility commit b06d652c."
+      },
+      "limitations": "No permissions changed on real sessions. Desktop node_modules are absent in this isolated checkout, so its TS tests were not rerun; native and real Rust-hub permission tests passed. Provider preference is not a facade/token grant."
+    },
+    {
+      "item": 19,
+      "title": "Keep worktree children nested through filters",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/navigation.rs",
+          "apps/native/src/ui/navigation.rs",
+          "apps/native/src/ui/sidebar.rs"
+        ]
+      },
+      "testsExecuted": [
+        "navigation::sidebar_tests::workers_in_worktrees_nest_under_their_manager_through_filters",
+        "ui::tests::worktree_workers_stay_nested_under_their_manager_when_its_project_is_open"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/spawn-another.png",
+          ".workspacer/reports/native-feedback-rig/visual/project-identity-saved.png"
+        ],
+        "observed": "Opening project-0 retained its parent plus a child whose cwd is project-1, rather than losing the child to the project filter. GPUI/source tests use the reported worktree-outside-repo shape and search ancestry."
+      },
+      "limitations": "No real fleet filter or production session was changed. Exact real IDs are represented by source/GPUI fixture shape, not a live production screenshot."
+    },
+    {
+      "item": 20,
+      "title": "Named and actionable child/fleet cards",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/transcript.rs",
+          "apps/native/src/ui/fleet_card.rs",
+          "apps/native/src/ui/transcript.rs",
+          "apps/native/src/ui/bus_commands.rs"
+        ]
+      },
+      "testsExecuted": [
+        "transcript::tests::fleet_wakes_parse_every_contract_case",
+        "ui::tests::fleet_wakes_render_as_named_worker_cards_not_user_bubbles",
+        "ui::tests::multi_worker_wakes_share_a_title_and_guard_foreign_sessions"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/fleet-cards-visible.png",
+          ".workspacer/reports/native-feedback-rig/visual/fleet-reply-preserves-draft.png",
+          ".workspacer/reports/native-feedback-rig/visual/fleet-open-child.png",
+          ".workspacer/reports/native-feedback-rig/visual/fleet-narrow-final.png"
+        ],
+        "observed": "Inspected named wake cards, status pills, short UUID metadata, original-wake disclosure and compact icon actions across all eight themes. Reply appended its prefix after Keep this draft; Open selected the worker. At 760px actions and titles stayed inside cards."
+      },
+      "limitations": "Live-status transitions and foreign-session refusal are verified by GPUI tests; visual sessions are fixture-owned. Fixture Worker 2 remains its live session label rather than fabricated identity."
+    },
+    {
+      "item": 21,
+      "title": "Timestamp spacing and quiet alignment",
+      "verdict": "verified_with_limits",
+      "sourceCheck": {
+        "reviewed": true,
+        "files": [
+          "apps/native/src/ui/transcript.rs"
+        ]
+      },
+      "testsExecuted": [
+        "ui::tests::timestamps_keep_clear_space_from_neighbouring_cards",
+        "ui::tests::message_timestamps_are_below_user_assistant_and_tool_content"
+      ],
+      "harness": {
+        "actuallyInspected": true,
+        "captures": [
+          ".workspacer/reports/native-feedback-rig/visual/theme-tokyo-night-fleet.png",
+          ".workspacer/reports/native-feedback-rig/visual/fleet-narrow-final.png"
+        ],
+        "observed": "Inspected quiet right-aligned timestamps with space between neighboring cards, including narrow view. Layout tests check actual card/timestamp bounds."
+      },
+      "limitations": "Linux/X11 with software Vulkan; no Windows/macOS or hardware-GPU run."
+    }
+  ],
+  "limitations": [
+    "Linux software-rendered windows only; no Windows/macOS, hardware GPU or screen-reader run.",
+    "No paid provider request, real TLS remote host or production account polling. Codex interruption tested with real driver + fake app-server.",
+    "Advisory save locking does not stop nonparticipating external writers or inode replacement; readback is additional detection, not universal atomic CAS.",
+    "Old hubs must implement fs.compareWrite to save from the editor; no unsafe fallback.",
+    "Terminal IME and mouse selection/reporting remain outside scope.",
+    "Native X11-discovery test and one manual Codex test remain ignored as declared by those suites.",
+    "Shared-hub strict Clippy baseline remains red (245 findings); native strict Clippy passes.",
+    "Desktop TS compatibility tests not rerun because isolated checkout has no node_modules.",
+    "Raw logs and captures are preserved in this worktree; report is tracked. Parent should retain the evidence directory/archive before worktree cleanup."
+  ],
+  "supersededFailures": [
+    "Initial save/Quit implementation compile error (Context::on_action overload) fixed by explicit App::on_action.",
+    "Initial Quit regression lacked restored editor focus after clicking prompt cancel; focused shortcut regression and real main/popout captures pass.",
+    "Initial concurrency test closure borrow fixed; host suite rerun passed.",
+    "Early visual captures before paint and a process-group cleanup interruption are not acceptance evidence; rig now detaches owned processes with setsid."
+  ],
+  "artifacts": [
+    {
+      "path": ".workspacer/reports/native-feedback-logs/capspec-search.json",
+      "bytes": 6307,
+      "sha256": "f33165866785bbce5efa03d9b1abc5dbdd13fa34b156b6142868eae1e824f38a"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/codex-provider.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/codex-provider.log",
+      "bytes": 17246,
+      "sha256": "9e0cfe78213d347ac97f8af2768f4d629f1650c94a8904c25fdf2b434094c904"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/combined-build.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/combined-build.log",
+      "bytes": 185,
+      "sha256": "090c6f78a9e5ed1c3fce26beeeb716a726bbd35ec9d9ebeb9630f121715405b8"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/combined-clippy.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/combined-clippy.log",
+      "bytes": 879,
+      "sha256": "f3c16f22a79756564e83bf86e4c98c307f57025a8f66eb5ea37c1c8a531272bb"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/combined-native.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/combined-native.log",
+      "bytes": 30103,
+      "sha256": "08d80d8e0ab59220d3f7ffb8188f56eda93f65770e031fa0f4bd4960344a2c4d"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/controls-editor-tests.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/controls-editor-tests.log",
+      "bytes": 28806,
+      "sha256": "b2037df4b7fe823edbe9711cf932e9cbef35666d1c5bd3806cccd6e813531810"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/federation-routing.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/federation-routing.log",
+      "bytes": 999,
+      "sha256": "bd2029945c4e8f1e52a357b4c802bcae398b9750112e215c9a372bd2df52b0e9"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/final-clippy.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/final-clippy.log",
+      "bytes": 185,
+      "sha256": "37482aa29dc6a24bff6b3deb910514b4f67892da0c790020016a2536190fadde"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/final-fmt.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/final-fmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/final-native.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/final-native.log",
+      "bytes": 29703,
+      "sha256": "c7e86685ddf19ef8e919d35c1980728627b298c87e012d008bd998088861150e"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/final-witness.json",
+      "bytes": 981,
+      "sha256": "d6aa16778f0a811298f381a60ab0af29b441ad1c3f1ccf100442d1725c28f51b"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/fixture-replay-build.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/fixture-replay-build.log",
+      "bytes": 185,
+      "sha256": "965030bd55b67c52aa08ef800e8bb3778e4c0073d973895ef0fbab4725896654"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-affected-2.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-affected-2.log",
+      "bytes": 7429,
+      "sha256": "864362d7ace90c692c02b2853cfc3c3ae2bbc65ac43dc76b1804bfa8298dab20"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-affected.exit",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-affected.log",
+      "bytes": 7009,
+      "sha256": "1c37b7c1f922be4d74054e573e7ba88026e92755d8d0a109cff2cf12deabe6bc"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-clippy.exit",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-clippy.log",
+      "bytes": 198885,
+      "sha256": "6b6e0bb70c6e3d3ed1a38438c609be72917313ce27d702a76042a67e475cb4bf"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-files-lib.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/hub-files-lib.log",
+      "bytes": 1175,
+      "sha256": "d5264adc2ba27255fa823cc9b75f7ca73cefaba53dcde241df77aaa5268b2c69"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/merge-fmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/merge-witness.json",
+      "bytes": 822,
+      "sha256": "9dfc1227e5b66918b7f63af354fbc09d0894b73b09dc1c4ac8368884b52b5ce2"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/omarchy-palette-reference.json",
+      "bytes": 3837,
+      "sha256": "fab00f296d355d3d2a8e4cc3ddae85c2ad132d4ccc0a0c67c1984968c5ff87bc"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/quit-focused.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/quit-focused.log",
+      "bytes": 555,
+      "sha256": "3e0d719b0efba364c9c8b670ac374bd662d5e908aca2c97877beffde86fd3c25"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/release-native.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/release-native.log",
+      "bytes": 29703,
+      "sha256": "4a29e430c2aee054361d7770f2cb4818cf4fdb966f0e583fbea2d5e0422bcf44"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/safe-save-quit-tests-2.exit",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/safe-save-quit-tests-2.log",
+      "bytes": 23930,
+      "sha256": "1075b0af5dd006cc9998f7bc8f6055d43af824b70e18fb516f97fcdb5eca3002"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/safe-save-quit-tests.exit",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/safe-save-quit-tests.log",
+      "bytes": 1051,
+      "sha256": "c76615499649b7ae82b7488b75a7679bca65d6547af491bd667d942646cb7b5c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/save-protocol-hub.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/save-protocol-hub.log",
+      "bytes": 4400,
+      "sha256": "bc7be219cd1edad77cae7c067b42736be789f86d983ab148f42434355096dec4"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/save-related.json",
+      "bytes": 2497,
+      "sha256": "2ec8b8d4dae1a4aaab63ae3d51a49299ae7fb9ed517712db3be4971b6a653512"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/save-witness.json",
+      "bytes": 2024,
+      "sha256": "dd427e212d3751a7d7e025268e19ab4439d4689c03f4375e1758946e65d37b8f"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/terminal-related.json",
+      "bytes": 2384,
+      "sha256": "1331f9781be55b7bb4ff269c5784f9d4614dff01e8d58afe03538dc6ea38d2a4"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/terminal-theme.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/terminal-theme.log",
+      "bytes": 553,
+      "sha256": "cc58dd394d808c557f073ae44d022fc2db15e7849a58ab8c4447a482de830843"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/terminal-two-shells.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/terminal-two-shells.log",
+      "bytes": 759,
+      "sha256": "3e3e2ce3310fd44888c99e4ed4694145abe2c0bb0f1163742ff55322ad404609"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/themes-merge-fmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/typography-related.json",
+      "bytes": 2577,
+      "sha256": "2499fdc929bf028e03ec2af6a55a2312fdcc07dc2169d93952015e66f284ac4d"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/usage-context.md",
+      "bytes": 11620,
+      "sha256": "777cee8fa7f97ed4b8edb1627db4b28adb93da2e060f4d73ac3140eb71015ba4"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-logs/usage-search.json",
+      "bytes": 4665,
+      "sha256": "31dfdf8fb6dcd077f478d3bf35e775a86023a6484c99a912ccefa2e4bc1378e9"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/agents-off-confirmed.png",
+      "bytes": 125029,
+      "sha256": "55be721157bae4bf05e989eeaa8a831be45903c0fe3da228399786e9a0492e5f"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/agents-on-confirmed.png",
+      "bytes": 124853,
+      "sha256": "ed7fcaf1c60021aadf200c2f34f48d3e1ffd203d4d28b7d056ca2a8f01984c52"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/agents-setting-off.png",
+      "bytes": 101602,
+      "sha256": "6a024cfaf73096bdd7930d1f5e29a619088e37fc8c1a47c935f82c8c463b44e7"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/agents-setting-on.png",
+      "bytes": 139161,
+      "sha256": "9260ac704e96b05a3f962d3deff95aa13ce6f68b36a9fd64171ab2c3f17ee375"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/attachment-removed.png",
+      "bytes": 139727,
+      "sha256": "245cad557765863ed5d2555793e1cb63f17712b50978b36585dbbf78aea4c689"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/attachment-thumbnail.png",
+      "bytes": 119642,
+      "sha256": "5cd3cc41d5111317e23d076927de3049eb06d72f9b9ed13aceae492251b06afa"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/chat-narrow.png",
+      "bytes": 74018,
+      "sha256": "dc3bccf93c711263d0f93066299f79e31205ef9e7ae3a5de215d39af66706a18"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/codex-control.png",
+      "bytes": 137931,
+      "sha256": "da7116356aa426083e40b75c866348e4fdce1f8888778656145a62ba19290af1"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/codex-interrupt-clicked.png",
+      "bytes": 138193,
+      "sha256": "d2a02550a15466b0759c6fdfbbd200eb247f5c8b5ae59604bc1576e6a8946651"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/context-default-keeps-1m.png",
+      "bytes": 82611,
+      "sha256": "b63e0fde1259a110c065a1f91f4131fa962f4321665dbb315ea7336110197c67"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/context-segments-custom.png",
+      "bytes": 82338,
+      "sha256": "36b308633f437e6fea195b9ae6a4bcc6bda2ba06ede539d07b7e7f34b7faa8dc"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/editor-dirty.png",
+      "bytes": 150717,
+      "sha256": "051df88bfaba775e3367215cbc8fe3fa300fb1c6ddfc4eb5c98997007cf1342a"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/editor-latte-open.png",
+      "bytes": 153454,
+      "sha256": "a1f9b4426518a4b4bdd4f945f1c709bfde285c2ab77d59c242bf463a9c0e5776"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/editor-popout-quit.png",
+      "bytes": 36705,
+      "sha256": "86feadae0ac7c5cf36b9a49facf415e829705c8a960b497f273ffbaa899cd20c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/editor-saved.png",
+      "bytes": 150633,
+      "sha256": "d91e67f43cb04eaf0e71554f23dcb91f619131a1d9c38c3356ea411d6d40bee4"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/editor-selected-latte.png",
+      "bytes": 117353,
+      "sha256": "56268e70799008bbbb93338b2808d32d7f5f7b9500052352b4a4130a777cb07b"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/editor-selection-readable.png",
+      "bytes": 153416,
+      "sha256": "743a48e08c4c1bd8bb43bba68789b1c1b5365f4009048ab5282b3a1b440502dd"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/editor-source.png",
+      "bytes": 148837,
+      "sha256": "d80b6721e7b1f14b2f7c88c21a2acc1b0f8ef50526bf9299e463b3bdf32d09a3"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/enter-draft-newline.png",
+      "bytes": 114447,
+      "sha256": "cecc7d9bc4e5af3bee2e464a781e4f1c9ae058dc16dcc218b66ab020b0367928"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/enter-sent.png",
+      "bytes": 114400,
+      "sha256": "a5e6ca500fe8eb06434ea5a1742a81e642738be639f48788ec1e19fd7d422537"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/enter-setting-on.png",
+      "bytes": 139282,
+      "sha256": "01fef0ece6ac306c8832e0cd95be0040433c3618004c9d63e7632e028bc32a39"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/explorer-open.png",
+      "bytes": 142884,
+      "sha256": "b0d6c8729fff7fcd86339685ecf106f09ee9f6a458aae51196f502bc39957846"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-cards-latte-scroll.png",
+      "bytes": 136092,
+      "sha256": "c448cd5fb0448f7324733db4ba158abf635168fa55de693b18d049e86a772c5c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-cards-latte.png",
+      "bytes": 132954,
+      "sha256": "bb8272049565004b89fa1f892cd485f2765c06e4cacc2b5e7c440460a16b1022"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-cards-visible.png",
+      "bytes": 125031,
+      "sha256": "b66d1e52e31946ab85b3513cfa2b3802bef22cea2146c9b2d0bb875afe704bfb"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-narrow-2.png",
+      "bytes": 75553,
+      "sha256": "89bd47ee1fb5abea86f24dba541c385e8c7699f902d843b3b8bd953c6c73a89a"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-narrow-3.png",
+      "bytes": 75539,
+      "sha256": "d1a1bb93b868fe050a16bd9836727fb91c5af42f370f26e27cb5b550c7a7fa78"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-narrow-final.png",
+      "bytes": 80159,
+      "sha256": "c3bb0432c8e0c3bd421d8d552336bd3b06c0d42ef150fe984ad0a58b3ccf6156"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-narrow.png",
+      "bytes": 63869,
+      "sha256": "68d37f4cc6803917893f27256572e79a12bb0a144b3d032bebdeb1da9dce3b75"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-open-child.png",
+      "bytes": 142652,
+      "sha256": "b50c358431dfee172e944af02fcc5fc93d0cb7693ebd3619992b075e0f50dc12"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/fleet-reply-preserves-draft.png",
+      "bytes": 126816,
+      "sha256": "9d61c033681c552af3d96f156e14661b9ba207e543a47e3ab69c5ddb84776bc9"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/initial-tokyo-2.png",
+      "bytes": 131288,
+      "sha256": "66ee1784a5fb7a243668f2e8fb56e599aae690cc85341c51286064afcbceacd9"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/initial-tokyo.png",
+      "bytes": 3744,
+      "sha256": "1ba4dbcc726f280e3fb94b03be323b8c25fdabcf2bb1ebd4ffc87b9526a1837c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/keyboard-setting-ready.png",
+      "bytes": 139162,
+      "sha256": "d3fa7a25e0bb30e232bfebe87bbc985ac7045bb3b6ee8a75a5a315f90381d6bf"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/keyboard-setting.png",
+      "bytes": 125028,
+      "sha256": "a97f98aca69e2ece60bfd40b7020b7f536e3d19d1b58c59055196626e51bf41e"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/model-catalog-ready.png",
+      "bytes": 79958,
+      "sha256": "e06cc8c78978e4450d901d2b4f22e93ba0f1dad4fb46f73d5e76f9f15fc47996"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/model-catalog.png",
+      "bytes": 79966,
+      "sha256": "4bf9696227d410a7a7e1b9dd1519f0073d85bcfe900b4f695b2f0d4fe530f158"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/model-efforts.png",
+      "bytes": 85907,
+      "sha256": "9aca9ec305068dd499f4f6d07ef367859758f9601602a3481604ed598cb4c8d0"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/model-menu-custom.png",
+      "bytes": 83301,
+      "sha256": "9fc4398483832db3ed385b46a61875ea1b2222c155d6c00dce4b35b0810fd4a6"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/model-narrow.png",
+      "bytes": 59492,
+      "sha256": "28f5052740f79aed0f3385769a3deef1cbba5f4f49fce07a59d5e03c2a1db77c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/model-queued.png",
+      "bytes": 83426,
+      "sha256": "058f25fa3059a9bdea803e7a29bb6fac4fc0ab76d4308cd0ea3af3cdc1369a70"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/notice-dismissed.png",
+      "bytes": 132955,
+      "sha256": "d5b27f82f8ac22e0280e6ce73303bf1da59be81a9b10e57efb20efa29f7e6aab"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/project-identity-form.png",
+      "bytes": 119524,
+      "sha256": "3068e20eff2b945dda2178384303570528e5988040a8c58cfb20aff451096b11"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/project-identity-saved.png",
+      "bytes": 114431,
+      "sha256": "9fbf6fd750148898cc1513c41627b95ecc66cde8554e5f55a7ff41e1c3112b96"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/projects.png",
+      "bytes": 124752,
+      "sha256": "bc3996dc7e138a01215203646530a7fe1af240974f5c28f108567cd0abbfdb42"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/quit-unsaved-guard.png",
+      "bytes": 157987,
+      "sha256": "014349ca7d0994ec11caf14538dc2af75903cbc1b7dc00f0a60da4d907e0bf08"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/review-all-files.png",
+      "bytes": 83649,
+      "sha256": "0987bab72b1842a15e1ca7e33f11135625323f1d169a2d8876589d867eebee8c"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/review-changed.png",
+      "bytes": 79079,
+      "sha256": "898d87fe6f3a967b9988c14465b308764d39326f262c51231f8ae8c226ccfcf9"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/settings-open.png",
+      "bytes": 101604,
+      "sha256": "8082caa06f2615c7dff00b0e4d5ee5d35120aba491dd41560d9e9f15b526b2dd"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/settings.png",
+      "bytes": 114393,
+      "sha256": "e180af228127951c6260a69d80483f2e57dc8f5e25311e7880adeda2a256c8cd"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/spawn-another.png",
+      "bytes": 87450,
+      "sha256": "5e6bc23eff1898a67b9448fb5dff36e3539b859d0ee0a87350a021dbed09ca66"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-before-hide.png",
+      "bytes": 111463,
+      "sha256": "8d582d1ae2b9b0ac2161bb8972d8f90e283bb01dc867d870910eec046d33cfb7"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-first-agent.png",
+      "bytes": 125122,
+      "sha256": "16f54242a3466f94fe9e4f771c72fc6624d97355fcc90931f5118f02335c254b"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-first-reattached.png",
+      "bytes": 122163,
+      "sha256": "cb5176880d7960514ca17b52e9b8232744321e92a0a864150f6653eb8aa95e27"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-popout-latte-confirmed.png",
+      "bytes": 13296,
+      "sha256": "08d1baacc4965195e66dd8b6588ff3ac118e2b391081fc6f1947790b914b2bef"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-popout-latte.png",
+      "bytes": 13352,
+      "sha256": "6e1f86a26f80ef66daf7dade1b12bf8095697e4ce374b17e31bbb08cb0535715"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-replay-confirmed.png",
+      "bytes": 117514,
+      "sha256": "0598a2aba33e84cab5bcc454213ae01d57ad2f349578e3731288fe4f2b1b93d3"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-replay-final.png",
+      "bytes": 111457,
+      "sha256": "8894c45652f8ea13d695cfc2432684e083432ddbc8db1fee0b89982ef0b169d6"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-second-agent-before.png",
+      "bytes": 104068,
+      "sha256": "c70e28af79bb3b2f5f76149295c7f35f5107baefe8b3916a2ce09f578772c269"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/terminal-second-agent.png",
+      "bytes": 105630,
+      "sha256": "08b34c7792d46770638905e32bc9ada5c3870e7629a32257255456f80829a6a4"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-chat.png",
+      "bytes": 135421,
+      "sha256": "bc987b50b96ef430194331e7917f6753ebce042eae655cf615724227d47425a9"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-fleet.png",
+      "bytes": 131533,
+      "sha256": "0c3c4ea77ca22825fa060ef91688d0210e91a2f561fbaed4e3bbd76c2698072e"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-latte-chat.png",
+      "bytes": 133176,
+      "sha256": "8bbd795bcfd810946da776c435ad11f55565981edb28d25ee0a005c624806c65"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-latte-fleet.png",
+      "bytes": 124488,
+      "sha256": "aa1dd895a4bd50468145ec5a9d229a311cd0a6850f1b8768bdbce5e95d97b2ec"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-latte-terminal.png",
+      "bytes": 110234,
+      "sha256": "07b5a32343ff7807ebc4102fdb524b12f7b8dd65ddc086debeacda083c8127e7"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-catppuccin-terminal.png",
+      "bytes": 117044,
+      "sha256": "85cf114c35d7085eeb0e6ec068a8ff255d0e07e34cae38a8beaf4c743f75f33f"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-dark-chat.png",
+      "bytes": 132775,
+      "sha256": "80000a5791b1f8d65ca266dbdbfe6eea4b043b7d025c4d2f68f7b37db472eac4"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-dark-fleet.png",
+      "bytes": 121667,
+      "sha256": "21662c518d73222fb9c58581d844ca09f2e017bb16e99d3098213567ab95f94b"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-dark-terminal.png",
+      "bytes": 107285,
+      "sha256": "e39ce5aa3d5536315dd8e1d01f308a945e69cf6a9af2eb4d564335657c5a1fec"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-everforest-chat.png",
+      "bytes": 135381,
+      "sha256": "638d6a1faaae49633f7abdc0cb5d858f0363ee575ebd7ab3f3638a605812f5bc"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-everforest-fleet.png",
+      "bytes": 132687,
+      "sha256": "9b5ebcd7dff85b7040560ee9ed7843d8f3e3ccdbebc29c1df9b04a4810a710f5"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-everforest-terminal.png",
+      "bytes": 118612,
+      "sha256": "7d466e2776fb67546218a787a909a27ecd9f7abafb2244d2362c142c21c16267"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-gruvbox-chat.png",
+      "bytes": 132120,
+      "sha256": "bb6ce66bae85831f4bd13201f165e43713e7bf1c5a5e3622b7a846b54deb2d57"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-gruvbox-fleet.png",
+      "bytes": 121458,
+      "sha256": "7fd3cd81e440ac136b1809eff08e719508b3314f69bb74529ca082407ace4425"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-gruvbox-terminal.png",
+      "bytes": 107085,
+      "sha256": "768dc64ce01b8fcf9460a56403f33ac5ea488d6b40386a60facd937f2fc8e7a5"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-latte-chosen.png",
+      "bytes": 101812,
+      "sha256": "21b6358321c7a45b7386c52af93d9f84930184bd771c174d498931cde1de9c6f"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-light-chat.png",
+      "bytes": 136378,
+      "sha256": "710de6414f810ba42f9cba7aeb94f09d47858b32566050eaee78c2c1ca75526a"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-light-fleet.png",
+      "bytes": 129912,
+      "sha256": "d98e390f916f87aff280c4cf61d509bce1299653c25aad5103ffc1790bc1d1ff"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-light-terminal.png",
+      "bytes": 115851,
+      "sha256": "7e5fe40ca32418fe767a26eb50c93b30c143949d6bf998f16795b406f0546087"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-nord-chat.png",
+      "bytes": 135858,
+      "sha256": "05bc0aa1212bd08c28d5b7f79ab7ec42136a728274c54ce3c20ed519cae39c21"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-nord-fleet.png",
+      "bytes": 132686,
+      "sha256": "40aefa3804341cb8b94ef18d9d52acec9eeba3d3fe2f19b77d2f431a995f9c1e"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-nord-terminal.png",
+      "bytes": 118571,
+      "sha256": "96bc5a61e82d669df7b012a3612d87908a7f18d8b36b71618b69fe58bcfd6b1e"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-picker-narrow-scrolled.png",
+      "bytes": 62540,
+      "sha256": "4a53f3b7af0e1ca9bd493b441b536b78be201cdb295c4bb3dfc34de281888144"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-picker-narrow.png",
+      "bytes": 65064,
+      "sha256": "63ae9400d130a88f08b69276b0696509d1bc3aa13a44c8f846ab0fc1e78bf186"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-tokyo-night-chat.png",
+      "bytes": 135181,
+      "sha256": "17b2e8a50f09a82c6a083bfe0f00a523c2fd03b8ca24a87f0d876d992202bf19"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-tokyo-night-fleet.png",
+      "bytes": 130643,
+      "sha256": "3cd76bfb08e9ef14a0cb8291704712d4ff2960c56de8ae3d1763c86a42d70365"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/theme-tokyo-night-terminal.png",
+      "bytes": 116255,
+      "sha256": "fb6ba35b4e56cbfb506f1cd7195240aafe353094ba5d9da70ba3e4dadae0e2cf"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/tokyo-model.png",
+      "bytes": 82702,
+      "sha256": "8b0951d61700701ecde2d84dcb2449e3f0f969786f4bca3b1bd695e4cac6ac26"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/tokyo-selection-drag.png",
+      "bytes": 131227,
+      "sha256": "76ed29ac8bfa56e04a74349f67cd3bfeb9baf76b74aa972b2a4be1db70736cdf"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/tokyo-selection.png",
+      "bytes": 131201,
+      "sha256": "d73b9c828cdde6af1fb704f77c2e738c63141281419f75878d13ecbfc1e9d253"
+    },
+    {
+      "path": ".workspacer/reports/native-feedback-rig/visual/unavailable-notice.png",
+      "bytes": 135203,
+      "sha256": "41850b77ad5b6bbf930336629057ceaf6440c88cd95292280e1d6e029b1040db"
+    }
+  ],
+  "versionedCaptureExamples": [
+    "apps/native/docs/ui-integration-tokyo-selection-drag.png",
+    "apps/native/docs/ui-integration-editor-popout-quit.png",
+    "apps/native/docs/ui-integration-terminal-popout-latte-confirmed.png",
+    "apps/native/docs/ui-integration-unavailable-notice.png",
+    "apps/native/docs/ui-integration-model-narrow.png",
+    "apps/native/docs/ui-integration-fleet-narrow-final.png"
+  ],
+  "evidenceArchive": {
+    "path": ".workspacer/reports/native-feedback-evidence.tar.gz",
+    "bytes": 9547810,
+    "sha256": "8bea5410c3e962e2eb99f128d37a3a3df40956d2ea8a3ec0c8bc32b3e7a2a265"
+  }
+}

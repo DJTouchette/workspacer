@@ -1076,3 +1076,87 @@ a 1M selection and a sign-in-needed login): [themes](docs/ui-omarchy-themes-dark
 [usage](docs/ui-usage-unmeasured.png), [theme picker](docs/ui-theme-picker.png).
 Not captured: the request notice (needs a hub UI request; covered by a GPUI
 geometry test). Linux only: no Windows/macOS, hardware GPU or live provider.
+
+## Independent 21-item integration validation (2026-10-05)
+
+**PASS with documented limits.** Implementation `2e8bfa09` combines controls
+`c929bce8`, editor `c4352a85`, and the exact finalized themes `cfc6014a`.
+No push or release was performed; the parent owns nightly publication and its
+release gates. Full per-item source/test/real-window evidence and limitations:
+[validation matrix](../../.workspacer/reports/native-feedback-validation.json).
+
+Integration corrected the earlier editor limitations recorded above: saves now
+call the distinct host `fs.compareWrite`, comparing under an OS advisory lock
+shared with ordinary `fs.write`; stale saves are refused and older hubs cannot
+silently ignore the precondition. Native readback remains. Both Quit shortcuts
+share the unsaved main-window guard, including a popped-out editor. This is
+coordination among participating writers, not an atomic CAS against programs
+that ignore advisory locks or replace the file's inode.
+
+A combined-theme interaction defect was also fixed: the terminal popout kept
+its old palette when the main terminal panel was hidden. Theme/typography
+changes now update terminal views and explicitly refresh that window. The
+regression cycles all eight themes after popping out; an actual Tokyo Night →
+Catppuccin Latte switch was inspected. The real owned-hub test now executes
+commands in two independent shells/cwds, in addition to detach/replay/restart.
+
+Independent checks (four Cargo jobs maximum, serialized GPUI tests, full logs
+and real exit statuses preserved under `.workspacer/reports/native-feedback-logs`):
+
+- Complete final native suite: **342 passed, 1 ignored** (152 lib, 142 UI,
+  3 background, 3 shared-project/settings, 38 protocol, 4 real Rust-hub tests).
+- Native strict Clippy (`--all-targets --features ui-tests -- -D warnings`),
+  builds, native/hub/claudemon rustfmt, and diff whitespace checks passed.
+- Shared hub: files 10, Git 8, agent spawn 17, models 6, snapshots 10,
+  internal filesystem 5, federation-routing 2 passed.
+- Codex driver tests: **69 passed, 1 ignored** with a fake app-server; active
+  and early-held interrupts name the turn and end it. No paid model calls.
+- Shared-hub strict Clippy still reports **245 baseline findings**; no broad
+  cleanup was attempted. The findings in `files.rs` are unchanged older tests,
+  not the new save operation. Native strict Clippy is clean.
+- Parent-requested baseline claudemon formatting repair is `89b2a22a`.
+
+Actual Linux windows ran under owned Xvfb `:96`, lavapipe, and fixture port
+`18037`, with a throwaway HOME and XDG directories. All eight themes were
+captured across chat, fleet cards and terminal; narrow layouts were inspected
+at 760×640. Interaction evidence includes model/effort queued feedback, project
+identity, another-agent form, clipboard thumbnail/removal, Enter/Shift+Enter,
+child-access toggle, source editing/save, main/popout Quit guards, right-hand
+Git/files views, terminal cwd/replay/popout, and fleet Open/Reply preserving a
+draft. The missing-session card was driven by a real fixture bus event; Copy
+request copied its full JSON and Dismiss removed it.
+
+| Items | Source and automated evidence | Actual window evidence |
+|---|---|---|
+| #1 | Selection-before-glyph paint; all-palette contrast/syntax tests | Chat selection and editor selection remained readable |
+| #2–3 | Host lock/CAS regression, old-hub refusal, dirty navigation and real-hub save | Edit, save, project tree, editor window, main/popout Quit guards |
+| #4 | Notice geometry/action regression | Missing-session bus request, Copy request, Dismiss |
+| #5 | Terminal key-routing, eight-theme popout, two real shells and replay | Distinct agent cwd, panel/window, retained output and live theme switch |
+| #6 | Toolbar source review; full native regressions | No chat refresh; targeted refresh controls retained |
+| #7 | Diff/tree GPUI, real Git/root/path tests | Changed/Files toggle with explorer on the right |
+| #8 | Native control protocol plus real Codex driver/fake server | Native Codex Interrupt clicked; end-of-turn proof is the driver test |
+| #9 | Thumbnail/receipt/failure and clipboard encoding tests | X11 image paste, thumbnail and removal |
+| #10 | Model/effort selection, refusal and stale catalog tests | Title picker, supported effort options, queued result |
+| #11–12 | Multi-agent project and real shared identity/icon tests | Another-agent form; saved name/icon reflected in sidebar |
+| #13 | Segmented-control geometry regression | Default retains 1M, also at narrow width |
+| #14–15 | Unknown-account/error and footer regressions | Claude, unavailable Claude profile, Codex; no healthy Connected label |
+| #16 | Five read-only Omarchy palette references, eight-theme tests | All eight themes, scrolling picker, source/terminal popouts |
+| #17–18 | Composer focus/IME guard, shared setting and local-child scope tests | Enter/newline, persisted hint, off→on child setting |
+| #19 | Worktree lineage/project/search regression | Project-filtered parent retains child with a different cwd |
+| #20–21 | Shared wake cases, guarded actions and timestamp bounds | Named cards/status, draft-preserving reply, Open, narrow spacing |
+
+Selected independent captures: [chat selection](docs/ui-integration-tokyo-selection-drag.png),
+[editor Quit guard](docs/ui-integration-editor-popout-quit.png),
+[terminal after theme change](docs/ui-integration-terminal-popout-latte-confirmed.png),
+[unavailable notice](docs/ui-integration-unavailable-notice.png),
+[narrow model controls](docs/ui-integration-model-narrow.png),
+[narrow fleet cards](docs/ui-integration-fleet-narrow-final.png).
+
+Limits: no Windows/macOS, hardware GPU, screen reader, real TLS host or paid
+provider run. The visual terminal is explicitly echo-only; real shell behavior
+comes from the isolated owned-hub test. Terminal IME and mouse selection/reporting
+remain unimplemented. Existing named Dark/Light/Nord contrast exceptions remain.
+The desktop compatibility commit `b06d652c` is retained and source-reviewed;
+its TS tests were not rerun because this checkout has no `node_modules`.
+The full evidence archive is `.workspacer/reports/native-feedback-evidence.tar.gz`;
+retain it before deleting this integration worktree.
