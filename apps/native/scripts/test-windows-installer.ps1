@@ -59,6 +59,16 @@ try {
             throw "Installed payload differs: $relative"
         }
     }
+    # The in-app updater trusts the silent installer's exit code. A payload
+    # file it cannot replace (NSIS skips it silently) must fail the install.
+    $locked = [System.IO.File]::Open((Join-Path $installDir 'build-stamp.json'), 'Open', 'Read', 'None')
+    try {
+        $process = Start-Process $installerPath -ArgumentList "/S /D=$installDir" -Wait -PassThru
+        if ($process.ExitCode -eq 0) { throw 'Silent install reported success over a locked payload file' }
+    } finally {
+        $locked.Dispose()
+    }
+    Invoke-Installer
     # Isolate backend state without changing the actual user's home directory.
     $env:APPDATA = Join-Path $testRoot 'config'
     $env:LOCALAPPDATA = Join-Path $testRoot 'data'

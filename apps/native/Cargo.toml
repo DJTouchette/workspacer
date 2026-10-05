@@ -77,3 +77,10 @@ portable-pty = { path = "../../vendor/portable-pty" }
 name = "background_process"
 path = "tests/background_process.rs"
 required-features = ["rust-hub"]
+
+# Copies of this executable play the app, installer and a busy process, so it
+# owns its main (Windows only; other platforms report a skip).
+[[test]]
+name = "windows_update_handoff"
+path = "tests/windows_update_handoff.rs"
+harness = false
