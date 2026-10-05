@@ -335,6 +335,8 @@ actions!(
     [
         SendMessage,
         ComposerEnter,
+        SubmitAnswers,
+        AnswerEnter,
         CreateSession,
         NextSession,
         PreviousSession,
@@ -418,6 +420,15 @@ pub fn bind_keys(cx: &mut App) {
         // context as well; a root-only binding loses to its newline action.
         KeyBinding::new("ctrl-enter", SendMessage, Some("Workspace > Input")),
         KeyBinding::new("cmd-enter", SendMessage, Some("Workspace > Input")),
+        // Inside the question picker Ctrl/Cmd+Enter sends its answers, never
+        // the composer draft. Same depth as the Input binding above, so these
+        // must come after it to win.
+        KeyBinding::new("ctrl-enter", SubmitAnswers, Some("QuestionPicker")),
+        KeyBinding::new("cmd-enter", SubmitAnswers, Some("QuestionPicker")),
+        KeyBinding::new("ctrl-enter", SubmitAnswers, Some("QuestionPicker > Input")),
+        KeyBinding::new("cmd-enter", SubmitAnswers, Some("QuestionPicker > Input")),
+        // Enter in a typed answer: send or move on, never a newline.
+        KeyBinding::new("enter", AnswerEnter, Some("QuestionPicker > Input")),
         // Settings → Keyboard → Send with Enter: only the chat composer carries
         // the ComposerEnter context, so every other field keeps its Enter.
         KeyBinding::new("enter", ComposerEnter, Some("ComposerEnter > Input")),
@@ -967,6 +978,12 @@ impl Workspace {
             self.last_receipt = receipt.number;
             self.note_model_receipt(receipt);
             if receipt.error.is_none()
+                && matches!(receipt.action, Action::Answers(_) | Action::Answer(_))
+                && view.selected.as_ref() == Some(&receipt.session)
+            {
+                self.extras.answers_sent = true;
+            }
+            if receipt.error.is_none()
                 && matches!(receipt.action, Action::Stop)
                 && let Some(clock) = self.turn_clocks.get_mut(&receipt.session)
             {
@@ -1438,6 +1455,10 @@ impl Render for Workspace {
             .as_ref()
             .and_then(|id| self.turn_clocks.get(id));
         let working = self.view.connected && selected.as_ref().is_some_and(Session::working);
+        // A pending question set takes more of the dock: it is what the agent
+        // is waiting on, and its own list scrolls inside the card.
+        let questions_pending =
+            self.view.child.is_none() && selected.as_ref().is_some_and(|s| s.questions.is_some());
         let animate_activity = (!self.view.connected && self.connection_copy().animated)
             || self.view.loading
             || self.view.busy
@@ -1630,7 +1651,7 @@ impl Render for Workspace {
                 // out over the 12px above them (the transcript's spare padding).
                 .child(div().absolute().bottom_0().left_0().w_full().flex().justify_center().pt(px(DOCK_FADE))
                     .bg(gpui::linear_gradient(0., gpui::linear_color_stop(rgb(p.chat), 1. - DOCK_FADE / (f32::from(self.composer_dock_bounds.size.height) + DOCK_FADE).max(DOCK_FADE * 2.)), gpui::linear_color_stop(gpui::Hsla::from(rgb(p.chat)).opacity(0.), 1.)))
-                    .child(chrome::chat_column().id("conversation-dock").relative().pt(px(if compact { 8. } else { 12. })).pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * if compact { 0.45 } else { 0.55 }).overflow_y_scroll().flex().flex_col().gap(px(if compact { 4. } else { 8. }))
+                    .child(chrome::chat_column().id("conversation-dock").relative().pt(px(if compact { 8. } else { 12. })).pb(px(if compact { 8. } else { 16. })).max_h(window.viewport_size().height * match (questions_pending, compact) { (true, _) => 0.7, (false, true) => 0.45, (false, false) => 0.55 }).overflow_y_scroll().flex().flex_col().gap(px(if compact { 4. } else { 8. }))
                 .child(canvas(move |bounds, _, cx| {
                     cx.defer(move |cx| {
                         let _ = dock_view.update(cx, |this, cx| {
@@ -1655,7 +1676,7 @@ impl Render for Workspace {
                             .child(self.primary_button("approve", "Allow once", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)))))
                             .child(self.button("deny", "Deny", enabled).when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)))))))
                 })
-                .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, cx)))
+                .when_some(selected.as_ref().filter(|s| s.questions.is_some()), |d, session| d.child(self.render_questions(session, enabled, compact, window, cx)))
                 .children(self.render_child_bar(cx))
                 .when(selected.is_some() && self.view.child.is_none(), |d| d.child(div().w_full().flex_shrink_0().flex().flex_col().gap_2()
                     .child(div().id("floating-composer").debug_selector(|| "chat-composer".into()).key_context(if self.settings.enter_sends { "Composer ComposerEnter" } else { "Composer" }).occlude().bg(rgb(p.surface)).border_1()
@@ -8958,6 +8979,346 @@ mod tests {
             assert_eq!(this.question_answers(cx), vec!["Another approach"]);
         }));
     }
+    /// Session "a" waiting on a mixed set: single choice with descriptions,
+    /// multiple choice, and free text.
+    fn question_state() -> View {
+        let mut next = state("a");
+        let session = &mut Arc::make_mut(&mut next.sessions)[0];
+        session.state = "question".into();
+        session.questions = Some(serde_json::json!([
+            {"header":"Approach","question":"Which migration strategy?","multiSelect":false,"options":[
+                {"label":"Online backfill","description":"Copy rows in batches while the hub keeps serving."},
+                {"label":"Stop-the-world","description":"Pause writers and migrate in one transaction."},
+                {"label":"Skip for now"}]},
+            {"header":"Checks","question":"Which checks should run?","multiSelect":true,"options":[
+                {"label":"cargo test"},{"label":"Clippy, strict"},{"label":"rustfmt --check"}]},
+            {"header":"Reviewer","question":"Anything the reviewer should know?","options":[]}
+        ]));
+        next
+    }
+
+    /// Every action sent since the last call (all for session "a").
+    fn sent_actions(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> Vec<Action> {
+        std::iter::from_fn(|| commands.try_recv().ok())
+            .filter_map(|command| match command {
+                Command::Act { session, action } => {
+                    assert_eq!(session, "a");
+                    Some(action)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A full key press: test keystrokes are key-down only, and GPUI
+    /// activates a focused control on key-up.
+    fn press(visual: &mut VisualTestContext, key: &str) {
+        visual.simulate_keystrokes(key);
+        visual.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+        visual.run_until_parked();
+    }
+
+    fn click_selector(visual: &mut VisualTestContext, selector: &str) {
+        let bounds = bounds_of(visual, selector);
+        visual.simulate_click(bounds.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn question_picker_answers_by_click_and_keyboard_without_touching_the_draft(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        // Tall enough that every row is on screen; small windows are the
+        // geometry test's job.
+        visual.simulate_resize(size(px(1400.), px(1400.)));
+        let selected = |visual: &mut VisualTestContext, ix: usize| {
+            workspace.read_with(visual, |this, _| {
+                this.extras.selected_options[ix]
+                    .iter()
+                    .copied()
+                    .collect::<Vec<_>>()
+            })
+        };
+        // Busy: rows are inert.
+        let mut busy = question_state();
+        busy.busy = true;
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(busy), window, cx))
+        });
+        visual.run_until_parked();
+        click_selector(&mut visual, "question-0-option-1");
+        assert!(
+            selected(&mut visual, 0).is_empty(),
+            "busy picker ignores clicks"
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(question_state()), window, cx);
+                this.composer
+                    .update(cx, |input, cx| input.set_value("KEEP_DRAFT", window, cx));
+            })
+        });
+        visual.run_until_parked();
+        // Nothing answered: neither Send nor Ctrl+Enter sends anything (in
+        // particular not the composer draft), and Enter in a typed answer
+        // moves on to the next unanswered question.
+        click_selector(&mut visual, "submit-answers");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.extras.answers[2].update(cx, |input, cx| input.focus(window, cx))
+            })
+        });
+        visual.simulate_keystrokes("ctrl-enter");
+        visual.simulate_keystrokes("enter");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                assert!(
+                    this.extras.answers[0]
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window),
+                    "Enter moves to the first unanswered question"
+                )
+            })
+        });
+        assert!(sent_actions(&mut commands).is_empty());
+        // Single choice: a click chooses, another click replaces it.
+        click_selector(&mut visual, "question-0-option-1");
+        assert_eq!(selected(&mut visual, 0), vec![1]);
+        click_selector(&mut visual, "question-0-option-0");
+        assert_eq!(selected(&mut visual, 0), vec![0]);
+        assert!(visual.debug_bounds("question-0-answered").is_some());
+        assert!(
+            sent_actions(&mut commands).is_empty(),
+            "choosing never sends"
+        );
+        // Multiple choice from the keyboard: Space toggles the focused row,
+        // digits pick within the same question, Down moves to the next row.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, _| window.focus(&this.extras.option_focus[1][0]))
+        });
+        visual.run_until_parked();
+        press(&mut visual, "space");
+        assert_eq!(selected(&mut visual, 1), vec![0]);
+        press(&mut visual, "3");
+        assert_eq!(selected(&mut visual, 1), vec![0, 2]);
+        press(&mut visual, "space");
+        assert_eq!(selected(&mut visual, 1), vec![2]);
+        press(&mut visual, "down");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, _| {
+                assert!(this.extras.option_focus[1][1].is_focused(window))
+            })
+        });
+        assert_eq!(
+            selected(&mut visual, 0),
+            vec![0],
+            "other questions keep their choice"
+        );
+        // Typed answer, then Ctrl+Enter inside the picker sends exactly the
+        // literal labels and text once, and leaves the draft alone.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.extras.answers[2].update(cx, |input, cx| input.focus(window, cx))
+            })
+        });
+        visual.simulate_input("Ship it, 2");
+        // Offline, the keyboard is held to the same gate as the button.
+        let mut offline = question_state();
+        offline.connected = false;
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(offline), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("ctrl-enter");
+        assert!(
+            sent_actions(&mut commands).is_empty(),
+            "nothing sent while offline"
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(question_state()), window, cx);
+                this.extras.answers[2].update(cx, |input, cx| input.focus(window, cx))
+            })
+        });
+        visual.simulate_keystrokes("ctrl-enter");
+        let expected = vec![
+            "Online backfill".to_owned(),
+            "rustfmt --check".to_owned(),
+            "Ship it, 2".to_owned(),
+        ];
+        let sent = sent_actions(&mut commands);
+        assert!(
+            matches!(sent.as_slice(), [Action::Answers(answers)] if *answers == expected),
+            "{sent:?}"
+        );
+        // Wire shape (answerKinds all "text"): tests/protocol.rs.
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(this.composer.read(cx).value().as_ref(), "KEEP_DRAFT")
+        });
+        // Accepted: read-only (no second send) until the user edits or the
+        // question set changes.
+        let mut accepted = question_state();
+        accepted.receipt = Some(wks_native::controller::Receipt {
+            number: 1,
+            session: "a".into(),
+            action: Action::Answers(expected),
+            error: None,
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(accepted), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(workspace.read_with(&visual, |this, _| this.extras.answers_sent));
+        click_selector(&mut visual, "submit-answers");
+        click_selector(&mut visual, "question-0-option-2");
+        visual.simulate_keystrokes("ctrl-enter");
+        assert!(
+            sent_actions(&mut commands).is_empty(),
+            "sent answers are not resent"
+        );
+        assert_eq!(selected(&mut visual, 0), vec![0]);
+        click_selector(&mut visual, "edit-answers");
+        assert!(!workspace.read_with(&visual, |this, _| this.extras.answers_sent));
+        // Resolution, then a new set: the picker starts fresh.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.update_view(Arc::new(question_state()), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(selected(&mut visual, 0).is_empty() && selected(&mut visual, 1).is_empty());
+        workspace.read_with(&visual, |this, cx| {
+            assert!(!this.extras.answers_sent);
+            assert!(this.extras.answers[2].read(cx).value().is_empty());
+            assert_eq!(this.composer.read(cx).value().as_ref(), "KEEP_DRAFT");
+        });
+    }
+
+    #[gpui::test]
+    fn single_question_needs_an_explicit_send_and_keeps_typed_numbers_literal(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let mut next = state("a");
+        Arc::make_mut(&mut next.sessions)[0].questions = Some(serde_json::json!([
+            {"question":"Ship now?","options":[{"label":"Yes, please"},{"label":"No"}]}
+        ]));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(next), window, cx))
+        });
+        visual.run_until_parked();
+        click_selector(&mut visual, "question-0-option-0");
+        assert!(
+            sent_actions(&mut commands).is_empty(),
+            "a choice is not a send"
+        );
+        // Typing replaces the choice; the typed number goes out as text.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.extras.answers[0].update(cx, |input, cx| input.focus(window, cx))
+            })
+        });
+        visual.simulate_input("2");
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(
+                this.question_answers(cx),
+                vec!["2"],
+                "typing replaces the choice"
+            )
+        });
+        visual.simulate_keystrokes("enter");
+        let sent = sent_actions(&mut commands);
+        assert!(
+            matches!(sent.as_slice(), [Action::Answers(answers)] if answers == &["2".to_owned()]),
+            "{sent:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn question_picker_keeps_send_reachable_in_every_theme_and_window(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(question_state()), window, cx)
+            })
+        });
+        for (width, height) in [(720., 480.), (760., 520.), (1000., 700.), (1400., 900.)] {
+            visual.simulate_resize(size(px(width), px(height)));
+            for appearance in Appearance::ALL {
+                visual.update(|window, cx| {
+                    workspace.update(cx, |this, cx| this.set_appearance(appearance, window, cx))
+                });
+                visual.run_until_parked();
+                let label = format!("{} {width}x{height}", appearance.label());
+                let card = bounds_of(&mut visual, "question-card");
+                let list = bounds_of(&mut visual, "question-list");
+                let submit = bounds_of(&mut visual, "submit-answers");
+                let composer = bounds_of(&mut visual, "chat-composer");
+                let first = bounds_of(&mut visual, "question-0-text");
+                assert!(
+                    card.top() >= px(0.) && card.bottom() <= composer.top(),
+                    "{label}: {card:?} over {composer:?}"
+                );
+                for (name, inner) in [("list", list), ("send", submit)] {
+                    assert!(
+                        inner.left() >= card.left()
+                            && inner.right() <= card.right()
+                            && inner.top() >= card.top()
+                            && inner.bottom() <= card.bottom(),
+                        "{label}: {name} {inner:?} outside {card:?}"
+                    );
+                }
+                assert!(
+                    !submit.intersects(&list),
+                    "{label}: Send never scrolls with the list"
+                );
+                assert!(
+                    list.size.height >= px(56.),
+                    "{label}: list too short {list:?}"
+                );
+                assert!(
+                    first.top() >= list.top() && first.top() < list.bottom(),
+                    "{label}: first question hidden"
+                );
+                if height >= 620. {
+                    assert!(
+                        submit.top() >= list.bottom(),
+                        "{label}: Send sits below the list"
+                    );
+                }
+            }
+        }
+        // Moving focus to a row outside the list scrolls it into view.
+        visual.simulate_resize(size(px(760.), px(520.)));
+        visual.run_until_parked();
+        let list = bounds_of(&mut visual, "question-list");
+        assert!(
+            bounds_of(&mut visual, "question-2-answer").top() >= list.bottom(),
+            "starts out of view"
+        );
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.extras.answers[2].update(cx, |input, cx| input.focus(window, cx))
+            })
+        });
+        visual.run_until_parked();
+        visual.run_until_parked();
+        let answer = bounds_of(&mut visual, "question-2-answer");
+        assert!(
+            answer.top() >= list.top() && answer.bottom() <= list.bottom() + px(1.),
+            "{answer:?} not scrolled into {list:?}"
+        );
+    }
+
     #[gpui::test]
     fn unsupported_provider_is_never_silently_resumed_as_claude(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);

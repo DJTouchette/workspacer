@@ -609,8 +609,18 @@ be expanded, and attachment controls share the composer action row.
   clipboard fallback. Attachments are uploaded to the connected hub, remain bound
   to their original session, and stay in the draft after failed/uncertain sends.
   Remove discards a draft attachment; uploaded files follow the hub’s retention.
-- **Question choices** support single and multiple selections and custom answers.
-  Labels and typed numbers are sent literally. **Model and effort** opens from
+- **Question choices** dock above the composer as one card: each question
+  shows its position, header and whether to choose one or any, then numbered
+  (single) or checkbox (multiple) option rows with descriptions and a typed
+  answer field. Typing replaces a choice and choosing clears typed text.
+  Questions scroll inside the card while its header, progress and **Send**
+  stay visible. Nothing is sent until Send, Ctrl/Cmd+Enter inside the card, or
+  Enter in a typed answer (which otherwise moves to the next unanswered
+  question); all of them need every question answered. Tab and the arrow keys
+  move between rows, Enter/Space choose, and 1–9 choose within a question.
+  Accepted answers make the card read-only (with **Edit answers**) until the
+  question set changes. The composer draft is never touched or sent from the
+  card. Labels and typed numbers are sent literally. **Model and effort** opens from
   the title bar's model chip (which also shows the session's recorded effort) or
   `g m`. It starts on the session's exact model ID — selected in the list only
   when the catalog has that exact ID, never a near match — and its effort, and

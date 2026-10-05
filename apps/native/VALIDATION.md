@@ -1192,3 +1192,74 @@ inspected. Limits: the long-error and busy states were checked only by GPUI
 geometry tests, not captured. The `Ctrl Enter` keycap uses `p.surface`, so on
 the panel it reads as plain mono text, as it already does in the chat composer.
 No Windows/macOS or hardware-GPU capture.
+
+## Question picker card (#24, 2026-10-05)
+
+Cause: `render_questions` (`src/ui/features.rs`) drew pending AskUserQuestion
+sets as loose content in the composer dock: no surface, the question in the
+warning color, options as wrapped chips with no number/checkbox or chosen
+mark, no question count, and the whole set (Send included) inside a 240px
+(120px short) inner scroll. With the three-question fixture at 1000×700 the
+third option was cut mid-row and the other two questions and Send were only
+reachable by scrolling. Ctrl/Cmd+Enter in an answer field matched the
+composer's `Workspace > Input` binding and sent the composer draft as a chat
+message; Enter did nothing.
+
+Fix: one themed card (`surface`, `border`, `panel_radius`, floating shadow)
+with a header (Needs your input · N questions, k of N answered), a scrolling
+question list (gpui-component scrollbar) and a fixed footer (hint, keycap or
+error/sent status, primary Send). In windows under 620px tall, Send and
+progress share the header row. Each question has an overline (n of N ·
+header · Choose one/any, Answered mark), the question in text color, option
+rows with a number or checkbox badge, label and description, and its typed
+answer field. The dock may use 70% of the window while questions are pending.
+Keys: `SubmitAnswers` (Ctrl/Cmd+Enter) and `AnswerEnter` (Enter) are bound in
+`QuestionPicker` contexts after the composer bindings so they win at equal
+depth; Enter is consumed (it would otherwise fall through as text into the
+next field after focus moves). Explicit option focus handles let focus moves
+scroll the focused row into view. Answer routing (`Action::Answers`, literal
+labels, `answerKinds` text), question identity reset and the composer
+fallback are unchanged. Approval UI is untouched.
+
+Tests (GPUI): `question_picker_answers_by_click_and_keyboard_without_touching_the_draft`
+(busy rows inert; no send while unanswered, including Ctrl+Enter, which fails
+with the new bindings removed; Enter advances; single choice replaces; Space,
+digits and Down on multiple choice; offline Ctrl+Enter refused; one exact
+`Answers` send; draft kept; read-only after acceptance; Edit; reset on a new
+set), `single_question_needs_an_explicit_send_and_keeps_typed_numbers_literal`,
+and `question_picker_keeps_send_reachable_in_every_theme_and_window` (all
+eight themes at 720×480, 760×520, 1000×700, 1400×900: card above the
+composer, Send inside it and outside the list, first question visible; a
+focused off-screen answer scrolls into view). Full native suite (`cargo test
+--locked --features ui-tests --no-fail-fast -- --test-threads=1`, four jobs):
+346 passed, 1 ignored. Strict Clippy, rustfmt and `git diff --check` clean.
+
+Real windows: private Xvfb `:127`, lavapipe, throwaway HOME/XDG, debug build,
+`native-harness serve --pending-questions` on 18127 (new flag: mixed,
+two-option and free-text sets; each `claude.answer` printed to stderr and the
+set resolved). `smoke.py --session` opens a fixture session. Keyboard run
+(click, Tab, Space, 3, Tab, typed text, Ctrl+Enter) logged exactly one
+`{"answers":["Stop-the-world","cargo test, rustfmt --check","Ship it, 2"],"answerKinds":["text","text","text"]}`;
+nothing was logged before Ctrl+Enter, and the card cleared on resolution.
+Before: [mixed dark](docs/ui-question-picker-before-multi-dark.png),
+[short](docs/ui-question-picker-before-multi-narrow-short-dark.png),
+[free text light](docs/ui-question-picker-before-freeform-light.png). After:
+[mixed dark](docs/ui-question-picker-after-multi-dark.png),
+[mixed light](docs/ui-question-picker-after-multi-light.png),
+[single dark](docs/ui-question-picker-after-single-dark.png),
+[single light](docs/ui-question-picker-after-single-light.png),
+[free text](docs/ui-question-picker-after-freeform-dark.png),
+[keyboard focus](docs/ui-question-picker-after-multi-keyboard-dark.png),
+[ready](docs/ui-question-picker-after-multi-ready-dark.png),
+[760×640 light](docs/ui-question-picker-after-multi-narrow-light.png),
+[760×640 single](docs/ui-question-picker-after-single-narrow-dark.png),
+[760×520](docs/ui-question-picker-after-multi-short-dark.png),
+[720×480 Latte](docs/ui-question-picker-after-multi-min-latte.png),
+[all eight themes](docs/ui-question-picker-after-all-themes.png).
+
+Limits: the fixture resolves immediately, so the sent/waiting and error
+states were checked only by GPUI tests, not captured. In 720×480 and
+760×520 windows about one option row is visible at a time (it scrolls; Send
+stays visible). The scrollbar appears on hover/scroll only. Questions are
+answered all at once, not stepped like the desktop picker; there is no
+Decline. No Windows/macOS, hardware GPU, screen reader or real provider run.
