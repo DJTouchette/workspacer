@@ -875,7 +875,7 @@ impl Workspace {
                                                 .child(
                                                     this.icon_button(
                                                         SharedString::from(format!("archive-sidebar-{}", session.id)),
-                                                        "Archive on this device · restore from Session history → Archived",
+                                                        "Archive · hides it in every client, keeps it running · restore from Session history → Archived",
                                                         IconName::Inbox,
                                                         true,
                                                     )

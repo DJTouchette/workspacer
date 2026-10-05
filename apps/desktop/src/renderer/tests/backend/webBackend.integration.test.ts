@@ -146,6 +146,28 @@ describe('web backend bus integration', () => {
     unsubscribe();
   });
 
+  it('reads, changes and follows the hub’s shared session archive', async () => {
+    const api = createWebBackend('token', 'ws://host.test/bus');
+    client().results.set('sessionArchive.get', { version: 2, archived: { ws2: 7 } });
+    await expect(api.sessionArchiveGet!()).resolves.toEqual({ version: 2, archived: { ws2: 7 } });
+
+    client().results.set('sessionArchive.set', { version: 3, archived: {} });
+    await api.sessionArchiveSet!('ws2', false);
+    expect(call('sessionArchive.set').at(-1)?.params).toEqual({
+      sessionId: 'ws2',
+      archived: false,
+    });
+
+    const changed = vi.fn();
+    const off = api.onSessionArchiveChanged!(changed);
+    client().emit('sessionArchive.changed', { version: 4, archived: { ws1: 9 } });
+    expect(changed).toHaveBeenCalledWith({ version: 4, archived: { ws1: 9 } });
+    // A peer hub's copy is not this hub's archive.
+    client().emit('sessionArchive.changed', { version: 9, archived: {} }, 'peer-a');
+    expect(changed).toHaveBeenCalledTimes(1);
+    off();
+  });
+
   it('keeps paired worker actions on the local credential-owning host route', async () => {
     const api = createWebBackend('token', 'ws://host.test/bus');
     const off = api.onClaudeSessionUpdate(vi.fn());

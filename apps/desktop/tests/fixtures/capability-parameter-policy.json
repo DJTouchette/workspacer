@@ -129,7 +129,8 @@
     "federation.savePeersConfig": "peerConfigTrusted requires authenticated local owner identity. The saved peer credentials and dispatch selection can authorize later peer calls, but this write is restricted to the same server owner who owns that authority; providers, scoped operators, plugins and peer links cannot acquire it.",
     "remote.tailscaleInfo": "networkTrusted confines listener changes to the authenticated local owner. These changes can expose an already token-protected server, but cannot grant a scoped worker or peer host credentials or root commands. The private combined-node supervisor exposes only Tailscale status and this node's fixed HTTPS proxy.",
     "remote.tailscaleServe": "networkTrusted confines listener changes to the authenticated local owner. These changes can expose an already token-protected server, but cannot grant a scoped worker or peer host credentials or root commands. The private combined-node supervisor exposes only Tailscale status and this node's fixed HTTPS proxy.",
-    "remote.setSharing": "networkTrusted confines listener changes to the authenticated local owner. These changes can expose an already token-protected server, but cannot grant a scoped worker or peer host credentials or root commands. The private combined-node supervisor exposes only Tailscale status and this node's fixed HTTPS proxy."
+    "remote.setSharing": "networkTrusted confines listener changes to the authenticated local owner. These changes can expose an already token-protected server, but cannot grant a scoped worker or peer host credentials or root commands. The private combined-node supervisor exposes only Tailscale status and this node's fixed HTTPS proxy.",
+    "sessionArchive.set": "the only caller values are `sessionId`, an opaque bounded id, and the boolean `archived`. It adds or removes that id in the hub's own session-archive.json, which clients read only to decide which sidebar rows to list. Never a path, argv or policy input, and never a lifecycle action: nothing is stopped, signalled, closed or deleted"
   },
   "inertMethods": {
     "fleet.dispatchTargets": "Read-only discovery of explicitly enabled paired or linked worker targets. Returns remote protocol, actual provider readiness and remote repository choices, never the pairing credential.",
@@ -178,7 +179,8 @@
     "push.list": "no params; lists stored subscriptions. Operator-only by construction — it appears in neither scoped tier",
     "push.test": "no params; sends one canned notification to every registered subscription so a phone can answer \"is push reaching me at all\" without reading hub logs. Nothing about the message is caller-supplied — title and body are literals in RPCTest — so there is no text a caller can put on someone's lock screen, which is the shape that made a forged agent.snapshot worth closing. It is a SEND trigger available to the triage tier, bounded by the same recipient set every other push already goes to: subscriptions this hub stored, still-valid credential, endpoint already validated by validatePushEndpoint at subscribe time. The tier that may subscribe may already provoke real pushes by approving or answering, so this adds no reach it lacked — only a way to test it deliberately",
     "ui.fonts": "No caller parameters; reads uploaded font labels from the fixed display cache.",
-    "remote.sharingInfo": "No caller parameters; reports configured sharing state and caller manageability without changing the listener."
+    "remote.sharingInfo": "No caller parameters; reports configured sharing state and caller manageability without changing the listener.",
+    "sessionArchive.get": "no params; returns the hub's archived-session document (session ids and archive times). Discloses only ids the agent.snapshot feed already carries"
   },
   "parameterDecisions": {
     "fleet.selectDispatchModel": {

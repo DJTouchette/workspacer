@@ -152,6 +152,8 @@
     "routing.preview",
     "routing.select",
     "search.project",
+    "sessionArchive.get",
+    "sessionArchive.set",
     "sessions.attachTerminal",
     "sessions.conversation",
     "sessions.delete",
@@ -845,7 +847,9 @@
       "push.subscribe",
       "push.unsubscribe",
       "push.test",
-      "files.upload"
+      "files.upload",
+      "sessionArchive.get",
+      "sessionArchive.set"
     ],
     "view": [
       "remote.sharingInfo",
@@ -870,7 +874,8 @@
       "machine.power",
       "nodes.list",
       "push.key",
-      "agents.reportProgress"
+      "agents.reportProgress",
+      "sessionArchive.get"
     ]
   },
   "spawnKeys": [
@@ -1137,6 +1142,13 @@
       "Disposition": "open-by-decision",
       "Method": "",
       "Reason": "the PUBLISHED projection of a routing answer, and it is deliberately narrower than the answer the caller gets: decision id, ticket id, role, capability, provider, model, effort, mode and the reason list. Every one of those is a fact about which MODEL was chosen for which kind of work, which is what the fleet view renders (\"promoted from Sol High, reason: spend-down, reset in 38m\") and what a view-tier phone needs to render it. It names no credential, no path and no argv — in particular the request's `cwd` and `account` do NOT ride this topic even though they are on the decision, because \"which project directory is being worked in\" is a fact about the user's disk and belongs in the 0600 decision log, not on a plane every tier receives. Publishing it is the hub's own (the publish-ownership half of this registry refuses it to every non-trusted publisher), which matters because a forged routing.decision would put a model name and a spend-down justification into a fleet view for work nobody decided",
+      "Publisher": ""
+    },
+    {
+      "Pattern": "sessionArchive.changed",
+      "Disposition": "open-by-decision",
+      "Method": "",
+      "Reason": "the hub's whole archived-session document: session ids and the millisecond each was archived. Its read (sessionArchive.get) is in the view tier and the ids are the same ones agent.snapshot already discloses, so receiving it reveals nothing new. The topic is hub-published only (refused to non-trusted publishers by the publish-ownership half of this registry), so no client can forge another client's archive",
       "Publisher": ""
     },
     {

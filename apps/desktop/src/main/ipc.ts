@@ -552,6 +552,14 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // forwarded to the renderer over LAYOUT_CHANGED (see hubClient / setupHub).
   ipcMain.handle(IPC.LAYOUT_GET, () => callHub('layout.get', {}));
   ipcMain.handle(IPC.LAYOUT_SET, (_event, data: unknown) => callHub('layout.set', { data }));
+  // Shared session archive: which sessions every client hides. View state on
+  // the hub only — it never reaches a session's process.
+  ipcMain.handle(IPC.SESSION_ARCHIVE_GET, () => callHub('sessionArchive.get', {}));
+  ipcMain.handle(IPC.SESSION_ARCHIVE_SET, (_event, sessionId: unknown, archived: unknown) => {
+    if (typeof sessionId !== 'string' || typeof archived !== 'boolean')
+      throw new Error('sessionArchive.set requires a session id and a boolean');
+    return callHub('sessionArchive.set', { sessionId, archived });
+  });
   // Connection info for the remote-control client (URL + token for a QR/share).
   ipcMain.handle(IPC.HUB_GET_REMOTE_INFO, () => getRemoteShareInfo());
   ipcMain.handle(IPC.HUB_SET_REMOTE_SHARE, (_event, enabled: boolean) => setRemoteShare(!!enabled));

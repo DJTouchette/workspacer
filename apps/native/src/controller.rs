@@ -211,6 +211,16 @@ pub struct PendingMessage {
     pub before: Option<crate::reading::Anchor>,
 }
 
+/// A completed archive/restore, including failures, so the UI can settle the
+/// exact change it optimistically showed (not a later one for the session).
+#[derive(Clone, Debug)]
+pub struct ArchiveReceipt {
+    pub number: u64,
+    pub session: String,
+    pub archived: bool,
+    pub error: Option<String>,
+}
+
 /// Recent completed recency updates, including failures, attributed to the
 /// accepted launch's project and timestamp (not a later request in the slot).
 #[derive(Clone, Debug)]
@@ -231,6 +241,11 @@ pub struct View {
     pub project_registry: Option<Arc<Value>>,
     /// Last 128 completed touches; pending touches are never evicted or coalesced.
     pub project_touch_receipts: VecDeque<ProjectTouchReceipt>,
+    /// The hub's shared archived-session document (newest version seen), or
+    /// `None` while unknown or when this hub predates shared archives.
+    pub session_archive: Option<Arc<Value>>,
+    /// Last 128 completed archive/restore requests.
+    pub archive_receipts: VecDeque<ArchiveReceipt>,
     pub connected: bool,
     pub power_paused: bool,
     pub power_pause_generation: u64,
@@ -605,13 +620,12 @@ impl Worker {
         // Each accepted touch keeps its own job. Jobs queue on the shared
         // per-hub FIFO transaction lock; never cancel an acknowledged launch's
         // recency update merely because another launch used the same slot.
-        if key != "project-touch"
-            && let Some(abort) = self.request_aborts.remove(key)
-        {
+        let queued = matches!(key, "project-touch" | "archive-set");
+        if !queued && let Some(abort) = self.request_aborts.remove(key) {
             abort.abort();
         }
         let (abort, registration) = AbortHandle::new_pair();
-        if key != "project-touch" {
+        if !queued {
             self.request_aborts.insert(key, abort);
         }
         self.view.requests.insert(
@@ -851,6 +865,25 @@ impl Worker {
         self.dirty = true;
     }
 
+    /// Adopt a `sessionArchive` document unless an equal or newer one is
+    /// already held (a reply can land after the change event it caused).
+    fn apply_archive(&mut self, data: &Value) {
+        let Ok(document) = crate::features::archive_document(data.clone()) else {
+            return;
+        };
+        let version = document["version"].as_i64().unwrap_or(0);
+        if self
+            .view
+            .session_archive
+            .as_ref()
+            .is_some_and(|held| held["version"].as_i64().unwrap_or(0) >= version)
+        {
+            return;
+        }
+        self.view.session_archive = Some(Arc::new(document));
+        self.dirty = true;
+    }
+
     fn upsert(&mut self, data: &Value) {
         let Some(id) = Session::id_of(data) else {
             return;
@@ -912,6 +945,9 @@ impl Worker {
                 self.usage_pending = false;
                 self.fetch_fleet();
                 self.fetch_usage();
+                // Re-read the shared archive on every connect: changes made by
+                // another client while this one was away have no replay.
+                self.request(crate::features::Request::Archive);
                 let child = self.view.child.clone();
                 self.select(self.view.selected.clone()).await;
                 if child.is_some() {
@@ -957,6 +993,8 @@ impl Worker {
                         Err(error) => self.view.ui_request_warning = error.to_string(),
                         Ok(None) => (),
                     }
+                } else if topic == "sessionArchive.changed" {
+                    self.apply_archive(&data);
                 } else if topic == "agent.snapshot" {
                     if self.fleet_pending
                         && let Some(id) = Session::id_of(&data)
@@ -1177,7 +1215,7 @@ impl Worker {
             Completion::Request(epoch, number, request, result) => {
                 let key = request.key();
                 if epoch != self.epoch
-                    || (key != "project-touch"
+                    || (!matches!(key, "project-touch" | "archive-set")
                         && self
                             .view
                             .requests
@@ -1202,6 +1240,20 @@ impl Worker {
                             .unwrap_or(0)
                 {
                     self.view.project_registry = Some(value.clone());
+                }
+                if matches!(key, "archive" | "archive-set") && error.is_none() {
+                    self.apply_archive(&value);
+                }
+                if let crate::features::Request::SetArchive { session, archived } = &request {
+                    self.view.archive_receipts.push_back(ArchiveReceipt {
+                        number,
+                        session: session.clone(),
+                        archived: *archived,
+                        error: error.clone(),
+                    });
+                    if self.view.archive_receipts.len() > 128 {
+                        self.view.archive_receipts.pop_front();
+                    }
                 }
                 if let crate::features::Request::TouchProject { path, at } = &request {
                     self.view
@@ -1524,7 +1576,7 @@ impl Worker {
 
     /// Selected conversation, UI commands, and every shell being streamed.
     async fn subscribe(&mut self) {
-        let mut topics = BTreeSet::from(["agent.snapshot".into()]);
+        let mut topics = BTreeSet::from(["agent.snapshot".into(), "sessionArchive.changed".into()]);
         topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
         if let Some(id) = &self.view.selected {
             topics.insert(format!("agent.conversation.{id}"));

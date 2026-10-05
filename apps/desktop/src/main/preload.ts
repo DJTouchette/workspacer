@@ -661,6 +661,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(IPC.LAYOUT_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.LAYOUT_CHANGED, handler);
   },
+  // Shared session archive (hub-owned view state; never a lifecycle action).
+  sessionArchiveGet: (): Promise<{ version: number; archived: Record<string, number> }> =>
+    ipcRenderer.invoke(IPC.SESSION_ARCHIVE_GET),
+  sessionArchiveSet: (
+    sessionId: string,
+    archived: boolean,
+  ): Promise<{ version: number; archived: Record<string, number> }> =>
+    ipcRenderer.invoke(IPC.SESSION_ARCHIVE_SET, sessionId, archived),
+  onSessionArchiveChanged: (
+    callback: (doc: { version: number; archived: Record<string, number> }) => void,
+  ): (() => void) => {
+    // Main already forwards every hub event; pick this hub's archive changes.
+    const handler = (
+      _e: Electron.IpcRendererEvent,
+      ev: { type: string; hub?: string; data?: unknown },
+    ) => {
+      if (ev.type === 'sessionArchive.changed' && !ev.hub)
+        callback(ev.data as { version: number; archived: Record<string, number> });
+    };
+    ipcRenderer.on(IPC.HUB_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC.HUB_EVENT, handler);
+  },
   /** A facade agent asked to open a visible terminal (open_terminal →
    *  terminals.open). The renderer opens the pane (nested under parentSessionId
    *  when it names a live agent). */

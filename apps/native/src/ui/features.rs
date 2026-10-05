@@ -92,6 +92,12 @@ pub(super) struct Extras {
     /// The last change sent, until a newer titles receipt arrives.
     pub title_sent: Option<wks_native::features::TitleChange>,
     pub title_sent_after: u64,
+    /// Archive changes sent to the hub and not yet confirmed: shown at once,
+    /// settled by the hub's document or by the request's receipt.
+    pub archive_pending: std::collections::BTreeMap<String, bool>,
+    pub archive_receipt: u64,
+    /// Device-only archives already offered to the hub this run.
+    pub archive_migrating: std::collections::BTreeSet<String>,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -151,6 +157,9 @@ impl Extras {
             title_picker_key: String::new(),
             title_sent: None,
             title_sent_after: 0,
+            archive_pending: Default::default(),
+            archive_receipt: 0,
+            archive_migrating: Default::default(),
         }
     }
 }
@@ -227,11 +236,91 @@ impl Workspace {
             .cloned()
             .unwrap_or_else(|| session.title().into())
     }
+    /// Hidden from the normal list. The hub's shared archive (so web and
+    /// every other client agree) plus any device-only archive not yet moved
+    /// there; an unconfirmed change shows as already made.
     pub(super) fn archived(&self, id: &str) -> bool {
+        if let Some(&pending) = self.extras.archive_pending.get(id) {
+            return pending;
+        }
+        self.locally_archived(id)
+            || self
+                .view
+                .session_archive
+                .as_ref()
+                .is_some_and(|doc| wks_native::features::archive_contains(doc, id))
+    }
+    fn locally_archived(&self, id: &str) -> bool {
         self.settings
             .archived
             .get(&self.project_scope)
             .is_some_and(|ids| ids.iter().any(|s| s == id))
+    }
+    /// The connected hub keeps a shared archive (older hubs do not).
+    fn hub_archive(&self) -> bool {
+        self.view.connected && !self.demo && self.view.session_archive.is_some()
+    }
+    /// Settle sent archive changes and move device-only archives to the hub,
+    /// so a session archived here before archives were shared hides on the
+    /// web too. A device copy is dropped only once the hub holds it.
+    fn sync_archive(&mut self, next: &View, cx: &mut Context<Self>) {
+        for receipt in next
+            .archive_receipts
+            .iter()
+            .filter(|r| r.number > self.extras.archive_receipt)
+        {
+            if self.extras.archive_pending.get(&receipt.session) == Some(&receipt.archived) {
+                self.extras.archive_pending.remove(&receipt.session);
+            }
+            if let Some(error) = &receipt.error {
+                let verb = if receipt.archived {
+                    "archive"
+                } else {
+                    "restore"
+                };
+                self.extras.notice = format!("Could not {verb} the session: {error}");
+            }
+        }
+        if let Some(last) = next.archive_receipts.back() {
+            self.extras.archive_receipt = self.extras.archive_receipt.max(last.number);
+        }
+        let Some(doc) = next.session_archive.clone() else {
+            return;
+        };
+        self.extras
+            .archive_pending
+            .retain(|id, archived| wks_native::features::archive_contains(&doc, id) != *archived);
+        if !next.connected || self.demo {
+            return;
+        }
+        let local = self
+            .settings
+            .archived
+            .get(&self.project_scope)
+            .cloned()
+            .unwrap_or_default();
+        let mut moved = false;
+        for id in local {
+            if wks_native::features::archive_contains(&doc, &id) {
+                if let Some(ids) = self.settings.archived.get_mut(&self.project_scope) {
+                    ids.retain(|s| s != &id);
+                }
+                moved = true;
+            } else if !self.extras.archive_pending.contains_key(&id)
+                && self.extras.archive_migrating.insert(id.clone())
+            {
+                let _ = self
+                    .controller
+                    .command(Command::Request(Request::SetArchive {
+                        session: id,
+                        archived: true,
+                    }));
+            }
+        }
+        if moved {
+            self.settings.archived.retain(|_, ids| !ids.is_empty());
+            self.save_settings(cx);
+        }
     }
     pub(super) fn request(&mut self, request: Request, cx: &mut Context<Self>) {
         self.extras.notice.clear();
@@ -348,6 +437,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.sync_file_viewer(next, window, cx);
+        self.sync_archive(next, cx);
         if self.settings.notifications
             && self.view.connected
             && next.connected
@@ -1027,22 +1117,52 @@ impl Workspace {
                 div()
                     .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
-                    .child("Names and archives are saved on this device for this connection. Archiving keeps the conversation and does not stop an agent."),
+                    .child("Names are saved on this device. Archives are shared with every client of this hub, web included. Archiving keeps the conversation and does not stop an agent."),
             )
     }
 
+    /// Archive or restore. Only ever a visibility change: no stop, signal,
+    /// selection change or forget is sent, and a running session keeps
+    /// running. Shared through the hub when it supports it; otherwise kept on
+    /// this device for this connection, as before.
     pub(super) fn toggle_archive(&mut self, id: &str, cx: &mut Context<Self>) {
-        let ids = self
-            .settings
-            .archived
-            .entry(self.project_scope.clone())
-            .or_default();
-        if ids.iter().any(|s| s == id) {
-            ids.retain(|s| s != id);
-        } else {
-            ids.push(id.into());
+        let archive = !self.archived(id);
+        if !archive && self.locally_archived(id) {
+            if let Some(ids) = self.settings.archived.get_mut(&self.project_scope) {
+                ids.retain(|s| s != id);
+            }
+            self.settings.archived.retain(|_, ids| !ids.is_empty());
+            self.save_settings(cx);
         }
-        self.save_settings(cx);
+        let shared = !archive
+            && self
+                .view
+                .session_archive
+                .as_ref()
+                .is_some_and(|doc| wks_native::features::archive_contains(doc, id));
+        if self.hub_archive() && (archive || shared || self.extras.archive_pending.contains_key(id))
+        {
+            match self
+                .controller
+                .command(Command::Request(Request::SetArchive {
+                    session: id.into(),
+                    archived: archive,
+                })) {
+                Ok(()) => {
+                    self.extras.archive_pending.insert(id.into(), archive);
+                    self.extras.notice.clear();
+                }
+                Err(error) => self.extras.notice = error.to_string(),
+            }
+        } else if archive {
+            self.settings
+                .archived
+                .entry(self.project_scope.clone())
+                .or_default()
+                .push(id.into());
+            self.save_settings(cx);
+        }
+        cx.notify();
     }
     pub(super) fn resume_session(
         &mut self,
@@ -1213,7 +1333,7 @@ impl Workspace {
                     .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .child(self.button("archive-session", if archived { "Restore from archive" } else { "Archive on this device" }, true)
+                    .child(self.button("archive-session", if archived { "Restore from archive" } else { "Archive" }, true)
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&archive, cx))))
                     .when(s.stopped() && self.supported_session(), |d| d.child(self.button("resume-session", "Resume session…", !busy)
                         .when(!busy, |d| d.on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx))))))
@@ -1237,7 +1357,7 @@ impl Workspace {
                         .child(self.danger_button("confirm-end", "End session", !busy).debug_selector(|| "confirm-end".into()).when(!busy, |d| d.on_click(cx.listener(|this, _, _, cx| { this.act(Action::Terminate, cx); this.extras.confirm_end = None; }))))),
             ))
             .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(
-                "Archiving hides the session on this device and keeps it running. Ending stops the agent.",
+                "Archiving hides the session from the list in every client of this hub and keeps it running. Ending stops the agent.",
             ));
         let notice = self.view.notice.clone();
         div()

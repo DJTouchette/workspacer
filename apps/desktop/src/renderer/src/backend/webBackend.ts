@@ -23,7 +23,7 @@ import type { UsagePacingScheduleWire, UsageReportWire } from '../../../main/sha
  * scripts/web-capability-audit.mjs inventories them against the complete type.
  */
 
-import type { ElectronAPI, SessionListEntry } from '../types/electron';
+import type { ElectronAPI, SessionArchiveDoc, SessionListEntry } from '../types/electron';
 import type { ConversationTurn } from '../types/claudeSession';
 import type {
   ClaudeSessionSnapshot,
@@ -1410,6 +1410,16 @@ export function createWebBackend(
       client.subscribe('layout.changed', (ev) =>
         callback(ev.data as { version: number; data: unknown }),
       ),
+    // Shared session archive: hub-owned view state, so an archive made by the
+    // native client (or another browser) hides the row here too.
+    sessionArchiveGet: () => client.call<SessionArchiveDoc>('sessionArchive.get', {}),
+    sessionArchiveSet: (sessionId, archived) =>
+      client.call<SessionArchiveDoc>('sessionArchive.set', { sessionId, archived }),
+    onSessionArchiveChanged: (callback) =>
+      client.subscribe('sessionArchive.changed', (ev) => {
+        // Peer hubs never forward it; a stamped copy is not this hub's archive.
+        if (!ev.hub) callback(ev.data as SessionArchiveDoc);
+      }),
     // The brain (headless provider) has no renderer to push IPC.
     // FACADE_OPEN_TERMINAL to, so it publishes the identical payload as
     // facade.openTerminal on the bus instead (visibleterm.go). The topic is

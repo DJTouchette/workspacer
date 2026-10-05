@@ -48,6 +48,8 @@
     "routing.preferences.validate",
     "routing.preview",
     "routing.select",
+    "sessionArchive.get",
+    "sessionArchive.set",
     "usage.pacingSchedule",
     "usage.report",
     "usage.setPacingSchedule"
