@@ -195,10 +195,18 @@ pub enum Effect {
     Recent,
     Changes(String),
     Inspector,
-    Spawn { cwd: String, claude: bool },
+    Spawn {
+        cwd: String,
+        claude: bool,
+    },
     PreviousAgent,
     NextAgent,
     NextAttention,
+    /// The selected agent's own terminal: shown (or toggled), never running
+    /// a requested command.
+    Terminal {
+        toggle: bool,
+    },
     Unsupported(String),
 }
 pub fn effect(intent: &Intent) -> Effect {
@@ -209,17 +217,17 @@ pub fn effect(intent: &Intent) -> Effect {
    "claude"=>Effect::Spawn{cwd:cwd.clone(),claude:true},"settings"=>Effect::Settings,
    "sessions"|"recentagents"=>Effect::Recent,"review"=>Effect::Changes(cwd.clone()),
    "agents"|"agentwatch"=>Effect::Conversation,"inspector"=>Effect::Inspector,
-   "terminal"=>Effect::Unsupported("Terminal panes are unavailable in the native client. No shell or command was started; use a client with a terminal pane.".into()),
+   "terminal"=>Effect::Unsupported("The native client does not open hub terminal panes; no shell or command was started. Each agent has its own terminal (Ctrl+` in the conversation).".into()),
    other=>Effect::Unsupported(format!("The native client does not support the {other} pane.")),
   },
-  Intent::Terminal{..}=>Effect::Unsupported("Terminal panes are unavailable in the native client. No shell or command was started; copy the request to retain its command and project details.".into()),
+  Intent::Terminal{..}=>Effect::Unsupported("The native client does not run hub terminal requests; no shell or command was started. Copy the request to keep its command, or run it in the agent's own terminal (Ctrl+`).".into()),
   Intent::OpenGuide=>Effect::Unsupported("The native client has no Workspacer Guide pane. Read native guide opens documentation for its supported controls.".into()),
   Intent::OpenPlugin(name)=>Effect::Unsupported(format!("The native client cannot render plugin pane {name}.")),
   Intent::RunAction{action,..}=>match action.as_str(){
    "prev-agent"=>Effect::PreviousAgent,"next-agent"=>Effect::NextAgent,"next-attention"=>Effect::NextAttention,
    "spawn-agent"=>Effect::Spawn{cwd:String::new(),claude:false},"new-claude"=>Effect::Spawn{cwd:String::new(),claude:true},
    "settings"=>Effect::Settings,"open-review"=>Effect::Changes(String::new()),"toggle-inspector"=>Effect::Inspector,
-   "new-terminal"|"toggle-terminal"=>Effect::Unsupported("Terminal panes are unavailable in the native client. No shell was started.".into()),
+   "new-terminal"=>Effect::Terminal{toggle:false},"toggle-terminal"=>Effect::Terminal{toggle:true},
    "toggle-help"=>effect(&Intent::OpenGuide),
    other=>Effect::Unsupported(format!("The native client does not apply the {other} UI action. Decision and session-control actions require their scoped controls.")),
   },
@@ -247,6 +255,13 @@ mod effect_tests {
                 url: String::new()
             }),
             Effect::Changes("/different".into())
+        );
+        assert_eq!(
+            effect(&Intent::RunAction {
+                action: "toggle-terminal".into(),
+                digit: None
+            }),
+            Effect::Terminal { toggle: true }
         );
         for action in [
             "fleet-approve-yes",

@@ -10,6 +10,8 @@ use anyhow::{Result, ensure};
 /// and the code editor's comfortable line budget.
 pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
 pub const MAX_TEXT_LINES: usize = 50_000;
+/// Largest file the editor writes back (the hub reads files up to 5 MiB).
+pub const MAX_EDITABLE_BYTES: usize = 4 * 1024 * 1024;
 /// `fs.readImage` refuses larger sources; matched here for the message.
 pub const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 /// Displayed images are re-encoded no larger than this on either side.
@@ -397,6 +399,35 @@ pub fn normalize(path: &str) -> String {
     format!("{prefix}{}", parts.join(&sep.to_string()))
 }
 
+/// `relative` (a repository- or explorer-relative path) joined under `root`,
+/// or `None` when it would leave `root` lexically (`..`, an absolute path).
+/// The hub still canonicalizes and contains every read and diff; this keeps
+/// the client from even asking for a path outside the tree it shows.
+pub fn join_within(root: &str, relative: &str) -> Option<String> {
+    let relative = relative.trim();
+    if root.trim().is_empty()
+        || relative.is_empty()
+        || crate::transcript::absolute(relative)
+        || relative.contains(['\0', '\n', '\r'])
+        || relative.split(['/', '\\']).any(|part| part == "..")
+    {
+        return None;
+    }
+    let root = normalize(root);
+    let joined = normalize(&crate::transcript::resolve_path(&root, relative));
+    within(&root, &joined).then_some(joined)
+}
+
+/// `path` is `root` or lies beneath it (both already normalized).
+pub fn within(root: &str, path: &str) -> bool {
+    let root = root.trim_end_matches(['/', '\\']);
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with(['/', '\\']))
+        || (root.is_empty() && path.starts_with(['/', '\\']))
+}
+
 /// Raster formats both the hub and the native decoder accept. SVG is source.
 pub fn image(path: &str) -> bool {
     path.rsplit_once('.').is_some_and(|(_, ext)| {
@@ -508,6 +539,26 @@ pub fn size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explorer_paths_stay_inside_their_root() {
+        assert_eq!(
+            join_within("/repo", "src/lib.rs").as_deref(),
+            Some("/repo/src/lib.rs")
+        );
+        assert_eq!(join_within("/repo/", "a/./b").as_deref(), Some("/repo/a/b"));
+        assert_eq!(join_within("/", "etc/hosts").as_deref(), Some("/etc/hosts"));
+        for escape in ["../etc/passwd", "a/../../x", "/etc/passwd", "", "a\0b"] {
+            assert_eq!(join_within("/repo", escape), None, "{escape}");
+        }
+        assert!(within("/repo", "/repo/x"));
+        assert!(within("/repo", "/repo"));
+        assert!(!within("/repo", "/repository/x"));
+        assert_eq!(
+            join_within(r"C:\repo", r"src\main.rs").as_deref(),
+            Some(r"C:\repo\src\main.rs")
+        );
+    }
 
     fn file(path: &str, line: Option<u32>, column: Option<u32>, kind: FileKind) -> Link {
         Link::File(FileTarget {

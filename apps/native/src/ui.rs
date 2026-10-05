@@ -1,6 +1,7 @@
 mod bus_commands;
 mod children;
 mod chrome;
+mod explorer;
 mod features;
 mod file_viewer;
 mod launch;
@@ -8,12 +9,14 @@ mod markdown;
 mod navigation;
 mod projects;
 mod remote;
+mod review;
 mod scroll;
 mod settings;
 mod sidebar;
 mod smooth_scroll;
 mod states;
 mod syntax;
+mod terminal;
 mod tools;
 mod transcript;
 mod typography;
@@ -351,6 +354,9 @@ actions!(
         ViewerTab,
         ViewerToggleSource,
         ViewerFind,
+        ViewerSave,
+        OpenEditor,
+        ToggleTerminal,
         Quit
     ]
 );
@@ -418,6 +424,15 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-shift-v", ViewerToggleSource, Some("FileViewer")),
         KeyBinding::new("ctrl-f", ViewerFind, Some("FileViewer")),
         KeyBinding::new("cmd-f", ViewerFind, Some("FileViewer")),
+        KeyBinding::new("ctrl-s", ViewerSave, Some("FileViewer")),
+        KeyBinding::new("cmd-s", ViewerSave, Some("FileViewer")),
+        // The editor on the selected session's folder, and its terminal.
+        KeyBinding::new("ctrl-shift-e", OpenEditor, Some("Workspace")),
+        KeyBinding::new("cmd-shift-e", OpenEditor, Some("Workspace")),
+        KeyBinding::new("g f", OpenEditor, Some("VimNormal")),
+        KeyBinding::new("ctrl-`", ToggleTerminal, Some("Workspace")),
+        KeyBinding::new("cmd-`", ToggleTerminal, Some("Workspace")),
+        KeyBinding::new("g t", ToggleTerminal, Some("VimNormal")),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("ctrl-shift-q", Quit, None),
     ]);
@@ -427,6 +442,9 @@ pub fn bind_keys(cx: &mut App) {
 pub struct Workspace {
     ui_bus: bus_commands::UiState,
     extras: features::Extras,
+    explorer: explorer::Explorer,
+    review: review::ReviewUi,
+    terminal: terminal::TerminalUi,
     remote: remote::RemoteUi,
     chat: transcript::ChatUi,
     child_ui: children::ChildUi,
@@ -637,7 +655,7 @@ impl Workspace {
         // A key aimed at something the file viewer covers (focus pulled
         // behind it) is dropped before any binding or text input sees it.
         let (this, handle) = (cx.entity().downgrade(), window.window_handle());
-        focus_watch.push(cx.intercept_keystrokes(move |_, window, cx| {
+        focus_watch.push(cx.intercept_keystrokes(move |event, window, cx| {
             if window.window_handle() != handle {
                 return;
             }
@@ -645,12 +663,16 @@ impl Workspace {
                 if this.viewer_modal(window) && !this.viewer_has_focus(window, cx) {
                     this.hold_viewer_focus(window, cx);
                     cx.stop_propagation();
+                } else if this.terminal_keystroke(&event.keystroke, window, cx) {
+                    // A focused terminal takes keys ahead of every binding.
+                    cx.stop_propagation();
                 }
             });
         }));
         focus_watch.push(cx.on_release(|this, cx| {
-            // A popped-out file viewer never outlives its workspace.
+            // A popped-out file viewer or terminal never outlives its workspace.
             this.close_popout_window(cx);
+            this.close_terminal_popout(cx);
             if let Some(path) = &this.settings_path
                 && let Err(error) = this.settings.save(path)
             {
@@ -660,6 +682,9 @@ impl Workspace {
         window.focus(&focus);
         Self {
             extras,
+            explorer: Default::default(),
+            review: Default::default(),
+            terminal: Default::default(),
             remote: Default::default(),
             chat: transcript::ChatUi::default(),
             child_ui: children::ChildUi::default(),
@@ -774,6 +799,7 @@ impl Workspace {
         let children_changed = self.sync_children(&view, cx);
         self.receive_chat_requests(&view, cx);
         self.sync_features(&view, window, cx);
+        self.sync_explorer(&view, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt
         {
@@ -1001,6 +1027,9 @@ impl Workspace {
             .unwrap_or_default();
         self.sync_projects(&view);
         self.view = view;
+        self.resume_explorer(cx);
+        self.sync_terminals(window, cx);
+        self.sync_review(cx);
         self.hand_off_update(cx);
         self.land_on_latest();
         if self.new_session || self.screen == Screen::Model {
@@ -1429,14 +1458,18 @@ impl Render for Workspace {
                 .into_any_element();
         }
 
+        if self.screen == Screen::Changes {
+            let content = self.render_review(window, cx);
+            return self
+                .shell(window, cx)
+                .child(sidebar)
+                .child(content)
+                .children(self.render_docked_viewer(window, cx))
+                .into_any_element();
+        }
         if matches!(
             self.screen,
-            Screen::Recent
-                | Screen::Changes
-                | Screen::History
-                | Screen::Session
-                | Screen::Setup
-                | Screen::Model
+            Screen::Recent | Screen::History | Screen::Session | Screen::Setup | Screen::Model
         ) {
             let content = self.render_feature(window, cx);
             return self
@@ -1465,6 +1498,7 @@ impl Render for Workspace {
                 .into_any_element();
         }
 
+        let terminal_panel = self.render_terminal_panel(window, cx);
         // Transparent fade rather than a ruled strip: history scrolls softly
         // under the floating title pill instead of colliding with a hard edge.
         let header = div().absolute().top_0().left_0().w_full().flex().justify_center()
@@ -1507,7 +1541,7 @@ impl Render for Workspace {
 
         self.shell(window, cx)
             .child(sidebar)
-            .child(div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
+            .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat)).child(div().relative().flex_1().min_h_0().w_full().flex().flex_col().bg(rgb(p.chat))
                 .when(self.view.transcript.rows.is_empty() && (self.view.child.is_some() || self.child_ui.agents.unanchored.is_empty()), |d| d.child(self.render_empty_state(compact, window, cx)))
                 .when(self.view.transcript.rows.is_empty() && self.view.child.is_none() && !self.child_ui.agents.unanchored.is_empty(), |d| d.child(self.render_child_only(window, cx)))
                 .when(!self.view.transcript.rows.is_empty(), |d| d.child(transcript).child(self.wheel_smoother(cx)))
@@ -1576,7 +1610,7 @@ impl Render for Workspace {
                             .when(animate_activity, |d| d.child(brand_spinner(12., p, "composer-activity")))
                             .child(div().truncate().child(activity.unwrap_or_else(|| if enabled { "Ready" } else { "Session unavailable" }.into()))))
                         .child(div().flex().gap_1().items_center().flex_shrink_0().child(keycap(if cfg!(target_os = "macos") { "⌘ Enter" } else { "Ctrl Enter" }, p)).child("to send"))
-                        .when(!narrow, |d| d.child("Enter for a new line")))))) ))
+                        .when(!narrow, |d| d.child("Enter for a new line")))))) )).children(terminal_panel))
             .children(self.render_docked_viewer(window, cx))
             .into_any_element()
     }
@@ -2085,22 +2119,25 @@ mod tests {
         });
         assert!(text.starts_with("line 1\n"));
         assert_eq!(cursor.line, 11, "line anchors place the cursor on line 12");
-        // Read-only: typing reaches no file and changes nothing.
+        // Editable: typing changes the editor only. Nothing reaches the
+        // hub until Save.
         visual.simulate_input("typed");
         visual.run_until_parked();
-        workspace.read_with(&visual, |this, cx| {
-            assert_eq!(
-                this.file_viewer()
-                    .unwrap()
-                    .read(cx)
-                    .editor()
-                    .unwrap()
-                    .read(cx)
-                    .value()
-                    .to_string(),
-                text
-            );
+        let pane = pane_of(&workspace, &visual);
+        pane.read_with(&visual, |pane, cx| {
+            let value = pane.editor().unwrap().read(cx).value().to_string();
+            assert_ne!(value, text);
+            assert!(value.contains("typed"));
+            assert!(pane.dirty());
         });
+        assert!(commands.try_recv().is_err(), "typing sent nothing");
+        // Restoring the loaded text leaves nothing unsaved.
+        visual.update(|window, cx| {
+            let editor = pane.read(cx).editor().unwrap().clone();
+            editor.update(cx, |e, cx| e.set_value(text.clone(), window, cx));
+        });
+        visual.run_until_parked();
+        assert!(!pane.read_with(&visual, |p, _| p.dirty()));
         // Wheel over the sheet never scrolls the conversation underneath.
         let top = |this: &Workspace| {
             let top = this.list.logical_scroll_top();
@@ -2587,15 +2624,36 @@ mod tests {
             visual.run_until_parked();
             untouched(&mut visual, &mut commands, "typing");
             if selector == "file-viewer-text" {
-                // The viewer's own keys still work: select all and copy.
+                // The keys above edited the source, not the composer.
+                let pane =
+                    workspace.read_with(&visual, |this, _| this.file_viewer().cloned().unwrap());
+                let edited = pane.read_with(&visual, |pane, cx| {
+                    assert!(pane.dirty(), "the source is editable");
+                    pane.editor().unwrap().read(cx).value().to_string()
+                });
+                assert!(edited.contains("typed") && edited.contains("one\ntwo\n"));
+                // The editor's own keys still work: select all and copy.
                 visual.simulate_keystrokes("ctrl-a ctrl-c");
                 visual.run_until_parked();
                 let copied = visual.update(|_, cx| cx.read_from_clipboard());
-                assert_eq!(
-                    copied.and_then(|item| item.text()).as_deref(),
-                    Some("one\ntwo\n")
-                );
+                assert_eq!(copied.and_then(|item| item.text()), Some(edited));
                 untouched(&mut visual, &mut commands, "ctrl-a ctrl-c");
+                // Esc over unsaved edits asks first; Discard closes.
+                visual.simulate_keystrokes("escape");
+                visual.run_until_parked();
+                untouched(&mut visual, &mut commands, "escape over edits");
+                let discard = visual
+                    .debug_bounds("file-viewer-prompt-discard")
+                    .expect("unsaved edits ask before closing");
+                visual.simulate_click(discard.center(), gpui::Modifiers::default());
+                visual.run_until_parked();
+                workspace.read_with(&visual, |this, _| assert!(this.file_viewer().is_none()));
+                visual.update(|window, cx| {
+                    workspace.update(cx, |this, cx| {
+                        this.composer.read(cx).focus_handle(cx).focus(window)
+                    })
+                });
+                continue;
             }
             // Focus pulled behind the sheet (a late receipt, a UI request) is
             // taken back before a key can reach the composer.
@@ -3484,6 +3542,15 @@ mod tests {
             None,
             serde_json::json!({"contents": "# Next\n", "size": 7}),
         );
+        // The source was edited by the keys above: the window asks before
+        // replacing it with the new link.
+        window.run_until_parked();
+        assert_eq!(window.update(|_, cx| pane.read(cx).state().number), 1);
+        let discard = window
+            .debug_bounds("file-viewer-prompt-discard")
+            .expect("the edited file asks first");
+        window.simulate_click(discard.center(), gpui::Modifiers::default());
+        window.run_until_parked();
         visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
                 let mut view = (*this.view).clone();
@@ -8293,7 +8360,7 @@ mod tests {
             let(intent,payload)=wks_native::ui_requests::parse("facade.openTerminal",&data).unwrap().unwrap();
             let mut next=state("a");next.ui_requests.push(wks_native::ui_requests::Request{number:1,intent,payload});
             this.update_view(Arc::new(next),window,cx);
-            assert!(this.ui_bus.notice.contains("Terminal panes are unavailable"));
+            assert!(this.ui_bus.notice.contains("does not run hub terminal requests"));
             assert_eq!(this.screen,Screen::Conversation);
         }));
         assert!(matches!(
@@ -8404,5 +8471,611 @@ mod tests {
             Command::ResumePowerPause(42)
         ));
         assert!(commands.try_recv().is_err());
+    }
+
+    /// Put any request state into the view, as the controller does.
+    fn request_state(
+        workspace: &Entity<Workspace>,
+        visual: &mut VisualTestContext,
+        request: wks_native::features::Request,
+        number: u64,
+        value: serde_json::Value,
+    ) {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.requests.insert(
+                    request.key(),
+                    wks_native::features::RequestState {
+                        request,
+                        number,
+                        loading: false,
+                        error: None,
+                        value: Arc::new(value),
+                    },
+                );
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+    }
+
+    fn click(visual: &mut VisualTestContext, selector: &'static str) {
+        let bounds = visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is not on screen"));
+        visual.simulate_click(bounds.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+    }
+
+    /// Commands, without the terminal resizes painting produces.
+    fn effects(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> Vec<Command> {
+        std::iter::from_fn(|| commands.try_recv().ok())
+            .filter(|c| {
+                !matches!(
+                    c,
+                    Command::Terminal(wks_native::terminal::Command::Resize { .. })
+                )
+            })
+            .collect()
+    }
+
+    fn editor_text(pane: &Entity<file_viewer::PreviewPane>, visual: &VisualTestContext) -> String {
+        pane.read_with(visual, |pane, cx| {
+            pane.editor().unwrap().read(cx).value().to_string()
+        })
+    }
+
+    #[gpui::test]
+    fn editor_saves_through_the_hub_and_never_drops_unsaved_edits(cx: &mut TestAppContext) {
+        use wks_native::features::Request;
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        let lib = file_target("/repo/src/lib.rs");
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            lib.clone(),
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": "one\n", "size": 4}),
+        );
+        settle(&mut visual);
+        let pane = pane_of(&workspace, &visual);
+        assert!(
+            visual.debug_bounds("file-viewer-save").is_some(),
+            "text files offer Save"
+        );
+        assert!(visual.debug_bounds("file-viewer-dirty").is_none());
+        // The source is editable and edits mark the file unsaved.
+        visual.simulate_input("X");
+        visual.run_until_parked();
+        assert_eq!(editor_text(&pane, &visual), "Xone\n");
+        assert!(pane.read_with(&visual, |p, _| p.dirty()));
+        assert!(visual.debug_bounds("file-viewer-dirty").is_some());
+        // Ctrl+S writes through the hub, comparing against what was loaded.
+        visual.simulate_keystrokes("ctrl-s");
+        visual.run_until_parked();
+        let save = |commands: &mut tokio::sync::mpsc::Receiver<Command>| match effects(commands)
+            .as_slice()
+        {
+            [
+                Command::Request(Request::SaveFile {
+                    path,
+                    contents,
+                    base,
+                    force,
+                    session,
+                }),
+            ] => {
+                assert_eq!((path.as_str(), session.as_str()), ("/repo/src/lib.rs", "a"));
+                (contents.clone(), base.clone(), *force)
+            }
+            other => panic!("expected one save, got {} commands", other.len()),
+        };
+        assert_eq!(
+            save(&mut commands),
+            ("Xone\n".into(), "one\n".into(), false)
+        );
+        let save_request = |contents: &str, base: &str, force: bool| Request::SaveFile {
+            session: "a".into(),
+            path: "/repo/src/lib.rs".into(),
+            contents: contents.into(),
+            base: base.into(),
+            force,
+        };
+        request_state(
+            &workspace,
+            &mut visual,
+            save_request("Xone\n", "one\n", false),
+            5,
+            serde_json::json!({"saved": true, "contents": "Xone\n"}),
+        );
+        assert!(!pane.read_with(&visual, |p, _| p.dirty()), "saved");
+        assert!(
+            visual.debug_bounds("file-viewer-note").is_some(),
+            "says Saved"
+        );
+
+        // Someone else changed the file: nothing is overwritten silently.
+        visual.simulate_input("Y");
+        visual.simulate_keystrokes("ctrl-s");
+        visual.run_until_parked();
+        let edited = editor_text(&pane, &visual);
+        assert!(edited.contains('X') && edited.contains('Y') && edited.ends_with("one\n"));
+        assert_eq!(
+            save(&mut commands),
+            (edited.clone(), "Xone\n".into(), false)
+        );
+        request_state(
+            &workspace,
+            &mut visual,
+            save_request(&edited, "Xone\n", false),
+            6,
+            serde_json::json!({"saved": false, "conflict": "changed", "current": "theirs\n"}),
+        );
+        assert!(visual.debug_bounds("file-viewer-conflict").is_some());
+        assert!(pane.read_with(&visual, |p, _| p.dirty()), "edits kept");
+        click(&mut visual, "file-viewer-overwrite");
+        assert_eq!(save(&mut commands), (edited.clone(), "Xone\n".into(), true));
+        request_state(
+            &workspace,
+            &mut visual,
+            save_request(&edited, "Xone\n", true),
+            7,
+            serde_json::json!({"saved": true, "contents": edited.clone()}),
+        );
+        assert!(!pane.read_with(&visual, |p, _| p.dirty()));
+        assert!(pane.read_with(&visual, |p, _| p.conflict().is_none()));
+
+        // A reload after a conflict takes the file as it is on disk.
+        visual.simulate_input("Z");
+        visual.simulate_keystrokes("ctrl-s");
+        visual.run_until_parked();
+        let (contents, base, _) = save(&mut commands);
+        assert_eq!(base, edited);
+        request_state(
+            &workspace,
+            &mut visual,
+            save_request(&contents, &base, false),
+            8,
+            serde_json::json!({"saved": false, "conflict": "changed", "current": "disk\n"}),
+        );
+        click(&mut visual, "file-viewer-reload");
+        assert_eq!(editor_text(&pane, &visual), "disk\n");
+        assert!(!pane.read_with(&visual, |p, _| p.dirty()));
+
+        // A chat link arriving over unsaved edits waits for a decision.
+        visual.simulate_input("W");
+        visual.run_until_parked();
+        let other = file_target("/repo/src/other.rs");
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            other.clone(),
+            2,
+            false,
+            None,
+            serde_json::json!({"contents": "other\n", "size": 6}),
+        );
+        assert_eq!(
+            pane.read_with(&visual, |p, _| p.state().number),
+            1,
+            "still the edited file"
+        );
+        let kept = editor_text(&pane, &visual);
+        assert!(kept.contains('W') && kept.contains("disk"), "{kept:?}");
+        assert!(visual.debug_bounds("file-viewer-unsaved").is_some());
+        click(&mut visual, "file-viewer-prompt-discard");
+        assert_eq!(pane.read_with(&visual, |p, _| p.state().number), 2);
+        assert_eq!(editor_text(&pane, &visual), "other\n");
+
+        // Esc over unsaved edits asks; Keep editing keeps everything.
+        visual.update(|window, cx| pane.read(cx).focus_content(window, cx));
+        visual.simulate_input("V");
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        assert!(workspace.read_with(&visual, |this, _| this.file_viewer().is_some()));
+        assert!(visual.debug_bounds("file-viewer-unsaved").is_some());
+        click(&mut visual, "file-viewer-prompt-cancel");
+        assert!(pane.read_with(&visual, |p, _| !p.asking()));
+        assert!(pane.read_with(&visual, |p, _| p.dirty()));
+        // Closing the window asks too, instead of losing the edits.
+        let allowed = visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.confirm_window_close(window, cx))
+        });
+        visual.run_until_parked();
+        assert!(!allowed);
+        assert!(visual.debug_bounds("file-viewer-unsaved").is_some());
+        click(&mut visual, "file-viewer-prompt-cancel");
+        // The backdrop asks as well; Discard then closes.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.close_file_viewer(window, cx))
+        });
+        visual.run_until_parked();
+        assert!(workspace.read_with(&visual, |this, _| this.file_viewer().is_some()));
+        click(&mut visual, "file-viewer-prompt-discard");
+        assert!(workspace.read_with(&visual, |this, _| this.file_viewer().is_none()));
+        assert!(effects(&mut commands).is_empty(), "nothing else was sent");
+    }
+
+    #[gpui::test]
+    fn editor_explorer_lists_the_session_folder_and_opens_files(cx: &mut TestAppContext) {
+        use wks_native::features::Request;
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/work/proj".into();
+                this.update_view(Arc::new(view), window, cx)
+            })
+        });
+        visual.simulate_keystrokes("ctrl-shift-e");
+        visual.run_until_parked();
+        let listing = |commands: &mut tokio::sync::mpsc::Receiver<Command>| match effects(commands)
+            .as_slice()
+        {
+            [
+                Command::Request(Request::ListDir {
+                    path,
+                    include_ignored,
+                }),
+            ] => (path.clone(), *include_ignored),
+            other => panic!("expected one listing, got {} commands", other.len()),
+        };
+        assert_eq!(listing(&mut commands), ("/work/proj".into(), false));
+        settle(&mut visual);
+        assert!(visual.debug_bounds("file-viewer-explorer").is_some());
+        assert!(
+            visual.debug_bounds("file-viewer-empty").is_some(),
+            "no file yet"
+        );
+        request_state(
+            &workspace,
+            &mut visual,
+            Request::ListDir {
+                path: "/work/proj".into(),
+                include_ignored: false,
+            },
+            1,
+            serde_json::json!({"entries": [
+                {"name": "src", "path": "/work/proj/src", "isDir": true},
+                {"name": "README.md", "path": "/work/proj/README.md", "isDir": false},
+            ], "includeIgnored": false}),
+        );
+        assert!(
+            visual
+                .debug_bounds("file-viewer-tree-row-README.md")
+                .is_some()
+        );
+        click(&mut visual, "file-viewer-tree-row-src");
+        assert_eq!(listing(&mut commands), ("/work/proj/src".into(), false));
+        request_state(
+            &workspace,
+            &mut visual,
+            Request::ListDir {
+                path: "/work/proj/src".into(),
+                include_ignored: false,
+            },
+            2,
+            serde_json::json!({"entries": [
+                {"name": "lib.rs", "path": "/work/proj/src/lib.rs", "isDir": false},
+            ]}),
+        );
+        click(&mut visual, "file-viewer-tree-row-lib.rs");
+        match effects(&mut commands).as_slice() {
+            [Command::Request(Request::FilePreview { session, target })] => {
+                assert_eq!(
+                    (session.as_str(), target.path.as_str()),
+                    ("a", "/work/proj/src/lib.rs")
+                );
+            }
+            other => panic!("expected a file read, got {} commands", other.len()),
+        }
+        // Git-ignored entries are listed only when asked, re-reading folders.
+        click(&mut visual, "file-viewer-files-ignored");
+        let (_, ignored) = listing(&mut commands);
+        assert!(ignored);
+    }
+
+    #[gpui::test]
+    fn review_shows_git_diffs_beside_a_right_hand_file_explorer(cx: &mut TestAppContext) {
+        use wks_native::features::Request;
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.simulate_resize(size(px(1400.), px(800.)));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/repo/sub".into();
+                this.update_view(Arc::new(view), window, cx);
+                this.open_feature(Screen::Changes, window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Request(Request::Changes { cwd })] if cwd == "/repo/sub"));
+        request_state(
+            &workspace,
+            &mut visual,
+            Request::Changes {
+                cwd: "/repo/sub".into(),
+            },
+            1,
+            serde_json::json!({"branch": "main", "root": "/repo", "files": [
+                {"path": "src/lib.rs", "staged": " ", "unstaged": "M"},
+                {"path": "new.txt", "staged": "?", "unstaged": "?"},
+            ]}),
+        );
+        // The first change's diff is read at once.
+        let diff = |commands: &mut tokio::sync::mpsc::Receiver<Command>| match effects(commands)
+            .as_slice()
+        {
+            [
+                Command::Request(Request::Diff {
+                    cwd,
+                    path,
+                    staged,
+                    untracked,
+                }),
+            ] => {
+                assert_eq!(cwd, "/repo/sub");
+                (path.clone(), *staged, *untracked)
+            }
+            other => panic!("expected one diff read, got {} commands", other.len()),
+        };
+        assert_eq!(diff(&mut commands), ("src/lib.rs".into(), false, false));
+        request_state(
+            &workspace,
+            &mut visual,
+            Request::Diff {
+                cwd: "/repo/sub".into(),
+                path: "src/lib.rs".into(),
+                staged: false,
+                untracked: false,
+            },
+            2,
+            serde_json::json!({"diff": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n"}),
+        );
+        let diff_bounds = visual.debug_bounds("review-diff").expect("diff rows");
+        let files = visual.debug_bounds("review-files").expect("file explorer");
+        assert!(
+            files.left() >= diff_bounds.right(),
+            "the explorer is on the right"
+        );
+        assert!(visual.debug_bounds("review-change-src/lib.rs").is_some());
+        // An untracked file's diff is against nothing.
+        click(&mut visual, "review-change-new.txt");
+        assert_eq!(diff(&mut commands), ("new.txt".into(), false, true));
+        // Its source opens in the editor, resolved under the repository root.
+        click(&mut visual, "review-open-file");
+        match effects(&mut commands).as_slice() {
+            [Command::Request(Request::FilePreview { target, .. })] => {
+                assert_eq!(target.path, "/repo/new.txt")
+            }
+            other => panic!("expected a file read, got {} commands", other.len()),
+        }
+        // All files: the project tree, marked with git status; files open
+        // in the editor.
+        click(&mut visual, "review-mode-all");
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Request(Request::ListDir { path, .. })] if path == "/repo"));
+        request_state(
+            &workspace,
+            &mut visual,
+            Request::ListDir {
+                path: "/repo".into(),
+                include_ignored: false,
+            },
+            3,
+            serde_json::json!({"entries": [
+                {"name": "src", "path": "/repo/src", "isDir": true},
+                {"name": "README.md", "path": "/repo/README.md", "isDir": false},
+            ]}),
+        );
+        click(&mut visual, "review-tree-row-README.md");
+        match effects(&mut commands).as_slice() {
+            [Command::Request(Request::FilePreview { target, .. })] => {
+                assert_eq!(target.path, "/repo/README.md")
+            }
+            other => panic!("expected a file read, got {} commands", other.len()),
+        }
+    }
+
+    #[gpui::test]
+    fn agent_terminal_takes_keys_and_follows_the_selected_agent(cx: &mut TestAppContext) {
+        use wks_native::terminal::{Command as T, Status, Terminal};
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].cwd = "/work/a".into();
+                Arc::make_mut(&mut view.sessions)[1].cwd = "/work/b".into();
+                this.update_view(Arc::new(view), window, cx)
+            })
+        });
+        click(&mut visual, "open-terminal");
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Terminal(T::Open { agent, cwd, .. })] if agent == "a" && cwd == "/work/a"));
+        let live = |workspace: &Entity<Workspace>,
+                    visual: &mut VisualTestContext,
+                    agent: &str,
+                    shell: &str,
+                    bytes: &[u8]| {
+            let (agent, shell, bytes) = (agent.to_owned(), shell.to_owned(), bytes.to_vec());
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut view = (*this.view).clone();
+                    view.terminals.insert(
+                        agent.clone(),
+                        Terminal {
+                            agent: agent.clone(),
+                            cwd: format!("/work/{agent}"),
+                            shell: Some(shell.clone()),
+                            status: Status::Live,
+                            error: None,
+                            attach: 1,
+                        },
+                    );
+                    view.terminal_feed.push(&shell, &bytes);
+                    this.update_view(Arc::new(view), window, cx)
+                })
+            });
+            visual.run_until_parked();
+        };
+        live(
+            &workspace,
+            &mut visual,
+            "a",
+            "shell-a",
+            b"\x1b[32mhello\x1b[0m\r\n$ ",
+        );
+        assert!(visual.debug_bounds("terminal-panel").is_some());
+        assert!(visual.debug_bounds("terminal-view").is_some());
+        let view = workspace.read_with(&visual, |this, _| this.terminal_view("a").unwrap());
+        assert!(view.read_with(&visual, |v, _| v.text()).contains("hello"));
+        // Every key, including the app's own shortcuts, reaches the shell.
+        visual.simulate_keystrokes("l s enter ctrl-c ctrl-n escape alt-down tab");
+        visual.run_until_parked();
+        let sent: Vec<u8> = effects(&mut commands)
+            .into_iter()
+            .flat_map(|c| match c {
+                Command::Terminal(T::Input { agent, bytes }) if agent == "a" => bytes,
+                _ => panic!("a key escaped the terminal"),
+            })
+            .collect();
+        assert_eq!(sent, b"ls\r\x03\x0e\x1b\x1b[1;3B\t");
+        workspace.read_with(&visual, |this, _| {
+            assert!(!this.new_session, "Ctrl+N stayed in the shell");
+            assert_eq!(this.view.selected.as_deref(), Some("a"));
+        });
+        // Selecting another agent hides this shell; that agent has none yet.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.selected = Some("b".into());
+                this.update_view(Arc::new(view), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Terminal(T::Hide { agent })] if agent == "a"));
+        click(&mut visual, "terminal-start");
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Terminal(T::Open { agent, cwd, .. })] if agent == "b" && cwd == "/work/b"));
+        // Back to the first agent: its same shell re-attaches.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                view.selected = Some("a".into());
+                this.update_view(Arc::new(view), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        let switched = effects(&mut commands);
+        assert!(matches!(switched.as_slice(),
+            [Command::Terminal(T::Hide { agent: b }), Command::Terminal(T::Open { agent: a, .. })] if b == "b" && a == "a"));
+        // Ctrl+` hides the panel; the shell keeps running.
+        visual.update(|window, cx| {
+            workspace
+                .read(cx)
+                .terminal_view("a")
+                .unwrap()
+                .read(cx)
+                .focus(window)
+        });
+        visual.simulate_keystrokes("ctrl-`");
+        visual.run_until_parked();
+        // (Debug bounds outlive their elements in GPUI tests; check state.)
+        assert!(!workspace.read_with(&visual, |this, _| this.terminal.open));
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Terminal(T::Hide { agent })] if agent == "a"));
+
+        // Pop out: the same shell in a window of its own, keys included.
+        click(&mut visual, "open-terminal");
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Terminal(T::Open { agent, .. })] if agent == "a"));
+        click(&mut visual, "terminal-popout");
+        visual.run_until_parked();
+        let handle = workspace
+            .read_with(&visual, |this, _| this.terminal_popout())
+            .expect("terminal window");
+        assert_eq!(cx.windows().len(), 2);
+        assert!(
+            !workspace.read_with(&visual, |this, _| this.terminal.open),
+            "the panel moved out"
+        );
+        assert!(
+            effects(&mut commands).is_empty(),
+            "the shell keeps streaming"
+        );
+        let mut popped = VisualTestContext::from_window(handle.into(), cx);
+        popped.run_until_parked();
+        assert!(popped.debug_bounds("terminal-view").is_some());
+        popped.simulate_keystrokes("p w d enter ctrl-n");
+        popped.run_until_parked();
+        let sent: Vec<u8> = effects(&mut commands)
+            .into_iter()
+            .flat_map(|c| match c {
+                Command::Terminal(T::Input { agent, bytes }) if agent == "a" => bytes,
+                _ => panic!("a key escaped the terminal window"),
+            })
+            .collect();
+        assert_eq!(sent, b"pwd\r\x0e");
+        // Dock brings it back under the chat, still the same shell.
+        let dock = popped.debug_bounds("terminal-window-dock").unwrap();
+        popped.simulate_click(dock.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(cx.windows().len(), 1);
+        assert!(workspace.read_with(&visual, |this, _| this.terminal.open
+            && this.terminal_popout().is_none()));
+        assert!(
+            effects(&mut commands).is_empty(),
+            "docking re-uses the attached shell"
+        );
+    }
+
+    #[gpui::test]
+    fn unsaved_edits_move_with_the_editor_into_its_own_window(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx)
+            })
+        });
+        preview_state(
+            &workspace,
+            &mut visual,
+            "a",
+            file_target("/repo/a.rs"),
+            1,
+            false,
+            None,
+            serde_json::json!({"contents": "one\n", "size": 4}),
+        );
+        settle(&mut visual);
+        visual.simulate_input("X");
+        visual.run_until_parked();
+        click(&mut visual, "file-viewer-popout");
+        visual.run_until_parked();
+        let (_, popped) = workspace
+            .read_with(&visual, |this, _| this.viewer_popout())
+            .expect("popped out");
+        popped.read_with(&visual, |pane, cx| {
+            assert_eq!(pane.editor().unwrap().read(cx).value().as_ref(), "Xone\n");
+            assert!(pane.dirty(), "still unsaved in the new window");
+        });
+        // Docking back keeps them too.
+        visual.update(|window, cx| workspace.update(cx, |this, cx| this.dock_popout(window, cx)));
+        visual.run_until_parked();
+        let pane = pane_of(&workspace, &visual);
+        assert_eq!(editor_text(&pane, &visual), "Xone\n");
+        assert!(pane.read_with(&visual, |p, _| p.dirty()));
     }
 }

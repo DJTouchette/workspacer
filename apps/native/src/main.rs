@@ -238,12 +238,20 @@ fn main() -> Result<()> {
                 },
                 |window, cx| {
                     let close_preference = keep_running.clone();
-                    window.on_window_should_close(cx, move |window, _| {
+                    let workspace: Rc<RefCell<Option<gpui::WeakEntity<ui::Workspace>>>> =
+                        Default::default();
+                    let closing = workspace.clone();
+                    window.on_window_should_close(cx, move |window, cx| {
                         if close_preference.get() {
                             window.minimize_window();
                             false
                         } else {
-                            true
+                            // Unsaved editor changes: the editor asks first,
+                            // then closes the window itself.
+                            let workspace = closing.borrow().as_ref().and_then(|w| w.upgrade());
+                            workspace.is_none_or(|workspace| {
+                                workspace.update(cx, |ws, cx| ws.confirm_window_close(window, cx))
+                            })
                         }
                     });
                     window.set_window_title("Workspacer Native");
@@ -257,6 +265,7 @@ fn main() -> Result<()> {
                         view.start_update_checks(cx);
                         view
                     });
+                    *workspace.borrow_mut() = Some(view.downgrade());
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )

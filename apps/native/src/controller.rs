@@ -167,6 +167,8 @@ pub enum Command {
         key: CatalogKey,
         refresh: bool,
     },
+    /// An agent's interactive shell; see [`crate::terminal`].
+    Terminal(crate::terminal::Command),
 }
 
 /// A provider-native subagent of a session (Claude's Task/Agent children).
@@ -236,6 +238,11 @@ pub struct View {
     pub receipt: Option<Receipt>,
     pub creating: bool,
     pub spawn_receipt: Option<SpawnReceipt>,
+    /// Each agent's shell, by agent session id. Shell sessions themselves
+    /// never appear in `sessions`.
+    pub terminals: BTreeMap<String, crate::terminal::Terminal>,
+    /// Shell output waiting for the window (shared, not snapshotted).
+    pub terminal_feed: Arc<crate::terminal::Feed>,
 }
 
 #[derive(Clone)]
@@ -312,7 +319,39 @@ enum Completion {
     Child(u64, u64, Result<Value>),
     Conversation(u64, u64, Result<Value>),
     Action(u64, String, Action, Result<Value>),
+    /// (epoch, agent, shell generation, step)
+    Terminal(u64, String, u64, ShellStep),
 }
+
+enum ShellStep {
+    Created(Result<Value>),
+    Attached(Result<Value>),
+    Input(Result<Value>),
+    Resized,
+    Keepalive(Result<Value>),
+}
+
+/// Worker-side bookkeeping for one agent's shell; the window's projection is
+/// `View::terminals`.
+struct Shell {
+    id: Option<String>,
+    cwd: String,
+    /// The window shows this terminal: keep its output streaming.
+    wanted: bool,
+    attached: bool,
+    /// Bumped when the shell is replaced; older completions are ignored.
+    generation: u64,
+    input: Vec<u8>,
+    input_busy: bool,
+    size: (u16, u16),
+    resize_pending: bool,
+    resize_busy: bool,
+    last_keepalive: Instant,
+}
+
+/// Keyboard input is batched per call; this much may queue behind a slow hub.
+const MAX_TERMINAL_INPUT: usize = 1024 * 1024;
+const TERMINAL_KEEPALIVE: Duration = Duration::from_secs(8);
 
 struct Worker {
     backend: Backend,
@@ -343,6 +382,10 @@ struct Worker {
     last_usage: Instant,
     child_pending: bool,
     last_child: Instant,
+    shells: BTreeMap<String, Shell>,
+    /// Shell ids replaced or ended in this run; their rows stay hidden.
+    retired_shells: BTreeSet<String>,
+    shell_generation: u64,
 }
 
 impl Worker {
@@ -379,6 +422,9 @@ impl Worker {
             last_usage: Instant::now(),
             child_pending: false,
             last_child: Instant::now(),
+            shells: BTreeMap::new(),
+            retired_shells: BTreeSet::new(),
+            shell_generation: 0,
         }
     }
 
@@ -420,6 +466,7 @@ impl Worker {
                         }
                     }
                     Some(Command::RefreshUsage) => self.fetch_usage(),
+                    Some(Command::Terminal(command)) => self.terminal(command).await,
                     Some(Command::ViewChild(target)) => self.view_child(target).await,
                     Some(Command::LoadOlder) => {
                         if self.view.transcript.has_older && !self.conversation_pending {
@@ -440,7 +487,7 @@ impl Worker {
                 event = events.recv() => match event {
                     Err(_) => {
                         if self.view.connected {self.disconnected("Backend event stream closed".into(),false);}
-                        if self.fleet_dirty {self.view.sessions=Arc::new(self.sessions.values().cloned().collect());}
+                        if self.fleet_dirty {self.view.sessions=self.session_list();}
                         updates.send_replace(Arc::new(self.view.clone()));
                         break;
                     },
@@ -449,7 +496,7 @@ impl Worker {
                 Some(result) = self.jobs.next(), if !self.jobs.is_empty() => self.complete(result).await,
                 _ = frame.tick(), if self.dirty => {
                     if self.fleet_dirty {
-                        self.view.sessions = Arc::new(self.sessions.values().cloned().collect());
+                        self.view.sessions = self.session_list();
                         self.fleet_dirty = false;
                     }
                     self.reconcile_messages();
@@ -463,6 +510,7 @@ impl Worker {
                         if self.last_fleet.elapsed() >= Duration::from_secs(30) { self.fetch_fleet(); }
                         // The hub's report is valid for 60s; account windows move slowly.
                         if self.last_usage.elapsed() >= Duration::from_secs(60) { self.fetch_usage(); }
+                        self.keep_terminals_alive();
                         // Ready suppresses fast polling. A slow reconciliation also
                         // repairs a provider restart behind an otherwise healthy hub.
                         let pace = if self.push_ready { Duration::from_secs(30) } else { Duration::from_secs(1) };
@@ -530,7 +578,7 @@ impl Worker {
         let key = request.key();
         // A write already on its way cannot be recalled: superseding it would
         // report "superseded" for a change the hub may still apply.
-        if matches!(key, "upload" | "project-save")
+        if matches!(key, "upload" | "project-save" | "file-save")
             && self.view.requests.get(key).is_some_and(|s| s.loading)
         {
             return;
@@ -781,12 +829,7 @@ impl Worker {
         self.conversation_pending = false;
         self.push_ready = false;
         self.buffered.clear();
-        let mut topics = BTreeSet::from(["agent.snapshot".into()]);
-        topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
-        if let Some(id) = &self.view.selected {
-            topics.insert(format!("agent.conversation.{id}"));
-        }
-        let _ = self.backend.topics(topics).await;
+        self.subscribe().await;
         self.fetch_conversation();
         self.dirty = true;
     }
@@ -795,6 +838,9 @@ impl Worker {
         let Some(id) = Session::id_of(data) else {
             return;
         };
+        if self.is_shell(id) {
+            return;
+        }
         if !self.sessions.contains_key(id) && self.sessions.len() >= MAX_SESSIONS {
             return;
         }
@@ -814,6 +860,7 @@ impl Worker {
         }
         self.view.catalog.loading = false;
         self.view.catalog.error = Some("Hub disconnected. Reconnect to load models.".into());
+        self.terminals_disconnected();
         self.view.loading = false;
         self.view.sessions_loading = false;
         self.view.power_paused = power_paused;
@@ -853,6 +900,7 @@ impl Worker {
                 if child.is_some() {
                     self.view_child(child).await;
                 }
+                self.reopen_terminals().await;
             }
             Event::Disconnected(reason) => self.disconnected(reason, false),
             Event::PowerPaused => self.disconnected(String::new(), true),
@@ -867,7 +915,13 @@ impl Worker {
                 {
                     return;
                 }
-                if crate::ui_requests::TOPICS.contains(&topic.as_str()) {
+                if let Some(shell) = topic.strip_prefix("pty.bytes.") {
+                    self.terminal_bytes(shell, &data).await;
+                } else if topic == "pty.exit" || topic == "pty.desync" {
+                    if let Some(shell) = data["sessionId"].as_str() {
+                        self.terminal_signal(shell, topic == "pty.exit").await;
+                    }
+                } else if crate::ui_requests::TOPICS.contains(&topic.as_str()) {
                     match crate::ui_requests::parse(&topic, &data) {
                         Ok(Some((intent, payload)))
                             if self.view.ui_requests.len() < crate::ui_requests::MAX_PENDING =>
@@ -1357,6 +1411,11 @@ impl Worker {
                     }
                 }
             }
+            Completion::Terminal(epoch, agent, generation, step) => {
+                if epoch == self.epoch {
+                    self.terminal_done(agent, generation, step).await;
+                }
+            }
             Completion::Action(number, session, action, result) => {
                 self.view.busy = false;
                 let queued = result
@@ -1403,5 +1462,565 @@ impl Worker {
             _ => return, // result belongs to an older connection or selection
         }
         self.dirty = true;
+    }
+}
+
+/// Agent shells: one hub-owned shell per agent, attached while shown.
+impl Worker {
+    fn is_shell(&self, id: &str) -> bool {
+        self.retired_shells.contains(id)
+            || self.shells.values().any(|s| s.id.as_deref() == Some(id))
+    }
+
+    fn session_list(&self) -> Arc<Vec<Session>> {
+        Arc::new(
+            self.sessions
+                .values()
+                .filter(|s| !self.is_shell(&s.id))
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// Selected conversation, UI commands, and every shell being streamed.
+    async fn subscribe(&mut self) {
+        let mut topics = BTreeSet::from(["agent.snapshot".into()]);
+        topics.extend(crate::ui_requests::TOPICS.iter().map(|s| s.to_string()));
+        if let Some(id) = &self.view.selected {
+            topics.insert(format!("agent.conversation.{id}"));
+        }
+        let mut streaming = false;
+        for shell in self.shells.values().filter(|s| s.wanted) {
+            if let Some(id) = &shell.id {
+                topics.insert(format!("pty.bytes.{id}"));
+                streaming = true;
+            }
+        }
+        if streaming {
+            topics.insert("pty.exit".into());
+            topics.insert("pty.desync".into());
+        }
+        let _ = self.backend.topics(topics).await;
+    }
+
+    fn set_terminal(&mut self, agent: &str, f: impl FnOnce(&mut crate::terminal::Terminal)) {
+        let entry = self
+            .view
+            .terminals
+            .entry(agent.to_owned())
+            .or_insert_with(|| crate::terminal::Terminal {
+                agent: agent.to_owned(),
+                ..Default::default()
+            });
+        f(entry);
+        self.dirty = true;
+    }
+
+    fn forget_shell_row(&mut self, id: &str) {
+        if self.sessions.remove(id).is_some() {
+            self.fleet_dirty = true;
+        }
+    }
+
+    async fn terminal(&mut self, command: crate::terminal::Command) {
+        use crate::terminal::{Command as T, Status};
+        match command {
+            T::Adopt(known) => {
+                for (agent, id) in known {
+                    if self.shells.contains_key(&agent) || id.is_empty() {
+                        continue;
+                    }
+                    self.shell_generation += 1;
+                    self.forget_shell_row(&id);
+                    self.shells.insert(
+                        agent.clone(),
+                        Shell {
+                            id: Some(id.clone()),
+                            cwd: String::new(),
+                            wanted: false,
+                            attached: false,
+                            generation: self.shell_generation,
+                            input: Vec::new(),
+                            input_busy: false,
+                            size: (crate::terminal::DEFAULT_COLS, crate::terminal::DEFAULT_ROWS),
+                            resize_pending: false,
+                            resize_busy: false,
+                            last_keepalive: Instant::now(),
+                        },
+                    );
+                    self.set_terminal(&agent, |t| {
+                        t.shell = Some(id);
+                        t.status = Status::Detached;
+                    });
+                }
+            }
+            T::Open {
+                agent,
+                cwd,
+                cols,
+                rows,
+            } => {
+                let shell = self.shells.entry(agent.clone()).or_insert_with(|| Shell {
+                    id: None,
+                    cwd: cwd.clone(),
+                    wanted: false,
+                    attached: false,
+                    generation: 0,
+                    input: Vec::new(),
+                    input_busy: false,
+                    size: (cols, rows),
+                    resize_pending: false,
+                    resize_busy: false,
+                    last_keepalive: Instant::now(),
+                });
+                shell.wanted = true;
+                if shell.cwd.is_empty() {
+                    shell.cwd = cwd;
+                }
+                if shell.size != (cols, rows) {
+                    shell.size = (cols, rows);
+                    shell.resize_pending = shell.id.is_some();
+                }
+                if !self.view.connected {
+                    self.set_terminal(&agent, |t| {
+                        t.status = Status::Failed;
+                        t.error = Some("Reconnect to the hub to open a terminal.".into());
+                    });
+                    return;
+                }
+                let shell = &self.shells[&agent];
+                match (&shell.id, shell.attached) {
+                    (Some(_), true) => {}
+                    (Some(_), false) => self.attach_shell(&agent).await,
+                    (None, _) => self.create_shell(&agent),
+                }
+                self.flush_resize(&agent);
+            }
+            T::Hide { agent } => {
+                let Some(shell) = self.shells.get_mut(&agent) else {
+                    return;
+                };
+                shell.wanted = false;
+                let detach = shell.attached.then(|| shell.id.clone()).flatten();
+                shell.attached = false;
+                if let Some(id) = detach {
+                    let backend = self.backend.clone();
+                    // Fire and forget: the lease also lapses on its own.
+                    tokio::spawn(async move {
+                        let _ = backend
+                            .call("sessions.detachTerminal", json!({"sessionId":id}))
+                            .await;
+                    });
+                    self.set_terminal(&agent, |t| {
+                        if t.status == Status::Live || t.status == Status::Attaching {
+                            t.status = Status::Detached;
+                        }
+                    });
+                }
+                self.subscribe().await;
+            }
+            T::Input { agent, bytes } => {
+                let Some(shell) = self.shells.get_mut(&agent) else {
+                    return;
+                };
+                if shell.input.len() + bytes.len() > MAX_TERMINAL_INPUT {
+                    self.set_terminal(&agent, |t| {
+                        t.error = Some(
+                            "Input is arriving faster than the hub accepts it; some was not sent."
+                                .into(),
+                        );
+                    });
+                    return;
+                }
+                shell.input.extend_from_slice(&bytes);
+                self.flush_input(&agent);
+            }
+            T::Resize { agent, cols, rows } => {
+                let Some(shell) = self.shells.get_mut(&agent) else {
+                    return;
+                };
+                if shell.size != (cols, rows) {
+                    shell.size = (cols, rows);
+                    shell.resize_pending = true;
+                    self.flush_resize(&agent);
+                }
+            }
+            T::Restart {
+                agent,
+                cwd,
+                cols,
+                rows,
+            } => {
+                if let Some(shell) = self.shells.get_mut(&agent) {
+                    if let Some(id) = shell.id.take() {
+                        self.view.terminal_feed.forget(&id);
+                        self.retired_shells.insert(id.clone());
+                        let backend = self.backend.clone();
+                        tokio::spawn(async move {
+                            let _ = backend
+                                .call("claude.signal", json!({"sessionId":id,"signal":"SIGKILL"}))
+                                .await;
+                        });
+                    }
+                    shell.cwd = cwd;
+                    shell.size = (cols, rows);
+                    shell.wanted = true;
+                    shell.attached = false;
+                    shell.input.clear();
+                } else {
+                    return Box::pin(self.terminal(T::Open {
+                        agent,
+                        cwd,
+                        cols,
+                        rows,
+                    }))
+                    .await;
+                }
+                if self.view.connected {
+                    self.create_shell(&agent);
+                }
+                self.subscribe().await;
+            }
+        }
+    }
+
+    fn create_shell(&mut self, agent: &str) {
+        use crate::terminal::Status;
+        self.shell_generation += 1;
+        let generation = self.shell_generation;
+        let Some(shell) = self.shells.get_mut(agent) else {
+            return;
+        };
+        shell.generation = generation;
+        shell.id = None;
+        shell.attached = false;
+        shell.input_busy = false;
+        shell.resize_busy = false;
+        shell.resize_pending = false;
+        let params = json!({"cwd":shell.cwd,"cols":shell.size.0,"rows":shell.size.1});
+        self.set_terminal(agent, |t| {
+            t.status = Status::Starting;
+            t.error = None;
+            t.shell = None;
+        });
+        let cwd = self.shells[agent].cwd.clone();
+        self.set_terminal(agent, |t| t.cwd = cwd);
+        let backend = self.backend.clone();
+        let (epoch, agent) = (self.epoch, agent.to_owned());
+        self.jobs.push(Box::pin(async move {
+            let result = backend.call("terminals.create", params).await;
+            Completion::Terminal(epoch, agent, generation, ShellStep::Created(result))
+        }));
+    }
+
+    async fn attach_shell(&mut self, agent: &str) {
+        use crate::terminal::Status;
+        let Some(shell) = self.shells.get_mut(agent) else {
+            return;
+        };
+        let Some(id) = shell.id.clone() else {
+            return;
+        };
+        shell.attached = true;
+        shell.last_keepalive = Instant::now();
+        let generation = shell.generation;
+        // Whatever arrives next is the attach's replay of the whole screen.
+        self.view.terminal_feed.reset(&id);
+        self.set_terminal(agent, |t| {
+            t.status = Status::Attaching;
+            t.error = None;
+            t.shell = Some(id.clone());
+            t.attach += 1;
+        });
+        // Subscribe before attaching: the replay is published immediately.
+        self.subscribe().await;
+        let backend = self.backend.clone();
+        let (epoch, agent) = (self.epoch, agent.to_owned());
+        self.jobs.push(Box::pin(async move {
+            let result = backend
+                .call("sessions.attachTerminal", json!({"sessionId":id}))
+                .await;
+            Completion::Terminal(epoch, agent, generation, ShellStep::Attached(result))
+        }));
+    }
+
+    fn flush_input(&mut self, agent: &str) {
+        let Some(shell) = self.shells.get_mut(agent) else {
+            return;
+        };
+        let Some(id) = shell.id.clone() else {
+            return;
+        };
+        if shell.input_busy || shell.input.is_empty() || !self.view.connected {
+            return;
+        }
+        shell.input_busy = true;
+        let bytes = std::mem::take(&mut shell.input);
+        let generation = shell.generation;
+        let backend = self.backend.clone();
+        let (epoch, agent) = (self.epoch, agent.to_owned());
+        self.jobs.push(Box::pin(async move {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            let result = backend
+                .call(
+                    "sessions.terminalInput",
+                    json!({"sessionId":id,"bytesB64":encoded}),
+                )
+                .await;
+            Completion::Terminal(epoch, agent, generation, ShellStep::Input(result))
+        }));
+    }
+
+    fn flush_resize(&mut self, agent: &str) {
+        let Some(shell) = self.shells.get_mut(agent) else {
+            return;
+        };
+        let Some(id) = shell.id.clone() else {
+            return;
+        };
+        if shell.resize_busy || !shell.resize_pending || !self.view.connected {
+            return;
+        }
+        shell.resize_busy = true;
+        shell.resize_pending = false;
+        let (cols, rows) = shell.size;
+        let generation = shell.generation;
+        let backend = self.backend.clone();
+        let (epoch, agent) = (self.epoch, agent.to_owned());
+        self.jobs.push(Box::pin(async move {
+            let result = backend
+                .call(
+                    "sessions.terminalResize",
+                    json!({"sessionId":id,"cols":cols,"rows":rows}),
+                )
+                .await;
+            {
+                let _ = result;
+                Completion::Terminal(epoch, agent, generation, ShellStep::Resized)
+            }
+        }));
+    }
+
+    fn keep_terminals_alive(&mut self) {
+        let due: Vec<_> = self
+            .shells
+            .iter_mut()
+            .filter(|(_, s)| s.attached && s.last_keepalive.elapsed() >= TERMINAL_KEEPALIVE)
+            .filter_map(|(agent, s)| {
+                s.last_keepalive = Instant::now();
+                Some((agent.clone(), s.id.clone()?, s.generation))
+            })
+            .collect();
+        for (agent, id, generation) in due {
+            let backend = self.backend.clone();
+            let epoch = self.epoch;
+            self.jobs.push(Box::pin(async move {
+                let result = backend
+                    .call("sessions.terminalKeepalive", json!({"sessionId":id}))
+                    .await;
+                Completion::Terminal(epoch, agent, generation, ShellStep::Keepalive(result))
+            }));
+        }
+    }
+
+    fn agent_of_shell(&self, id: &str) -> Option<String> {
+        self.shells
+            .iter()
+            .find(|(_, s)| s.id.as_deref() == Some(id))
+            .map(|(agent, _)| agent.clone())
+    }
+
+    async fn terminal_bytes(&mut self, id: &str, data: &Value) {
+        use base64::Engine;
+        let Some(agent) = self.agent_of_shell(id) else {
+            return;
+        };
+        if !self.shells[&agent].attached {
+            return;
+        }
+        let Some(bytes) = data
+            .as_str()
+            .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+        else {
+            return;
+        };
+        if self.view.terminal_feed.push(id, &bytes) {
+            self.set_terminal(&agent, |t| {
+                if t.status == crate::terminal::Status::Attaching {
+                    t.status = crate::terminal::Status::Live;
+                }
+            });
+        } else {
+            // The window fell behind; a fresh attach replays the screen.
+            self.attach_shell(&agent).await;
+        }
+    }
+
+    /// `pty.exit` (the shell ended) or `pty.desync` (its stream broke).
+    async fn terminal_signal(&mut self, id: &str, exited: bool) {
+        let Some(agent) = self.agent_of_shell(id) else {
+            return;
+        };
+        if exited {
+            self.shell_ended(&agent, id).await;
+        } else if self.shells[&agent].attached {
+            self.attach_shell(&agent).await;
+        }
+    }
+
+    async fn shell_ended(&mut self, agent: &str, id: &str) {
+        if let Some(shell) = self.shells.get_mut(agent) {
+            shell.id = None;
+            shell.attached = false;
+            shell.input.clear();
+        }
+        self.retired_shells.insert(id.to_owned());
+        self.set_terminal(agent, |t| {
+            t.status = crate::terminal::Status::Exited;
+            t.shell = None;
+        });
+        self.subscribe().await;
+    }
+
+    async fn terminal_done(&mut self, agent: String, generation: u64, step: ShellStep) {
+        use crate::terminal::Status;
+        if self
+            .shells
+            .get(&agent)
+            .is_none_or(|s| s.generation != generation)
+        {
+            return;
+        }
+        match step {
+            ShellStep::Created(result) => {
+                let id = result.and_then(|v| {
+                    v["sessionId"]
+                        .as_str()
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_owned)
+                        .ok_or_else(|| anyhow!("The hub started no shell (no session id)."))
+                });
+                match id {
+                    Ok(id) => {
+                        self.forget_shell_row(&id);
+                        let shell = self.shells.get_mut(&agent).unwrap();
+                        shell.id = Some(id.clone());
+                        self.set_terminal(&agent, |t| t.shell = Some(id));
+                        if self.shells[&agent].wanted {
+                            self.attach_shell(&agent).await;
+                        } else {
+                            self.set_terminal(&agent, |t| t.status = Status::Detached);
+                        }
+                        self.flush_input(&agent);
+                    }
+                    Err(error) => self.set_terminal(&agent, |t| {
+                        t.status = Status::Failed;
+                        t.error = Some(format!("Couldn’t start a terminal: {error}"));
+                    }),
+                }
+            }
+            ShellStep::Attached(Ok(_)) => {
+                self.set_terminal(&agent, |t| {
+                    if t.status == Status::Attaching {
+                        t.status = Status::Live;
+                    }
+                });
+                self.flush_resize(&agent);
+            }
+            ShellStep::Attached(Err(error)) => {
+                let message = error.to_string();
+                let id = self.shells[&agent].id.clone().unwrap_or_default();
+                self.shells.get_mut(&agent).unwrap().attached = false;
+                if message.contains("no PTY") || message.contains("not found") {
+                    // A remembered shell that no longer exists: start over.
+                    self.retired_shells.insert(id.clone());
+                    self.view.terminal_feed.forget(&id);
+                    if self.shells[&agent].wanted {
+                        self.create_shell(&agent);
+                    } else {
+                        self.shell_ended(&agent, &id).await;
+                    }
+                } else {
+                    self.set_terminal(&agent, |t| {
+                        t.status = Status::Failed;
+                        t.error = Some(format!("Couldn’t attach to the terminal: {message}"));
+                    });
+                }
+                self.subscribe().await;
+            }
+            ShellStep::Input(result) => {
+                self.shells.get_mut(&agent).unwrap().input_busy = false;
+                if let Err(error) = result {
+                    self.set_terminal(&agent, |t| {
+                        t.error = Some(format!("Input was not delivered: {error}"))
+                    });
+                } else if self.view.terminals.get(&agent).is_some_and(|t| {
+                    t.error
+                        .as_deref()
+                        .is_some_and(|e| e.starts_with("Input was not delivered"))
+                }) {
+                    self.set_terminal(&agent, |t| t.error = None);
+                }
+                self.flush_input(&agent);
+            }
+            ShellStep::Resized => {
+                self.shells.get_mut(&agent).unwrap().resize_busy = false;
+                self.flush_resize(&agent);
+            }
+            ShellStep::Keepalive(Ok(value)) if value["ok"] == false => {
+                // The lease lapsed: re-prime the stream with a replay.
+                if self.shells[&agent].attached {
+                    self.attach_shell(&agent).await;
+                }
+            }
+            ShellStep::Keepalive(_) => {}
+        }
+    }
+
+    /// After a reconnect, resume every terminal still on screen.
+    async fn reopen_terminals(&mut self) {
+        let agents: Vec<_> = self
+            .shells
+            .iter()
+            .filter(|(_, s)| s.wanted)
+            .map(|(agent, s)| (agent.clone(), s.id.is_some()))
+            .collect();
+        for (agent, exists) in agents {
+            if exists {
+                self.attach_shell(&agent).await;
+            } else if self
+                .view
+                .terminals
+                .get(&agent)
+                .is_none_or(|t| t.status != crate::terminal::Status::Exited)
+            {
+                self.create_shell(&agent);
+            }
+        }
+    }
+
+    fn terminals_disconnected(&mut self) {
+        use crate::terminal::Status;
+        let mut changed = Vec::new();
+        for (agent, shell) in &mut self.shells {
+            shell.attached = false;
+            shell.input.clear();
+            shell.input_busy = false;
+            shell.resize_busy = false;
+            if shell.wanted {
+                changed.push(agent.clone());
+            }
+        }
+        for agent in changed {
+            self.set_terminal(&agent, |t| {
+                if t.status != Status::Exited {
+                    t.status = Status::Attaching;
+                    t.error = Some(
+                        "Connection lost. The terminal resumes when the hub reconnects.".into(),
+                    );
+                }
+            });
+        }
     }
 }

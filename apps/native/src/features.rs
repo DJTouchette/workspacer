@@ -15,6 +15,24 @@ pub enum Request {
         session: String,
         target: crate::links::FileTarget,
     },
+    /// Write an edited file back on the session's machine. Unless `force`,
+    /// the hub's current contents must still equal `base` (what the editor
+    /// loaded); otherwise nothing is written and the answer is a conflict.
+    SaveFile {
+        session: String,
+        path: String,
+        contents: String,
+        base: String,
+        force: bool,
+    },
+    /// One directory of a file explorer, read on the session's machine by
+    /// `fs.listEntries`. `.git` is always omitted; git-ignored entries are
+    /// omitted unless `include_ignored` (older hubs always omit them, and say
+    /// so by not echoing `includeIgnored: true`).
+    ListDir {
+        path: String,
+        include_ignored: bool,
+    },
     Previews {
         paths: Vec<String>,
     },
@@ -101,6 +119,8 @@ impl Request {
     pub fn key(&self) -> &'static str {
         match self {
             Self::FilePreview { .. } => "file-preview",
+            Self::SaveFile { .. } => "file-save",
+            Self::ListDir { .. } => "file-tree",
             Self::Previews { .. } => "previews",
             Self::CardDiff { .. } => "card-diff",
             Self::TurnChanges { .. } => "turn-changes",
@@ -150,6 +170,29 @@ impl Request {
                             .map_err(fail)
                     }
                 }
+            }
+            Self::SaveFile {
+                path,
+                contents,
+                base,
+                force,
+                ..
+            } => save_file(backend, path, contents, base, *force).await,
+            Self::ListDir {
+                path,
+                include_ignored,
+            } => {
+                let value = backend
+                    .call(
+                        "fs.listEntries",
+                        json!({"path":path,"includeIgnored":include_ignored}),
+                    )
+                    .await?;
+                ensure!(
+                    value["entries"].is_array(),
+                    "The hub returned no directory entries."
+                );
+                Ok(value)
             }
             Self::Previews { paths } => {
                 let mut previews = serde_json::Map::new();
@@ -340,6 +383,51 @@ async fn save_project(
     let saved = backend.call("config.save", partial).await?;
     crate::projects::verify(&saved, path, change)?;
     Ok(project_snapshot(&saved, &mut revision))
+}
+
+/// Compare-and-write through the hub, then read the file back: an editor
+/// must never report a save the file does not hold. This is not atomic. The
+/// compare and the write are separate calls with no lock, so another writer
+/// landing between them is silently overwritten (the read-back then shows
+/// our own text). The read-back only catches a write after ours. The check
+/// stops the common stale-editor case, not concurrent writers.
+async fn save_file(
+    backend: &Backend,
+    path: &str,
+    contents: &str,
+    base: &str,
+    force: bool,
+) -> Result<Value> {
+    ensure!(
+        contents.len() <= crate::links::MAX_EDITABLE_BYTES,
+        "This file is {}; the editor saves files up to {}.",
+        crate::links::size(contents.len() as u64),
+        crate::links::size(crate::links::MAX_EDITABLE_BYTES as u64)
+    );
+    if !force {
+        match backend.call("fs.read", json!({"path":path})).await {
+            Ok(current) => {
+                let current = current["contents"].as_str().unwrap_or_default();
+                if current != base {
+                    return Ok(json!({"saved":false,"conflict":"changed","current":current}));
+                }
+            }
+            Err(error) => {
+                return Ok(
+                    json!({"saved":false,"conflict":"unreadable","error":error.to_string()}),
+                );
+            }
+        }
+    }
+    backend
+        .call("fs.write", json!({"path":path,"contents":contents}))
+        .await?;
+    let written = backend.call("fs.read", json!({"path":path})).await?;
+    ensure!(
+        written["contents"].as_str() == Some(contents),
+        "The hub accepted the save, but the file now holds different contents (another program may have written it). Reload to see it."
+    );
+    Ok(json!({"saved":true,"size":written["size"],"contents":contents}))
 }
 
 /// `exists` comes from listing the folder; `git` from `git.status`, whose

@@ -387,6 +387,39 @@ impl Workspace {
             )
             .child(
                 self.icon_button(
+                    "open-editor",
+                    "Files and editor (Ctrl+Shift+E)",
+                    IconName::FolderOpen,
+                    selected,
+                )
+                .debug_selector(|| "open-editor".into())
+                .when(selected, |d| {
+                    d.on_click(
+                        cx.listener(|this, _, window, cx| this.open_selected_editor(window, cx)),
+                    )
+                }),
+            )
+            .child(
+                self.icon_button(
+                    "open-terminal",
+                    if self.terminal.open {
+                        "Hide terminal (Ctrl+`)"
+                    } else {
+                        "Terminal in this agent’s folder (Ctrl+`)"
+                    },
+                    IconName::SquareTerminal,
+                    selected,
+                )
+                .debug_selector(|| "open-terminal".into())
+                .when(self.terminal.open, |d| {
+                    d.text_color(rgb(self.appearance.palette().accent))
+                })
+                .when(selected, |d| {
+                    d.on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)))
+                }),
+            )
+            .child(
+                self.icon_button(
                     "open-history",
                     "Conversation history",
                     IconName::BookOpen,

@@ -959,3 +959,69 @@ The three items left open here were fixed the same day (next section).
 
 Noticed, not changed: at 720×600 the sidebar's last session row draws under
 the usage meters. Linux only: no Windows/macOS, hardware GPU or screen reader.
+
+## Editor, file explorer, agent terminals and Git-style review (2026-10-05)
+
+- **Editor.** The file viewer's source is editable and saves through the hub:
+  `file-save` reads the file first and writes only if it still equals what the
+  editor loaded, then reads it back. Not atomic: a writer between the compare
+  and the write is overwritten without notice (the read-back sees our text);
+  a hub-side compare-and-write with a lock would be needed for that. Conflicts offer Overwrite / Reload from
+  disk / Keep editing. Unsaved edits are guarded on explorer/Back/document
+  navigation, an incoming chat link (deferred until answered), ✕/Esc/backdrop
+  and main-window close (`on_window_should_close` →
+  `Workspace::confirm_window_close`); Pop out and Dock carry edits and an
+  in-flight save. Quit is explicit and does not ask.
+- **Explorer.** Lazy `fs.listEntries` tree in the editor (docked, sheet and
+  popped-out window) and in the review. Hub `fs.listEntries` gained an
+  additive `includeIgnored` option and echoes it; `.git` stays omitted.
+  "Git-ignored files are hidden" is shown until Show ignored.
+- **Terminal.** One hub-owned shell per agent (`terminals.create` in the
+  agent's cwd, `sessions.attachTerminal` / keepalive / input / resize,
+  `pty.bytes.<id>`), rendered by a `vt100` emulator in a panel under the chat
+  or its own window. Keys go to the shell ahead of every binding (keystroke
+  interceptor). Shell rows are filtered out of the session list; the agent →
+  shell pairing is remembered per hub. Hub `toggle-terminal` / `new-terminal`
+  UI actions drive it; `facade.openTerminal` commands are still not run.
+- **Review.** Changes is a Git-style diff (old/new gutters, hunks, tints,
+  sideways scrolling) with Changed / Files on the right. `git.status` now
+  reports the work-tree `root` (older hubs: the session cwd).
+
+Evidence (Linux, this worktree, serialized UI tests):
+
+- Native `cargo test --locked --features ui-tests -- --test-threads=1`: lib 144,
+  GPUI/bin 124 (1 ignored), protocol 37, rust_hub 4, projects_hub 1,
+  background_process 3 — all passed. `--no-default-features`: 142 + 37 passed.
+  Strict Clippy (`--all-targets --features ui-tests -D warnings`) and rustfmt
+  passed.
+- New GPUI tests: `editor_saves_through_the_hub_and_never_drops_unsaved_edits`,
+  `editor_explorer_lists_the_session_folder_and_opens_files`,
+  `review_shows_git_diffs_beside_a_right_hand_file_explorer`,
+  `agent_terminal_takes_keys_and_follows_the_selected_agent` (includes pop
+  out / dock), `unsaved_edits_move_with_the_editor_into_its_own_window`.
+  Three existing viewer tests were updated from "read-only" to the editable
+  contract (keys still never reach the workspace underneath).
+- Real embedded hub, no model provider:
+  `editor_explorer_and_agent_terminal_round_trip_through_the_owned_hub` runs a
+  real login shell in the project folder (`echo`/`pwd` output), hides and
+  re-attaches to the same shell with its output replayed, confirms the shell
+  never appears in sessions, restarts it, verifies a save, refuses a stale
+  save (file untouched), forces an overwrite, and lists with/without ignored
+  entries.
+- hub-rs: `services::files` 5, `tests/git.rs` 8 (new `root` assertion), and
+  witness-selected `tests/files.rs` 8, `tests/snapshots.rs` 10,
+  `tests/models.rs` 6, federation routing 2 — passed. hub-rs strict Clippy
+  fails on ~200 findings that predate this change (none on the changed lines).
+- Debug-build captures under private Xvfb against `native-harness serve`
+  (whose fixture now answers `fs.listEntries`, `fs.write` in memory and an
+  echo-only fake shell that runs nothing):
+  [editor, unsaved](docs/ui-editor-unsaved.png),
+  [unsaved-changes guard](docs/ui-editor-guard.png),
+  [review diff](docs/ui-review-diff.png),
+  [review files + editor](docs/ui-review-files.png),
+  [terminal panel](docs/ui-terminal-panel.png),
+  [terminal window](docs/ui-terminal-window.png).
+
+Not covered: Windows/macOS rendering and ConPTY shells, hardware GPU, a
+remote (TLS) hub, IME composition in the terminal, mouse selection/reporting
+in the terminal, and the Quit shortcut over unsaved edits.
