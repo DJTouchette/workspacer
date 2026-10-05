@@ -44,6 +44,9 @@ pub struct Settings {
     /// Client-local session organization, scoped by hub identity.
     pub names: BTreeMap<String, BTreeMap<String, String>>,
     pub archived: BTreeMap<String, Vec<String>>,
+    /// Finished children cleared from the sidebar, by hub identity. Separate
+    /// from the shared archive: this device's child view only.
+    pub cleared_children: BTreeMap<String, BTreeMap<String, crate::child_agents::ClearMark>>,
     pub default_provider: Provider,
     pub default_claude_access: crate::launch::Permission,
     pub default_codex_access: crate::launch::Permission,
@@ -66,6 +69,7 @@ impl Default for Settings {
             notifications: true,
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
+            cleared_children: BTreeMap::new(),
             default_provider: Provider::Claude,
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
@@ -380,6 +384,24 @@ pub fn lineage_filter(
     (0..sessions.len()).filter(|&ix| keep[ix]).collect()
 }
 
+/// Which sessions a clear hides. A cleared session that still has a shown,
+/// uncleared descendant stays as that descendant's context, so clearing never
+/// detaches live work from its lineage.
+pub fn cleared_hidden(
+    sessions: &[Session],
+    shown: impl Fn(usize) -> bool,
+    cleared: impl Fn(usize) -> bool,
+) -> Vec<bool> {
+    let cleared: Vec<bool> = (0..sessions.len()).map(cleared).collect();
+    let mut hidden = cleared.clone();
+    for ix in (0..sessions.len()).filter(|&ix| shown(ix) && !cleared[ix]) {
+        for ancestor in ancestors(sessions, ix) {
+            hidden[ancestor] = false;
+        }
+    }
+    hidden
+}
+
 /// Stable parent-first order; missing/filtered parents become roots. A visited
 /// set also keeps malformed cycles visible without recursing indefinitely.
 pub fn session_tree(sessions: &[Session], visible: &[usize]) -> Vec<(usize, usize)> {
@@ -437,6 +459,30 @@ mod sidebar_tests {
         assert_eq!(
             session_tree(&sessions, &[0, 1, 2]),
             vec![(1, 0), (0, 1), (2, 0)]
+        );
+    }
+    #[test]
+    fn a_cleared_child_stays_as_context_for_uncleared_descendants() {
+        let sessions = vec![
+            session("root", ""),
+            session("child", "root"),
+            session("grandchild", "child"),
+            session("sibling", "root"),
+        ];
+        let all = |_| true;
+        assert_eq!(
+            cleared_hidden(&sessions, all, |ix| ix == 1 || ix == 3),
+            vec![false, false, false, true],
+            "the live grandchild keeps its cleared parent"
+        );
+        assert_eq!(
+            cleared_hidden(&sessions, all, |ix| ix == 1 || ix == 2),
+            vec![false, true, true, false]
+        );
+        // An archived (not shown) grandchild does not hold its parent.
+        assert_eq!(
+            cleared_hidden(&sessions, |ix| ix != 2, |ix| ix == 1),
+            vec![false, true, false, false]
         );
     }
     fn located(id: &str, parent: &str, cwd: &str, label: &str) -> Session {

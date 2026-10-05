@@ -1100,6 +1100,7 @@ impl Workspace {
             .unwrap_or_default();
         self.sync_projects(&view);
         self.view = view;
+        self.lift_child_clears(cx);
         self.ensure_project_icons(cx);
         self.resume_explorer(cx);
         self.sync_terminals(window, cx);
@@ -7060,50 +7061,380 @@ mod tests {
         );
     }
 
+    /// `state(selected)` with parent `a` in `parent_state` and one native
+    /// child `t1` in `child_status`.
+    fn native_child_state(
+        selected: &str,
+        parent_state: &str,
+        child_status: &str,
+        completed_at: i64,
+    ) -> View {
+        let mut next = state(selected);
+        let parent = &mut Arc::make_mut(&mut next.sessions)[0];
+        parent.state = parent_state.into();
+        parent.merge(&serde_json::json!({"subagents":[{
+            "id":"t1","description":"Audit","status":child_status,
+            "startedAt":1000,"completedAt":completed_at
+        }]}));
+        next
+    }
+
+    fn provider_rows(this: &Workspace, cx: &App) -> usize {
+        this.sidebar_rows(cx)
+            .iter()
+            .filter(|row| matches!(row, sidebar::SidebarRow::Provider { .. }))
+            .count()
+    }
+
+    // #29: a finished provider-native child stays under its parent through
+    // turn ends, parent/sibling focus changes, opening and leaving it, and
+    // replayed snapshots; nothing flashes in or out.
     #[gpui::test]
-    fn finished_native_subagents_leave_the_sidebar_once_the_parent_turn_ends(
+    fn finished_native_subagents_stay_under_their_parent_across_focus_and_turns(
         cx: &mut TestAppContext,
     ) {
         let (workspace, mut visual, _, _updates) = fixture(cx);
-        let rows = |parent_state: &str,
-                    child_status: &str,
-                    visual: &mut gpui::VisualTestContext| {
+        let show = |view: View, visual: &mut gpui::VisualTestContext| {
             visual.update(|window, cx| {
                 workspace.update(cx, |this, cx| {
-                    let mut next = state("b");
-                    let parent = &mut Arc::make_mut(&mut next.sessions)[0];
-                    parent.state = parent_state.into();
-                    parent.subagents = serde_json::json!([{"id":"t1","description":"Audit","status":child_status}]);
-                    this.update_view(Arc::new(next), window, cx);
-                    this.sidebar_rows(cx).len()
+                    this.update_view(Arc::new(view), window, cx);
+                    (this.sidebar_rows(cx).len(), provider_rows(this, cx))
                 })
             })
         };
-        // Sessions a and b, plus the subagent row while it matters.
-        assert_eq!(rows("input", "running", &mut visual), 3, "running: shown");
+        let steps = [
+            ("b", "responding", "running", 0, "running, parent mid-turn"),
+            (
+                "b",
+                "responding",
+                "complete",
+                2000,
+                "finished, parent mid-turn",
+            ),
+            (
+                "b",
+                "input",
+                "complete",
+                2000,
+                "finished and the turn is over",
+            ),
+            ("a", "input", "complete", 2000, "parent focused"),
+            ("b", "input", "complete", 2000, "sibling focused again"),
+            ("b", "input", "complete", 2000, "the same snapshot replayed"),
+            ("a", "responding", "complete", 2000, "parent's next turn"),
+            ("a", "input", "complete", 2000, "parent idle again"),
+        ];
+        for (selected, parent, child, completed, step) in steps {
+            assert_eq!(
+                show(
+                    native_child_state(selected, parent, child, completed),
+                    &mut visual
+                ),
+                (3, 1),
+                "{step}"
+            );
+        }
+        // Open the child, then go back to the parent: it stays both times.
+        let mut viewing = native_child_state("a", "input", "complete", 2000);
+        viewing.child = Some(wks_native::controller::ChildTarget {
+            parent: "a".into(),
+            agent: "t1".into(),
+        });
+        assert_eq!(show(viewing, &mut visual), (3, 1));
         assert_eq!(
-            rows("responding", "complete", &mut visual),
-            3,
-            "parent mid-turn: shown"
+            show(
+                native_child_state("a", "input", "complete", 2000),
+                &mut visual
+            ),
+            (3, 1)
         );
+        // Its row keeps the truthful finished status.
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("sidebar-provider-1").is_some());
+        assert!(visual.debug_bounds("sidebar-clear-provider-1").is_some());
+    }
+
+    #[gpui::test]
+    fn clearing_a_finished_native_child_is_stable_until_it_works_again(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let path = std::env::temp_dir().join(format!("native-clear-{}.json", std::process::id()));
+        let show = |view: View, visual: &mut gpui::VisualTestContext| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(Arc::new(view), window, cx);
+                    provider_rows(this, cx)
+                })
+            })
+        };
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, _| this.settings_path = Some(path.clone()))
+        });
         assert_eq!(
-            rows("input", "complete", &mut visual),
-            2,
-            "done and turn over: gone"
+            show(
+                native_child_state("b", "input", "complete", 2000),
+                &mut visual
+            ),
+            1
         );
-        // Viewing it keeps it, so the highlight has somewhere to live.
-        let kept = visual.update(|window, cx| {
+        visual.run_until_parked();
+        let _ = archive_effects(&mut commands);
+        let clear = visual.debug_bounds("sidebar-clear-provider-1").unwrap();
+        visual.simulate_click(clear.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(provider_rows(this, cx), 0);
+            assert_eq!(
+                this.view.selected.as_deref(),
+                Some("b"),
+                "selection unchanged"
+            );
+            assert!(!this.archived("a"), "clearing is not archiving");
+        });
+        assert!(
+            archive_effects(&mut commands).is_empty(),
+            "no stop, close, archive, delete or selection is sent"
+        );
+        let saved = Settings::load(&path).unwrap();
+        assert!(saved.cleared_children["test"].contains_key("agent:a/t1"));
+        assert!(saved.archived.is_empty());
+        // Replays, focus changes and turn boundaries keep it cleared.
+        for (selected, parent) in [
+            ("b", "input"),
+            ("a", "input"),
+            ("a", "responding"),
+            ("b", "input"),
+        ] {
+            assert_eq!(
+                show(
+                    native_child_state(selected, parent, "complete", 2000),
+                    &mut visual
+                ),
+                0,
+                "{selected} {parent}"
+            );
+        }
+        // Opening it from the chat still shows it while it is open.
+        let mut viewing = native_child_state("a", "input", "complete", 2000);
+        viewing.child = Some(wks_native::controller::ChildTarget {
+            parent: "a".into(),
+            agent: "t1".into(),
+        });
+        assert_eq!(show(viewing, &mut visual), 1);
+        assert_eq!(
+            show(
+                native_child_state("a", "input", "complete", 2000),
+                &mut visual
+            ),
+            0
+        );
+        // Reused: it shows while it runs and stays after the new finish.
+        assert_eq!(
+            show(native_child_state("a", "input", "running", 0), &mut visual),
+            1
+        );
+        workspace.read_with(&visual, |this, _| {
+            assert!(
+                this.settings.cleared_children.is_empty(),
+                "the clear is lifted"
+            );
+        });
+        assert_eq!(
+            show(
+                native_child_state("a", "input", "complete", 9000),
+                &mut visual
+            ),
+            1
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[gpui::test]
+    fn a_finished_native_child_with_a_later_finish_returns_after_a_restart(
+        cx: &mut TestAppContext,
+    ) {
+        // Cleared on one run, then the child worked and finished again while
+        // this client was away: newer evidence brings it back.
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let rows = visual.update(|window, cx| {
             workspace.update(cx, |this, cx| {
-                let mut next = (*this.view).clone();
-                next.child = Some(wks_native::controller::ChildTarget {
-                    parent: "a".into(),
-                    agent: "t1".into(),
-                });
-                this.update_view(Arc::new(next), window, cx);
-                this.sidebar_rows(cx).len()
+                this.update_view(
+                    Arc::new(native_child_state("b", "input", "complete", 2000)),
+                    window,
+                    cx,
+                );
+                let marks = this.clearable_children(&this.view.sessions[0].clone());
+                assert_eq!(marks.len(), 1);
+                this.clear_children(marks, cx);
+                let cleared = provider_rows(this, cx);
+                this.update_view(
+                    Arc::new(native_child_state("b", "input", "complete", 7000)),
+                    window,
+                    cx,
+                );
+                (cleared, provider_rows(this, cx))
             })
         });
-        assert_eq!(kept, 3);
+        assert_eq!(rows, (0, 1));
+    }
+
+    #[gpui::test]
+    fn finished_workspacer_children_offer_clear_in_place_of_archive(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let with_child = |child_state: &str, selected: &str| {
+            let mut next = state(selected);
+            Arc::make_mut(&mut next.sessions).push(Session {
+                id: "c".into(),
+                label: "Worker".into(),
+                parent_session_id: "a".into(),
+                state: child_state.into(),
+                ..Default::default()
+            });
+            Arc::new(next)
+        };
+        let ids = |this: &Workspace, cx: &App| -> Vec<String> {
+            this.visible_sessions(cx)
+                .into_iter()
+                .map(|ix| this.view.sessions[ix].id.clone())
+                .collect()
+        };
+        // Debug bounds outlive their frame, so absence is checked on a
+        // window's first frame. Rows: a, c (nested), b.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(with_child("input", "b"), window, cx)
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("sidebar-clear-1").is_some());
+        assert!(visual.debug_bounds("sidebar-archive-1").is_none());
+        // Main sessions keep their Archive button.
+        assert!(visual.debug_bounds("sidebar-archive-0").is_some());
+        assert!(visual.debug_bounds("sidebar-archive-2").is_some());
+        assert!(visual.debug_bounds("sidebar-clear-finished-0").is_some());
+        let _ = archive_effects(&mut commands);
+        let clear = visual.debug_bounds("sidebar-clear-1").unwrap();
+        visual.simulate_click(clear.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(archive_effects(&mut commands).is_empty());
+        workspace.read_with(&visual, |this, cx| {
+            assert_eq!(ids(this, cx), ["a", "b"]);
+            assert!(!this.archived("c"));
+            assert!(this.clear_marked("c"), "History offers Show in sidebar");
+        });
+        // Replayed snapshot and focus changes keep it cleared; opening it
+        // shows it while open.
+        for (selected, expected) in [
+            ("b", vec!["a", "b"]),
+            ("a", vec!["a", "b"]),
+            ("c", vec!["a", "c", "b"]),
+            ("b", vec!["a", "b"]),
+        ] {
+            let shown = visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(with_child("input", selected), window, cx);
+                    ids(this, cx)
+                })
+            });
+            assert_eq!(shown, expected, "selected {selected}");
+        }
+        // A new message makes it work again: it returns, and stays after.
+        let shown = visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(with_child("responding", "b"), window, cx);
+                let working = ids(this, cx);
+                this.update_view(with_child("input", "b"), window, cx);
+                (working, ids(this, cx))
+            })
+        });
+        assert_eq!(shown.0, ["a", "c", "b"]);
+        assert_eq!(shown.1, ["a", "c", "b"]);
+        // History's Show in sidebar undoes a clear.
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                let marks = this.clearable_children(&this.view.sessions[0].clone());
+                this.clear_children(marks, cx);
+                assert_eq!(ids(this, cx), ["a", "b"]);
+                this.unclear_session("c", cx);
+                assert_eq!(ids(this, cx), ["a", "c", "b"]);
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn active_workspacer_children_keep_archive_and_offer_no_clear(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("b");
+                Arc::make_mut(&mut next.sessions).push(Session {
+                    id: "c".into(),
+                    parent_session_id: "a".into(),
+                    state: "responding".into(),
+                    ..Default::default()
+                });
+                this.update_view(Arc::new(next), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("sidebar-archive-1").is_some());
+        assert!(visual.debug_bounds("sidebar-clear-1").is_none());
+        assert!(visual.debug_bounds("sidebar-clear-finished-0").is_none());
+    }
+
+    #[gpui::test]
+    fn clear_finished_on_the_parent_leaves_running_children(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = state("b");
+                let sessions = Arc::make_mut(&mut next.sessions);
+                sessions[0].merge(&serde_json::json!({"subagents":[
+                    {"id":"done","status":"complete","startedAt":1000,"completedAt":2000},
+                    {"id":"busy","status":"running","startedAt":1500},
+                    {"id":"broke","status":"failed","startedAt":1000,"completedAt":1200}
+                ]}));
+                sessions.push(Session {
+                    id: "w1".into(),
+                    parent_session_id: "a".into(),
+                    state: "input".into(),
+                    ..Default::default()
+                });
+                sessions.push(Session {
+                    id: "w2".into(),
+                    parent_session_id: "a".into(),
+                    state: "responding".into(),
+                    ..Default::default()
+                });
+                sessions.push(Session {
+                    id: "g".into(),
+                    parent_session_id: "w1".into(),
+                    state: "responding".into(),
+                    ..Default::default()
+                });
+                this.update_view(Arc::new(next), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let _ = archive_effects(&mut commands);
+        let clear = visual.debug_bounds("sidebar-clear-finished-0").unwrap();
+        visual.simulate_click(clear.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(archive_effects(&mut commands).is_empty());
+        workspace.read_with(&visual, |this, cx| {
+            let rows: Vec<String> = this
+                .sidebar_rows(cx)
+                .iter()
+                .map(|row| match row {
+                    sidebar::SidebarRow::Session { index, .. } => {
+                        this.view.sessions[*index].id.clone()
+                    }
+                    sidebar::SidebarRow::Provider { child, .. } => format!("native:{}", child.id),
+                })
+                .collect();
+            // w1 was cleared but its working child g keeps it as context.
+            assert_eq!(rows, ["a", "native:busy", "w1", "g", "w2", "b"]);
+            assert!(this.clearable_children(&this.view.sessions[0]).is_empty());
+        });
     }
 
     // A background session that finishes its turn raises one OS alert. The

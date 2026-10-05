@@ -1001,6 +1001,7 @@ impl Worker {
                 } else if topic == "sessionArchive.changed" {
                     self.apply_archive(&data);
                 } else if topic == "agent.snapshot" {
+                    self.upsert(&data);
                     if self.fleet_pending
                         && let Some(id) = Session::id_of(&data)
                         && self.fleet_overlay.len() < MAX_SESSIONS
@@ -1031,9 +1032,22 @@ impl Worker {
                                 merged[key] = v.clone();
                             }
                         }
+                        // Child membership and status too, or a fleet read
+                        // served before this event rolls finished children
+                        // back to running (or drops new ones) until the next
+                        // event. Kept as the bounded projection.
+                        if let Some(session) = self.sessions.get(id) {
+                            for (key, value) in [
+                                ("subagents", &session.subagents),
+                                ("workflows", &session.workflows),
+                            ] {
+                                if data.get(key).is_some() {
+                                    merged[key] = value.clone();
+                                }
+                            }
+                        }
                         self.fleet_overlay.insert(id.into(), merged);
                     }
-                    self.upsert(&data);
                 } else if self.view.child.is_none()
                     && self
                         .view

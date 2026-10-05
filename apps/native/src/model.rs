@@ -216,8 +216,14 @@ impl Session {
             self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
         }
         if let Some(items) = value.get("subagents") {
-            let mut projected = bounded_inventory(
+            // The daemon appends children, so the newest (and any still
+            // running) are the tail; past the bound, the oldest drop first.
+            let skip = items
+                .as_array()
+                .map_or(0, |all| all.len().saturating_sub(32));
+            let mut projected = inventory_from(
                 items,
+                skip,
                 &[
                     "id",
                     "toolUseId",
@@ -347,11 +353,16 @@ impl Session {
 }
 
 fn bounded_inventory(value: &Value, fields: &[&str]) -> Value {
+    inventory_from(value, 0, fields)
+}
+
+fn inventory_from(value: &Value, skip: usize, fields: &[&str]) -> Value {
     Value::Array(
         value
             .as_array()
             .into_iter()
             .flatten()
+            .skip(skip)
             .take(32)
             .map(|item| {
                 let mut projected = serde_json::Map::new();

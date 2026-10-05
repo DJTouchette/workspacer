@@ -1025,11 +1025,22 @@ transcript refreshes every two seconds; parent approvals still surface. Agents
 started through Workspacer's spawn skill are real sessions and keep a working
 composer.
 
-In the sidebar, a provider-native subagent row stays while it runs or while its
-parent's turn is still going (working, or waiting on an approval or question).
-Once it has finished and the turn is over it leaves, and the chat keeps its
-record. Agents started through the spawn skill are sessions, nested under their
-parent with the same archive button.
+In the sidebar, a provider-native subagent row stays under its parent while it
+runs and after it finishes, through turn ends, focus changes between parent and
+siblings, and fleet refreshes, with its reported status. Agents started through
+the spawn skill are sessions, nested under their parent. A finished child (a
+done or failed subagent, or a spawned session back at its prompt or ended)
+offers **Clear** in place of Archive; the parent's card offers **Clear finished
+children** while it has any. Clear only hides the row on this device: it is
+saved per hub in native settings, sends no stop, close, archive or selection
+change, and leaves the session, transcript, inline chat card and Session history
+alone. It is not the shared archive. Running children are never cleared. A
+cleared child stays hidden through replays of the same finish; one that works
+again (seen running, a later finish, or more tool calls) returns and stays.
+The child open in the chat stays listed while it is open; History's **Show in
+sidebar** undoes a cleared session. A cleared session with a live descendant
+stays as that descendant's parent. Archive still covers ordinary sessions and
+active children.
 
 Subagents with no spawning call in view (an untracked dispatch or one whose call
 scrolled out) gather in a collapsible **subagents** card pinned where they

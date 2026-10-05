@@ -80,11 +80,22 @@ impl Workspace {
         }
         let query = self.search.read(cx).value().to_lowercase();
         let sessions = &self.view.sessions;
+        // Finished children the user cleared leave this device's list, except
+        // the one open now; a live descendant keeps its cleared parent.
+        let open = self
+            .navigation_selected
+            .as_ref()
+            .or(self.view.selected.as_ref());
+        let cleared = wks_native::navigation::cleared_hidden(
+            sessions,
+            |ix| !self.archived(&sessions[ix].id),
+            |ix| Some(&sessions[ix].id) != open && self.session_cleared(&sessions[ix]),
+        );
         // Project and search each match a lineage, so workers in their own
         // worktrees stay nested under a manager the filter matched.
         let in_project = wks_native::navigation::lineage_filter(
             sessions,
-            |ix| !self.archived(&sessions[ix].id),
+            |ix| !self.archived(&sessions[ix].id) && !cleared[ix],
             |ix| {
                 self.project_filter
                     .as_ref()

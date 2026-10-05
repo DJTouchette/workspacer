@@ -16,7 +16,7 @@ pub async fn serve_with_transcript(
     turns: usize,
     rich: bool,
 ) -> Result<()> {
-    serve_feedback_fixture(listener, sessions, turns, rich, false, false).await
+    serve_feedback_fixture(listener, sessions, turns, rich, false, false, false).await
 }
 
 /// Visual acceptance fixture. The optional request exercises the native
@@ -24,6 +24,9 @@ pub async fn serve_with_transcript(
 /// `pending_questions` gives the first sessions question sets (see
 /// [`fixture_questions`]); each `claude.answer` is printed to stderr as one
 /// `fixture claude.answer <params>` line and resolves that session's set.
+/// `child_lifecycle` (rich only) finishes the first session's native
+/// children and ends its turn a few seconds after connecting, then replays
+/// that identical snapshot every 1.5s, for child-row stability captures.
 pub async fn serve_feedback_fixture(
     listener: TcpListener,
     sessions: usize,
@@ -31,7 +34,9 @@ pub async fn serve_feedback_fixture(
     rich: bool,
     missing_session_request: bool,
     pending_questions: bool,
+    child_lifecycle: bool,
 ) -> Result<()> {
+    let child_lifecycle = child_lifecycle && rich;
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
@@ -77,8 +82,19 @@ pub async fn serve_feedback_fixture(
             let mut due: Vec<(tokio::time::Instant, String, Value)> = Vec::new();
             let mut clock = tokio::time::interval(std::time::Duration::from_millis(100));
             clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let finish_at = tokio::time::Instant::now() + std::time::Duration::from_secs(4);
+            let mut replay = tokio::time::interval(std::time::Duration::from_millis(1500));
+            let mut finished_parent: Option<Value> = None;
             loop {
                 tokio::select! {
+                    _ = replay.tick(), if child_lifecycle => {
+                        if finished_parent.is_none() && tokio::time::Instant::now() >= finish_at {
+                            pending = false;
+                            finished_parent = Some(finished_rich_parent());
+                        }
+                        if let Some(row) = &finished_parent
+                            && socket.send(event("agent.snapshot", row.clone())).await.is_err() { return; }
+                    }
                     _ = clock.tick(), if !due.is_empty() => {
                         let now = tokio::time::Instant::now();
                         let (ready, later): (Vec<_>, Vec<_>) = due.drain(..).partition(|(at, _, _)| *at <= now);
@@ -244,6 +260,7 @@ pub async fn serve_feedback_fixture(
                                         "pendingApproval":if i == 0 && pending {json!({"toolName":"Bash", "toolInput":{"command":"cargo test"}})} else {Value::Null}
                                         });
                                         let mut snapshot = if rich { rich_snapshot(i, snapshot) } else { snapshot };
+                                        if i == 0 && let Some(row) = &finished_parent { snapshot = row.clone(); }
                                         if pending_questions && !answered.contains(&format!("demo-{i:04}")) && let Some(questions) = fixture_questions(i) {
                                             snapshot["pendingQuestions"] = questions;
                                             snapshot["mode"] = json!("question");
@@ -539,6 +556,26 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
     snapshot
 }
 
+/// The first rich session after its native children finish and its turn
+/// ends: the same identities with terminal status and fixed times, so every
+/// replay is byte-identical.
+fn finished_rich_parent() -> Value {
+    let base = json!({
+        "sessionId":"demo-0000","label":"Native client experiment","cwd":"/workspaces/project-0",
+        "parentSessionId":"","provider":"claude","model":"sonnet","transport":"stream",
+        "mode":"input","pendingApproval":Value::Null
+    });
+    let mut parent = rich_snapshot(0, base);
+    let now = chrono::Utc::now().timestamp_millis();
+    for child in parent["subagents"].as_array_mut().into_iter().flatten() {
+        if child["status"] == "running" {
+            child["status"] = json!("complete");
+            child["completedAt"] = json!(now);
+        }
+    }
+    parent
+}
+
 fn rich_subagent_conversation(session: &str, agent: &str) -> Value {
     if session != "demo-0000"
         || !matches!(
@@ -634,6 +671,27 @@ pub async fn ui_intent_probe() -> Result<Value> {
 #[cfg(test)]
 mod child_fixture_tests {
     use super::*;
+
+    #[test]
+    fn child_lifecycle_finishes_the_same_children_and_ends_the_turn() {
+        let running = rich_snapshot(0, json!({"sessionId":"demo-0000"}));
+        let finished = finished_rich_parent();
+        assert_eq!(finished["mode"], "input");
+        assert!(finished["pendingApproval"].is_null());
+        let ids = |v: &Value| -> Vec<Value> {
+            v["subagents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["id"].clone())
+                .collect()
+        };
+        assert_eq!(ids(&running), ids(&finished), "identities are kept");
+        for child in finished["subagents"].as_array().unwrap() {
+            assert_eq!(child["status"], "complete");
+            assert!(child["completedAt"].as_i64().is_some());
+        }
+    }
 
     #[test]
     fn rich_children_have_dispatch_anchors_and_parent_scoped_replay() {
