@@ -204,7 +204,7 @@ impl Inline {
     fn layout_selections(
         &self,
         text_layout: &TextLayout,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> (bool, bool, Option<Selection>) {
         let Some(text_view_state) = GlobalState::global(cx).text_view_state() else {
@@ -217,46 +217,28 @@ impl Inline {
             return (is_selectable, false, None);
         }
 
-        let line_height = window.line_height();
-        let selection_bounds = text_view_state.selection_bounds();
-
-        // Use for debug selection bounds
-        // self.paint_selected_bounds(selection_bounds, window, cx);
-
-        let mut selection: Option<Selection> = None;
-        let mut offset = 0;
-        let mut chars = self.text.chars().peekable();
-        while let Some(c) = chars.next() {
-            let Some(pos) = text_layout.position_for_index(offset) else {
-                offset += c.len_utf8();
-                continue;
-            };
-
-            let mut char_width = line_height.half();
-            if let Some(next_pos) = text_layout.position_for_index(offset + 1) {
-                if next_pos.y == pos.y {
-                    char_width = next_pos.x - pos.x;
-                }
-            }
-
-            if point_in_text_selection(pos, char_width, &selection_bounds, line_height) {
-                if selection.is_none() {
-                    selection = Some((offset..offset).into());
-                }
-
-                let next_offset = offset + c.len_utf8();
-                selection.as_mut().unwrap().end = next_offset;
-            }
-
-            offset += c.len_utf8();
-        }
-
+        // Workspacer: select from where the drag started to the pointer in
+        // reading order. Upstream selected the characters inside the
+        // rectangle spanned by the two points, which dropped the drag's
+        // direction: dragging up and to the right (or down and to the left)
+        // took in text on the upper line left of the pointer, text it never
+        // reached, and that text was copied too.
+        let Some((anchor, head)) = text_view_state.selection_points() else {
+            return (is_selectable, false, None);
+        };
+        let boxes = self.text.char_indices().filter_map(|(offset, c)| {
+            let (origin, width) = char_box(text_layout, c, offset)?;
+            Some((offset, c, origin, width))
+        });
+        let [start, end] = selection_carets(boxes, [anchor, head], text_layout.line_height());
+        let selection = (start != end).then(|| (start.min(end)..start.max(end)).into());
         (true, true, selection)
     }
 
     /// Paint the selection background.
     fn paint_selection(
         selection: &Selection,
+        text: &str,
         text_layout: &TextLayout,
         bounds: &Bounds<Pixels>,
         window: &mut Window,
@@ -267,7 +249,13 @@ impl Inline {
         if end < start {
             std::mem::swap(&mut start, &mut end);
         }
-        let Some(start_position) = text_layout.position_for_index(start) else {
+        // A selection that starts at a soft wrap starts on the next line,
+        // not at the end of the line GPUI reports for that index.
+        let start_position = match text[start..].chars().next() {
+            Some(c) => char_box(text_layout, c, start).map(|(origin, _)| origin),
+            None => text_layout.position_for_index(start),
+        };
+        let Some(start_position) = start_position else {
             return;
         };
         let Some(end_position) = text_layout.position_for_index(end) else {
@@ -431,7 +419,7 @@ impl Element for Inline {
         // backgrounds, before text), as Input does. Painting it on top hid
         // selected text whenever the theme's selection color was opaque.
         if let Some(selection) = &state.selection {
-            Self::paint_selection(selection, &text_layout, &bounds, window, cx);
+            Self::paint_selection(selection, &self.text, &text_layout, &bounds, window, cx);
         }
         self.styled_text
             .paint(global_id, None, bounds, &mut (), &mut (), window, cx);
@@ -494,181 +482,176 @@ impl Element for Inline {
     }
 }
 
-/// Check if a `pos` is within a `bounds`, considering multi-line selections.
-fn point_in_text_selection(
-    pos: Point<Pixels>,
-    char_width: Pixels,
-    bounds: &Bounds<Pixels>,
+/// Where character `c` at `offset` is drawn, and its advance (workspacer).
+fn char_box(layout: &TextLayout, c: char, offset: usize) -> Option<(Point<Pixels>, Pixels)> {
+    let position = layout.position_for_index(offset)?;
+    let next = layout.position_for_index(offset + c.len_utf8());
+    Some(visual_box(
+        c,
+        position,
+        next,
+        layout.bounds().left(),
+        layout.line_height(),
+    ))
+}
+
+/// GPUI reports the index of a soft wrap at the end of the line the wrap
+/// ends, but the character there is drawn at the start of the next line.
+/// Taking GPUI's position for it put the first character of every wrapped
+/// line at the end of the line above, so dragging back to the start of a
+/// wrapped line left that character unselected. A newline keeps its own
+/// line's end and has no width.
+fn visual_box(
+    c: char,
+    position: Point<Pixels>,
+    next: Option<Point<Pixels>>,
+    line_left: Pixels,
     line_height: Pixels,
-) -> bool {
-    let top = bounds.top();
-    let bottom = bounds.bottom();
-    let left = bounds.left();
-    let right = bounds.right();
-
-    // Out of the vertical bounds
-    if pos.y + line_height < top || pos.y >= bottom {
-        return false;
+) -> (Point<Pixels>, Pixels) {
+    match next {
+        _ if c == '\n' => (position, px(0.)),
+        Some(next) if next.y == position.y => (position, next.x - position.x),
+        Some(next) => (point(line_left, next.y), next.x - line_left),
+        None => (position, line_height.half()),
     }
+}
 
-    let single_line = (bottom - top) <= line_height;
-    if single_line {
-        // If it's a single line selection, just check horizontal bounds
-        return pos.x + char_width.half() >= left && pos.x + char_width.half() <= right;
+/// The caret each selection point puts in the text: after every character
+/// that precedes the point in reading order. `boxes` are the characters in
+/// text order with where they are drawn (`visual_box`). Selecting between
+/// the two carets keeps the drag's direction, which a rectangle between the
+/// points does not.
+fn selection_carets(
+    boxes: impl Iterator<Item = (usize, char, Point<Pixels>, Pixels)>,
+    points: [Point<Pixels>; 2],
+    line_height: Pixels,
+) -> [usize; 2] {
+    let mut carets = [0; 2];
+    let mut settled = [false; 2];
+    for (offset, c, origin, width) in boxes {
+        for ix in 0..2 {
+            if settled[ix] {
+                continue;
+            }
+            let point = points[ix];
+            let precedes = if origin.y + line_height <= point.y {
+                // On a line above the point's.
+                true
+            } else if point.y < origin.y {
+                // On a line below it.
+                false
+            } else {
+                // On the point's line, which a newline ends: before the
+                // point once the point is past the character's middle.
+                c != '\n' && origin.x + width.half() <= point.x
+            };
+            if precedes {
+                carets[ix] = offset + c.len_utf8();
+            } else {
+                settled[ix] = true;
+            }
+        }
+        if settled == [true; 2] {
+            break;
+        }
     }
-
-    let is_above = pos.y <= top;
-    let is_below = pos.y + line_height >= bottom;
-
-    if is_above {
-        return pos.x + char_width.half() >= left;
-    } else if is_below {
-        return pos.x + char_width.half() <= right;
-    } else {
-        return true;
-    }
+    carets
 }
 
 #[cfg(test)]
 mod tests {
-    use super::point_in_text_selection;
-    use gpui::{Bounds, point, px, size};
+    use super::{selection_carets, visual_box};
+    use gpui::{Pixels, Point, point, px};
+
+    const CHAR: f32 = 10.;
+    const LINE: f32 = 20.;
+
+    /// "abc def\nghi" in a 10px monospace font, soft wrapped before "def",
+    /// at the positions GPUI's `position_for_index` reports: the wrap index
+    /// (4, "d") at the end of the first line.
+    fn gpui_position(ix: usize) -> Point<Pixels> {
+        let (x, line) = match ix {
+            0..=4 => (ix, 0),
+            5..=7 => (ix - 4, 1),
+            _ => (ix - 8, 2),
+        };
+        point(px(x as f32 * CHAR), px(line as f32 * LINE))
+    }
+
+    fn boxes() -> Vec<(usize, char, Point<Pixels>, Pixels)> {
+        "abc def\nghi"
+            .char_indices()
+            .map(|(ix, c)| {
+                let (origin, width) = visual_box(
+                    c,
+                    gpui_position(ix),
+                    Some(gpui_position(ix + 1)),
+                    px(0.),
+                    px(LINE),
+                );
+                (ix, c, origin, width)
+            })
+            .collect()
+    }
+
+    fn selected(anchor: (f32, f32), head: (f32, f32)) -> &'static str {
+        let points = [anchor, head].map(|(x, y)| point(px(x), px(y)));
+        let [a, b] = selection_carets(boxes().into_iter(), points, px(LINE));
+        &"abc def\nghi"[a.min(b)..a.max(b)]
+    }
 
     #[test]
-    fn test_point_in_text_selection() {
-        let line_height = px(20.);
-        let char_width = px(10.);
-        let bounds = Bounds {
-            origin: point(px(50.), px(50.)),
-            size: size(px(100.), px(100.)),
-        };
+    fn wrapped_characters_are_drawn_on_their_own_line() {
+        let boxes = boxes();
+        // The wrap index starts the second line.
+        assert_eq!(boxes[4].2, point(px(0.), px(LINE)));
+        assert_eq!(boxes[4].3, px(CHAR));
+        // The space before the wrap ends the first line.
+        assert_eq!(boxes[3].2, point(px(30.), px(0.)));
+        assert_eq!(boxes[3].3, px(CHAR));
+        // A newline stays at its line's end, without width.
+        assert_eq!(boxes[7].2, point(px(30.), px(LINE)));
+        assert_eq!(boxes[7].3, px(0.));
+    }
 
-        // First line but haft line height, true
-        // | p --------|
-        // | selection |
-        // |-----------|
-        assert!(point_in_text_selection(
-            point(px(50.), px(40.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
+    #[test]
+    fn selection_follows_the_drag_in_reading_order() {
+        // Within a line, either way.
+        assert_eq!(selected((25., 5.), (5., 5.)), "bc");
+        assert_eq!(selected((5., 5.), (25., 5.)), "bc");
+        // Backward up and to the right: from after "e" back to after "c".
+        // A rectangle between the points also took "bc" on the line above
+        // and "f" on the line below.
+        assert_eq!(selected((15., 25.), (25., 5.)), " de");
+        // Forward down and to the left, the same span.
+        assert_eq!(selected((25., 5.), (15., 25.)), " de");
+        // Backward up and to the left.
+        assert_eq!(selected((15., 45.), (5., 5.)), "bc def\ngh");
+    }
 
-        // First line in selection, true
-        // | p --------|
-        // | selection |
-        // |-----------|
-        assert!(point_in_text_selection(
-            point(px(50.), px(50.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-        // First line, but left out of selection, false
-        // p |-----------|
-        //   | selection |
-        //   |-----------|
-        assert!(!point_in_text_selection(
-            point(px(40.), px(50.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-        // First line but right out of selection, true
-        // |-----------| p
-        // | selection |
-        // |-----------|
-        assert!(point_in_text_selection(
-            point(px(160.), px(50.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
+    #[test]
+    fn selection_reaches_the_start_of_a_wrapped_line() {
+        // Dragging back past the start of the wrapped line takes its first
+        // character, and nothing from the line above.
+        assert_eq!(selected((15., 25.), (-5., 25.)), "de");
+        assert_eq!(selected((-5., 25.), (15., 25.)), "de");
+        // Past the end of the first line is the same caret as its wrap.
+        assert_eq!(selected((90., 5.), (15., 25.)), "de");
+        // Past the end of a line ending in a newline stops before it.
+        assert_eq!(selected((90., 25.), (-5., 25.)), "def");
+        // Across the newline, it is kept.
+        assert_eq!(selected((90., 25.), (15., 45.)), "\ngh");
+    }
 
-        // Middle line in selection, true
-        // |-----------|
-        // |     p     |
-        // |-----------|
-        assert!(point_in_text_selection(
-            point(px(100.), px(70.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-        // Middle line, but left out of selection, true
-        //   |-----------|
-        // p | selection |
-        //   |-----------|
-        assert!(point_in_text_selection(
-            point(px(40.), px(70.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-        // Middle line, but right out of selection, true
-        // |-----------|
-        // | selection | p
-        // |-----------|
-        assert!(point_in_text_selection(
-            point(px(160.), px(70.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-
-        // Last line in selection, true
-        // |-----------|
-        // | selection |
-        // |------- p -|
-        assert!(point_in_text_selection(
-            point(px(100.), px(140.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-        // Last line, but left out of selection, true
-        //
-        //   |-----------|
-        //   | selection |
-        // p |-----------|
-        assert!(point_in_text_selection(
-            point(px(40.), px(140.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-        // Last line, but right out of selection, false
-        // |-----------|
-        // | selection |
-        // |-----------| p
-        assert!(!point_in_text_selection(
-            point(px(160.), px(140.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-
-        // Out of vertical bounds (top), false
-        //       p
-        // |-----------|
-        // | selection |
-        // |-----------|
-        assert!(!point_in_text_selection(
-            point(px(100.), px(20.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
-        // Out of vertical bounds (bottom), false
-        // |-----------|
-        // | selection |
-        // |-----------|
-        //       p
-        assert!(!point_in_text_selection(
-            point(px(100.), px(160.)),
-            char_width,
-            &bounds,
-            line_height
-        ));
+    #[test]
+    fn a_line_owns_its_top_edge_only() {
+        // The second line's top edge is in the second line: the first line
+        // is not reached.
+        assert_eq!(selected((15., 25.), (12., LINE)), "e");
+        // Just above it is in the first line.
+        assert_eq!(selected((15., 25.), (12., LINE - 0.5)), "bc de");
+        // Above and below the text clamp to its ends.
+        assert_eq!(selected((5., -10.), (-5., 5.)), "");
+        assert_eq!(selected((25., -10.), (25., 100.)), "abc def\nghi");
     }
 }

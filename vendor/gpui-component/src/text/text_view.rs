@@ -9,7 +9,7 @@ use gpui::{
     AnyElement, App, AppContext, Bounds, ClipboardItem, Context, Element, ElementId, Entity,
     EntityId, FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
     KeyBinding, LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Point, RenderOnce, SharedString, Size, StyleRefinement, Styled, Timer, Window, div, px,
+    Pixels, Point, RenderOnce, SharedString, StyleRefinement, Styled, Timer, Window, div, px,
 };
 use smol::stream::StreamExt;
 
@@ -368,9 +368,11 @@ impl TextViewState {
         self.is_selectable
     }
 
-    /// Return the bounds of the selection in window coordinates.
-    pub(crate) fn selection_bounds(&self) -> Bounds<Pixels> {
-        selection_bounds(
+    /// Where the selection drag started and where the pointer is, in
+    /// window coordinates (workspacer: replaces the rectangle between
+    /// them, which lost the drag's direction).
+    pub(crate) fn selection_points(&self) -> Option<(Point<Pixels>, Point<Pixels>)> {
+        selection_points(
             self.selection_positions.0,
             self.selection_positions.1,
             self.bounds,
@@ -880,28 +882,12 @@ fn parse_content(
     res.map(move |root_node| ParsedContent { root_node, node_cx })
 }
 
-fn selection_bounds(
+fn selection_points(
     start: Option<Point<Pixels>>,
     end: Option<Point<Pixels>>,
     bounds: Bounds<Pixels>,
-) -> Bounds<Pixels> {
-    if let (Some(start), Some(end)) = (start, end) {
-        let start = start + bounds.origin;
-        let end = end + bounds.origin;
-
-        let origin = Point {
-            x: start.x.min(end.x),
-            y: start.y.min(end.y),
-        };
-        let size = Size {
-            width: (start.x - end.x).abs(),
-            height: (start.y - end.y).abs(),
-        };
-
-        return Bounds { origin, size };
-    }
-
-    Bounds::default()
+) -> Option<(Point<Pixels>, Point<Pixels>)> {
+    Some((start? + bounds.origin, end? + bounds.origin))
 }
 
 #[cfg(test)]
@@ -910,83 +896,24 @@ mod tests {
     use gpui::{Bounds, point, px, size};
 
     #[test]
-    fn test_text_view_state_selection_bounds() {
+    fn test_text_view_state_selection_points() {
+        let bounds = Bounds {
+            origin: point(px(100.), px(200.)),
+            size: size(px(300.), px(300.)),
+        };
+        assert_eq!(selection_points(None, None, bounds), None);
         assert_eq!(
-            selection_bounds(None, None, Default::default()),
-            Bounds::default()
+            selection_points(None, Some(point(px(10.), px(20.))), bounds),
+            None
         );
+        // Order is kept: a backward drag ends before it starts.
         assert_eq!(
-            selection_bounds(None, Some(point(px(10.), px(20.))), Default::default()),
-            Bounds::default()
-        );
-        assert_eq!(
-            selection_bounds(Some(point(px(10.), px(20.))), None, Default::default()),
-            Bounds::default()
-        );
-
-        // 10,10 start
-        //   |------|
-        //   |      |
-        //   |------|
-        //         50,50
-        assert_eq!(
-            selection_bounds(
-                Some(point(px(10.), px(10.))),
-                Some(point(px(50.), px(50.))),
-                Default::default()
-            ),
-            Bounds {
-                origin: point(px(10.), px(10.)),
-                size: size(px(40.), px(40.))
-            }
-        );
-        // 10,10
-        //   |------|
-        //   |      |
-        //   |------|
-        //         50,50 start
-        assert_eq!(
-            selection_bounds(
+            selection_points(
                 Some(point(px(50.), px(50.))),
                 Some(point(px(10.), px(10.))),
-                Default::default()
+                bounds
             ),
-            Bounds {
-                origin: point(px(10.), px(10.)),
-                size: size(px(40.), px(40.))
-            }
-        );
-        //        50,10 start
-        //   |------|
-        //   |      |
-        //   |------|
-        // 10,50
-        assert_eq!(
-            selection_bounds(
-                Some(point(px(50.), px(10.))),
-                Some(point(px(10.), px(50.))),
-                Default::default()
-            ),
-            Bounds {
-                origin: point(px(10.), px(10.)),
-                size: size(px(40.), px(40.))
-            }
-        );
-        //        50,10
-        //   |------|
-        //   |      |
-        //   |------|
-        // 10,50 start
-        assert_eq!(
-            selection_bounds(
-                Some(point(px(10.), px(50.))),
-                Some(point(px(50.), px(10.))),
-                Default::default()
-            ),
-            Bounds {
-                origin: point(px(10.), px(10.)),
-                size: size(px(40.), px(40.))
-            }
+            Some((point(px(150.), px(250.)), point(px(110.), px(210.))))
         );
     }
 }
