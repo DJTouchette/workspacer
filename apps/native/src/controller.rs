@@ -178,6 +178,8 @@ pub enum Command {
     /// or return to its parent with `None`.
     ViewChild(Option<ChildTarget>),
     Create(NewSession),
+    /// Continue a session with the other provider; see [`crate::handoff`].
+    Handoff(crate::handoff::Request),
     LoadModels {
         key: CatalogKey,
         refresh: bool,
@@ -270,6 +272,10 @@ pub struct View {
     pub receipt: Option<Receipt>,
     pub creating: bool,
     pub spawn_receipt: Option<SpawnReceipt>,
+    /// The handoff in flight (at most one per connection).
+    pub handoff: Option<crate::handoff::Progress>,
+    /// The latest finished handoff, including refusals and failures.
+    pub handoff_receipt: Option<crate::handoff::Receipt>,
     /// Each agent's shell, by agent session id. Shell sessions themselves
     /// never appear in `sessions`.
     pub terminals: BTreeMap<String, crate::terminal::Terminal>,
@@ -345,7 +351,8 @@ impl Controller {
 enum Completion {
     Request(u64, u64, crate::features::Request, Result<Value>),
     Models(u64, u64, Result<Vec<crate::launch::ModelChoice>>),
-    Spawn(u64, NewSession, Result<Value>),
+    Spawn(u64, NewSession, Option<HandoffSpawn>, Result<Value>),
+    HandoffBrief(u64, crate::handoff::Request, Result<Value>),
     Fleet(u64, Result<Value>),
     Usage(u64, Result<Value>),
     Child(u64, u64, Result<Value>),
@@ -353,6 +360,12 @@ enum Completion {
     Action(u64, String, Action, Result<Value>),
     /// (epoch, agent, shell generation, step)
     Terminal(u64, String, u64, ShellStep),
+}
+
+/// A successor launch's handoff: whose work it continues and its brief.
+struct HandoffSpawn {
+    source: String,
+    brief: crate::handoff::Written,
 }
 
 enum ShellStep {
@@ -489,6 +502,7 @@ impl Worker {
                     Some(Command::Request(request)) => self.request(request),
                     Some(Command::Act { session, action }) => self.act(session, action),
                     Some(Command::Create(request)) => self.create(request),
+                    Some(Command::Handoff(request)) => self.handoff(request),
                     Some(Command::LoadModels { key, refresh }) => self.load_models(key, refresh),
                     Some(Command::ResumePowerPause(generation)) => {
                         if self.view.power_paused && self.view.power_pause_generation==generation {
@@ -1217,6 +1231,10 @@ impl Worker {
                 self.view.connected,
                 "Hub disconnected; session was not created"
             );
+            anyhow::ensure!(
+                self.view.handoff.is_none(),
+                "A handoff is preparing a new agent; start this one when it finishes"
+            );
             Ok(params)
         });
         match params {
@@ -1233,10 +1251,86 @@ impl Worker {
                 let backend = self.backend.clone();
                 self.jobs.push(Box::pin(async move {
                     let result = backend.spawn(params).await;
-                    Completion::Spawn(number, request, result)
+                    Completion::Spawn(number, request, None, result)
                 }));
             }
         }
+        self.dirty = true;
+    }
+
+    /// Start a handoff: the brief first, then (in `complete`) the successor.
+    /// One at a time and never beside a launch, so a repeated click or a
+    /// second window cannot start a second successor.
+    fn handoff(&mut self, request: crate::handoff::Request) {
+        self.action_number += 1;
+        let number = self.action_number;
+        // Refused with a receipt rather than dropped, so the asking window
+        // never waits on a handoff that will not happen. The running one
+        // keeps its progress (`finish_handoff` matches by number).
+        let checked = if self.view.handoff.is_some() || self.view.creating {
+            Err(anyhow!(
+                "Another handoff or launch is already in progress; nothing new was started"
+            ))
+        } else if !self.view.connected {
+            Err(anyhow!("Hub disconnected; nothing was started"))
+        } else {
+            match self.sessions.get(&request.source) {
+                Some(source) => request.validate(source),
+                None => Err(anyhow!(
+                    "The session is no longer listed; nothing was started"
+                )),
+            }
+        };
+        if let Err(error) = checked {
+            self.finish_handoff(
+                number,
+                (&request.source, &request.successor.provider),
+                None,
+                None,
+                Some(error.to_string()),
+            );
+            return;
+        }
+        self.view.handoff = Some(crate::handoff::Progress {
+            number,
+            source: request.source.clone(),
+            provider: request.successor.provider.clone(),
+            stage: crate::handoff::Stage::Brief(request.brief),
+        });
+        let backend = self.backend.clone();
+        self.jobs.push(Box::pin(async move {
+            let result = backend.handoff_brief(&request.source, request.brief).await;
+            Completion::HandoffBrief(number, request, result)
+        }));
+        self.dirty = true;
+    }
+
+    fn finish_handoff(
+        &mut self,
+        number: u64,
+        (source, provider): (&str, &str),
+        successor: Option<String>,
+        brief: Option<crate::handoff::Written>,
+        error: Option<String>,
+    ) {
+        if self
+            .view
+            .handoff
+            .as_ref()
+            .is_some_and(|p| p.number == number)
+        {
+            self.view.handoff = None;
+        }
+        let receipt = crate::handoff::Receipt {
+            number,
+            source: source.to_owned(),
+            provider: provider.to_owned(),
+            successor,
+            brief,
+            error,
+        };
+        self.view.notice = receipt.summary();
+        self.view.handoff_receipt = Some(receipt);
         self.dirty = true;
     }
 
@@ -1323,7 +1417,63 @@ impl Worker {
                     Err(error) => self.view.catalog.error = Some(format!("Could not load models: {error}")),
                 }
             }
-            Completion::Spawn(number, request, result) => {
+            Completion::HandoffBrief(number, request, result) => {
+                if self
+                    .view
+                    .handoff
+                    .as_ref()
+                    .is_none_or(|p| p.number != number)
+                {
+                    return;
+                }
+                let brief = match result.and_then(|reply| crate::handoff::written(&reply)) {
+                    Ok(brief) => brief,
+                    Err(error) => {
+                        self.finish_handoff(
+                            number,
+                            (&request.source, &request.successor.provider),
+                            None,
+                            None,
+                            Some(error.to_string()),
+                        );
+                        return;
+                    }
+                };
+                // Launch checks again: the connection may have dropped while
+                // the source agent was writing.
+                let params = request.successor.params().and_then(|params| {
+                    anyhow::ensure!(self.view.connected, "the hub disconnected");
+                    anyhow::ensure!(!self.view.creating, "another launch is in progress");
+                    Ok(params)
+                });
+                match params {
+                    Err(error) => {
+                        self.finish_handoff(
+                            number,
+                            (&request.source, &request.successor.provider),
+                            None,
+                            Some(brief),
+                            Some(error.to_string()),
+                        );
+                    }
+                    Ok(params) => {
+                        if let Some(progress) = &mut self.view.handoff {
+                            progress.stage = crate::handoff::Stage::Starting;
+                        }
+                        self.view.creating = true;
+                        let backend = self.backend.clone();
+                        let spawn = HandoffSpawn {
+                            source: request.source.clone(),
+                            brief,
+                        };
+                        self.jobs.push(Box::pin(async move {
+                            let result = backend.spawn(params).await;
+                            Completion::Spawn(number, request.successor, Some(spawn), result)
+                        }));
+                    }
+                }
+            }
+            Completion::Spawn(number, request, handoff, result) => {
                 self.view.creating = false;
                 let result = result.and_then(|value| {
                     anyhow::ensure!(value["sessionId"].as_str().is_some_and(|id| !id.is_empty()),
@@ -1333,9 +1483,16 @@ impl Worker {
                 match result {
                     Ok(value) => {
                         let id = value["sessionId"].as_str().unwrap().to_owned();
-                        let unsent_message = (!request.message.trim().is_empty()
-                            && value["messageQueued"] != true)
-                            .then(|| request.message.clone());
+                        // A handoff's takeover message is staged for review,
+                        // never sent on the user's behalf.
+                        let unsent_message = match &handoff {
+                            Some(handoff) => {
+                                Some(crate::handoff::successor_prompt(&handoff.brief.path))
+                            }
+                            None => (!request.message.trim().is_empty()
+                                && value["messageQueued"] != true)
+                                .then(|| request.message.clone()),
+                        };
                         let row = json!({"sessionId":id,"cwd":request.cwd.trim(),"label":request.label.trim(),"transport":"stream","mode":"unknown","provider":request.provider,"model":request.model});
                         // Preserve the acknowledged identity across an older fleet read.
                         if !self.sessions.contains_key(&id) {
@@ -1350,20 +1507,40 @@ impl Worker {
                         };
                         self.view.spawn_receipt = Some(SpawnReceipt {
                             number,
-                            session: Some(id),
+                            session: Some(id.clone()),
                             error: None,
                             unsent_message,
                         });
+                        if let Some(handoff) = handoff {
+                            self.finish_handoff(
+                                number,
+                                (&handoff.source, &request.provider),
+                                Some(id),
+                                Some(handoff.brief),
+                                None,
+                            );
+                        }
                         self.fetch_fleet();
                     }
-                    Err(error) => {
-                        self.view.spawn_receipt = Some(SpawnReceipt {
+                    // A failed handoff launch is the handoff's to report; the
+                    // New Agent form never shows another flow's error.
+                    Err(error) => match handoff {
+                        Some(handoff) => self.finish_handoff(
                             number,
-                            session: None,
-                            error: Some(error.to_string()),
-                            unsent_message: None,
-                        });
-                    }
+                            (&handoff.source, &request.provider),
+                            None,
+                            Some(handoff.brief),
+                            Some(error.to_string()),
+                        ),
+                        None => {
+                            self.view.spawn_receipt = Some(SpawnReceipt {
+                                number,
+                                session: None,
+                                error: Some(error.to_string()),
+                                unsent_message: None,
+                            });
+                        }
+                    },
                 }
             }
             Completion::Child(epoch, selection, result)

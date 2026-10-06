@@ -33,6 +33,13 @@ pub struct Session {
     pub telemetry: crate::child_agents::Telemetry,
     pub approval: Option<Value>,
     pub questions: Option<Value>,
+    /// The hub marks a Fleet Manager with `isWakeTarget`. Its role (journal,
+    /// tasks, workers) moves only through manager replacement, never through
+    /// an ordinary handoff.
+    pub wake_target: bool,
+    /// Live permission mode when reported, else the launch setting, in the
+    /// provider's own vocabulary (`default`, `bypassPermissions`, `ask`, `yolo`…).
+    pub permission_mode: String,
 }
 
 /// Context-window occupancy as the runtime reports it: the status line's
@@ -292,6 +299,21 @@ impl Session {
         }
         if value.get("status").and_then(Value::as_str) == Some("ended") {
             self.state = "stopped".into();
+        }
+        if let Some(manager) = ["isWakeTarget", "isFleetManager"]
+            .iter()
+            .filter_map(|name| value.get(*name).and_then(Value::as_bool))
+            .reduce(|a, b| a || b)
+        {
+            self.wake_target = manager;
+        }
+        if let Some(mode) = ["/livePermissionMode", "/settings/permissionMode"]
+            .iter()
+            .find_map(|path| value.pointer(path).and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|mode| !mode.is_empty())
+        {
+            self.permission_mode = crate::transcript::head(mode, 32);
         }
         for (target, name) in [
             (&mut self.approval, "pendingApproval"),

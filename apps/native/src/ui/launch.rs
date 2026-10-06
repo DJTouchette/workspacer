@@ -788,7 +788,9 @@ impl Workspace {
     }
 
     pub(super) fn load_models(&mut self, refresh: bool, cx: &mut Context<Self>) {
-        if self.demo || (!self.new_session && self.screen != Screen::Model) {
+        if self.demo
+            || (!self.new_session && !matches!(self.screen, Screen::Model | Screen::Handoff))
+        {
             return;
         }
         self.command(

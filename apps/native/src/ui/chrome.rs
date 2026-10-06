@@ -740,6 +740,28 @@ impl Workspace {
                     }))
                 }),
             )
+            .child(self.handoff_action(cx))
+    }
+
+    /// "Continue with…": the other provider's successor (see `handoff.rs`).
+    /// Shown for Claude and Codex sessions; a Fleet Manager's page explains
+    /// why ordinary handoff is not offered.
+    fn handoff_action(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = match self.selected_session().map(|s| s.provider.as_str()) {
+            Some("codex") => "Continue with Claude…",
+            Some("claude" | "") => "Continue with Codex…",
+            _ => "Continue with another agent…",
+        };
+        let enabled = self.supported_session() && self.view.connected && !self.demo;
+        self.icon_button("open-handoff", label, IconName::ArrowRight, enabled)
+            .debug_selector(|| "open-handoff".into())
+            .when(enabled, |d| {
+                d.on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Handoff, window, cx)
+                    }),
+                )
+            })
     }
 
     pub(super) fn quiet_button(

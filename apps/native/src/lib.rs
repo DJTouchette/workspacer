@@ -6,6 +6,7 @@ pub mod child_agents;
 pub mod controller;
 pub mod diff;
 pub mod features;
+pub mod handoff;
 pub mod harness;
 pub mod host;
 pub mod launch;
