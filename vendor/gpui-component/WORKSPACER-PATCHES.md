@@ -110,4 +110,25 @@ Native interaction polish also patches:
   matching the order `input/element.rs` already uses. Native also keeps the
   selection color translucent, per palette.
 
+- Selection in reading order (`text/inline.rs`, `text/text_view.rs`):
+  upstream `Inline::layout_selections` selected every character inside the
+  rectangle spanned by the drag's start and the pointer
+  (`selection_bounds`/`point_in_text_selection`). A rectangle has no
+  direction, so a drag up and to the right (or down and to the left) took
+  in the upper line from the leftmost of the two x positions, text the
+  pointer never reached, and copied it. `TextViewState::selection_points`
+  now hands each `Inline` both points, and `selection_carets` turns each
+  into a caret (after every character before the point in reading order:
+  lines above, then the point's own line up to the character middle). The
+  selection is the span between the carets. This works across paragraphs,
+  list items and table cells of one TextView: a point above an `Inline`
+  is caret 0 and a point below is its end.
+  `visual_box` also corrects GPUI's soft-wrap affinity: `TextLayout::
+  position_for_index` reports a wrap index at the end of the line it ends,
+  so the first character of every wrapped line was hit-tested on the line
+  above and dragging back to a wrapped line's start missed it. A selection
+  that starts at a wrap paints from the next line's start for the same
+  reason. Regression tests: `text::inline::tests` here and the native
+  `chat_selection_follows_the_drag_in_reading_order`.
+
 Reapply these interaction changes explicitly when upgrading the component.

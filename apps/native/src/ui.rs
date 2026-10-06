@@ -2274,6 +2274,89 @@ mod tests {
         );
     }
 
+    /// Selection runs from where the drag started to the pointer in reading
+    /// order. The vendored TextView once selected the rectangle between the
+    /// two points, so a backward drag up and to the right took in the line
+    /// above from the start column, text the pointer never reached.
+    #[gpui::test]
+    fn chat_selection_follows_the_drag_in_reading_order(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                view.transcript.snapshot(ConversationSnapshot {
+                    seq: 1,
+                    first_seq: 1,
+                    items: vec![Item {
+                        kind: "assistant_text".into(),
+                        text: "alpha beta gamma delta\n\nepsilon zeta eta theta".into(),
+                        ..Default::default()
+                    }],
+                });
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let bounds = visual
+            .debug_bounds("markdown-inline-live:a:0-0")
+            .expect("assistant markdown");
+        // The test text system is monospaced: every glyph is 0.6em wide.
+        let font = workspace.read_with(&visual, |this, _| this.settings.text_size as f32);
+        let (char_width, line_height) = (font * 0.6, font * 1.6);
+        // Just right of the boundary before character `col`.
+        let first = |col: f32| {
+            bounds.origin + gpui::point(px((col + 0.1) * char_width), px(line_height / 2.))
+        };
+        let second = |col: f32| {
+            gpui::point(
+                bounds.left() + px((col + 0.1) * char_width),
+                bounds.bottom() - px(line_height / 2.),
+            )
+        };
+        let mut copy = |from: gpui::Point<gpui::Pixels>, to: gpui::Point<gpui::Pixels>| {
+            let away = bounds.bottom_right() + gpui::point(px(0.), px(40.));
+            visual.simulate_click(away, gpui::Modifiers::default());
+            visual.run_until_parked();
+            visual.simulate_mouse_down(from, gpui::MouseButton::Left, gpui::Modifiers::default());
+            visual.simulate_mouse_move(
+                to,
+                Some(gpui::MouseButton::Left),
+                gpui::Modifiers::default(),
+            );
+            visual.run_until_parked();
+            visual.simulate_mouse_up(to, gpui::MouseButton::Left, gpui::Modifiers::default());
+            visual.run_until_parked();
+            visual.write_to_clipboard(gpui::ClipboardItem::new_string(String::new()));
+            visual.simulate_keystrokes("secondary-c");
+            visual.run_until_parked();
+            visual
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .unwrap_or_default()
+        };
+        // Backward within a line, and its forward twin.
+        assert_eq!(copy(first(16.), first(6.)), "beta gamma");
+        assert_eq!(copy(first(6.), first(16.)), "beta gamma");
+        // Backward up and to the right across paragraphs: from "zeta" back
+        // to "gamma". Neither "beta" above nor "zeta" below is reached.
+        for copied in [copy(second(8.), first(11.)), copy(first(11.), second(8.))] {
+            assert!(
+                copied.starts_with("gamma delta") && copied.ends_with("epsilon"),
+                "{copied:?}"
+            );
+            assert!(
+                !copied.contains("ta gamma") && !copied.contains("zet"),
+                "{copied:?}"
+            );
+        }
+        // Backward up and to the left: "beta" through "epsilon zeta".
+        let copied = copy(second(12.), first(6.));
+        assert!(
+            copied.starts_with("beta gamma delta") && copied.ends_with("epsilon zeta"),
+            "{copied:?}"
+        );
+    }
+
     #[gpui::test]
     fn markdown_file_link_requests_preview_and_shows_the_result(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);
