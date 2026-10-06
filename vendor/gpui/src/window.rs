@@ -863,6 +863,9 @@ pub struct Window {
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
+    /// Workspacer patch: whether the latest key or pointer press came from
+    /// the keyboard, for [`InteractiveElement::focus_visible`] styles.
+    last_input_was_keyboard: bool,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1246,6 +1249,7 @@ impl Window {
             hovered,
             needs_present,
             last_input_timestamp,
+            last_input_was_keyboard: false,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -1380,6 +1384,59 @@ impl Window {
     pub fn focused(&self, cx: &App) -> Option<FocusHandle> {
         self.focus
             .and_then(|id| FocusHandle::for_id(id, &cx.focus_handles))
+    }
+
+    /// Workspacer patch: whether the latest key or pointer press came from the
+    /// keyboard. Focus moved by a pointer press then draws no
+    /// [`InteractiveElement::focus_visible`] style; Tab (or any key) does.
+    pub fn last_input_was_keyboard(&self) -> bool {
+        self.last_input_was_keyboard
+    }
+
+    /// Only the focused element's focus-visible style changes with the input
+    /// kind: redraw the view that drew it. Not a refresh (re-renders every
+    /// cached view) and not `cx.notify` (runs the entity's observers). Called
+    /// after the event is handled, so a key press is not preceded by a draw.
+    fn repaint_focus_visible(&mut self) {
+        let tree = &self.rendered_frame.dispatch_tree;
+        if let Some(view_id) = self
+            .focus
+            .and_then(|id| tree.focusable_node_id(id))
+            .and_then(|node_id| tree.view_id_for_node(node_id))
+            && self.invalidator.not_drawing()
+        {
+            self.mark_view_dirty(view_id);
+            self.invalidator.set_dirty(true);
+        }
+    }
+
+    /// Workspacer patch: the last rendered frame's visibly bordered quads, in
+    /// logical pixels, so UI tests can check what a frame actually painted.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rendered_borders(&self) -> Vec<(Bounds<Pixels>, Hsla)> {
+        let scale = self.scale_factor();
+        self.rendered_frame
+            .scene
+            .quads
+            .iter()
+            .filter(|quad| {
+                let w = &quad.border_widths;
+                quad.border_color.a > 0.
+                    && [w.top, w.right, w.bottom, w.left]
+                        .iter()
+                        .any(|width| width.0 > 0.)
+            })
+            .map(|quad| {
+                let b = quad.bounds;
+                (
+                    Bounds::new(
+                        point(px(b.origin.x.0 / scale), px(b.origin.y.0 / scale)),
+                        size(px(b.size.width.0 / scale), px(b.size.height.0 / scale)),
+                    ),
+                    quad.border_color,
+                )
+            })
+            .collect()
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
@@ -3584,6 +3641,7 @@ impl Window {
         cx.propagate_event = true;
         // Handlers may set this to true by calling `prevent_default`.
         self.default_prevented = false;
+        let mut modality_changed = false;
 
         let event = match event {
             // Track the mouse position with our own state, since accessing the platform
@@ -3596,6 +3654,7 @@ impl Window {
             PlatformInput::MouseDown(mouse_down) => {
                 self.mouse_position = mouse_down.position;
                 self.modifiers = mouse_down.modifiers;
+                modality_changed = mem::replace(&mut self.last_input_was_keyboard, false);
                 PlatformInput::MouseDown(mouse_down)
             }
             PlatformInput::MouseUp(mouse_up) => {
@@ -3659,13 +3718,20 @@ impl Window {
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },
-            PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+            PlatformInput::KeyDown(_) => {
+                modality_changed = !mem::replace(&mut self.last_input_was_keyboard, true);
+                event
+            }
+            PlatformInput::KeyUp(_) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        }
+        if modality_changed {
+            self.repaint_focus_visible();
         }
 
         DispatchEventResult {

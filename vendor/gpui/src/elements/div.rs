@@ -1025,6 +1025,18 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Workspacer patch: like [`Self::focus`], but only while focus is
+    /// keyboard-driven ([`Window::last_input_was_keyboard`]), as CSS
+    /// `:focus-visible`. A pointer press still focuses the element, but draws
+    /// no ring that would outlast the press.
+    fn focus_visible(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().focus_visible_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
+
     /// Set the given styles to be applied when this element is inside another element that is focused.
     /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
     fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
@@ -1497,6 +1509,7 @@ pub struct Interactivity {
     pub base_style: Box<StyleRefinement>,
     pub(crate) focus_style: Option<Box<StyleRefinement>>,
     pub(crate) in_focus_style: Option<Box<StyleRefinement>>,
+    pub(crate) focus_visible_style: Option<Box<StyleRefinement>>,
     pub(crate) hover_style: Option<Box<StyleRefinement>>,
     pub(crate) group_hover_style: Option<GroupStyle>,
     pub(crate) active_style: Option<Box<StyleRefinement>>,
@@ -2491,6 +2504,13 @@ impl Interactivity {
                 && focus_handle.is_focused(window)
             {
                 style.refine(focus_style);
+            }
+
+            if let Some(focus_visible_style) = self.focus_visible_style.as_ref()
+                && focus_handle.is_focused(window)
+                && window.last_input_was_keyboard()
+            {
+                style.refine(focus_visible_style);
             }
         }
 

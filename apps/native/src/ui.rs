@@ -7435,6 +7435,81 @@ mod tests {
         }
     }
 
+    /// Whether the last frame painted an accent border around `bounds`.
+    fn accent_border(
+        workspace: &Entity<Workspace>,
+        visual: &mut VisualTestContext,
+        bounds: gpui::Bounds<gpui::Pixels>,
+    ) -> bool {
+        let accent: gpui::Hsla =
+            rgb(workspace.read_with(visual, |this, _| this.appearance.palette().accent)).into();
+        let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() < px(0.5);
+        visual.update(|window, _| {
+            window.rendered_borders().into_iter().any(|(quad, color)| {
+                color == accent
+                    && near(quad.left(), bounds.left())
+                    && near(quad.top(), bounds.top())
+                    && near(quad.size.width, bounds.size.width)
+                    && near(quad.size.height, bounds.size.height)
+            })
+        })
+    }
+
+    /// A pressed control keeps focus (Enter/Space then act on it), but only
+    /// keyboard focus draws the accent ring: a chip or toggle turned off by
+    /// mouse must not keep an "on"-looking border until focus moves.
+    #[gpui::test]
+    fn pointer_focus_draws_no_ring_but_keyboard_focus_does(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.update_view(Arc::new(state("a")), window, cx);
+                this.show_screen(Screen::Settings, window, cx);
+                this.settings_section = settings::SettingsSection::Keyboard;
+            })
+        });
+        visual.simulate_resize(size(px(1200.), px(900.)));
+        visual.run_until_parked();
+        let selected = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.settings.enter_sends)
+        };
+        let before = selected(&mut visual);
+        let other = visual
+            .debug_bounds(if before { "send-key-0" } else { "send-key-1" })
+            .unwrap();
+        visual.simulate_click(other.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        assert_ne!(selected(&mut visual), before, "the click picked the option");
+        let chip = visual
+            .debug_bounds(if before { "send-key-0" } else { "send-key-1" })
+            .unwrap();
+        let pressed = visual.update(|window, cx| window.focused(cx));
+        assert!(pressed.is_some(), "a pressed control takes focus");
+        assert!(
+            !accent_border(&workspace, &mut visual, chip),
+            "a mouse press leaves no focus ring"
+        );
+
+        // Away and back by keyboard: the same control now shows its ring.
+        visual.simulate_keystrokes("tab shift-tab");
+        visual.run_until_parked();
+        assert_eq!(visual.update(|window, cx| window.focused(cx)), pressed);
+        assert!(
+            accent_border(&workspace, &mut visual, chip),
+            "keyboard focus is visible"
+        );
+
+        // Pressing it again (turning it back off) hides the ring at once.
+        let back = visual
+            .debug_bounds(if before { "send-key-1" } else { "send-key-0" })
+            .unwrap();
+        visual.simulate_click(back.center(), gpui::Modifiers::none());
+        visual.run_until_parked();
+        assert_eq!(selected(&mut visual), before);
+        assert!(!accent_border(&workspace, &mut visual, back));
+        assert!(!accent_border(&workspace, &mut visual, chip));
+    }
+
     #[gpui::test]
     fn narrow_settings_rail_keeps_every_category_reachable(cx: &mut TestAppContext) {
         let (workspace, mut visual, _, _updates) = fixture(cx);
@@ -12859,6 +12934,18 @@ mod tests {
         workspace.read_with(&visual, |this, _| {
             assert!(this.chat.open.values().any(|open| *open));
         });
+        // Toggled closed by mouse, the chip keeps no "still on" accent ring;
+        // reached by keyboard it shows one.
+        visual.simulate_click(toggle.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert!(!this.chat.open.values().any(|open| *open));
+        });
+        let toggle = visual.debug_bounds("fleet-toggle-Original wake").unwrap();
+        assert!(!accent_border(&workspace, &mut visual, toggle));
+        visual.simulate_keystrokes("tab shift-tab");
+        visual.run_until_parked();
+        assert!(accent_border(&workspace, &mut visual, toggle));
     }
 
     #[gpui::test]

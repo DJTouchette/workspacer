@@ -595,6 +595,14 @@ impl DispatchTree {
         &mut self.nodes[active_node_id.0]
     }
 
+    /// Workspacer patch: the innermost view that rendered `target`.
+    pub fn view_id_for_node(&self, target: DispatchNodeId) -> Option<EntityId> {
+        self.dispatch_path(target)
+            .iter()
+            .rev()
+            .find_map(|node_id| self.node(*node_id).view_id)
+    }
+
     pub fn focusable_node_id(&self, target: FocusId) -> Option<DispatchNodeId> {
         self.focusable_node_ids.get(&target).copied()
     }

@@ -543,7 +543,8 @@ pub(crate) trait FocusableExt<T: ParentElement + Styled + Sized> {
 
 impl<T: ParentElement + Styled + Sized> FocusableExt<T> for T {
     fn focus_ring(mut self, is_focused: bool, margins: Pixels, window: &Window, cx: &App) -> Self {
-        if !is_focused {
+        // Workspacer patch: keyboard focus only, as CSS `:focus-visible`.
+        if !is_focused || !window.last_input_was_keyboard() {
             return self;
         }
 

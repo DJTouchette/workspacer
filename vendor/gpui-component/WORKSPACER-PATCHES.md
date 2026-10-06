@@ -95,6 +95,9 @@ Native interaction polish also patches:
   replacing an accidental hardcoded red foreground.
 - `src/styled.rs`: focus rings use 80 percent of the theme ring color so keyboard
   focus remains visible. The native client supplies its palette accent as ring.
+  `focus_ring` also draws only while `Window::last_input_was_keyboard()` (the
+  vendored GPUI focus-visible patch), so a clicked Button, Checkbox or Radio
+  does not keep a ring after the press; Tab still shows it.
 - `src/input/search.rs`: `InputState::open_search` (the `Search` action's
   handler, made callable) and `InputState::search_query` (the open panel's
   query). The native file viewer's Ctrl+F switches a rendered Markdown
