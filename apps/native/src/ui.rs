@@ -103,41 +103,43 @@ use wks_native::timing::{self, TurnClock};
 
 const CHAT_WIDTH: f32 = 900.;
 
-/// Bundled provider marks layered over gpui-component's icon set.
 /// Fade height above the conversation dock; within its 12px of transcript padding.
 const DOCK_FADE: f32 = 12.;
 /// Height the dock's cards keep however tall the composer grows, so an
 /// approval or question set stays visible and scrollable beside a big draft.
 const DOCK_CARDS_FLOOR: f32 = 72.;
 
+/// Bundled provider marks and extra Lucide icons layered over
+/// gpui-component's icon set.
 pub struct Assets;
+
+/// Embeds each bundled icon under its asset path.
+macro_rules! bundled_icons {
+    ($($path:literal),* $(,)?) => {
+        fn bundled_icon(path: &str) -> Option<&'static [u8]> {
+            match path {
+                $($path => Some(include_bytes!(concat!("../assets/icons/", $path))),)*
+                _ => None,
+            }
+        }
+    };
+}
+
+bundled_icons!(
+    "brand/claude.svg",
+    "brand/openai.svg",
+    "lucide/file-diff.svg",
+    "lucide/message-square-plus.svg",
+    "lucide/user-round.svg",
+    "lucide/reply.svg",
+    "lucide/megaphone.svg",
+);
 
 impl gpui::AssetSource for Assets {
     fn load(&self, path: &str) -> anyhow::Result<Option<std::borrow::Cow<'static, [u8]>>> {
-        use std::borrow::Cow;
-        match path {
-            "brand/claude.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icons/brand/claude.svg"
-            )))),
-            "brand/openai.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icons/brand/openai.svg"
-            )))),
-            "lucide/file-diff.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icons/lucide/file-diff.svg"
-            )))),
-            "lucide/message-square-plus.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icons/lucide/message-square-plus.svg"
-            )))),
-            "lucide/user-round.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icons/lucide/user-round.svg"
-            )))),
-            "lucide/reply.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icons/lucide/reply.svg"
-            )))),
-            "lucide/megaphone.svg" => Ok(Some(Cow::Borrowed(include_bytes!(
-                "../assets/icons/lucide/megaphone.svg"
-            )))),
-            _ => gpui_component_assets::Assets.load(path),
+        match bundled_icon(path) {
+            Some(bytes) => Ok(Some(std::borrow::Cow::Borrowed(bytes))),
+            None => gpui_component_assets::Assets.load(path),
         }
     }
 
@@ -741,7 +743,7 @@ impl Workspace {
             if let Some(path) = &this.settings_path
                 && let Err(error) = this.settings.save(path)
             {
-                eprintln!("Could not save native reading positions: {error}");
+                eprintln!("Could not save native settings: {error}");
             }
         }));
         window.focus(&focus);
@@ -888,11 +890,11 @@ impl Workspace {
                 // Like opening a project on the desktop: the hub's registry
                 // records it as recently used. Best effort; never blocks.
                 if own_launch && !self.demo && wks_native::launch::absolute_directory(&launched) {
-                    let at = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |d| d.as_millis() as i64);
                     let _ = self.controller.command(Command::Request(
-                        wks_native::features::Request::TouchProject { path: launched, at },
+                        wks_native::features::Request::TouchProject {
+                            path: launched,
+                            at: timing::now_ms(),
+                        },
                     ));
                 }
                 self.new_session = false;
@@ -1219,15 +1221,14 @@ impl Workspace {
         if text.trim().is_empty() || self.view.busy || !self.view.connected || self.uploading() {
             return;
         }
+        let attachments = self
+            .extras
+            .attachments
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
         self.extras.sent_drafts.insert(id.clone(), draft);
-        self.extras.sent_attachments.insert(
-            id,
-            self.extras
-                .attachments
-                .get(self.view.selected.as_ref().unwrap())
-                .cloned()
-                .unwrap_or_default(),
-        );
+        self.extras.sent_attachments.insert(id, attachments);
         self.act(Action::Send(text), cx);
     }
 

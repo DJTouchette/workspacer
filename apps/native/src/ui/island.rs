@@ -356,15 +356,7 @@ impl IslandMotion {
             self.open.set(1., now);
         }
         if snap {
-            self.rows.retain(|row| !row.leaving);
-            for row in &mut self.rows {
-                row.presence.snap(1.);
-                row.height.snap(row.height.target());
-                row.pending = false;
-                row.since = now - CONTENT_DELAY - CONTENT_FADE;
-            }
-            self.open.snap(if notices.is_empty() { 0. } else { 1. });
-            self.glow = None;
+            self.rest(now);
         } else if let Some(tone) = arrived.filter(|tone| *tone != Tone::Loading) {
             self.glow = Some((tone, now));
         }
@@ -440,9 +432,8 @@ impl IslandMotion {
         (speed.abs() * 0.025).min(8.)
     }
 
-    #[cfg(test)]
-    pub(super) fn settle(&mut self) {
-        let now = Instant::now();
+    /// Every row and the island itself where they are headed, at once.
+    fn rest(&mut self, now: Instant) {
         self.rows.retain(|row| !row.leaving);
         for row in &mut self.rows {
             row.presence.snap(1.);
@@ -452,6 +443,11 @@ impl IslandMotion {
         }
         self.open.snap(self.open.target());
         self.glow = None;
+    }
+
+    #[cfg(test)]
+    pub(super) fn settle(&mut self) {
+        self.rest(Instant::now());
     }
 
     /// Holds every row and the island part-grown, for a frame mid-motion.

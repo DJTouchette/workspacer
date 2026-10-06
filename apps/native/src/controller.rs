@@ -1073,85 +1073,12 @@ impl Worker {
                         self.terminal_signal(shell, topic == "pty.exit").await;
                     }
                 } else if crate::ui_requests::TOPICS.contains(&topic.as_str()) {
-                    match crate::ui_requests::parse(&topic, &data) {
-                        Ok(Some((intent, payload)))
-                            if self.view.ui_requests.len() < crate::ui_requests::MAX_PENDING =>
-                        {
-                            self.action_number += 1;
-                            self.view.ui_requests.push(crate::ui_requests::Request {
-                                number: self.action_number,
-                                intent,
-                                payload,
-                            });
-                        }
-                        Ok(Some(_)) => {
-                            self.view.ui_request_warning =
-                                "UI request queue is full; the new request was not applied.".into()
-                        }
-                        Err(error) => self.view.ui_request_warning = error.to_string(),
-                        Ok(None) => (),
-                    }
+                    self.queue_ui_request(&topic, &data);
                 } else if topic == "sessionArchive.changed" {
                     self.apply_archive(&data);
                 } else if topic == "agent.snapshot" {
                     self.upsert(&data);
-                    if self.fleet_pending
-                        && let Some(id) = Session::id_of(&data)
-                        && self.fleet_overlay.len() < MAX_SESSIONS
-                    {
-                        // Store the projection rather than retaining rich transcripts.
-                        let mut merged = self.fleet_overlay.remove(id).unwrap_or(json!({}));
-                        for key in [
-                            "sessionId",
-                            "session_id",
-                            "label",
-                            "customName",
-                            "cwd",
-                            "mode",
-                            "ambientState",
-                            "status",
-                            "transport",
-                            "provider",
-                            "parentSessionId",
-                            "parent_session_id",
-                            "model",
-                            "requestedSelection",
-                            "settings",
-                            "pending",
-                            "pendingApproval",
-                            "pendingQuestions",
-                        ] {
-                            if let Some(v) = data.get(key) {
-                                merged[key] = v.clone();
-                            }
-                        }
-                        // Child membership and status too, or a fleet read
-                        // served before this event rolls finished children
-                        // back to running (or drops new ones) until the next
-                        // event. Kept as the bounded projection.
-                        if let Some(session) = self.sessions.get(id) {
-                            // Clear uses completed tool calls as work evidence.
-                            // Carry the parsed scalar, not an arbitrary payload,
-                            // and cover aliases a stale read may have supplied.
-                            if ["toolCalls", "totalToolCalls", "tool_calls"]
-                                .iter()
-                                .any(|key| data.get(*key).is_some())
-                            {
-                                for key in ["toolCalls", "totalToolCalls", "tool_calls"] {
-                                    merged[key] = json!(session.telemetry.tool_calls);
-                                }
-                            }
-                            for (key, value) in [
-                                ("subagents", &session.subagents),
-                                ("workflows", &session.workflows),
-                            ] {
-                                if data.get(key).is_some() {
-                                    merged[key] = value.clone();
-                                }
-                            }
-                        }
-                        self.fleet_overlay.insert(id.into(), merged);
-                    }
+                    self.overlay_snapshot(&data);
                 } else if self.view.child.is_none()
                     && self
                         .view
@@ -1159,50 +1086,139 @@ impl Worker {
                         .as_ref()
                         .is_some_and(|id| topic == format!("agent.conversation.{id}"))
                 {
-                    let size = data.to_string().len();
-                    if let Ok(delta) = serde_json::from_value::<Delta>(data) {
-                        if delta.ready {
-                            self.push_ready = true;
-                            // A subscribe ack alone does not establish the
-                            // provider's demand/SSE path. Reseed after ready so
-                            // updates between the first read and readiness are
-                            // observed even when there is no subsequent delta.
-                            if self.conversation_pending {
-                                self.resync_after_read = true;
-                            } else {
-                                self.fetch_conversation();
-                            }
-                        } else if self.conversation_pending {
-                            if delta.reset
-                                || self.buffered.len() >= 64
-                                || self.buffered_bytes + size > 2 * 1024 * 1024
-                            {
-                                self.buffered.clear();
-                                self.resync_after_read = true;
-                            } else if !self.resync_after_read {
-                                self.buffered_bytes += size;
-                                self.buffered.push(delta);
-                            }
-                        } else {
-                            self.push_ready = true;
-                            // RPC completions and events use different queues.
-                            // Even a reset received before a reply on the wire
-                            // may be processed after it here. Always read after
-                            // resets, including when no read appears pending.
-                            if delta.reset {
-                                self.view.loading = true;
-                                self.fetch_conversation();
-                            } else if self.view.transcript.delta(delta, self.streaming())
-                                == Fold::Gap
-                            {
-                                self.fetch_conversation();
-                            }
-                        }
-                    }
+                    self.conversation_event(data);
                 }
             }
         }
         self.dirty = true;
+    }
+
+    /// A UI request from the bus, queued for the window, or a warning when
+    /// it cannot be.
+    fn queue_ui_request(&mut self, topic: &str, data: &Value) {
+        match crate::ui_requests::parse(topic, data) {
+            Ok(Some((intent, payload)))
+                if self.view.ui_requests.len() < crate::ui_requests::MAX_PENDING =>
+            {
+                self.action_number += 1;
+                self.view.ui_requests.push(crate::ui_requests::Request {
+                    number: self.action_number,
+                    intent,
+                    payload,
+                });
+            }
+            Ok(Some(_)) => {
+                self.view.ui_request_warning =
+                    "UI request queue is full; the new request was not applied.".into()
+            }
+            Err(error) => self.view.ui_request_warning = error.to_string(),
+            Ok(None) => (),
+        }
+    }
+
+    /// Folds a snapshot event into the fleet read in flight, so its reply
+    /// cannot roll this newer state back.
+    fn overlay_snapshot(&mut self, data: &Value) {
+        if self.fleet_pending
+            && let Some(id) = Session::id_of(data)
+            && self.fleet_overlay.len() < MAX_SESSIONS
+        {
+            // Store the projection rather than retaining rich transcripts.
+            let mut merged = self.fleet_overlay.remove(id).unwrap_or(json!({}));
+            for key in [
+                "sessionId",
+                "session_id",
+                "label",
+                "customName",
+                "cwd",
+                "mode",
+                "ambientState",
+                "status",
+                "transport",
+                "provider",
+                "parentSessionId",
+                "parent_session_id",
+                "model",
+                "requestedSelection",
+                "settings",
+                "pending",
+                "pendingApproval",
+                "pendingQuestions",
+            ] {
+                if let Some(v) = data.get(key) {
+                    merged[key] = v.clone();
+                }
+            }
+            // Child membership and status too, or a fleet read
+            // served before this event rolls finished children
+            // back to running (or drops new ones) until the next
+            // event. Kept as the bounded projection.
+            if let Some(session) = self.sessions.get(id) {
+                // Clear uses completed tool calls as work evidence.
+                // Carry the parsed scalar, not an arbitrary payload,
+                // and cover aliases a stale read may have supplied.
+                if ["toolCalls", "totalToolCalls", "tool_calls"]
+                    .iter()
+                    .any(|key| data.get(*key).is_some())
+                {
+                    for key in ["toolCalls", "totalToolCalls", "tool_calls"] {
+                        merged[key] = json!(session.telemetry.tool_calls);
+                    }
+                }
+                for (key, value) in [
+                    ("subagents", &session.subagents),
+                    ("workflows", &session.workflows),
+                ] {
+                    if data.get(key).is_some() {
+                        merged[key] = value.clone();
+                    }
+                }
+            }
+            self.fleet_overlay.insert(id.into(), merged);
+        }
+    }
+
+    /// A conversation delta for the selected session: applied, buffered
+    /// behind a read in flight, or answered with a fresh read.
+    fn conversation_event(&mut self, data: Value) {
+        let size = data.to_string().len();
+        if let Ok(delta) = serde_json::from_value::<Delta>(data) {
+            if delta.ready {
+                self.push_ready = true;
+                // A subscribe ack alone does not establish the
+                // provider's demand/SSE path. Reseed after ready so
+                // updates between the first read and readiness are
+                // observed even when there is no subsequent delta.
+                if self.conversation_pending {
+                    self.resync_after_read = true;
+                } else {
+                    self.fetch_conversation();
+                }
+            } else if self.conversation_pending {
+                if delta.reset
+                    || self.buffered.len() >= 64
+                    || self.buffered_bytes + size > 2 * 1024 * 1024
+                {
+                    self.buffered.clear();
+                    self.resync_after_read = true;
+                } else if !self.resync_after_read {
+                    self.buffered_bytes += size;
+                    self.buffered.push(delta);
+                }
+            } else {
+                self.push_ready = true;
+                // RPC completions and events use different queues.
+                // Even a reset received before a reply on the wire
+                // may be processed after it here. Always read after
+                // resets, including when no read appears pending.
+                if delta.reset {
+                    self.view.loading = true;
+                    self.fetch_conversation();
+                } else if self.view.transcript.delta(delta, self.streaming()) == Fold::Gap {
+                    self.fetch_conversation();
+                }
+            }
+        }
     }
 
     fn streaming(&self) -> bool {
