@@ -1018,6 +1018,7 @@ impl Workspace {
                 })
                 .into_any_element(),
             ),
+            Screen::Handoff => self.handoff_continue(cx).map(IntoElement::into_any_element),
             _ => None,
         };
         let body = match self.screen {

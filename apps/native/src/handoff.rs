@@ -215,10 +215,18 @@ impl Receipt {
                 )
             })
             .unwrap_or_default();
+        // The lead says which kind of success it was; the window's notice
+        // tone keys on it (a fallback brief stays a warning).
+        let lead = if fallback.is_empty() {
+            "Handoff ready"
+        } else {
+            "Handoff ready with a fallback brief"
+        };
         match (&self.successor, &self.error) {
             (Some(_), _) => format!(
-                "{name} started in the same folder. Review the handoff message in the composer, \
-                 then send it. The original session is unchanged.{fallback}"
+                "{lead}: {name} started in the same folder. Review the handoff message in the \
+                 composer, then send it. The original session stays available with its \
+                 history.{fallback}"
             ),
             (None, Some(error)) => match &self.brief {
                 Some(brief) => format!(
@@ -367,7 +375,19 @@ mod tests {
             error: None,
         };
         let text = done.summary();
-        assert!(text.contains("Codex started") && text.contains("mechanical summary"));
+        assert!(text.starts_with("Handoff ready with a fallback brief: Codex started"));
+        assert!(text.contains("mechanical summary"));
+        let clean = Receipt {
+            brief: Some(Written {
+                fallback: None,
+                ..brief.clone()
+            }),
+            ..done.clone()
+        }
+        .summary();
+        assert!(clean.starts_with("Handoff ready: Codex started"));
+        // An authored brief takes a turn in the source: never claim it is untouched.
+        assert!(text.contains("stays available with its history") && !text.contains("unchanged"));
         let orphaned = Receipt {
             successor: None,
             error: Some("launch admission may have executed".into()),

@@ -239,6 +239,7 @@ pub(super) fn notice_tone(text: &str) -> Tone {
         Tone::Info
     } else if lower.contains("saved")
         || lower == "session created"
+        || lower.starts_with("handoff ready:")
         || lower.starts_with("pinned")
         || lower.starts_with("unpinned")
         || lower.ends_with(" applied")

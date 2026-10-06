@@ -18,6 +18,7 @@ related_paths:
   - "apps/native/src/handoff.rs"
   - "apps/native/src/controller.rs"
   - "apps/native/src/ui/handoff.rs"
+  - "apps/native/src/harness.rs"
   - "apps/desktop/src/renderer/src/components/claude/HandoffDialog.tsx"
   - "services/claudemon/src/session/handoff.rs"
   - "services/claudemon/src/daemon/api.rs"
@@ -110,7 +111,8 @@ access carries the source's `livePermissionMode`/`settings.permissionMode`
 default); model/effort start on the target's catalog defaults. The page reuses
 the New Agent pickers like Change model does, scoping the Codex catalog to the
 source folder, and checks `providers.checkAll` (no test request) to disable a
-missing target.
+missing target. Continue is the page header's trailing action, so it stays on
+screen in short windows; progress and failures render above the cards.
 
 `Command::Handoff` in the controller calls the brief method (180 s client
 budget for the agent tier), then normal `agents.spawn` in the exact source cwd
@@ -118,11 +120,17 @@ with no message. The takeover prompt (desktop wording) reaches the successor's
 composer via `SpawnReceipt.unsent_message`; nothing is sent for the user. One
 handoff per connection: concurrent requests, launches and validation failures
 produce a `handoff_receipt` instead of being dropped. A launch failure names the
-brief left behind and never sets the New Agent form's spawn error. The source is
-never signalled. Native lists local-hub rows only, so the brief path and the
+brief left behind and never sets the New Agent form's spawn error. Success copy
+leads with `Handoff ready:` (green via `notice_tone`) or `Handoff ready with a
+fallback brief:` (deliberately a warning). The source is never signalled, but
+the agent tier does submit one instruction turn to it, so copy says the source
+"stays available with its history", never "unchanged". Native lists local-hub rows only, so the brief path and the
 successor are on the same host. Tests: `src/handoff.rs` units,
 `src/ui/handoff.rs` UI, and `tests/protocol.rs` `handoff_*` against a fake bus.
-No live Claude/Codex handoff was run for this flow.
+`native-harness serve --rich-transcript` answers both brief methods with a
+fixture path (its spawn is fake), so the whole flow can be captured in a private
+Xvfb: demo-0000 (Claude) shows the Codex-missing state, demo-0001 (Codex) the
+normal one. No live Claude/Codex handoff was run for this flow.
 
 ## Desktop and TUI successor flows
 

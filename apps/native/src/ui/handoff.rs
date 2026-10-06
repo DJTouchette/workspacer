@@ -128,6 +128,41 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The installed check for `target`: (in flight, found). `None` found is
+    /// unknown (not checked, failed, or an older hub), which never blocks.
+    fn handoff_detection(&self, target: &str) -> (bool, Option<bool>) {
+        let setup = self.view.requests.get("setup").filter(
+            |state| matches!(&state.request, Request::Setup { provider, .. } if provider == target),
+        );
+        let found = setup.filter(|state| !state.loading).and_then(|state| {
+            state.value["installed"]
+                .as_array()?
+                .iter()
+                .find(|row| row["provider"] == target)?["found"]
+                .as_bool()
+        });
+        (setup.is_some_and(|state| state.loading), found)
+    }
+
+    /// The page's primary action, in its header so it stays on screen at any
+    /// window height; `None` where the session cannot be continued.
+    pub(super) fn handoff_continue(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let target = handoff::target(self.selected_session()?).ok()?;
+        let enabled = !self.handoff_busy()
+            && self.view.connected
+            && !self.demo
+            && self.handoff_detection(target).1 != Some(false);
+        let label = SharedString::from(format!("Continue with {}", handoff::provider_name(target)));
+        Some(
+            self.primary_button("handoff-continue", label, enabled)
+                .debug_selector(|| "handoff-continue".into())
+                .flex_shrink_0()
+                .when(enabled, |d| {
+                    d.on_click(cx.listener(|this, _, window, cx| this.continue_handoff(window, cx)))
+                }),
+        )
+    }
+
     pub(super) fn render_handoff(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         let Some(source) = self.selected_session().cloned() else {
@@ -154,18 +189,8 @@ impl Workspace {
         let name = handoff::provider_name(target);
         let source_name = handoff::provider_name(&source.provider);
         let busy = self.handoff_busy() || !self.view.connected;
-        let setup = self.view.requests.get("setup").filter(
-            |state| matches!(&state.request, Request::Setup { provider, .. } if provider == target),
-        );
-        let found = setup.filter(|state| !state.loading).and_then(|state| {
-            state.value["installed"]
-                .as_array()?
-                .iter()
-                .find(|row| row["provider"] == target)?["found"]
-                .as_bool()
-        });
+        let (checking, found) = self.handoff_detection(target);
         let missing = found == Some(false);
-        let can_continue = !busy && !missing && !self.demo;
 
         let fact = |label: &'static str, value: AnyElement| {
             div()
@@ -182,7 +207,14 @@ impl Workspace {
                         .text_color(rgb(p.muted))
                         .child(label),
                 )
-                .child(div().flex_1().min_w_0().child(value))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .text_size(px(chrome::scale::BODY))
+                        .child(value),
+                )
         };
         let from = chrome::card(p)
             .p_4()
@@ -210,12 +242,12 @@ impl Workspace {
                     .text_color(rgb(p.muted))
                     .child(format!(
                         "{name} starts in this same folder and reads a written brief. This session \
-                         keeps running with its history; {name} does not receive {source_name}’s \
-                         own context."
+                         stays available with its history; {name} does not receive the private \
+                         context held by {source_name}."
                     )),
             );
 
-        let detection = match (setup.is_some_and(|s| s.loading), found) {
+        let detection = match (checking, found) {
             (true, _) => chrome::notice_line(
                 format!("Checking that {name} is installed…"),
                 chrome::Tone::Loading,
@@ -377,40 +409,17 @@ impl Workspace {
             )),
             _ => None,
         };
-        let label = SharedString::from(format!("Continue with {name}"));
-        let footer = div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .justify_end()
-            .gap_2()
-            .child(
-                self.button("handoff-cancel", "Back to chat", !busy)
-                    .when(!busy, |d| {
-                        d.on_click(
-                            cx.listener(|this, _, window, cx| this.back_from_feature(window, cx)),
-                        )
-                    }),
-            )
-            .child(
-                self.primary_button("handoff-continue", label, can_continue)
-                    .debug_selector(|| "handoff-continue".into())
-                    .when(can_continue, |d| {
-                        d.on_click(
-                            cx.listener(|this, _, window, cx| this.continue_handoff(window, cx)),
-                        )
-                    }),
-            );
         div()
             .debug_selector(|| "handoff-view".into())
             .flex()
             .flex_col()
             .gap_4()
+            // Progress and failures sit beside the header's Continue, not
+            // below the fold.
+            .children(status.map(|s| s.debug_selector(|| "handoff-status".into())))
             .child(from)
             .child(successor)
             .child(brief_card)
-            .children(status.map(|s| s.debug_selector(|| "handoff-status".into())))
-            .child(footer)
     }
 }
 
@@ -446,7 +455,8 @@ mod tests {
             Root::new(view, window, cx)
         });
         let visual = VisualTestContext::from_window(window.into(), cx);
-        // Tall enough that the whole page, footer included, is on screen.
+        // Tall enough that every card on the page can be clicked; the first
+        // test checks where Continue itself sits in a short window.
         visual.simulate_resize(size(px(1200.), px(1600.)));
         (workspace.unwrap(), visual, commands)
     }
@@ -499,6 +509,30 @@ mod tests {
         visual.run_until_parked();
     }
 
+    #[test]
+    fn handoff_outcomes_take_honest_notice_tones() {
+        let mut receipt = Receipt {
+            number: 1,
+            source: "a".into(),
+            provider: "codex".into(),
+            successor: Some("c".into()),
+            brief: Some(Written {
+                path: "/h/b.md".into(),
+                fallback: None,
+            }),
+            error: None,
+        };
+        let tone = |r: &Receipt| chrome::notice_tone(&r.summary());
+        assert!(matches!(tone(&receipt), chrome::Tone::Success));
+        receipt.brief.as_mut().unwrap().fallback = Some("deadline".into());
+        assert!(matches!(tone(&receipt), chrome::Tone::Warning));
+        receipt.successor = None;
+        receipt.error = Some("codex is not installed".into());
+        assert!(matches!(tone(&receipt), chrome::Tone::Error));
+        receipt.brief = None;
+        assert!(matches!(tone(&receipt), chrome::Tone::Error));
+    }
+
     #[gpui::test]
     fn header_continue_with_codex_stages_the_takeover_for_review(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands) = fixture(cx);
@@ -527,6 +561,12 @@ mod tests {
         });
         assert!(visual.debug_bounds("handoff-folder").is_some());
 
+        // Continue is the page header's action: on screen in a short window
+        // without scrolling past the settings.
+        visual.simulate_resize(size(px(1000.), px(520.)));
+        visual.run_until_parked();
+        let action = visual.debug_bounds("handoff-continue").unwrap();
+        assert!(action.bottom() < px(130.), "{action:?}");
         click(&mut visual, "handoff-continue");
         let Some(Command::Handoff(request)) = next_effect(&mut commands) else {
             panic!("Continue must request one handoff");
