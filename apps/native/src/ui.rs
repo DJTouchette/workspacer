@@ -5,6 +5,7 @@ mod explorer;
 mod features;
 mod file_viewer;
 mod fleet_card;
+mod gauge;
 mod handoff;
 mod island;
 mod launch;
@@ -520,6 +521,8 @@ pub struct Workspace {
     title_reveal: island::TitleReveal,
     /// How the capsule's notice island grows, settles and lets go.
     island_motion: island::IslandMotion,
+    /// How the capsule's context hairline fills and its glow warms.
+    gauge_motion: gauge::GaugeMotion,
     header_bounds: gpui::Bounds<gpui::Pixels>,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
@@ -782,6 +785,7 @@ impl Workspace {
             title_base_width: Default::default(),
             title_reveal: island::TitleReveal::new(cx),
             island_motion: Default::default(),
+            gauge_motion: Default::default(),
             header_bounds: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
@@ -1687,6 +1691,12 @@ impl Render for Workspace {
             ),
         };
         let title_island = self.render_title_island(title_bar, title_actions, notice, window, cx);
+        // The title capsule carries the context gauge; only where it is too
+        // narrow does the composer keep its meter.
+        let composer_meter = selected
+            .as_ref()
+            .filter(|_| !self.title_carries_context())
+            .and_then(|s| gauge::context_meter(s, p));
         // Transparent fade rather than a ruled strip: history scrolls softly
         // under the floating title pill instead of colliding with a hard edge.
         let header = div()
@@ -1827,7 +1837,7 @@ impl Render for Workspace {
                         .child(div().flex().items_center().justify_between().gap_2()
                             .child(div().flex_1().min_w_0().overflow_hidden().flex().items_center().gap_1()
                                 .child(self.icon_button("attach-file", if self.uploading() { "Attaching file…" } else { "Attach a file (or paste an image)" }, IconName::Plus, enabled && !self.uploading()).when(enabled && !self.uploading(), |d| d.on_click(cx.listener(|this, _, window, cx| this.pick_attachment(window, cx)))))
-                                .children(selected.as_ref().and_then(|s| chrome::context_meter(s, p))))
+                                .children(composer_meter))
                             .child(div().flex_shrink_0().flex().items_center().gap_2()
                                 .when(working, |d| d.child(if narrow { self.icon_button("stop", "Interrupt", IconName::WindowClose, enabled) } else { self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled) }.when(enabled, |d| d.on_click(cx.listener(|this, _, _, cx| this.act(Action::Stop, cx))))))
                                 .child(self.primary_icon_button("send", if self.view.busy {"Sending…"} else if working {"Queue message"} else {"Send message"}, IconName::ArrowUp, enabled && !self.uploading()).debug_selector(|| "composer-send".into()).size(px(32.)).rounded_full()
@@ -6866,29 +6876,244 @@ mod tests {
         assert!(commands.try_recv().is_err());
     }
 
+    /// The view with session `a` reporting `pct` of a 200K context window
+    /// (`None`: no reading at all).
+    fn with_context(selected: &str, pct: Option<f64>) -> View {
+        let mut next = state(selected);
+        if let Some(pct) = pct {
+            Arc::make_mut(&mut next.sessions)[0].merge(&serde_json::json!({
+                "statusLine": {"contextUsedPct": pct, "contextWindowSize": 200000}
+            }));
+        }
+        next
+    }
+
+    fn show_view(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, view: View) {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.update_view(Arc::new(view), window, cx))
+        });
+        visual.run_until_parked();
+    }
+
+    /// The context gauge rides the title capsule: a hairline along the
+    /// title row's bottom edge, filled to the share in use, with the exact
+    /// figures beside the revealed actions. The composer has no meter, and
+    /// with no reading nothing shows anywhere.
     #[gpui::test]
-    fn composer_shows_context_meter_once_the_runtime_reports(cx: &mut TestAppContext) {
+    fn title_capsule_carries_the_context_hairline_once_the_runtime_reports(
+        cx: &mut TestAppContext,
+    ) {
         let (workspace, mut visual, _, _updates) = fixture(cx);
-        visual.update(|window, cx| {
-            workspace.update(cx, |this, cx| {
-                this.update_view(Arc::new(state("a")), window, cx)
-            })
-        });
+        show_view(&workspace, &mut visual, with_context("a", None));
+        reveal_title(&workspace, &mut visual);
+        for selector in [
+            "title-context",
+            "title-context-detail",
+            "context-meter",
+            "island-notice-context",
+        ] {
+            assert!(visual.debug_bounds(selector).is_none(), "{selector}");
+        }
+
+        for (pct, tone) in [(30., None), (75., Some(chrome::Tone::Warning))] {
+            show_view(&workspace, &mut visual, with_context("a", Some(pct)));
+            assert!(visual.debug_bounds("context-meter").is_none(), "{pct}%");
+            assert!(workspace.read_with(&visual, |this, _| this.hairline_drawn()));
+            let bar = visual.debug_bounds("title-bar").unwrap();
+            let line = visual.debug_bounds("title-context").unwrap();
+            let fill = visual.debug_bounds("title-context-fill").unwrap();
+            assert_eq!(line.size.height, px(2.));
+            assert!(
+                (line.bottom() - bar.bottom()).abs() <= px(1.5),
+                "{line:?} on the bottom edge of {bar:?}"
+            );
+            assert!(line.left() > bar.left() + px(10.) && line.right() < bar.right() - px(10.));
+            let share = fill.size.width / line.size.width;
+            assert!((share - pct as f32 / 100.).abs() < 0.02, "{pct}%: {share}");
+            // The figures show at the head of the revealed actions.
+            let shown = visual.debug_bounds("title-actions-shown").unwrap();
+            let detail = visual.debug_bounds("title-context-detail").unwrap();
+            assert!(shown.size.width > px(0.) && shown.contains(&detail.center()));
+            assert!(bar.contains(&detail.center()));
+            // From 70% the capsule holds a quiet glow in the warning tone.
+            let glow = workspace.read_with(&visual, |this, _| {
+                this.gauge_motion.glow(std::time::Instant::now())
+            });
+            assert_eq!(glow.map(|(tone, _)| tone), tone, "{pct}%");
+            assert!(workspace.read_with(&visual, |this, _| this.island_slots().is_empty()));
+        }
+
+        // At rest the figures are clipped away with the actions.
+        visual.simulate_mouse_move(
+            gpui::point(px(5.), px(600.)),
+            None,
+            gpui::Modifiers::default(),
+        );
         visual.run_until_parked();
+        settle_title(&workspace, &mut visual);
+        let shown = visual.debug_bounds("title-actions-shown").unwrap();
+        assert_eq!(shown.size.width, px(0.));
+        assert!(workspace.read_with(&visual, |this, _| this.hairline_drawn()));
+
+        // The reading goes away, and so does the gauge, everywhere.
+        show_view(&workspace, &mut visual, with_context("a", None));
+        workspace.read_with(&visual, |this, _| {
+            assert!(!this.hairline_drawn());
+            assert!(this.title_carries_context(), "no meter in the composer");
+            assert!(this.gauge_motion.glow(std::time::Instant::now()).is_none());
+        });
+    }
+
+    /// A window with no usage yet shows an empty, muted track.
+    #[gpui::test]
+    fn waiting_context_shows_an_empty_track(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let mut next = state("a");
+        Arc::make_mut(&mut next.sessions)[0].merge(&serde_json::json!({
+            "statusLine": {
+                "contextWindowSize": 200000,
+                "contextUsageState": "waitingForRuntimeUsage"
+            }
+        }));
+        show_view(&workspace, &mut visual, next);
+        assert!(visual.debug_bounds("title-context").is_some());
+        assert!(visual.debug_bounds("title-context-fill").is_none());
         assert!(visual.debug_bounds("context-meter").is_none());
-        visual.update(|window, cx| {
-            workspace.update(cx, |this, cx| {
-                let mut next = state("a");
-                Arc::make_mut(&mut next.sessions)[0].merge(&serde_json::json!({
-                    "statusLine": {"contextUsedPct": 73.0, "contextWindowSize": 200000}
-                }));
-                this.update_view(Arc::new(next), window, cx)
-            })
+        reveal_title(&workspace, &mut visual);
+        assert!(visual.debug_bounds("title-context-detail").is_some());
+    }
+
+    /// Notices grow the island below the title row; the hairline stays on
+    /// the title row, just above the seam.
+    #[gpui::test]
+    fn context_hairline_stays_on_the_title_row_as_notices_grow_the_island(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let mut next = with_context("a", Some(40.));
+        next.notice = "Change queued".into();
+        show_view(&workspace, &mut visual, next);
+        let bar = visual.debug_bounds("title-bar").unwrap();
+        let island = visual.debug_bounds("title-island").unwrap();
+        let tray = visual.debug_bounds("title-island-notices").unwrap();
+        let line = visual.debug_bounds("title-context").unwrap();
+        assert!(
+            (line.bottom() - bar.bottom()).abs() <= px(1.),
+            "{line:?} {bar:?}"
+        );
+        assert!(line.bottom() <= tray.top() + px(1.), "above the seam");
+        assert!(island.bottom() > line.bottom() + px(10.));
+    }
+
+    /// From 90% the island grows one notice row per threshold band. A
+    /// dismissed row stays dismissed while the share ticks within its band,
+    /// and across a chat switch, but a new band is news again.
+    #[gpui::test]
+    fn context_notice_shows_once_per_band_and_stays_dismissed_within_it(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        let shows = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.island_slots().contains(&"context"))
+        };
+        show_view(&workspace, &mut visual, with_context("a", Some(89.)));
+        assert!(!shows(&mut visual));
+        show_view(&workspace, &mut visual, with_context("a", Some(92.)));
+        assert!(shows(&mut visual));
+        let row = visual.debug_bounds("island-notice-context").unwrap();
+        assert!(
+            visual
+                .debug_bounds("title-island")
+                .unwrap()
+                .contains(&row.center())
+        );
+        click(&mut visual, "dismiss-context-notice");
+        assert!(!shows(&mut visual));
+        // Token ticks within the band, and a trip to another chat.
+        show_view(&workspace, &mut visual, with_context("a", Some(93.)));
+        assert!(!shows(&mut visual), "same band");
+        show_view(&workspace, &mut visual, with_context("b", Some(93.)));
+        assert!(!shows(&mut visual), "b has no reading");
+        show_view(&workspace, &mut visual, with_context("a", Some(94.)));
+        assert!(!shows(&mut visual), "still dismissed after the switch");
+        // The next band shows again.
+        show_view(&workspace, &mut visual, with_context("a", Some(96.)));
+        assert!(shows(&mut visual), "95% is a new band");
+        click(&mut visual, "dismiss-context-notice");
+        assert!(!shows(&mut visual));
+        // Below 90% the row and its dismissal go; climbing back is news.
+        show_view(&workspace, &mut visual, with_context("a", Some(40.)));
+        assert!(!shows(&mut visual));
+        workspace.read_with(&visual, |this, _| {
+            assert!(
+                !this
+                    .extras
+                    .dismissed_notices
+                    .iter()
+                    .any(|(slot, _)| *slot == "context")
+            )
         });
-        visual.run_until_parked();
-        let meter = visual.debug_bounds("context-meter").unwrap();
-        let composer = visual.debug_bounds("chat-composer").unwrap();
-        assert!(composer.contains(&meter.center()));
+        show_view(&workspace, &mut visual, with_context("a", Some(91.)));
+        assert!(shows(&mut visual));
+    }
+
+    /// The capsule never hides in compact or narrow layouts, but a short
+    /// title in a narrow window leaves it too slim for a readable hairline:
+    /// then the composer keeps its meter. The two never show at once.
+    #[gpui::test]
+    fn composer_keeps_the_context_meter_where_the_capsule_is_too_narrow(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        show_view(&workspace, &mut visual, with_context("a", Some(92.)));
+        for (width, height, in_title) in [
+            (720., 480., false),
+            (1000., 700., true),
+            (720., 700., false),
+            (1400., 900., true),
+        ] {
+            visual.simulate_resize(size(px(width), px(height)));
+            visual.run_until_parked();
+            let label = format!("{width}x{height}");
+            workspace.read_with(&visual, |this, _| {
+                // One decision places the meter, so it is never in both.
+                assert_eq!(this.title_carries_context(), in_title, "{label}");
+                assert_eq!(this.hairline_drawn(), in_title, "{label}");
+                // A slim capsule does not escalate either: the meter's
+                // color does.
+                assert_eq!(
+                    this.island_slots().contains(&"context"),
+                    in_title,
+                    "{label}"
+                );
+            });
+            if in_title {
+                let bar = visual.debug_bounds("title-bar").unwrap();
+                let line = visual.debug_bounds("title-context").unwrap();
+                assert!(bar.contains(&line.center()), "{label}");
+            } else {
+                // Each fallback size moves the composer, so this is the
+                // meter drawn now.
+                let meter = visual.debug_bounds("context-meter").unwrap();
+                let composer = visual.debug_bounds("chat-composer").unwrap();
+                assert!(composer.contains(&meter.center()), "{label}");
+            }
+        }
+    }
+
+    /// The fill animates on a spring when the share changes, and snaps on
+    /// a chat switch; at rest it asks for no frames.
+    #[gpui::test]
+    fn context_hairline_springs_to_new_readings_and_snaps_across_chats(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _, _updates) = fixture(cx);
+        show_view(&workspace, &mut visual, with_context("a", Some(30.)));
+        assert!(!workspace.read_with(&visual, |this, _| this.gauge_moving()));
+        visual.update(|_, cx| workspace.update(cx, |this, _| this.settings.reduce_motion = false));
+        show_view(&workspace, &mut visual, with_context("a", Some(60.)));
+        assert!(workspace.read_with(&visual, |this, _| this.gauge_moving()));
+        let mut other = with_context("b", None);
+        Arc::make_mut(&mut other.sessions)[1].merge(&serde_json::json!({
+            "statusLine": {"contextUsedPct": 80.0, "contextWindowSize": 200000}
+        }));
+        show_view(&workspace, &mut visual, other);
+        assert!(!workspace.read_with(&visual, |this, _| this.gauge_moving()));
+        let line = visual.debug_bounds("title-context").unwrap();
+        let fill = visual.debug_bounds("title-context-fill").unwrap();
+        assert!((fill.size.width / line.size.width - 0.8).abs() < 0.02);
     }
 
     #[gpui::test]
