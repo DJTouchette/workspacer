@@ -509,6 +509,27 @@ mod tests {
         visual.run_until_parked();
     }
 
+    /// Rests the pointer on the title capsule, lets its secondary actions
+    /// finish showing (the test platform draws no animation frames), then
+    /// clicks one: hidden title actions ignore pointer clicks.
+    fn click_title_action(
+        workspace: &Entity<Workspace>,
+        visual: &mut VisualTestContext,
+        selector: &'static str,
+    ) {
+        visual.run_until_parked();
+        let bar = visual.debug_bounds("title-bar").expect("title bar");
+        visual.simulate_mouse_move(bar.center(), None, gpui::Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settle_title_reveal();
+                cx.notify();
+            })
+        });
+        click(visual, selector);
+    }
+
     #[test]
     fn handoff_outcomes_take_honest_notice_tones() {
         let mut receipt = Receipt {
@@ -546,7 +567,7 @@ mod tests {
                     .update(cx, |input, cx| input.set_value("source draft", window, cx));
             })
         });
-        click(&mut visual, "open-handoff");
+        click_title_action(&workspace, &mut visual, "open-handoff");
         let seen: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
         assert!(seen.iter().any(|c| matches!(c,
             Command::Request(Request::Setup { provider, check: false }) if provider == "codex")));
@@ -709,7 +730,7 @@ mod tests {
                 this.update_view(Arc::new(view(vec![manager])), window, cx);
             })
         });
-        click(&mut visual, "open-handoff");
+        click_title_action(&workspace, &mut visual, "open-handoff");
         assert!(visual.debug_bounds("handoff-unavailable").is_some());
         assert!(visual.debug_bounds("handoff-continue").is_none());
         assert!(next_effect(&mut commands).is_none());

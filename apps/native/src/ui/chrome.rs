@@ -292,9 +292,12 @@ impl Workspace {
     /// grow the capsule downward, like an island, instead of floating loose
     /// beneath it. With nothing to say it stays the plain capsule. `status`
     /// is the conversation notice (local first, then the hub's).
+    /// `actions` are the capsule's secondary actions, shown on hover or
+    /// focus (see `island.rs`); a subagent's capsule has none.
     pub(super) fn render_title_island(
         &mut self,
         bar: Stateful<Div>,
+        actions: Option<Div>,
         status: String,
         window: &Window,
         cx: &mut Context<Self>,
@@ -382,6 +385,10 @@ impl Workspace {
                 cx,
             ));
         }
+        let bar = match actions {
+            Some(actions) => self.reveal_title_actions(bar, actions, !rows.is_empty(), window, cx),
+            None => bar,
+        };
         // Measures the capsule's outline: the bare bar, or the island.
         let measure = cx.entity().downgrade();
         let outline = canvas(
@@ -545,7 +552,6 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = self.appearance.palette();
-        let divider = || div().w(px(1.)).h(px(18.)).flex_shrink_0().bg(rgb(p.border));
         div()
             .id("title-bar")
             .debug_selector(|| "title-bar".into())
@@ -601,11 +607,18 @@ impl Workspace {
             })
             .child(
                 div()
+                    .id("title-text")
+                    .debug_selector(|| "title-text".into())
                     .min_w_0()
                     .max_w(px(if narrow { 220. } else { 360. }))
                     .truncate()
                     .text_size(px(13.))
                     .font_weight(FontWeight::SEMIBOLD)
+                    // A tap shows the actions where there is no hover.
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.title_reveal.tap(std::time::Instant::now());
+                        cx.notify();
+                    }))
                     .child(title.to_owned()),
             )
             .when_some(session.filter(|_| !narrow), |d, session| {
@@ -654,8 +667,6 @@ impl Workspace {
                         }),
                 )
             })
-            .child(divider())
-            .child(self.chat_actions(enabled, cx))
     }
 
     pub(super) fn chat_actions(&self, enabled: bool, cx: &mut Context<Self>) -> Div {
@@ -668,8 +679,12 @@ impl Workspace {
             .flex_shrink_0()
             .child(
                 self.icon_button("open-changes", "Changes", IconName::Replace, selected)
+                    .debug_selector(|| "open-changes".into())
                     .when(selected, |d| {
-                        d.on_click(cx.listener(|this, _, window, cx| {
+                        d.on_click(cx.listener(|this, event, window, cx| {
+                            if !this.title_action_allowed(event) {
+                                return;
+                            }
                             this.open_feature(Screen::Changes, window, cx)
                         }))
                     }),
@@ -683,9 +698,11 @@ impl Workspace {
                 )
                 .debug_selector(|| "open-editor".into())
                 .when(selected, |d| {
-                    d.on_click(
-                        cx.listener(|this, _, window, cx| this.open_selected_editor(window, cx)),
-                    )
+                    d.on_click(cx.listener(|this, event, window, cx| {
+                        if this.title_action_allowed(event) {
+                            this.open_selected_editor(window, cx)
+                        }
+                    }))
                 }),
             )
             .child(
@@ -704,7 +721,11 @@ impl Workspace {
                     d.text_color(rgb(self.appearance.palette().accent))
                 })
                 .when(selected, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx)))
+                    d.on_click(cx.listener(|this, event, window, cx| {
+                        if this.title_action_allowed(event) {
+                            this.toggle_terminal(window, cx)
+                        }
+                    }))
                 }),
             )
             .child(
@@ -714,16 +735,24 @@ impl Workspace {
                     IconName::BookOpen,
                     selected,
                 )
+                .debug_selector(|| "open-history".into())
                 .when(selected, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| {
+                    d.on_click(cx.listener(|this, event, window, cx| {
+                        if !this.title_action_allowed(event) {
+                            return;
+                        }
                         this.open_feature(Screen::History, window, cx)
                     }))
                 }),
             )
             .child(
                 self.icon_button("open-session", "Session details", IconName::Info, selected)
+                    .debug_selector(|| "open-session".into())
                     .when(selected, |d| {
-                        d.on_click(cx.listener(|this, _, window, cx| {
+                        d.on_click(cx.listener(|this, event, window, cx| {
+                            if !this.title_action_allowed(event) {
+                                return;
+                            }
                             this.open_feature(Screen::Session, window, cx)
                         }))
                     }),
@@ -735,8 +764,12 @@ impl Workspace {
                     IconName::Settings2,
                     model_enabled,
                 )
+                .debug_selector(|| "open-model".into())
                 .when(model_enabled, |d| {
-                    d.on_click(cx.listener(|this, _, window, cx| {
+                    d.on_click(cx.listener(|this, event, window, cx| {
+                        if !this.title_action_allowed(event) {
+                            return;
+                        }
                         this.open_feature(Screen::Model, window, cx)
                     }))
                 }),
@@ -757,11 +790,12 @@ impl Workspace {
         self.icon_button("open-handoff", label, IconName::ArrowRight, enabled)
             .debug_selector(|| "open-handoff".into())
             .when(enabled, |d| {
-                d.on_click(
-                    cx.listener(|this, _, window, cx| {
-                        this.open_feature(Screen::Handoff, window, cx)
-                    }),
-                )
+                d.on_click(cx.listener(|this, event, window, cx| {
+                    if !this.title_action_allowed(event) {
+                        return;
+                    }
+                    this.open_feature(Screen::Handoff, window, cx)
+                }))
             })
     }
 

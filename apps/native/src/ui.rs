@@ -6,6 +6,7 @@ mod features;
 mod file_viewer;
 mod fleet_card;
 mod handoff;
+mod island;
 mod launch;
 mod markdown;
 mod navigation;
@@ -514,6 +515,8 @@ pub struct Workspace {
     /// The title capsule's measured outer width: its notice island wraps
     /// inside it.
     title_bar_width: gpui::Pixels,
+    /// Hover, focus and tap state behind the capsule's secondary actions.
+    title_reveal: island::TitleReveal,
     header_bounds: gpui::Bounds<gpui::Pixels>,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
@@ -774,6 +777,7 @@ impl Workspace {
             composer_dock_bounds: Default::default(),
             composer_layer_height: Default::default(),
             title_bar_width: Default::default(),
+            title_reveal: island::TitleReveal::new(cx),
             header_bounds: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
@@ -1671,11 +1675,14 @@ impl Render for Workspace {
         }
 
         let terminal_panel = self.render_terminal_panel(window, cx);
-        let title_bar = match self.render_child_title_bar(cx) {
-            Some(bar) => bar,
-            None => self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
+        let (title_bar, title_actions) = match self.render_child_title_bar(cx) {
+            Some(bar) => (bar, None),
+            None => (
+                self.render_title_bar(narrow, enabled, &title, selected.as_ref(), cx),
+                Some(self.chat_actions(enabled, cx)),
+            ),
         };
-        let title_island = self.render_title_island(title_bar, notice, window, cx);
+        let title_island = self.render_title_island(title_bar, title_actions, notice, window, cx);
         // Transparent fade rather than a ruled strip: history scrolls softly
         // under the floating title pill instead of colliding with a hard edge.
         let header = div()
@@ -6220,6 +6227,9 @@ mod tests {
         for (width, height) in [(1000., 700.), (720., 480.), (1600., 900.)] {
             visual.simulate_resize(size(px(width), px(height)));
             show(&mut visual, "");
+            // Measured with its actions showing: the island holds that room
+            // whether or not they show (see the reveal test below).
+            reveal_title(&workspace, &mut visual);
             let bare = header(&mut visual);
             let capsule = visual.debug_bounds("title-bar").unwrap();
             for notice in [
@@ -6342,6 +6352,323 @@ mod tests {
                 vec![("feature", "Attachment failed: too large".to_owned())]
             );
         });
+    }
+
+    /// The title capsule rests compact, like a Dynamic Island: its secondary
+    /// actions show only while the pointer is on it, focus is inside it or a
+    /// tap pinned it. Hidden or half-shown actions take no pointer clicks,
+    /// the capsule grows about its center without moving the transcript,
+    /// and beside notices the island keeps the actions' room, so revealing
+    /// them never rewraps or moves a notice row.
+    #[gpui::test]
+    fn title_actions_show_only_on_hover_focus_or_tap(cx: &mut TestAppContext) {
+        use wks_native::terminal::Command as T;
+        const ACTIONS: [&str; 6] = [
+            "open-changes",
+            "open-editor",
+            "open-terminal",
+            "open-history",
+            "open-session",
+            "open-model",
+        ];
+        let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+        let with_notice = |notice: &str| {
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].model = "claude-opus-5-5".into();
+            view.notice = notice.into();
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 12,
+                first_seq: 1,
+                items: (0..12)
+                    .map(|i| Item {
+                        kind: "assistant_text".into(),
+                        text: format!("Message {i}"),
+                        ..Default::default()
+                    })
+                    .collect(),
+            });
+            Arc::new(view)
+        };
+        let show = |visual: &mut VisualTestContext, notice: &str| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(with_notice(notice), window, cx)
+                })
+            });
+            visual.run_until_parked();
+        };
+        let header = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.header_bounds.size.height)
+        };
+        let shown = |visual: &mut VisualTestContext| {
+            visual
+                .debug_bounds("title-actions-shown")
+                .unwrap()
+                .size
+                .width
+        };
+        // (pointer on the capsule, where the reveal is headed)
+        let reveal = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| {
+                (this.title_reveal.hovered, this.title_reveal_target())
+            })
+        };
+        let point = |x: f32, y: f32| gpui::point(px(x), px(y));
+        let move_to = |visual: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>| {
+            visual.simulate_mouse_move(at, None, gpui::Modifiers::default());
+            visual.run_until_parked();
+        };
+        let untouched = |visual: &mut VisualTestContext,
+                         commands: &mut tokio::sync::mpsc::Receiver<Command>,
+                         case: &str| {
+            assert!(effects(commands).is_empty(), "{case}");
+            workspace.read_with(visual, |this, _| {
+                assert_eq!(this.screen, Screen::Conversation, "{case}");
+                assert!(!this.terminal.open, "{case}");
+            });
+        };
+
+        for (width, height) in [(1000., 700.), (720., 480.), (1600., 900.)] {
+            visual.simulate_resize(size(px(width), px(height)));
+            show(&mut visual, "");
+            let away = point(width * 0.6, height * 0.55);
+            move_to(&mut visual, away);
+            settle_title(&workspace, &mut visual);
+            let case = format!("{width}x{height}");
+
+            // At rest: compact, actions clipped to nothing, nothing clickable
+            // where they would be.
+            assert_eq!(reveal(&mut visual), (false, false), "{case}");
+            assert_eq!(shown(&mut visual), px(0.), "{case}");
+            let rest = visual.debug_bounds("title-bar").unwrap();
+            let rest_header = header(&mut visual);
+            for action in ACTIONS {
+                let hidden = visual.debug_bounds(action).unwrap();
+                visual.simulate_click(hidden.center(), gpui::Modifiers::default());
+                visual.run_until_parked();
+                untouched(
+                    &mut visual,
+                    &mut commands,
+                    &format!("{case} hidden {action}"),
+                );
+            }
+
+            // A real pointer move onto the capsule heads it open.
+            move_to(&mut visual, rest.center());
+            assert_eq!(reveal(&mut visual), (true, true), "{case}");
+            // Half-way, a click on a visible action still does nothing.
+            visual.update(|_, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.freeze_title_reveal(0.5);
+                    cx.notify();
+                })
+            });
+            visual.run_until_parked();
+            let half = shown(&mut visual);
+            assert!(half > px(40.), "{case}: {half:?}");
+            let changes = visual.debug_bounds("open-changes").unwrap();
+            let clip = visual.debug_bounds("title-actions-shown").unwrap();
+            assert!(clip.contains(&changes.center()), "{case}: visible mid-way");
+            visual.simulate_click(changes.center(), gpui::Modifiers::default());
+            visual.run_until_parked();
+            untouched(&mut visual, &mut commands, &format!("{case} mid-reveal"));
+
+            settle_title(&workspace, &mut visual);
+            let open = visual.debug_bounds("title-bar").unwrap();
+            let full = shown(&mut visual);
+            assert!(
+                (full - half * 2.).abs() < px(1.),
+                "{case}: {full:?} {half:?}"
+            );
+            // Grows about its center, same height; the transcript stays put.
+            assert_eq!(open.top(), rest.top(), "{case}");
+            assert_eq!(open.size.height, rest.size.height, "{case}");
+            assert!(open.size.width > rest.size.width + px(150.), "{case}");
+            assert!(
+                (open.center().x - rest.center().x).abs() <= px(1.),
+                "{case}: {open:?} {rest:?}"
+            );
+            assert_eq!(header(&mut visual), rest_header, "{case}");
+            // Every control fits inside the capsule, inside the window.
+            assert!(open.left() >= px(0.) && open.right() <= px(width), "{case}");
+            // (Narrow windows drop the model chip; debug bounds outlive it.)
+            let wide = width >= 900.;
+            let lead = if wide { "title-model" } else { "title-text" };
+            for control in ACTIONS.iter().chain([lead].iter()) {
+                let bounds = visual.debug_bounds(control).unwrap();
+                assert!(
+                    bounds.left() >= open.left() && bounds.right() <= open.right(),
+                    "{case}: {control} {bounds:?} in {open:?}"
+                );
+            }
+
+            // Crossing every control, the gaps between them and the divider
+            // keeps it open.
+            let first = visual.debug_bounds("open-changes").unwrap();
+            let lead = visual.debug_bounds(lead).unwrap();
+            let mut stops = vec![
+                point(f32::from(lead.right()) + 4., f32::from(open.center().y)),
+                point(f32::from(first.left()) - 1., f32::from(open.center().y)),
+            ];
+            for action in ACTIONS {
+                let bounds = visual.debug_bounds(action).unwrap();
+                stops.push(bounds.center());
+                stops.push(point(
+                    f32::from(bounds.right()) + 0.5,
+                    f32::from(bounds.center().y),
+                ));
+            }
+            for at in stops {
+                move_to(&mut visual, at);
+                assert_eq!(reveal(&mut visual), (true, true), "{case} at {at:?}");
+                assert_eq!(shown(&mut visual), full, "{case} at {at:?}");
+            }
+
+            // Leaving closes it again, back to exactly the resting capsule.
+            move_to(&mut visual, away);
+            assert_eq!(reveal(&mut visual), (false, false), "{case}");
+            settle_title(&workspace, &mut visual);
+            assert_eq!(visual.debug_bounds("title-bar").unwrap(), rest, "{case}");
+
+            // Beside a notice the island holds the actions' room at rest, so
+            // revealing them moves neither the island nor its rows.
+            show(
+                &mut visual,
+                "Model change refused: this provider cannot switch models while a turn is running, so nothing changed.",
+            );
+            settle_title(&workspace, &mut visual);
+            assert_eq!(shown(&mut visual), px(0.), "{case} notice at rest");
+            let island = visual.debug_bounds("title-island").unwrap();
+            let row = visual.debug_bounds("island-notice-status").unwrap();
+            let tray = visual.debug_bounds("title-island-notices").unwrap();
+            let noticed_header = header(&mut visual);
+            assert_eq!(island.origin, open.origin, "{case}");
+            assert_eq!(island.size.width, open.size.width, "{case}");
+            let bar = visual.debug_bounds("title-bar").unwrap();
+            move_to(&mut visual, bar.center());
+            assert_eq!(reveal(&mut visual), (true, true), "{case}");
+            settle_title(&workspace, &mut visual);
+            assert_eq!(shown(&mut visual), full, "{case} notice revealed");
+            assert_eq!(
+                visual.debug_bounds("title-island").unwrap(),
+                island,
+                "{case}"
+            );
+            assert_eq!(
+                visual.debug_bounds("island-notice-status").unwrap(),
+                row,
+                "{case}"
+            );
+            assert_eq!(
+                visual.debug_bounds("title-island-notices").unwrap(),
+                tray,
+                "{case}"
+            );
+            assert_eq!(header(&mut visual), noticed_header, "{case}");
+            move_to(&mut visual, away);
+            settle_title(&workspace, &mut visual);
+            assert_eq!(
+                visual.debug_bounds("title-island").unwrap(),
+                island,
+                "{case}"
+            );
+            assert_eq!(
+                visual.debug_bounds("island-notice-status").unwrap(),
+                row,
+                "{case}"
+            );
+            show(&mut visual, "");
+            settle_title(&workspace, &mut visual);
+        }
+
+        // Focus a pointer press leaves on a control does not hold the
+        // capsule open (above, the mid-reveal press focused an action, yet
+        // leaving closed it). Keyboard focus does, with no pointer, through
+        // the focus change's own repaint; Tab reaches the hidden actions and
+        // Enter activates them.
+        visual.simulate_resize(size(px(1000.), px(700.)));
+        show(&mut visual, "");
+        settle_title(&workspace, &mut visual);
+        let chip = visual.debug_bounds("title-model").unwrap();
+        visual.simulate_mouse_down(
+            chip.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        visual.simulate_mouse_up(
+            point(0., 0.),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        visual.run_until_parked();
+        let chip_focus = visual.update(|window, cx| window.focused(cx).unwrap());
+        assert_eq!(reveal(&mut visual), (false, false), "pressed, not tabbed");
+        visual.simulate_keystrokes("tab");
+        visual.run_until_parked();
+        assert_ne!(
+            visual.update(|window, cx| window.focused(cx).unwrap()),
+            chip_focus
+        );
+        assert_eq!(
+            reveal(&mut visual),
+            (false, true),
+            "Tab into the actions opens it"
+        );
+        settle_title(&workspace, &mut visual);
+        assert!(shown(&mut visual) > px(150.));
+        visual.simulate_keystrokes("tab tab");
+        visual.run_until_parked();
+        assert_eq!(reveal(&mut visual), (false, true), "focus stays inside");
+        untouched(&mut visual, &mut commands, "tabbing");
+        visual.simulate_keystrokes("enter");
+        visual.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+        });
+        visual.run_until_parked();
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Terminal(T::Open { agent, .. })] if agent == "a"));
+        // The terminal took focus: with no pointer, the capsule closes.
+        assert_eq!(reveal(&mut visual), (false, false));
+
+        // A pointer click works once fully shown (here it hides the panel
+        // again; a focused terminal would take ctrl-` itself).
+        reveal_title(&workspace, &mut visual);
+        click(&mut visual, "open-terminal");
+        assert!(matches!(effects(&mut commands).as_slice(),
+            [Command::Terminal(T::Hide { agent })] if agent == "a"));
+        assert!(!workspace.read_with(&visual, |this, _| this.terminal.open));
+
+        // Tap: a click on the title pins a closed capsule open without
+        // taking the composer's focus; a second tap releases it.
+        move_to(&mut visual, point(600., 400.));
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.composer
+                    .update(cx, |input, cx| input.focus(window, cx))
+            })
+        });
+        visual.run_until_parked();
+        settle_title(&workspace, &mut visual);
+        assert_eq!(reveal(&mut visual), (false, false));
+        let title = visual.debug_bounds("title-text").unwrap();
+        visual.simulate_click(title.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(reveal(&mut visual), (false, true), "tap pins it open");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                assert!(this.composer.read(cx).focus_handle(cx).is_focused(window))
+            })
+        });
+        settle_title(&workspace, &mut visual);
+        move_to(&mut visual, point(500., 500.));
+        assert_eq!(reveal(&mut visual), (false, true), "pinned through moves");
+        let title = visual.debug_bounds("title-text").unwrap();
+        visual.simulate_click(title.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(reveal(&mut visual), (false, false), "second tap releases");
+        settle_title(&workspace, &mut visual);
+        assert_eq!(shown(&mut visual), px(0.));
+        untouched(&mut visual, &mut commands, "taps");
     }
 
     #[gpui::test]
@@ -11340,6 +11667,26 @@ mod tests {
         visual.run_until_parked();
     }
 
+    /// Rests the pointer on the title capsule and lets its secondary
+    /// actions finish showing (the test platform draws no animation frames).
+    fn reveal_title(workspace: &Entity<Workspace>, visual: &mut VisualTestContext) {
+        let bar = visual.debug_bounds("title-bar").unwrap();
+        visual.simulate_mouse_move(bar.center(), None, gpui::Modifiers::default());
+        visual.run_until_parked();
+        settle_title(workspace, visual);
+    }
+
+    /// Finishes the capsule's reveal wherever it is headed.
+    fn settle_title(workspace: &Entity<Workspace>, visual: &mut VisualTestContext) {
+        visual.update(|_, cx| {
+            workspace.update(cx, |this, cx| {
+                this.settle_title_reveal();
+                cx.notify();
+            })
+        });
+        visual.run_until_parked();
+    }
+
     fn click(visual: &mut VisualTestContext, selector: &'static str) {
         let bounds = visual
             .debug_bounds(selector)
@@ -11749,6 +12096,7 @@ mod tests {
                 this.update_view(Arc::new(view), window, cx)
             })
         });
+        reveal_title(&workspace, &mut visual);
         click(&mut visual, "open-terminal");
         assert!(matches!(effects(&mut commands).as_slice(),
             [Command::Terminal(T::Open { agent, cwd, .. })] if agent == "a" && cwd == "/work/a"));
@@ -11847,6 +12195,7 @@ mod tests {
             [Command::Terminal(T::Hide { agent })] if agent == "a"));
 
         // Pop out: the same shell in a window of its own, keys included.
+        reveal_title(&workspace, &mut visual);
         click(&mut visual, "open-terminal");
         assert!(matches!(effects(&mut commands).as_slice(),
             [Command::Terminal(T::Open { agent, .. })] if agent == "a"));
