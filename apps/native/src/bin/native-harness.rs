@@ -75,6 +75,17 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         iterations: usize,
     },
+    /// Parent/child chat switching through the real controller against a dense
+    /// in-process fixture. Reports controller latency and hub reads per
+    /// switch, not GUI frame time.
+    BenchSwitch {
+        #[arg(long, default_value_t = 20)]
+        cycles: usize,
+        #[arg(long, default_value_t = 1000)]
+        parent_items: usize,
+        #[arg(long, default_value_t = 1000)]
+        child_items: usize,
+    },
     /// Repeatable reducer workload. Reports measured values, not GUI frame time.
     Bench {
         #[arg(long, default_value_t = 20000)]
@@ -234,6 +245,21 @@ async fn main() -> Result<()> {
                 "p50_us":percentile(50),"p95_us":percentile(95),"p99_us":percentile(99),
                 "scope":"real turn summary parsing/aggregation only; excludes GPUI layout, GPU, network and Electron; five warmup iterations"}))?
             );
+        }
+        Command::BenchSwitch {
+            cycles,
+            parent_items,
+            child_items,
+        } => {
+            anyhow::ensure!(
+                (1..=500).contains(&cycles)
+                    && (5..=5000).contains(&parent_items)
+                    && (5..=5000).contains(&child_items),
+                "cycles/items outside bounded benchmark range"
+            );
+            let report =
+                wks_native::harness::bench_switch(cycles, parent_items, child_items).await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::Bench { events } => {
             let mut transcript = Transcript::default();

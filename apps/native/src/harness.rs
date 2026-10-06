@@ -671,6 +671,228 @@ pub async fn ui_intent_probe() -> Result<Value> {
     probe
 }
 
+/// A dense, provider-shaped conversation: prose with fenced code, tool calls
+/// and their multi-line results. Tool ids are unique per `tag`.
+pub fn dense_items(count: usize, tag: &str) -> Vec<Value> {
+    let output = (1..=40)
+        .map(|n| format!("{n:>4} let value_{n} = compute({n});"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let start = chrono::Utc::now().timestamp_millis() - count as i64 * 1000;
+    (0..count)
+        .map(|i| {
+            let id = format!("{tag}-tool-{}", i / 5);
+            let mut item = match i % 5 {
+                0 => json!({"kind":"user_message","text":format!("Step {}: review the next module and report regressions.", i / 5 + 1)}),
+                1 => json!({"kind":"tool_use","id":id,"name":"Read","input":{"file_path":format!("src/module_{}.rs", i / 5)}}),
+                2 => json!({"kind":"tool_result","tool_use_id":id,"content":output}),
+                3 => json!({"kind":"tool_use","id":format!("{id}-edit"),"name":"Edit","input":{"file_path":format!("src/module_{}.rs", i / 5),"old_string":"compute(1)","new_string":"compute_checked(1)?"}}),
+                _ => json!({"kind":"assistant_text","text":format!("## Module {}\n\nThe change keeps **ordering** stable and adds `compute_checked`.\n\n- Callers updated\n- Tests cover the error path\n\n```rust\nfn compute_checked(n: u32) -> Result<u32> {{\n    n.checked_mul(2).context(\"overflow\")\n}}\n```\n\n| Check | Result |\n|---|---|\n| unit | pass |\n| clippy | pass |", i / 5 + 1)}),
+            };
+            item["timestamp"] = json!(
+                chrono::DateTime::from_timestamp_millis(start + i as i64 * 1000)
+                    .unwrap()
+                    .to_rfc3339()
+            );
+            item
+        })
+        .collect()
+}
+
+/// Parent/child chat switching through the real controller and bus client
+/// against an in-process dense fixture. Each cycle visits two new children,
+/// returns to the first, then to the parent. `shown_ms` is the wall time from
+/// `ViewChild` to the first published view showing the target's transcript;
+/// `reconciled_ms` to the view after that switch's hub read was folded in.
+/// Excludes GPUI layout/paint and any real backend's read latency (the fixture
+/// answers immediately), so it isolates client-side churn.
+pub async fn bench_switch(cycles: usize, parent_items: usize, child_items: usize) -> Result<Value> {
+    use crate::controller::{ChildTarget, Command, Controller, View};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    const PARENT: &str = "bench-parent";
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let config = crate::bus::Config::new(format!("ws://{}/bus", listener.local_addr()?), None)?;
+    let calls = Arc::new(Mutex::new(BTreeMap::<String, usize>::new()));
+    let parent = dense_items(parent_items, "parent");
+    let child_ids: Vec<String> = (0..cycles)
+        .flat_map(|i| [format!("bench-child-{i}-a"), format!("bench-child-{i}-b")])
+        .collect();
+    let children: BTreeMap<String, Vec<Value>> = child_ids
+        .iter()
+        .map(|id| (id.clone(), dense_items(child_items, id)))
+        .collect();
+    let row = json!({"sessionId":PARENT,"label":"Dense parent","cwd":"/fixture/project",
+        "provider":"claude","model":"sonnet","transport":"stream","mode":"input",
+        "subagents":child_ids.iter().map(|id| json!({"id":id,"type":"Explore","description":format!("Audit {id}"),
+            "status":"complete","startedAt":1790852400000i64,"completedAt":1790852442000i64,"toolCalls":40})).collect::<Vec<_>>()});
+    let counter = calls.clone();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await?;
+        let mut socket = accept_async(stream).await?;
+        socket
+            .send(Message::Text(
+                json!({"op":"hello","scope":"operator"}).to_string(),
+            ))
+            .await?;
+        while let Some(message) = socket.next().await {
+            let Message::Text(text) = message? else {
+                continue;
+            };
+            let frame: Value = serde_json::from_str(&text)?;
+            match frame["op"].as_str() {
+                Some("subscribe") => {
+                    for topic in frame["topics"].as_array().into_iter().flatten() {
+                        if let Some(topic) = topic
+                            .as_str()
+                            .filter(|t| t.starts_with("agent.conversation."))
+                        {
+                            socket.send(event(topic, json!({"ready":true}))).await?;
+                        }
+                    }
+                }
+                Some("call") => {
+                    let method = frame["method"].as_str().unwrap_or_default();
+                    *counter.lock().unwrap().entry(method.into()).or_default() += 1;
+                    let params = &frame["params"];
+                    let result = match method {
+                        "sessions.snapshots" => json!([row]),
+                        "sessions.conversation" => page(
+                            &parent,
+                            parent.len() as u64,
+                            params["limit"].as_u64().map(|l| l as usize),
+                        ),
+                        "sessions.subagentConversation" => {
+                            let agent = params["agentId"].as_str().unwrap_or_default();
+                            match children.get(agent) {
+                                Some(items) => {
+                                    json!({"session_id":PARENT,"agent_id":agent,"seq":items.len(),"first_seq":1,"items":items})
+                                }
+                                None => json!({"ok":false,"error":"unknown child"}),
+                            }
+                        }
+                        "usage.report" => json!({"providers":[]}),
+                        _ => Value::Null,
+                    };
+                    socket
+                        .send(Message::Text(
+                            json!({"op":"result","id":frame["id"],"result":result}).to_string(),
+                        ))
+                        .await?;
+                }
+                _ => (),
+            }
+        }
+        anyhow::Ok(())
+    });
+    let controller = Controller::start(config);
+    let mut views = controller.views.clone();
+    async fn until(
+        views: &mut tokio::sync::watch::Receiver<Arc<View>>,
+        done: impl Fn(&View) -> bool,
+    ) -> Result<Arc<View>> {
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                let view = views.borrow_and_update().clone();
+                if done(&view) {
+                    return anyhow::Ok(view);
+                }
+                views.changed().await?;
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("switch did not settle"))?
+    }
+    // Parent rows coalesce (a tool result folds into its call).
+    let parent_rows = parent_items.min(crate::controller::CONVERSATION_PAGE) * 3 / 5;
+    let child_rows = child_items * 3 / 5;
+    let showing = |child: Option<String>| {
+        let rows = if child.is_some() {
+            child_rows
+        } else {
+            parent_rows
+        };
+        move |view: &View| {
+            view.connected
+                && view.selected.as_deref() == Some(PARENT)
+                && view.child.as_ref().map(|c| &c.agent) == child.as_ref()
+                && !view.loading
+                && view.transcript.rows.len() >= rows
+        }
+    };
+    until(&mut views, showing(None)).await?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut samples: BTreeMap<&str, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
+    let mut reads: BTreeMap<&str, BTreeMap<String, usize>> = BTreeMap::new();
+    for cycle in 0..cycles {
+        let (a, b) = (
+            format!("bench-child-{cycle}-a"),
+            format!("bench-child-{cycle}-b"),
+        );
+        for (name, child) in [
+            ("parent_to_new_child", Some(a.clone())),
+            ("child_to_new_sibling", Some(b)),
+            ("child_to_revisited_sibling", Some(a)),
+            ("child_to_parent", None),
+        ] {
+            calls.lock().unwrap().clear();
+            views.borrow_and_update();
+            let started = Instant::now();
+            controller.command(Command::ViewChild(child.clone().map(|agent| ChildTarget {
+                parent: PARENT.into(),
+                agent,
+            })))?;
+            let shown = until(&mut views, showing(child.clone())).await?;
+            let shown_ms = started.elapsed().as_secs_f64() * 1000.;
+            // A held transcript shows before its read; the read's fold then
+            // publishes a later revision. A fresh one shows only as that fold.
+            let revision = shown.transcript.revision;
+            let folded = tokio::time::timeout(
+                Duration::from_millis(250),
+                until(&mut views, |v| v.transcript.revision > revision),
+            )
+            .await;
+            let reconciled_ms = match folded {
+                Ok(Ok(_)) => started.elapsed().as_secs_f64() * 1000.,
+                _ => shown_ms,
+            };
+            let entry = samples.entry(name).or_default();
+            entry.0.push(shown_ms);
+            entry.1.push(reconciled_ms);
+            // Let reads the transition started but did not wait for arrive.
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            for (method, count) in calls.lock().unwrap().iter() {
+                *reads
+                    .entry(name)
+                    .or_default()
+                    .entry(method.clone())
+                    .or_default() += count;
+            }
+        }
+    }
+    drop(controller);
+    drop(views);
+    server.abort();
+    let mut report = json!({"cycles":cycles,"parent_items":parent_items,"child_items":child_items,
+        "debug_assertions":cfg!(debug_assertions),
+        "scope":"real controller + bus client against an in-process fixture that answers immediately; ms from ViewChild to the first published view showing the target (shown) and to the view with that switch's read folded in (reconciled); includes the controller's 33ms publish tick; excludes GPUI layout/paint and real backend read cost"});
+    for (name, (mut shown, mut reconciled)) in samples {
+        shown.sort_by(f64::total_cmp);
+        reconciled.sort_by(f64::total_cmp);
+        let at = |v: &[f64], p: usize| v[(v.len() - 1) * p / 100];
+        let per_switch: BTreeMap<_, _> = reads
+            .remove(name)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(method, count)| (method, count as f64 / cycles as f64))
+            .collect();
+        report[name] = json!({"shown_p50_ms":at(&shown,50),"shown_p95_ms":at(&shown,95),
+            "reconciled_p50_ms":at(&reconciled,50),"reconciled_p95_ms":at(&reconciled,95),
+            "reads_per_switch":per_switch});
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod child_fixture_tests {
     use super::*;

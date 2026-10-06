@@ -79,7 +79,7 @@ impl Workspace {
     ) -> Div {
         let p = self.appearance.palette();
         let tool = row.tool.as_ref().expect("tool row");
-        let session = self.view.selected.clone().unwrap_or_default();
+        let session = self.chat_owner();
         let identity = tools::identity(row);
         let element_key = format!("{session}-{identity}");
         let expanded = self
@@ -280,7 +280,7 @@ impl Workspace {
         let p = self.appearance.palette();
         let view = self.view.clone();
         let rows = &view.transcript.rows;
-        let session = self.view.selected.clone().unwrap_or_default();
+        let session = self.chat_owner();
         let card_key = format!("work:{session}:{}", tools::identity(&rows[span.start]));
         let summary = tool_preview::summarize_work(rows.range(span.clone()).map(AsRef::as_ref));
         // Merged turns interleave assistant notes; only calls count as steps.

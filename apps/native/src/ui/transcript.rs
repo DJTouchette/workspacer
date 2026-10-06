@@ -51,6 +51,18 @@ fn literal(id: String, text: &str, window: &mut Window, cx: &mut App) -> TextVie
     .selectable(true)
 }
 impl Workspace {
+    /// The conversation in the chat: the selected session, or the native child
+    /// viewed inside it. Every transcript numbers its rows from zero, so row
+    /// element state keyed by the session alone let a child adopt its
+    /// parent's (or a sibling's) parsed text views and paint their content
+    /// until the deferred reparse.
+    pub(super) fn chat_owner(&self) -> String {
+        let session = self.view.selected.clone().unwrap_or_default();
+        match &self.view.child {
+            Some(child) => format!("{session}/{}", child.agent),
+            None => session,
+        }
+    }
     /// Opening or switching to a conversation always lands on the latest message.
     pub(super) fn land_on_latest(&mut self) {
         if self.chat.restored || self.view.loading || self.view.transcript.rows.is_empty() {
@@ -505,8 +517,7 @@ impl Workspace {
             && !continued
             && let Some(fleet) = content::fleet(&row.text)
         {
-            let session = self.view.selected.clone().unwrap_or_default();
-            let key = format!("{namespace}:{session}:{}", row.key);
+            let key = format!("{namespace}:{}:{}", self.chat_owner(), row.key);
             let card = self.render_fleet_card(&key, fleet, row.copy_text(), window, cx);
             return div()
                 .w_full()
@@ -518,7 +529,7 @@ impl Workspace {
         }
         if row.tool.is_none() && row.role == "Assistant" {
             // Hover-only copy lives on the metadata line so it reserves no row.
-            let session = self.view.selected.clone().unwrap_or_default();
+            let owner = self.chat_owner();
             let copy = row.copy_text();
             footer = div()
                 .flex()
@@ -527,7 +538,7 @@ impl Workspace {
                 .gap_1()
                 .child(
                     self.icon_button(
-                        SharedString::from(format!("copy-{namespace}:{session}:{}", row.key)),
+                        SharedString::from(format!("copy-{namespace}:{owner}:{}", row.key)),
                         "Copy message",
                         IconName::Copy,
                         true,
@@ -583,7 +594,7 @@ impl Workspace {
     ) -> Div {
         let p = self.appearance.palette();
         let session = self.view.selected.clone().unwrap_or_default();
-        let key = format!("{namespace}:{session}:{}", row.key);
+        let key = format!("{namespace}:{}:{}", self.chat_owner(), row.key);
         let copy = row.copy_text();
         let mut body = div()
             .w_full()
@@ -774,7 +785,7 @@ impl Workspace {
                 lead.append(&mut trail);
                 body = body.child(tools::card(
                     row,
-                    &session,
+                    &self.chat_owner(),
                     self.tool_expansion.get(&tools::identity(row)).copied(),
                     cx.entity().downgrade(),
                     (p, self.settings.twelve_hour_clock),
