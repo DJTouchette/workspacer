@@ -427,7 +427,6 @@ impl Workspace {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, size};
-    use gpui_component::Root;
     use wks_native::{
         controller::SpawnReceipt,
         handoff::{Receipt, Written},
@@ -442,29 +441,13 @@ mod tests {
         VisualTestContext,
         tokio::sync::mpsc::Receiver<Command>,
     ) {
-        cx.update(|cx| {
-            gpui_component::init(cx);
-            bind_keys(cx);
-        });
-        let (controller, commands, _updates) = Controller::test_channels();
-        std::mem::forget(_updates);
-        let mut workspace = None;
-        let window = cx.add_window(|window, cx| {
-            let view = cx.new(|cx| {
-                let mut workspace = Workspace::new(controller, true, window, cx);
-                // The test platform draws no animation frames: chrome
-                // springs would rest mid-flight. Motion has its own tests.
-                workspace.settings.reduce_motion = true;
-                workspace
-            });
-            workspace = Some(view.clone());
-            Root::new(view, window, cx)
-        });
-        let visual = VisualTestContext::from_window(window.into(), cx);
+        let (workspace, visual, commands, updates) = crate::ui::tests::fixture(cx);
+        // These tests drive the view directly; the channel stays open.
+        std::mem::forget(updates);
         // Tall enough that every card on the page can be clicked; the first
         // test checks where Continue itself sits in a short window.
         visual.simulate_resize(size(px(1200.), px(1600.)));
-        (workspace.unwrap(), visual, commands)
+        (workspace, visual, commands)
     }
 
     fn source(provider: &str) -> Session {
