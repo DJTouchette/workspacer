@@ -450,7 +450,13 @@ mod tests {
         std::mem::forget(_updates);
         let mut workspace = None;
         let window = cx.add_window(|window, cx| {
-            let view = cx.new(|cx| Workspace::new(controller, true, window, cx));
+            let view = cx.new(|cx| {
+                let mut workspace = Workspace::new(controller, true, window, cx);
+                // The test platform draws no animation frames: chrome
+                // springs would rest mid-flight. Motion has its own tests.
+                workspace.settings.reduce_motion = true;
+                workspace
+            });
             workspace = Some(view.clone());
             Root::new(view, window, cx)
         });

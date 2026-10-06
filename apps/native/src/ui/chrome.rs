@@ -1,4 +1,5 @@
 //! Shared native chrome: quiet actions, readable sections, and preference rows.
+use super::island::Notice;
 use super::*;
 use gpui::AnyElement;
 use gpui_component::tooltip::Tooltip;
@@ -228,6 +229,42 @@ pub(super) fn notice_line(
         .child(div().flex_1().min_w_0().child(text.into()))
 }
 
+/// A notice row on its way out: the same words, tone icon and dismiss
+/// glyph, no longer interactive, fading in place before the island closes
+/// over it.
+pub(super) fn island_ghost(
+    slot: &'static str,
+    text: &str,
+    tone: Tone,
+    dismissible: bool,
+    p: Palette,
+) -> AnyElement {
+    div()
+        .w_full()
+        .flex()
+        .items_start()
+        .gap_1()
+        .child(div().flex_1().min_w_0().py(px(5.)).child(notice_line(
+            text.to_owned(),
+            tone,
+            p,
+            SharedString::from(format!("island-ghost-{slot}-icon")),
+        )))
+        .when(dismissible, |d| {
+            d.child(
+                div()
+                    .size(px(24.))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(rgb(p.muted))
+                    .child(Icon::new(IconName::Close).size(px(13.))),
+            )
+        })
+        .into_any_element()
+}
+
 /// Free text from the hub or a local action, classified by how it reads.
 /// Used where one notice slot carries both confirmations and failures.
 pub(super) fn notice_tone(text: &str) -> Tone {
@@ -337,9 +374,17 @@ impl Workspace {
             shown("feature", &feature),
             shown("omitted", omitted),
         );
-        let mut rows: Vec<AnyElement> = Vec::new();
+        // Each row with what it says, so the island can move it and, once
+        // it goes, fade its words out in place.
+        let mut rows: Vec<(Notice, AnyElement)> = Vec::new();
         if !self.view.connected && !self.view.transcript.rows.is_empty() {
-            rows.push(self.render_connection_banner(cx).into_any_element());
+            let notice = Notice {
+                slot: "connection",
+                text: self.connection_copy().title.into(),
+                tone: Tone::Warning,
+                dismissible: false,
+            };
+            rows.push((notice, self.render_connection_banner(cx).into_any_element()));
         }
         if show_status {
             let action = retry.then(|| {
@@ -350,21 +395,46 @@ impl Workspace {
                     .into_any_element()
             });
             let tone = notice_tone(&status);
-            rows.push(self.island_notice("status", status, tone, action, !retry, compact, cx));
+            let row =
+                self.island_notice("status", status.clone(), tone, action, !retry, compact, cx);
+            let notice = Notice {
+                slot: "status",
+                text: status,
+                tone,
+                dismissible: !retry,
+            };
+            rows.push((notice, row));
         }
         if show_feature {
             let tone = notice_tone(&feature);
-            rows.push(self.island_notice("feature", feature, tone, None, true, compact, cx));
+            let row = self.island_notice("feature", feature.clone(), tone, None, true, compact, cx);
+            let notice = Notice {
+                slot: "feature",
+                text: feature,
+                tone,
+                dismissible: true,
+            };
+            rows.push((notice, row));
         }
         if self.view.loading && !self.view.transcript.rows.is_empty() {
-            rows.push(self.island_notice(
+            let text = "Refreshing conversation…";
+            let row = self.island_notice(
                 "refresh",
-                "Refreshing conversation…".into(),
+                text.into(),
                 Tone::Loading,
                 None,
                 false,
                 compact,
                 cx,
+            );
+            rows.push((
+                Notice {
+                    slot: "refresh",
+                    text: text.into(),
+                    tone: Tone::Loading,
+                    dismissible: false,
+                },
+                row,
             ));
         }
         if show_omitted {
@@ -375,7 +445,7 @@ impl Workspace {
                         this.open_feature(Screen::History, window, cx)
                     }))
                     .into_any_element();
-            rows.push(self.island_notice(
+            let row = self.island_notice(
                 "omitted",
                 omitted.into(),
                 Tone::Info,
@@ -383,20 +453,60 @@ impl Workspace {
                 true,
                 compact,
                 cx,
+            );
+            rows.push((
+                Notice {
+                    slot: "omitted",
+                    text: omitted.into(),
+                    tone: Tone::Info,
+                    dismissible: true,
+                },
+                row,
             ));
         }
-        let bar = match actions {
-            Some(actions) => self.reveal_title_actions(bar, actions, !rows.is_empty(), window, cx),
-            None => bar,
+        let now = std::time::Instant::now();
+        let motion = !self.settings.reduce_motion;
+        let (notices, mut elements): (Vec<Notice>, Vec<AnyElement>) = rows.into_iter().unzip();
+        // A chat switch shows the other chat's notices where they belong.
+        let chat = {
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            self.view.selected.hash(&mut hash);
+            if let Some(child) = &self.view.child {
+                (&child.parent, &child.agent).hash(&mut hash);
+            }
+            hash.finish()
         };
-        // Measures the capsule's outline: the bare bar, or the island.
+        self.island_motion.sync(&notices, chat, motion, now);
+        let open = self.island_motion.open(now);
+        // The island's width once grown around notices: rows lay out at it
+        // throughout, so words never rewrap while the outline moves.
+        let grown_width = self.title_base_width
+            + if actions.is_some() {
+                self.title_reveal.width
+            } else {
+                gpui::px(0.)
+            };
+        let (bar, extra) = match actions {
+            Some(actions) => self.reveal_title_actions(bar, actions, open, now, window, cx),
+            None => (bar, gpui::px(0.)),
+        };
+        if self.island_motion.moving(now) {
+            window.request_animation_frame();
+        }
+        // Measures the capsule's width inside its border, less whatever its
+        // actions add this frame: notices wrap at the resting width plus
+        // the actions' current share, so the tray follows the outline in the
+        // same frame as it grows or shrinks. (The bar, not the island: the
+        // tray's own width must not feed back into it.)
         let measure = cx.entity().downgrade();
-        let outline = canvas(
+        let base = canvas(
             move |bounds, _, cx| {
+                let base = bounds.size.width - extra;
                 cx.defer(move |cx| {
                     let _ = measure.update(cx, |this, cx| {
-                        if this.title_bar_width != bounds.size.width {
-                            this.title_bar_width = bounds.size.width;
+                        if (this.title_base_width - base).abs() > gpui::px(0.01) {
+                            this.title_base_width = base;
                             cx.notify();
                         }
                     });
@@ -408,24 +518,157 @@ impl Workspace {
         .top_0()
         .left_0()
         .size_full();
-        if rows.is_empty() {
-            return bar.child(outline).into_any_element();
+        let bar = bar.child(base);
+        if !self.island_motion.shows(now) {
+            return bar.into_any_element();
         }
         // The island's 1px border replaces the bar's own, so the capsule's
         // outline stays where it was and only grows downward.
         let border = gpui::px(1.);
-        let width = self.title_bar_width - border * 2.;
-        // New words fade in rather than pop; the height change itself is
-        // already absorbed by the measured header and its scroll anchor.
+        let width = self.title_base_width + extra;
+        // New words fade in rather than pop. With motion, each row grows
+        // into place and its words follow; without, the tray just fades.
         let signature = {
             use std::hash::{Hash, Hasher};
             let mut hash = std::collections::hash_map::DefaultHasher::new();
-            (show_status, show_feature, show_omitted, rows.len()).hash(&mut hash);
+            (show_status, show_feature, show_omitted, notices.len()).hash(&mut hash);
             self.extras.notice.hash(&mut hash);
             self.view.notice.hash(&mut hash);
             self.local_notice.hash(&mut hash);
             hash.finish() as usize
         };
+        let mut tray_rows: Vec<AnyElement> = Vec::new();
+        let mut above: Option<f32> = None;
+        for row in self.island_motion.rows() {
+            let content = if row.leaving {
+                island_ghost(row.slot, &row.text, row.tone, row.dismissible, p)
+            } else {
+                match notices.iter().position(|n| n.slot == row.slot) {
+                    Some(ix) => std::mem::replace(&mut elements[ix], div().into_any_element()),
+                    None => continue,
+                }
+            };
+            let presence = row.presence(now);
+            // The gap between two rows (`gap_1`) belongs to both: it opens
+            // and closes with whichever of them is arriving or leaving.
+            let gap = above.map_or(gpui::px(0.), |above| {
+                window.rem_size() * 0.25 * above.min(presence)
+            });
+            above = Some(presence);
+            let (shown, drift) = row.content(now);
+            let height = row.height(now);
+            let slot = row.slot;
+            let measure = cx.entity().downgrade();
+            tray_rows.push(
+                div()
+                    .flex_shrink_0()
+                    .w_full()
+                    .mt(gap)
+                    .flex()
+                    .flex_col()
+                    .when_some(height, |d, height| d.h(height).overflow_hidden())
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            // Moving, at the grown width (less the tray's
+                            // `px_3`), clipped by the row; at rest, its own.
+                            .map(|d| match height {
+                                Some(_) if self.title_base_width > px(0.) => {
+                                    d.w(grown_width - window.rem_size() * 1.5)
+                                }
+                                _ => d.w_full(),
+                            })
+                            .relative()
+                            .top(drift)
+                            .opacity(shown)
+                            .child(content)
+                            .child(
+                                canvas(
+                                    move |bounds, _, cx| {
+                                        let height = bounds.size.height;
+                                        cx.defer(move |cx| {
+                                            let _ = measure.update(cx, |this, cx| {
+                                                let now = std::time::Instant::now();
+                                                if this.island_motion.measured(slot, height, now) {
+                                                    cx.notify();
+                                                }
+                                            });
+                                        });
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full(),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let grown = open.max(0.);
+        let tray = div()
+            .id("title-island-notices")
+            .debug_selector(|| "title-island-notices".into())
+            // Wraps at the capsule's width instead of widening it
+            // (until the first measurement, at a modest cap).
+            .map(|d| {
+                if self.title_base_width > px(0.) {
+                    d.w(width)
+                } else {
+                    d.w_full().max_w(px(420.))
+                }
+            })
+            // Keep the full message scrollable without letting an
+            // arbitrary host error cover the transcript and composer.
+            .max_h(
+                (window.viewport_size().height
+                    - self.composer_dock_bounds.size.height
+                    // pt_3 + pb_5 use two rems at the user's font size.
+                    - px(40.) - window.rem_size() * 2.
+                    - if unzoom(window.viewport_size().height) < 300. { gpui::px(0.) } else { gpui::px(24.) })
+                .min(window.viewport_size().height * 0.35)
+                .max(gpui::px(1.)),
+            )
+            .overflow_y_scroll()
+            .px_3()
+            // The seam and padding (`pt_1`, `pb_2`) grow with the island.
+            .when(!compact, |d| {
+                d.pt(window.rem_size() * 0.25 * grown)
+                    .pb(window.rem_size() * 0.5 * grown)
+            })
+            .flex()
+            .flex_col()
+            .border_t(border * grown.min(1.))
+            .border_color(gpui::Hsla::from(rgb(p.border)).opacity(0.6 * grown.min(1.)))
+            .children(tray_rows);
+        let tray = if motion {
+            tray.into_any_element()
+        } else {
+            tray.with_animation(
+                ("title-island-reveal", signature),
+                Animation::new(std::time::Duration::from_millis(180))
+                    .with_easing(gpui::ease_out_quint()),
+                |tray, progress| tray.opacity(progress),
+            )
+            .into_any_element()
+        };
+        // A new notice greets with a short glow in its tone, then rests.
+        let mut shadow = floating_shadow(p);
+        if let Some((tone, strength)) = self.island_motion.glow(now) {
+            let color = match tone {
+                Tone::Info | Tone::Loading => p.accent,
+                Tone::Success => p.success,
+                Tone::Warning => p.warning,
+                Tone::Error => p.error,
+            };
+            shadow.push(gpui::BoxShadow {
+                color: gpui::Hsla::from(rgb(color)).opacity(0.45 * strength),
+                offset: gpui::point(px(0.), px(0.)),
+                blur_radius: px(22.),
+                spread_radius: px(2. * strength),
+            });
+        }
         div()
             .id("title-island")
             .debug_selector(|| "title-island".into())
@@ -434,59 +677,23 @@ impl Workspace {
             .min_w_0()
             .flex()
             .flex_col()
-            // Half the capsule's height: the top keeps the pill's curve.
-            .rounded(px(ISLAND_RADIUS))
+            // Sized by the bar alone: the tray follows it, never widens it.
+            .items_start()
+            // Half the capsule's height: the top keeps the pill's curve,
+            // and the lower corners soften while the island stretches.
+            .rounded_t(px(ISLAND_RADIUS))
+            .rounded_b(px(ISLAND_RADIUS + self.island_motion.bulge(now)))
             .bg(rgb(p.surface))
             .border_1()
             .border_color(rgb(p.border))
-            .shadow(floating_shadow(p))
-            .child(outline)
+            .shadow(shadow)
             .child(
                 bar.bg(gpui::transparent_black())
                     .border_0()
                     .h(px(40.) - border * 2.)
                     .shadow(Vec::new()),
             )
-            .child(
-                div()
-                    .id("title-island-notices")
-                    .debug_selector(|| "title-island-notices".into())
-                    // Wraps at the capsule's width instead of widening it
-                    // (until the first measurement, at a modest cap).
-                    .map(|d| {
-                        if width > px(0.) {
-                            d.w(width)
-                        } else {
-                            d.w_full().max_w(px(420.))
-                        }
-                    })
-                    // Keep the full message scrollable without letting an
-                    // arbitrary host error cover the transcript and composer.
-                    .max_h(
-                        (window.viewport_size().height
-                            - self.composer_dock_bounds.size.height
-                            // pt_3 + pb_5 use two rems at the user's font size.
-                            - px(40.) - window.rem_size() * 2.
-                            - if unzoom(window.viewport_size().height) < 300. { gpui::px(0.) } else { gpui::px(24.) })
-                        .min(window.viewport_size().height * 0.35)
-                        .max(gpui::px(1.)),
-                    )
-                    .overflow_y_scroll()
-                    .px_3()
-                    .when(!compact, |d| d.pt_1().pb_2())
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .border_t_1()
-                    .border_color(gpui::Hsla::from(rgb(p.border)).opacity(0.6))
-                    .children(rows)
-                    .with_animation(
-                        ("title-island-reveal", signature),
-                        Animation::new(std::time::Duration::from_millis(180))
-                            .with_easing(gpui::ease_out_quint()),
-                        |tray, progress| tray.opacity(progress),
-                    ),
-            )
+            .child(tray)
             .into_any_element()
     }
 

@@ -41,6 +41,9 @@ pub struct Settings {
     pub enter_sends: bool,
     pub keep_running: bool,
     pub notifications: bool,
+    /// Chrome changes shape at once instead of on springs (the title
+    /// island's reveal and notices); fades stay.
+    pub reduce_motion: bool,
     /// Client-local session organization, scoped by hub identity.
     pub names: BTreeMap<String, BTreeMap<String, String>>,
     pub archived: BTreeMap<String, Vec<String>>,
@@ -67,6 +70,7 @@ impl Default for Settings {
             enter_sends: false,
             keep_running: false,
             notifications: true,
+            reduce_motion: false,
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
             cleared_children: BTreeMap::new(),

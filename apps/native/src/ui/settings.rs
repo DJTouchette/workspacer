@@ -340,6 +340,21 @@ impl Workspace {
                 cx,
             ),
         ));
+        entries.push(Entry::new(
+            S::Appearance,
+            "reduce-motion",
+            "Reduce motion",
+            "The title capsule reveals its actions and grows around notices at once, without springing into shape. Fades stay.",
+            "motion animation animate spring bounce reduce reduced accessibility island",
+            Layout::Row,
+            Switch::new("settings-reduce-motion")
+                .checked(self.settings.reduce_motion)
+                .tooltip("Reduce motion")
+                .on_click(cx.listener(|this, checked, _, cx| {
+                    this.settings.reduce_motion = *checked;
+                    this.save_settings(cx);
+                })),
+        ));
 
         entries.push(Entry::new(
             S::Typography,
