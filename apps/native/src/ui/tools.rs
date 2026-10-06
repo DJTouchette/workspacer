@@ -148,7 +148,7 @@ pub(super) fn card(
         .focusable()
         .tab_stop(true)
         .key_context("NativeControl")
-        .focus(|s| s.bg(rgb(p.selected)))
+        .focus_visible(|s| s.bg(rgb(p.selected)))
         .cursor_pointer()
         .hover(|s| s.bg(rgb(p.selected)))
         .child(lead)

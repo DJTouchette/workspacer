@@ -42,7 +42,9 @@ impl ControlTextStyle for Stateful<Div> {
 }
 
 /// GPUI owns stable focus handles and Enter/Space activation for focusable divs.
-/// Reserve the ring at rest so focus never changes control geometry.
+/// Reserve the ring at rest so focus never changes control geometry. The ring
+/// is keyboard-only (`focus_visible`): a press still focuses the control, but
+/// an accent border left behind would read as a chip or toggle still "on".
 pub(super) fn interactive_control(
     control: Stateful<Div>,
     p: Palette,
@@ -56,7 +58,7 @@ pub(super) fn interactive_control(
                 .tab_stop(true)
                 .key_context("NativeControl")
                 .cursor_pointer()
-                .focus(|s| s.border_color(rgb(p.accent)))
+                .focus_visible(|s| s.border_color(rgb(p.accent)))
         })
 }
 
