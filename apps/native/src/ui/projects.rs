@@ -145,7 +145,13 @@ impl Workspace {
 
     pub(super) fn pick_rows(&self, cx: &App) -> Vec<PickRow> {
         let query = self.project_query.read(cx).value().trim().to_owned();
-        let known = self.known_projects();
+        let absolute = wks_native::launch::absolute_directory(&query);
+        // Worktree checkouts only come up on a search (a pasted path counts).
+        let known: Vec<KnownProject> = self
+            .known_projects()
+            .into_iter()
+            .filter(|p| absolute || p.listed(&query))
+            .collect();
         let mut rows = Vec::new();
         if wks_native::launch::absolute_directory(&query)
             && !known.iter().any(|p| projects::same_dir(&p.path, &query))
@@ -160,7 +166,6 @@ impl Workspace {
         {
             rows.push(PickRow::Current(self.projects.cwd.clone()));
         }
-        let absolute = wks_native::launch::absolute_directory(&query);
         rows.extend(
             known
                 .into_iter()
@@ -772,6 +777,7 @@ impl Workspace {
             sessions: 0,
             live_sessions: 0,
             source: Source::Hub,
+            worktree: false,
             configured: false,
         });
         let name = editor.name.read(cx).value().trim().to_owned();

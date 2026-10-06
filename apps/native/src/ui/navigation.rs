@@ -72,7 +72,7 @@ impl Workspace {
         let query = self.search.read(cx).value().to_owned();
         self.known_projects()
             .into_iter()
-            .filter(|p| p.matches(&query))
+            .filter(|p| p.listed(&query))
             .collect()
     }
 

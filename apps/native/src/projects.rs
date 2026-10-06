@@ -98,6 +98,9 @@ pub struct KnownProject {
     pub sessions: usize,
     pub live_sessions: usize,
     pub source: Source,
+    /// Only known because sessions run there, and the folder is an isolated
+    /// worktree checkout rather than a project. Listed only on a search.
+    pub worktree: bool,
     /// Carries configuration beyond pin/recency (label, scripts, workflow…),
     /// so this client never deletes it.
     pub configured: bool,
@@ -144,6 +147,16 @@ impl KnownProject {
     /// bookmark, may be forgotten here; anything else belongs to Settings.
     pub fn removable(&self) -> bool {
         self.source == Source::Device || (self.source == Source::Hub && !self.configured)
+    }
+
+    /// Whether a list filtered by `query` shows this row: worktree folders
+    /// stay out of the way until a search asks for them.
+    pub fn listed(&self, query: &str) -> bool {
+        if query.trim().is_empty() {
+            !self.worktree
+        } else {
+            self.matches(query)
+        }
     }
 
     pub fn matches(&self, query: &str) -> bool {
@@ -230,7 +243,24 @@ pub fn registry(config: &Value) -> Value {
         "favourites": config["directories"]["favourites"].as_array().cloned().unwrap_or_default(),
         "recent": config["directories"]["recent"].as_array().cloned().unwrap_or_default(),
         "configured": configured,
+        "worktreeRoot": config["agents"]["worktreeRoot"].as_str().map(str::trim).unwrap_or(""),
     })
+}
+
+/// The hub's default worktree root (`~/.workspacer/worktrees`), as a path
+/// segment, so it is recognised even when the config names another root.
+const DEFAULT_WORKTREES: &str = "/.workspacer/worktrees/";
+
+/// Whether `path` is a checkout inside the hub's worktree root (the
+/// configured `agents.worktreeRoot`, or the default one).
+pub fn in_worktree_root(path: &str, root: &str) -> bool {
+    let key = project_key(path);
+    let root = project_key(root);
+    (!root.is_empty()
+        && key.len() > root.len() + 1
+        && key.as_bytes()[root.len()] == b'/'
+        && same_dir(&key[..root.len()], &root))
+        || key.contains(DEFAULT_WORKTREES)
 }
 
 fn upsert(rows: &mut Vec<KnownProject>, path: &str, source: Source) -> usize {
@@ -249,6 +279,7 @@ fn upsert(rows: &mut Vec<KnownProject>, path: &str, source: Source) -> usize {
         sessions: 0,
         live_sessions: 0,
         source,
+        worktree: false,
         configured: false,
     });
     rows.len() - 1
@@ -263,8 +294,11 @@ fn strings(value: &Value) -> impl Iterator<Item = &str> {
         .filter(|s| !s.trim().is_empty())
 }
 
-/// Every project this client can offer, pinned first, then most recently
-/// opened, then directories the fleet is busy in.
+/// Every project this client can offer: pinned first, then the rest of the
+/// registry and device bookmarks (most recently opened first), then
+/// directories only the fleet knows, then worktree checkouts. A session in a
+/// worktree counts toward the project its nearest non-worktree ancestor runs
+/// in, so workers do not each become a project of their own.
 pub fn list(
     registry: Option<&Value>,
     sessions: &[Session],
@@ -337,16 +371,42 @@ pub fn list(
     for path in device.iter().filter(|p| !p.trim().is_empty()) {
         upsert(&mut rows, path, Source::Device);
     }
-    for session in sessions.iter().filter(|s| !s.cwd.is_empty()) {
-        let ix = upsert(&mut rows, &session.cwd, Source::Sessions);
+    let worktree_root = registry
+        .and_then(|r| r["worktreeRoot"].as_str())
+        .unwrap_or("");
+    let in_worktree = |cwd: &str| in_worktree_root(cwd, worktree_root);
+    for (at, session) in sessions.iter().enumerate() {
+        if session.cwd.is_empty() {
+            continue;
+        }
+        let home = if in_worktree(&session.cwd) {
+            crate::navigation::ancestors(sessions, at)
+                .into_iter()
+                .map(|a| sessions[a].cwd.as_str())
+                .find(|cwd| !cwd.is_empty() && !in_worktree(cwd))
+                .unwrap_or(&session.cwd)
+        } else {
+            &session.cwd
+        };
+        let ix = upsert(&mut rows, home, Source::Sessions);
+        if rows[ix].source == Source::Sessions && in_worktree(home) {
+            rows[ix].worktree = true;
+        }
         rows[ix].sessions += 1;
         if !session.stopped() {
             rows[ix].live_sessions += 1;
         }
     }
+    // Saved projects (registry or bookmark) outrank folders only sessions know.
+    let tier = |row: &KnownProject| match row.source {
+        Source::Hub | Source::Device => 0,
+        Source::Sessions if !row.worktree => 1,
+        Source::Sessions => 2,
+    };
     rows.sort_by(|a, b| {
         b.favourite
             .cmp(&a.favourite)
+            .then(tier(a).cmp(&tier(b)))
             .then(
                 b.last_opened
                     .unwrap_or(i64::MIN)
@@ -716,10 +776,11 @@ mod tests {
                 "/work/api",
                 "/work/recent-a",
                 "/work/recent-b",
-                "/fleet/only",
-                // Idle and never opened: alphabetical by title.
+                // Saved but never opened: alphabetical by title.
                 "/device/bookmark",
                 "/work/old",
+                // Known only to the fleet: after every saved project.
+                "/fleet/only",
             ]
         );
         let web = &rows[2];
@@ -735,11 +796,11 @@ mod tests {
             "device duplicate folds into the hub entry"
         );
         assert!(api.configured, "a label is configuration");
-        assert!(!rows[8].favourite, "explicit false shadows a legacy pin");
-        assert!(rows[8].removable());
-        assert_eq!(rows[7].source, Source::Device);
-        assert_eq!(rows[6].source, Source::Sessions);
-        assert!(!rows[6].removable());
+        assert!(!rows[7].favourite, "explicit false shadows a legacy pin");
+        assert!(rows[7].removable());
+        assert_eq!(rows[6].source, Source::Device);
+        assert_eq!(rows[8].source, Source::Sessions);
+        assert!(!rows[8].removable());
         assert!(
             rows.iter()
                 .find(|r| r.path == "/work/api")
@@ -758,9 +819,49 @@ mod tests {
         );
         assert_eq!(rows.len(), 2);
         assert_eq!(
-            rows[0].path, "/fleet/x",
-            "live work outranks an idle bookmark"
+            rows[0].path, "/device/y",
+            "a saved bookmark outranks a folder only the fleet knows"
         );
+    }
+
+    #[test]
+    fn worktree_sessions_count_toward_their_project_and_list_last() {
+        let child = |id: &str, cwd: &str, parent: &str| Session {
+            parent_session_id: parent.into(),
+            ..session(id, cwd, false)
+        };
+        let trees = "/home/u/.workspacer/worktrees/app";
+        let rows = list(
+            Some(&registry(
+                &json!({"projects": {"/work/app": {"lastOpened": 1}}}),
+            )),
+            &[
+                session("lead", "/work/app", false),
+                child("w1", &format!("{trees}/feat-a"), "lead"),
+                // A worker of a worker still lands on the lead's project.
+                child("w2", &format!("{trees}/feat-b"), "w1"),
+                // No non-worktree ancestor: its own row, flagged.
+                session("solo", &format!("{trees}/loose"), false),
+                session("fleet", "/fleet/live", false),
+            ],
+            &[],
+        );
+        let order: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
+        assert_eq!(
+            order,
+            ["/work/app", "/fleet/live", &format!("{trees}/loose")]
+        );
+        assert_eq!((rows[0].sessions, rows[0].live_sessions), (3, 3));
+        assert!(!rows[0].worktree && !rows[1].worktree && rows[2].worktree);
+        assert!(!rows[2].listed(""), "worktrees wait for a search");
+        assert!(rows[2].listed("loose") && rows[1].listed(""));
+
+        // A configured root is recognised as well as the default one.
+        let custom = registry(&json!({"agents": {"worktreeRoot": "/trees/"}}));
+        let rows = list(Some(&custom), &[session("t", "/trees/app/x", false)], &[]);
+        assert!(rows[0].worktree);
+        assert!(!in_worktree_root("/trees", "/trees"));
+        assert!(!in_worktree_root("/treesx/a", "/trees"));
     }
 
     #[test]
