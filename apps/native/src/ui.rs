@@ -1078,8 +1078,11 @@ impl Workspace {
         for session in view.sessions.iter() {
             if let Some(clock) = self.turn_clocks.get_mut(&session.id) {
                 let previous_end = clock.completed.back().map(|turn| turn.ended_ms);
-                let transcript = (!view.loading && view.selected.as_ref() == Some(&session.id))
-                    .then_some(&view.transcript);
+                // A viewed child's rows are not the parent's turns.
+                let transcript = (!view.loading
+                    && view.child.is_none()
+                    && view.selected.as_ref() == Some(&session.id))
+                .then_some(&view.transcript);
                 clock.update(session, transcript, view.connected, now);
                 if previous_end != clock.completed.back().map(|turn| turn.ended_ms)
                     && let Some(path) = &self.settings_path
@@ -1096,6 +1099,7 @@ impl Workspace {
         self.duration_labels = view
             .selected
             .as_ref()
+            .filter(|_| view.child.is_none())
             .and_then(|id| self.turn_clocks.get(id))
             .map(|clock| clock.message_labels(&view.transcript))
             .unwrap_or_default();
@@ -1838,6 +1842,8 @@ mod tests {
         features::Request,
         model::{ConversationSnapshot, Item, Session, Transcript},
     };
+
+    mod switching;
 
     struct HoverControls(Entity<Workspace>);
 

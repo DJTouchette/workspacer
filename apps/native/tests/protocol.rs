@@ -383,6 +383,130 @@ async fn subagent_view_reads_the_child_ignores_parent_deltas_and_returns() {
     assert!(!v.transcript.rows.iter().any(|r| r.text == "Child finding"));
 }
 
+fn child_reply(agent: &str, seq: u64, texts: &[&str]) -> Value {
+    json!({"session_id":"a","agent_id":agent,"seq":seq,"first_seq":1,
+        "items":texts.iter().map(|t| json!({"kind":"assistant_text","text":t})).collect::<Vec<_>>()})
+}
+
+fn shows(v: &View, child: Option<&str>, text: &str) -> bool {
+    v.child.as_ref().map(|c| c.agent.as_str()) == child
+        && v.transcript.rows.iter().any(|r| r.text == text)
+}
+
+#[tokio::test]
+async fn returning_to_a_parent_or_child_shows_it_at_once_and_still_reconciles() {
+    use wks_native::controller::ChildTarget;
+    let target = |agent: &str| {
+        Command::ViewChild(Some(ChildTarget {
+            parent: "a".into(),
+            agent: agent.into(),
+        }))
+    };
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let mut parent = session("a");
+    parent["subagents"] = json!([
+        {"id":"t1","description":"First","status":"complete"},
+        {"id":"t2","description":"Second","status":"complete"}
+    ]);
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([parent]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(5, "Parent reply"))
+        .await;
+    view(&controller, |v| shows(v, None, "Parent reply")).await;
+
+    controller.command(target("t1")).unwrap();
+    // Never seen before: nothing to show until its read lands.
+    let v = view(&controller, |v| v.child.is_some()).await;
+    assert!(v.loading && v.transcript.rows.is_empty());
+    hub.frame("call", Some("sessions.subagentConversation"))
+        .await
+        .result(child_reply("t1", 1, &["First finding"]))
+        .await;
+    view(&controller, |v| shows(v, Some("t1"), "First finding")).await;
+
+    controller.command(target("t2")).unwrap();
+    hub.frame("call", Some("sessions.subagentConversation"))
+        .await
+        .result(child_reply("t2", 1, &["Second finding"]))
+        .await;
+    view(&controller, |v| shows(v, Some("t2"), "Second finding")).await;
+
+    // Back to the first child: its held rows show before the hub answers,
+    // and the read it still issues folds into them.
+    controller.command(target("t1")).unwrap();
+    let v = view(&controller, |v| {
+        v.child.as_ref().is_some_and(|c| c.agent == "t1")
+    })
+    .await;
+    assert!(!v.loading, "a held child shows without a loading state");
+    assert_eq!(
+        v.transcript
+            .rows
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>(),
+        ["First finding"],
+        "only that child's own rows"
+    );
+    let read = hub
+        .frame("call", Some("sessions.subagentConversation"))
+        .await;
+    assert_eq!(read.value["params"]["agentId"], "t1");
+    read.result(child_reply("t1", 2, &["First finding", "First, continued"]))
+        .await;
+    let v = view(&controller, |v| shows(v, Some("t1"), "First, continued")).await;
+    assert_eq!(v.transcript.rows.len(), 2);
+
+    // The parent too, with its reconciling read of the same window.
+    controller.command(Command::ViewChild(None)).unwrap();
+    let v = view(&controller, |v| v.child.is_none()).await;
+    assert!(!v.loading);
+    assert!(shows(&v, None, "Parent reply"));
+    assert!(!shows(&v, None, "First finding"));
+    let read = hub.frame("call", Some("sessions.conversation")).await;
+    assert_eq!(read.value["params"]["sessionId"], "a");
+    read.result(json!({"seq":7,"first_seq":1,"items":[
+        {"kind":"assistant_text","text":"Parent reply"},
+        {"kind":"user_message","text":"Continue"},
+        {"kind":"assistant_text","text":"Parent moved on"}
+    ]}))
+    .await;
+    view(&controller, |v| shows(v, None, "Parent moved on")).await;
+
+    // Held rows never outlive their connection.
+    controller.command(target("t2")).unwrap();
+    let read = hub
+        .frame("call", Some("sessions.subagentConversation"))
+        .await;
+    read.result(child_reply("t2", 1, &["Second finding"])).await;
+    view(&controller, |v| shows(v, Some("t2"), "Second finding")).await;
+    read.send.send(Message::Close(None)).await.unwrap();
+    view(&controller, |v| !v.connected).await;
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([parent]))
+        .await;
+    hub.frame("call", Some("sessions.subagentConversation"))
+        .await
+        .result(child_reply("t2", 1, &["Second finding"]))
+        .await;
+    view(&controller, |v| {
+        v.connected && shows(v, Some("t2"), "Second finding")
+    })
+    .await;
+    controller.command(target("t1")).unwrap();
+    let v = view(&controller, |v| {
+        v.child.as_ref().is_some_and(|c| c.agent == "t1")
+    })
+    .await;
+    assert!(v.loading && v.transcript.rows.is_empty());
+}
+
 #[tokio::test]
 async fn controller_reconciles_snapshot_races_gaps_and_stale_selection() {
     let mut hub = Hub::new().await;

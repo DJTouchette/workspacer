@@ -8,6 +8,7 @@ use ropey::{ChunkCursor, Rope};
 use std::{
     collections::{BTreeSet, HashMap},
     ops::Range,
+    sync::{Arc, LazyLock, Mutex},
     usize,
 };
 use sum_tree::Bias;
@@ -20,8 +21,8 @@ use tree_sitter::{
 #[allow(unused)]
 pub struct SyntaxHighlighter {
     language: SharedString,
-    query: Option<Query>,
-    injection_queries: HashMap<SharedString, Query>,
+    query: Option<Arc<Query>>,
+    injection_queries: Arc<HashMap<SharedString, Query>>,
 
     locals_pattern_index: usize,
     highlights_pattern_index: usize,
@@ -155,6 +156,35 @@ impl<'a> sum_tree::Dimension<'a, HighlightSummary> for Range<usize> {
     }
 }
 
+/// A language's compiled queries and the indices derived from them.
+///
+/// Compiling a language's queries costs far more than highlighting a code
+/// block, and every fenced block (in every message, on every reparse) creates
+/// a highlighter, so all highlighters for a language name share one
+/// compilation (workspacer patch). `LanguageRegistry::register` forgets them.
+struct CompiledQueries {
+    language: SharedString,
+    query: Arc<Query>,
+    injection_queries: Arc<HashMap<SharedString, Query>>,
+    locals_pattern_index: usize,
+    highlights_pattern_index: usize,
+    non_local_variable_patterns: Vec<bool>,
+    injection_content_capture_index: Option<u32>,
+    injection_language_capture_index: Option<u32>,
+    local_scope_capture_index: Option<u32>,
+    local_def_capture_index: Option<u32>,
+    local_def_value_capture_index: Option<u32>,
+    local_ref_capture_index: Option<u32>,
+}
+
+static COMPILED_QUERIES: LazyLock<Mutex<HashMap<SharedString, Arc<CompiledQueries>>>> =
+    LazyLock::new(Default::default);
+
+/// Drop every shared compilation; a registered language may replace one.
+pub(crate) fn forget_compiled_queries() {
+    COMPILED_QUERIES.lock().unwrap().clear();
+}
+
 impl SyntaxHighlighter {
     /// Create a new SyntaxHighlighter for HTML.
     pub fn new(lang: &str) -> Self {
@@ -186,6 +216,43 @@ impl SyntaxHighlighter {
             .set_language(&config.language)
             .context("parse set_language")?;
 
+        let cached = COMPILED_QUERIES.lock().unwrap().get(lang).cloned();
+        let compiled = match cached {
+            Some(compiled) => compiled,
+            None => {
+                // Compile outside the lock; a concurrent first use may compile
+                // too, and the first stored result wins.
+                let compiled = Arc::new(Self::compile_queries(&config)?);
+                COMPILED_QUERIES
+                    .lock()
+                    .unwrap()
+                    .entry(lang.to_owned().into())
+                    .or_insert(compiled)
+                    .clone()
+            }
+        };
+
+        Ok(Self {
+            language: compiled.language.clone(),
+            query: Some(compiled.query.clone()),
+            injection_queries: compiled.injection_queries.clone(),
+
+            locals_pattern_index: compiled.locals_pattern_index,
+            highlights_pattern_index: compiled.highlights_pattern_index,
+            non_local_variable_patterns: compiled.non_local_variable_patterns.clone(),
+            injection_content_capture_index: compiled.injection_content_capture_index,
+            injection_language_capture_index: compiled.injection_language_capture_index,
+            local_scope_capture_index: compiled.local_scope_capture_index,
+            local_def_capture_index: compiled.local_def_capture_index,
+            local_def_value_capture_index: compiled.local_def_value_capture_index,
+            local_ref_capture_index: compiled.local_ref_capture_index,
+            text: Rope::new(),
+            parser,
+            tree: None,
+        })
+    }
+
+    fn compile_queries(config: &crate::highlighter::LanguageConfig) -> Result<CompiledQueries> {
         // Concatenate the query strings, keeping track of the start offset of each section.
         let mut query_source = String::new();
         query_source.push_str(&config.injections);
@@ -285,10 +352,10 @@ impl SyntaxHighlighter {
 
         // let highlight_indices = vec![None; query.capture_names().len()];
 
-        Ok(Self {
+        Ok(CompiledQueries {
             language: config.name.clone(),
-            query: Some(query),
-            injection_queries,
+            query: Arc::new(query),
+            injection_queries: Arc::new(injection_queries),
 
             locals_pattern_index,
             highlights_pattern_index,
@@ -299,9 +366,6 @@ impl SyntaxHighlighter {
             local_def_capture_index,
             local_def_value_capture_index,
             local_ref_capture_index,
-            text: Rope::new(),
-            parser,
-            tree: None,
         })
     }
 

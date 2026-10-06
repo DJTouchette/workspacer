@@ -482,6 +482,7 @@ impl LanguageRegistry {
             .lock()
             .unwrap()
             .insert(lang.to_string().into(), config.clone());
+        super::highlighter::forget_compiled_queries();
     }
 
     /// Returns a list of all registered language names.

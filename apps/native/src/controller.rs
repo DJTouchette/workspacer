@@ -394,6 +394,20 @@ struct Shell {
     last_keepalive: Instant,
 }
 
+/// A transcript left by a parent/child switch in this connection epoch. Going
+/// back shows it at once while the usual fenced read reconciles it in place.
+struct Held {
+    epoch: u64,
+    transcript: Transcript,
+    /// The parent's conversation window, so its reconciling read keeps any
+    /// pages the user had loaded.
+    limit: usize,
+}
+
+/// Children held for quick return (newest last), and their retained text.
+const MAX_HELD_CHILDREN: usize = 8;
+const MAX_HELD_BYTES: usize = 16 * 1024 * 1024;
+
 /// Keyboard input is batched per call; this much may queue behind a slow hub.
 const MAX_TERMINAL_INPUT: usize = 1024 * 1024;
 const TERMINAL_KEEPALIVE: Duration = Duration::from_secs(8);
@@ -428,6 +442,8 @@ struct Worker {
     last_usage: Instant,
     child_pending: bool,
     last_child: Instant,
+    held_parent: Option<(String, Held)>,
+    held_children: VecDeque<(ChildTarget, Held)>,
     shells: BTreeMap<String, Shell>,
     /// Shell ids replaced or ended in this run; their rows stay hidden.
     retired_shells: BTreeSet<String>,
@@ -469,6 +485,8 @@ impl Worker {
             last_usage: Instant::now(),
             child_pending: false,
             last_child: Instant::now(),
+            held_parent: None,
+            held_children: VecDeque::new(),
             shells: BTreeMap::new(),
             retired_shells: BTreeSet::new(),
             shell_generation: 0,
@@ -796,25 +814,35 @@ impl Worker {
 
     /// Enter or leave a subagent's conversation. Entering selects the parent
     /// first; the selection fence then drops any in-flight parent read, and
-    /// parent deltas are ignored until the reader returns.
+    /// parent deltas are ignored until the reader returns. A transcript held
+    /// from an earlier switch shows at once; the read still runs and folds
+    /// into it with the same identity-stable keys as a reseed.
     async fn view_child(&mut self, target: Option<ChildTarget>) {
         if target == self.view.child {
             return;
         }
+        let other_parent = target
+            .as_ref()
+            .filter(|t| self.view.selected.as_ref() != Some(&t.parent));
+        if other_parent.is_some_and(|t| !self.sessions.contains_key(&t.parent)) {
+            return;
+        }
+        self.hold_transcript();
         if let Some(target) = &target
             && self.view.selected.as_ref() != Some(&target.parent)
         {
-            if !self.sessions.contains_key(&target.parent) {
-                return;
-            }
             self.select(Some(target.parent.clone())).await;
         }
         let entering = target.is_some();
+        let held = self.take_held(target.as_ref());
         self.selection += 1;
         self.view.child = target;
-        self.view.transcript = Transcript::default();
-        self.view.loading = true;
+        self.view.loading = held.is_none();
         self.view.loading_older = false;
+        if !entering {
+            self.conversation_limit = held.as_ref().map_or(CONVERSATION_PAGE, |h| h.limit);
+        }
+        self.view.transcript = held.map(|h| h.transcript).unwrap_or_default();
         self.conversation_pending = false;
         self.child_pending = false;
         self.buffered.clear();
@@ -822,10 +850,61 @@ impl Worker {
         if entering {
             self.fetch_child();
         } else {
-            self.conversation_limit = CONVERSATION_PAGE;
             self.fetch_conversation();
         }
         self.dirty = true;
+    }
+
+    /// Keep the settled transcript being left by a parent/child switch.
+    fn hold_transcript(&mut self) {
+        if self.view.loading || self.view.transcript.seq.is_none() {
+            return;
+        }
+        let held = Held {
+            epoch: self.epoch,
+            transcript: self.view.transcript.clone(),
+            limit: self.conversation_limit,
+        };
+        match self.view.child.clone() {
+            None => {
+                if let Some(id) = self.view.selected.clone() {
+                    self.held_parent = Some((id, held));
+                }
+            }
+            Some(child) => {
+                self.held_children.retain(|(key, _)| *key != child);
+                self.held_children.push_back((child, held));
+                while self.held_children.len() > MAX_HELD_CHILDREN
+                    || self
+                        .held_children
+                        .iter()
+                        .map(|(_, h)| h.transcript.bytes)
+                        .sum::<usize>()
+                        > MAX_HELD_BYTES
+                {
+                    self.held_children.pop_front();
+                }
+            }
+        }
+    }
+
+    /// The held transcript for the parent (`None`) or child about to show,
+    /// only from this connection epoch and only for that exact owner.
+    fn take_held(&mut self, target: Option<&ChildTarget>) -> Option<Held> {
+        let epoch = self.epoch;
+        self.held_children.retain(|(_, h)| h.epoch == epoch);
+        let held = match target {
+            Some(target) => {
+                let ix = self.held_children.iter().position(|(k, _)| k == target)?;
+                self.held_children.remove(ix).map(|(_, h)| h)
+            }
+            None => self
+                .held_parent
+                .take()
+                .filter(|(id, _)| self.view.selected.as_ref() == Some(id))
+                .map(|(_, h)| h),
+        };
+        held.filter(|h| h.epoch == epoch)
     }
 
     fn fetch_conversation(&mut self) {

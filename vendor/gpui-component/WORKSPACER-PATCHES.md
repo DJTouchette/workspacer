@@ -75,6 +75,17 @@ Two upstream bug fixes in the same files:
   instead of the theme captured at creation (`text_view.rs`), so switching
   appearance recolors code already on screen.
 
+One performance patch outside the text renderer:
+
+- `highlighter/highlighter.rs` shares each language's compiled tree-sitter
+  queries (combined injections/locals/highlights plus its injection
+  languages' highlights) across every `SyntaxHighlighter`, keyed by the
+  requested language name; `LanguageRegistry::register` clears the cache.
+  Upstream recompiled them for every fenced code block on every first parse,
+  which was most of the native chat's cost of switching conversations (about
+  86ms of UI-thread work per switch in a release build, measured with
+  `make bench-native-switch`).
+
 Text changes are confined to `src/text/{style,inline,node,text_view}.rs` and `src/text/format/markdown.rs`. Reapply them explicitly
 when upgrading GPUI Component. Do not modify the user's Cargo registry cache.
 

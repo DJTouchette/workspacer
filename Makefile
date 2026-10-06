@@ -19,7 +19,7 @@ HUB_RUST  := services/hub-rs
 .PHONY: dev dev-share dev-tui run-tui install build build-desktop build-hub build-claudemon build-tui \
         build-cli test test-desktop test-hub test-tui test-claudemon test-routing-harness \
         claudemon-routes docs-drift package clean dev-native run-native build-native test-native \
-        dev-native-local run-native-local build-native-local
+        dev-native-local run-native-local build-native-local bench-native-switch
 
 ## dev: run the desktop app in dev mode (Vite + Electron). Remote sharing is now
 ##      a runtime toggle (Remote control → Start sharing); use `make dev-share`
@@ -83,6 +83,16 @@ build-native-local: build-native
 test-native:
 	cd $(NATIVE) && cargo test --locked --features ui-tests
 	cd $(CLAUDEMON) && cargo test --locked --test embedded
+
+## bench-native-switch: parent/child chat switching cost, dense fixtures.
+##                      Controller latency + hub reads per switch, then the
+##                      GPUI update/frame cost (test platform: no text shaping
+##                      or GPU). PROFILE=release for an optimized build;
+##                      the dev profile is unoptimized and much slower.
+PROFILE ?= dev
+bench-native-switch:
+	cd $(NATIVE) && cargo run --locked --profile $(PROFILE) --bin native-harness -- bench-switch
+	cd $(NATIVE) && WKS_NATIVE_BENCH_SWITCH=10 cargo test --locked --profile $(PROFILE) --features ui-tests --bin wks-native bench_switch_frames -- --nocapture
 
 ## install: install desktop JS dependencies
 install:

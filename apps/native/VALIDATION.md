@@ -1709,3 +1709,69 @@ required in the parent's CI. Provider inventories remain bounded to 32 rows;
 at saturation the parent says **Child list capped** and points to its chat.
 Stopped Workspacer sessions retain the existing hub visibility/history policy;
 Clear does not change that policy or add provider-child History restoration.
+
+## Parent/child chat switching performance (2026-10-05)
+
+Reported: switching to child-agent chats lagged in the dev build. Both a
+dev-build overhead and an avoidable production cost were found.
+
+**Dev build.** `make dev-native*` builds the `dev` profile: opt-level 0 with
+debug assertions. Read-only `perf` samples of the user's running
+`target/debug/wks-native --local` showed its GPUI thread ~90% busy with no
+input, in unoptimized taffy layout and debug-only `precondition_check` frames.
+The controller republishes the view (up to 30 Hz) on every bus event, and a
+no-op republish costs ~23ms of UI-thread work in the dev profile and ~3ms in
+release (below). `make run-native-local` uses the release profile.
+
+**Production cost (fixed).** A frame-pointer profile of the switch workload
+put 73% of the time in `tree_sitter::Query::new`: `gpui-component` recompiled
+each language's highlight queries for every fenced code block it parsed, and
+every switch re-parses the visible messages. The vendored highlighter now
+shares one compilation per language (see `vendor/gpui-component/WORKSPACER-PATCHES.md`).
+
+**Correctness on switch (fixed).** Row element keys used the selected
+(parent) session and per-transcript row numbers, so a child, its siblings
+and the parent reused each other's parsed text views and painted the old
+text until gpui-component's 200ms deferred reparse. Keys now include the
+viewed child (`Workspace::chat_owner`). The parent's turn clock and duration
+labels no longer read a viewed child's rows.
+
+**Return latency (improved).** `ViewChild` holds the transcript it leaves
+(the parent; up to 8 children/16MB) for the current connection epoch.
+Returning shows it at once without a loading state, and still issues its one
+selection-fenced read, which folds in place with identity-stable keys. Held
+rows never survive a reconnect.
+
+Measured with `make bench-native-switch` (`PROFILE=release` for release),
+16-core Linux, idle CPU, p50 of 10 (GPUI) or 20 (controller) cycles:
+
+| GPUI `update_view` + frame (test platform) | dev before | dev after | release before | release after |
+| --- | --- | --- | --- | --- |
+| parent → child (1000 items) | 313ms | 54ms | 86ms | 7.3ms |
+| child → sibling | 313ms | 55ms | 86ms | 7.0ms |
+| child → parent (200-item page) | 314ms | 56ms | 86ms | 7.2ms |
+| no-op republish | 23ms | 23ms | 3.0ms | 2.8ms |
+
+| Controller, `ViewChild` → target shown | dev before | dev after | release before | release after |
+| --- | --- | --- | --- | --- |
+| new child | 55ms | 55ms | 17ms | 11ms |
+| revisited child (shown / reconciled) | 56ms | 1.2 / 58ms | 17ms | 0.8 / 17ms |
+| back to parent (shown / reconciled) | 33ms | 0.4 / 14ms | 18ms | 0.2 / 4.4ms |
+
+Every switch still issues exactly one hub read. "Before" controller numbers
+came from the same binary with holding disabled. Release GPUI "before" is the
+same tree without the highlighter patch. Limitations: the GPUI bench uses
+gpui's test platform (no-op text shaping, no GPU), so it measures element,
+Markdown and layout work, not presented frames. The controller fixture
+answers immediately, so a real backend's child replay (claudemon re-reads
+the child JSONL per call) adds to "new child" and "reconciled" times, but
+not to "shown" for held transcripts. Both are reported as measured, not as
+perceived latency.
+
+Regression tests: `ui::tests::switching` (first-frame transcript identity,
+no parent durations on child rows) and protocol
+`returning_to_a_parent_or_child_shows_it_at_once_and_still_reconciles`.
+Full native suite passes serialized (`--test-threads=1`). Run in parallel,
+`projects_hub` and `rust_hub` tests fail with "a claudemon runtime is already
+active in this process". That is the process-wide embedded-runtime guard, which
+this change does not touch. It was not re-run on the base commit.
