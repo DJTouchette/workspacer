@@ -209,6 +209,24 @@ impl Backend {
             .await
     }
 
+    /// Ask the owning hub for a handoff brief. The agent tier waits up to
+    /// 150 s for the source's own brief, so this outlives the usual budget
+    /// (the hub's own forwarding budget for it is 180 s). A refusal is an
+    /// `ok:false` reply, read by [`crate::handoff::written`], not an error.
+    pub async fn handoff_brief(&self, id: &str, brief: crate::handoff::Brief) -> Result<Value> {
+        let wait = match brief {
+            crate::handoff::Brief::Agent => 180,
+            crate::handoff::Brief::Mechanical => 90,
+        };
+        self.hub
+            .call_with_timeout(
+                brief.method(),
+                json!({"sessionId":id}),
+                Duration::from_secs(wait),
+            )
+            .await
+    }
+
     pub async fn spawn(&self, params: Value) -> Result<Value> {
         // Never bypass facade injection, worktrees, skills, or owner registration.
         self.hub

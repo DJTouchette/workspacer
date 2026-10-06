@@ -11,6 +11,8 @@ pub(super) enum Screen {
     Session,
     Setup,
     Model,
+    /// Continue the open session with the other provider.
+    Handoff,
 }
 
 impl Workspace {

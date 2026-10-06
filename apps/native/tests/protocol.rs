@@ -2534,3 +2534,224 @@ async fn archive_reconnect_accepts_a_reset_version_without_replaying_old_visibil
         json!({})
     );
 }
+
+/// "Continue with…": a live Claude source in a worktree folder.
+fn handoff_source(extra: Value) -> Value {
+    let mut row = json!({"sessionId":"src","mode":"input","transport":"stream",
+        "cwd":"/work/repo-wt","provider":"claude","settings":{"permissionMode":"default"}});
+    for (key, value) in extra.as_object().unwrap() {
+        row[key] = value.clone();
+    }
+    row
+}
+
+fn handoff_request(brief: wks_native::handoff::Brief) -> wks_native::handoff::Request {
+    wks_native::handoff::Request {
+        source: "src".into(),
+        brief,
+        successor: wks_native::controller::NewSession {
+            provider: "codex".into(),
+            cwd: "/work/repo-wt".into(),
+            ..Default::default()
+        },
+    }
+}
+
+async fn handoff_hub(row: Value) -> (Hub, Controller) {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([row]))
+        .await;
+    view(&controller, |v| {
+        v.connected && v.sessions.iter().any(|s| s.id == "src")
+    })
+    .await;
+    (hub, controller)
+}
+
+/// No second successor, nothing sent on the user's behalf, source untouched.
+fn assert_no_side_effects(hub: &mut Hub) {
+    while let Ok(frame) = hub.frames.try_recv() {
+        let method = frame.value["method"].as_str().unwrap_or("");
+        assert!(
+            !matches!(
+                method,
+                "agents.spawn"
+                    | "agents.sendMessage"
+                    | "claude.signal"
+                    | "claude.handoffBrief"
+                    | "claude.handoffAgentBrief"
+            ),
+            "unexpected {method}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn handoff_writes_the_brief_then_stages_one_successor_in_the_same_folder() {
+    use wks_native::handoff::{Brief, Stage};
+    let (mut hub, controller) = handoff_hub(handoff_source(json!({}))).await;
+    controller
+        .command(Command::Handoff(handoff_request(Brief::Agent)))
+        .unwrap();
+    let brief = hub.frame("call", Some("claude.handoffAgentBrief")).await;
+    assert_eq!(brief.value["params"], json!({"sessionId":"src"}));
+    let writing = view(&controller, |v| v.handoff.is_some()).await;
+    assert_eq!(
+        writing.handoff.as_ref().unwrap().stage,
+        Stage::Brief(Brief::Agent)
+    );
+    // A repeated click (or another window) while the brief is written is
+    // refused with a receipt; the running handoff keeps its progress.
+    controller
+        .command(Command::Handoff(handoff_request(Brief::Agent)))
+        .unwrap();
+    let refused = view(&controller, |v| v.handoff_receipt.is_some()).await;
+    let receipt = refused.handoff_receipt.as_ref().unwrap();
+    assert!(
+        receipt
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("already in progress")
+    );
+    assert!(receipt.successor.is_none() && refused.handoff.is_some());
+
+    let path = "/home/u/.workspacer/handoffs/20261005-120000-abcd1234-agent.md";
+    brief
+        .result(json!({"ok":true,"path":path,"fallback":true,
+            "error":"Source agent did not write the brief before the deadline"}))
+        .await;
+    let spawn = hub.frame("call", Some("agents.spawn")).await;
+    assert_eq!(
+        spawn.value["params"],
+        json!({"provider":"codex","cwd":"/work/repo-wt","transport":"stream",
+            "skipPermissions":false,"permissionMode":"ask","autoTitle":true})
+    );
+    let starting = view(&controller, |v| v.creating).await;
+    assert_eq!(starting.handoff.as_ref().unwrap().stage, Stage::Starting);
+    spawn.result(json!({"sessionId":"succ"})).await;
+    let done = view(&controller, |v| {
+        v.handoff_receipt
+            .as_ref()
+            .is_some_and(|r| r.successor.is_some())
+    })
+    .await;
+    assert!(done.handoff.is_none() && !done.creating);
+    assert_eq!(done.selected.as_deref(), Some("succ"));
+    let launched = done.spawn_receipt.as_ref().unwrap();
+    assert_eq!(launched.session.as_deref(), Some("succ"));
+    assert_eq!(
+        launched.unsent_message.as_deref(),
+        Some(wks_native::handoff::successor_prompt(path).as_str())
+    );
+    let receipt = done.handoff_receipt.as_ref().unwrap();
+    assert_eq!(receipt.source, "src");
+    assert!(receipt.brief.as_ref().unwrap().fallback.is_some());
+    assert!(
+        done.notice.contains("mechanical summary"),
+        "{}",
+        done.notice
+    );
+    // The source stays listed; the successor is a new session beside it.
+    assert!(done.sessions.iter().any(|s| s.id == "src"));
+    assert!(
+        done.sessions
+            .iter()
+            .any(|s| s.id == "succ" && s.provider == "codex")
+    );
+    assert_no_side_effects(&mut hub);
+}
+
+#[tokio::test]
+async fn handoff_failure_of_brief_or_launch_is_reported_and_never_a_false_success() {
+    use wks_native::handoff::Brief;
+    let (mut hub, controller) = handoff_hub(handoff_source(json!({}))).await;
+    controller
+        .command(Command::Handoff(handoff_request(Brief::Mechanical)))
+        .unwrap();
+    hub.frame("call", Some("claude.handoffBrief"))
+        .await
+        .result(json!({"ok":false,"error":"conversation not found"}))
+        .await;
+    let failed = view(&controller, |v| v.handoff_receipt.is_some()).await;
+    let receipt = failed.handoff_receipt.as_ref().unwrap();
+    assert!(failed.handoff.is_none() && receipt.successor.is_none() && receipt.brief.is_none());
+    assert!(
+        failed
+            .notice
+            .starts_with("Could not prepare the handoff brief")
+    );
+    assert_no_side_effects(&mut hub);
+
+    // The brief is written but the launch fails: the brief's path is named,
+    // and the New Agent form's launch receipt is not used.
+    controller
+        .command(Command::Handoff(handoff_request(Brief::Mechanical)))
+        .unwrap();
+    hub.frame("call", Some("claude.handoffBrief"))
+        .await
+        .result(json!({"ok":true,"path":"/home/u/.workspacer/handoffs/b.md","markdown":"#"}))
+        .await;
+    let spawn = hub.frame("call", Some("agents.spawn")).await;
+    spawn
+        .send
+        .send(Message::Text(
+            json!({"op":"error","id":spawn.value["id"],"error":"codex is not installed"})
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let failed = view(&controller, |v| {
+        v.handoff_receipt
+            .as_ref()
+            .is_some_and(|r| r.brief.is_some())
+    })
+    .await;
+    assert!(failed.handoff.is_none() && !failed.creating);
+    assert!(failed.spawn_receipt.is_none());
+    assert!(failed.notice.contains("/home/u/.workspacer/handoffs/b.md"));
+    assert!(failed.notice.contains("codex is not installed"));
+    assert_eq!(failed.selected.as_deref(), Some("src"));
+    assert_no_side_effects(&mut hub);
+}
+
+#[tokio::test]
+async fn manager_and_mismatched_handoffs_are_refused_before_the_hub() {
+    use wks_native::handoff::Brief;
+    let (mut hub, controller) = handoff_hub(handoff_source(json!({"isWakeTarget":true}))).await;
+    controller
+        .command(Command::Handoff(handoff_request(Brief::Agent)))
+        .unwrap();
+    let refused = view(&controller, |v| v.handoff_receipt.is_some()).await;
+    let error = refused
+        .handoff_receipt
+        .as_ref()
+        .unwrap()
+        .error
+        .clone()
+        .unwrap();
+    assert!(error.contains("manager replacement"), "{error}");
+    assert!(refused.handoff.is_none());
+
+    let (mut other, controller) = handoff_hub(handoff_source(json!({}))).await;
+    let mut moved = handoff_request(Brief::Agent);
+    moved.successor.cwd = "/work/repo".into();
+    controller.command(Command::Handoff(moved)).unwrap();
+    let refused = view(&controller, |v| v.handoff_receipt.is_some()).await;
+    assert!(
+        refused
+            .handoff_receipt
+            .as_ref()
+            .unwrap()
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("same folder")
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_no_side_effects(&mut hub);
+    assert_no_side_effects(&mut other);
+}

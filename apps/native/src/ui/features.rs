@@ -103,6 +103,12 @@ pub(super) struct Extras {
     pub archive_receipt: u64,
     /// Device-only archives already offered to the hub this run.
     pub archive_migrating: std::collections::BTreeSet<String>,
+    /// Who writes the brief on Continue with…
+    pub handoff_brief: wks_native::handoff::Brief,
+    /// This window asked for a handoff and awaits a receipt newer than
+    /// `handoff_seen` (the latest one when it asked).
+    pub handoff_sent: bool,
+    pub handoff_seen: u64,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -167,6 +173,9 @@ impl Extras {
             archive_inflight: Default::default(),
             archive_receipt: 0,
             archive_migrating: Default::default(),
+            handoff_brief: Default::default(),
+            handoff_sent: false,
+            handoff_seen: 0,
         }
     }
 }
@@ -453,6 +462,7 @@ impl Workspace {
                     self.load_models(true, cx);
                 }
             }
+            Screen::Handoff => self.open_handoff(window, cx),
             _ => {}
         }
         cx.notify();
@@ -625,7 +635,11 @@ impl Workspace {
             self.extras.confirm_end = None;
             if matches!(
                 self.screen,
-                Screen::Changes | Screen::History | Screen::Session | Screen::Model
+                Screen::Changes
+                    | Screen::History
+                    | Screen::Session
+                    | Screen::Model
+                    | Screen::Handoff
             ) {
                 self.screen = Screen::Conversation;
             }
@@ -966,6 +980,7 @@ impl Workspace {
         let p = self.appearance.palette();
         let short = window.viewport_size().height < px(620.);
         let session_cwd = self.selected_session().map(|s| s.cwd.clone());
+        let handoff_title = self.handoff_title();
         let (title, description): (&str, Option<SharedString>) = match self.screen {
             Screen::Recent => (
                 "Session history",
@@ -979,6 +994,10 @@ impl Workspace {
             Screen::Setup => (
                 "Agent setup",
                 Some("Connect your agents on the machine running this workspace.".into()),
+            ),
+            Screen::Handoff => (
+                handoff_title.as_str(),
+                Some("Start a new agent in this session’s folder with a brief of its work. The handoff message waits in the new agent’s composer for you to review and send.".into()),
             ),
             Screen::Model => (
                 "Model and effort",
@@ -999,6 +1018,7 @@ impl Workspace {
                 })
                 .into_any_element(),
             ),
+            Screen::Handoff => self.handoff_continue(cx).map(IntoElement::into_any_element),
             _ => None,
         };
         let body = match self.screen {
@@ -1007,6 +1027,7 @@ impl Workspace {
             Screen::Session => self.render_session(cx),
             Screen::Setup => self.render_setup(cx),
             Screen::Model => self.render_model(cx),
+            Screen::Handoff => self.render_handoff(cx),
             _ => div(),
         };
         let back = self
@@ -1035,7 +1056,14 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap_5()
-                .child(self.page_header(Some(back), None, title, description, trailing, short))
+                .child(self.page_header(
+                    Some(back),
+                    None,
+                    title.to_owned(),
+                    description,
+                    trailing,
+                    short,
+                ))
                 .children(notice)
                 .child(body),
         )
@@ -1388,6 +1416,10 @@ impl Workspace {
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&archive, cx))))
                     .when(s.stopped() && self.supported_session(), |d| d.child(self.button("resume-session", "Resume session…", !busy)
                         .when(!busy, |d| d.on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx))))))
+                    .when_some(wks_native::handoff::target(s).ok().filter(|_| self.view.connected), |d, target| d.child(
+                        self.button("handoff-session", format!("Continue with {}…", wks_native::handoff::provider_name(target)), !busy)
+                            .debug_selector(|| "handoff-session".into())
+                            .when(!busy, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Handoff, window, cx))))))
                     .when(!s.stopped() && !confirming, |d| d.child(self.danger_button("end-session", "End session…", !busy).debug_selector(|| "end-session".into())
                         .when(!busy, |d| d.on_click(cx.listener(move |this, _, _, cx| { this.extras.confirm_end = Some(end.clone()); cx.notify(); }))))),
             )

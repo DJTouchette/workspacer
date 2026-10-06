@@ -253,6 +253,9 @@ pub async fn serve_feedback_fixture(
                                     "git.numstat" => json!({"files":[{"path":"src/main.rs","added":2,"deleted":1}]}),
                                     "git.status" => json!({"branch":"feature/native-basics","root":frame["params"]["cwd"],"files":[{"path":"src/main.rs","staged":" ","unstaged":"M"},{"path":"README.md","staged":"M","unstaged":" "},{"path":"tests/session.rs","staged":"?","unstaged":"?"}]}),
                                     "git.diff" => json!({"diff":"diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"}),
+                                    // A fixture brief path: nothing is written and no
+                                    // provider runs; the successor is the fake spawn above.
+                                    "claude.handoffBrief" | "claude.handoffAgentBrief" => json!({"ok":true,"path":"/fixture/home/.workspacer/handoffs/20261005-120000-fixture.md"}),
                                     "providers.checkAll" => json!([{"provider":"claude","found":true},{"provider":"codex","found":false}]),
                                     "desktop.providerReadiness" => json!({"state":"unchecked"}),
                                     "claude.setModel" => json!({"ok":true,"disposition":"queued"}),

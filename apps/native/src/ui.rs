@@ -5,6 +5,7 @@ mod explorer;
 mod features;
 mod file_viewer;
 mod fleet_card;
+mod handoff;
 mod launch;
 mod markdown;
 mod navigation;
@@ -1107,7 +1108,7 @@ impl Workspace {
         self.sync_review(cx);
         self.hand_off_update(window, cx);
         self.land_on_latest();
-        if self.new_session || self.screen == Screen::Model {
+        if self.new_session || matches!(self.screen, Screen::Model | Screen::Handoff) {
             self.sync_models(window, cx);
             if reconnected {
                 self.load_models(true, cx);
@@ -1631,7 +1632,12 @@ impl Render for Workspace {
         }
         if matches!(
             self.screen,
-            Screen::Recent | Screen::History | Screen::Session | Screen::Setup | Screen::Model
+            Screen::Recent
+                | Screen::History
+                | Screen::Session
+                | Screen::Setup
+                | Screen::Model
+                | Screen::Handoff
         ) {
             let content = self.render_feature(window, cx);
             return self

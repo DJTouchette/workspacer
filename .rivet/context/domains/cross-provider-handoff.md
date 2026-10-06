@@ -13,7 +13,12 @@ related_paths:
   - "apps/desktop/src/renderer/src/lib/watchBus.ts"
   - "apps/desktop/src/renderer/src/components/claude/ConversationEmptyState.tsx"
   - "apps/desktop/src/renderer/src/backend/webBackend.ts"
-  - "services/hub/cmd/brain/agenthandoff.go"
+  - "services/hub-rs/src/services/live_controls/handoff.rs"
+  - "services/hub-rs/src/services/live_controls.rs"
+  - "apps/native/src/handoff.rs"
+  - "apps/native/src/controller.rs"
+  - "apps/native/src/ui/handoff.rs"
+  - "apps/native/src/harness.rs"
   - "apps/desktop/src/renderer/src/components/claude/HandoffDialog.tsx"
   - "services/claudemon/src/session/handoff.rs"
   - "services/claudemon/src/daemon/api.rs"
@@ -22,7 +27,7 @@ related_paths:
   - "apps/tui/src/app/input/pickers.rs"
   - "apps/tui/src/keys.rs"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-10-05
 ---
 
 # Cross-provider handoff
@@ -71,15 +76,19 @@ another; do not treat these filenames as immutable request identities.
 
 ## Agent-authored brief
 
-Desktop `apps/desktop/src/main/services/agentHandoff.ts` and headless
-`services/hub/cmd/brain/agenthandoff.go` both ask the source to write a six-part
-brief and poll for up to 150 seconds at one-second intervals. Sending failure
+Desktop `apps/desktop/src/main/services/agentHandoff.ts` and the Rust hub's
+`services/hub-rs/src/services/live_controls/handoff.rs` (dispatched from
+`live_controls.rs`; the Go `agenthandoff.go` is historical) both ask the source
+to write a six-part brief and poll for up to 150 seconds at one-second intervals. Sending failure
 or deadline triggers the mechanical fallback, with `fallback=true` on success.
 Directory creation errors occur before this fallback path and can reject the
 operation. The source needs to accept a turn; the mechanical fallback does not.
 
 The implementations differ: TS uses a timestamp/session-prefix filename and
-`stat` size; Go validates a narrower alphanumeric/dash/underscore ID, uses a
+`stat` size; Rust uses a timestamp/random-nonce `-agent.md` name in a 0700
+directory, a nonempty regular file via `symlink_metadata`, and returns
+`ok:false` (not an error) when the fallback yields no path. The historical Go
+owner validated a narrower alphanumeric/dash/underscore ID, uses a
 nonce filename, honors context cancellation, and requires a nonempty regular
 file via `Lstat`. Go cancellation returns the context error rather than falling
 back. Neither completion check validates all six sections or proves writing
@@ -89,6 +98,39 @@ has finished. A bus caller's timeout may also expire before the service's
 `claude.handoffBrief` and `claude.handoffAgentBrief` are bus methods; desktop
 preload exposes the corresponding `claudeHandoff*` methods. The headless rich
 tier exists now; older comments describing it as desktop-only are obsolete.
+
+## Native successor flow
+
+The GPUI client's header arrow (`open-handoff`) and Session details offer
+"Continue with Codex…" on Claude sessions and "Continue with Claude…" on Codex
+sessions; native launches admit only those two. `apps/native/src/handoff.rs`
+holds the rules: Fleet Manager rows (`isWakeTarget`/`isFleetManager`, projected
+as `Session.wake_target`) are refused with a pointer to manager replacement;
+access carries the source's `livePermissionMode`/`settings.permissionMode`
+(bypass↔yolo kept, anything the target lacks → Ask, never the wider device
+default); model/effort start on the target's catalog defaults. The page reuses
+the New Agent pickers like Change model does, scoping the Codex catalog to the
+source folder, and checks `providers.checkAll` (no test request) to disable a
+missing target. Continue is the page header's trailing action, so it stays on
+screen in short windows; progress and failures render above the cards.
+
+`Command::Handoff` in the controller calls the brief method (180 s client
+budget for the agent tier), then normal `agents.spawn` in the exact source cwd
+with no message. The takeover prompt (desktop wording) reaches the successor's
+composer via `SpawnReceipt.unsent_message`; nothing is sent for the user. One
+handoff per connection: concurrent requests, launches and validation failures
+produce a `handoff_receipt` instead of being dropped. A launch failure names the
+brief left behind and never sets the New Agent form's spawn error. Success copy
+leads with `Handoff ready:` (green via `notice_tone`) or `Handoff ready with a
+fallback brief:` (deliberately a warning). The source is never signalled, but
+the agent tier does submit one instruction turn to it, so copy says the source
+"stays available with its history", never "unchanged". Native lists local-hub rows only, so the brief path and the
+successor are on the same host. Tests: `src/handoff.rs` units,
+`src/ui/handoff.rs` UI, and `tests/protocol.rs` `handoff_*` against a fake bus.
+`native-harness serve --rich-transcript` answers both brief methods with a
+fixture path (its spawn is fake), so the whole flow can be captured in a private
+Xvfb: demo-0000 (Claude) shows the Codex-missing state, demo-0001 (Codex) the
+normal one. No live Claude/Codex handoff was run for this flow.
 
 ## Desktop and TUI successor flows
 
