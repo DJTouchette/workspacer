@@ -1,3 +1,5 @@
+mod archive;
+mod attachments;
 mod bus_commands;
 mod children;
 mod chrome;
@@ -14,6 +16,7 @@ mod markdown;
 mod motion;
 mod navigation;
 mod projects;
+mod questions;
 mod remote;
 mod review;
 mod scroll;

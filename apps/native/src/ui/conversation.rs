@@ -640,7 +640,7 @@ impl Workspace {
 
     /// Draft attachments with their thumbnails (images only; PDFs keep the
     /// file chip). Loading and failure fall back to the name.
-    fn draft_files(&mut self, cx: &mut Context<Self>) -> Vec<features::DraftFile> {
+    fn draft_files(&mut self, cx: &mut Context<Self>) -> Vec<attachments::DraftFile> {
         self.view
             .selected
             .as_ref()

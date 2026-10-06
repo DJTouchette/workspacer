@@ -68,6 +68,57 @@ const ROW_HEIGHT: f32 = 52.;
 const VISIBLE_ROWS: usize = 5;
 
 impl Workspace {
+    pub(super) fn pick_folder(
+        &mut self,
+        bookmark: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.extras.local_paths {
+            return;
+        }
+        let pick = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Choose project folder".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = pick.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(Ok(Some(paths))) => {
+                        if let Some(path) = paths.first() {
+                            let path = path.to_string_lossy().into_owned();
+                            if bookmark {
+                                this.project_path
+                                    .update(cx, |input, cx| input.set_value(path, window, cx));
+                            } else {
+                                this.select_project(&path, window, cx);
+                            }
+                        }
+                    }
+                    Ok(Ok(None)) => {}
+                    _ if !bookmark && this.new_session => {
+                        // The hub is on this machine, so its listing is the
+                        // same filesystem the system dialog would have shown.
+                        this.projects.notice =
+                            "The system folder picker is unavailable; browsing folders on the hub instead.".into();
+                        let start = this.projects.cwd.clone();
+                        this.browse_to(start, cx);
+                    }
+                    _ => {
+                        this.extras.notice =
+                            "Could not open the folder picker. You can enter the path instead."
+                                .into()
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Arrow keys move through the project list while its search field has
     /// focus, unless the folder browser is showing.
     fn searching_projects(&self, window: &Window, cx: &App) -> bool {
