@@ -4,7 +4,7 @@
 //! open. Hidden actions are clipped to no width, so they have no hit area and
 //! cannot be clicked by accident; they stay in Tab order, and focusing one
 //! reveals them at once.
-use super::chrome::Tone;
+use super::chrome::{self, Tone};
 use super::motion::{Spring, Tune, smooth};
 use super::*;
 use gpui::{ClickEvent, DispatchPhase, MouseButton, MouseExitEvent, MouseMoveEvent};
@@ -356,15 +356,7 @@ impl IslandMotion {
             self.open.set(1., now);
         }
         if snap {
-            self.rows.retain(|row| !row.leaving);
-            for row in &mut self.rows {
-                row.presence.snap(1.);
-                row.height.snap(row.height.target());
-                row.pending = false;
-                row.since = now - CONTENT_DELAY - CONTENT_FADE;
-            }
-            self.open.snap(if notices.is_empty() { 0. } else { 1. });
-            self.glow = None;
+            self.rest(now);
         } else if let Some(tone) = arrived.filter(|tone| *tone != Tone::Loading) {
             self.glow = Some((tone, now));
         }
@@ -440,9 +432,8 @@ impl IslandMotion {
         (speed.abs() * 0.025).min(8.)
     }
 
-    #[cfg(test)]
-    pub(super) fn settle(&mut self) {
-        let now = Instant::now();
+    /// Every row and the island itself where they are headed, at once.
+    fn rest(&mut self, now: Instant) {
         self.rows.retain(|row| !row.leaving);
         for row in &mut self.rows {
             row.presence.snap(1.);
@@ -452,6 +443,11 @@ impl IslandMotion {
         }
         self.open.snap(self.open.target());
         self.glow = None;
+    }
+
+    #[cfg(test)]
+    pub(super) fn settle(&mut self) {
+        self.rest(Instant::now());
     }
 
     /// Holds every row and the island part-grown, for a frame mid-motion.
@@ -563,26 +559,14 @@ impl Workspace {
             // Arrives behind the width and leaves ahead of it, so controls
             // show whole and the capsule never closes over visible ones.
             .opacity(smooth((progress - 0.4) / 0.5))
-            .child(
-                canvas(
-                    move |bounds, _, cx| {
-                        cx.defer(move |cx| {
-                            let _ = measure.update(cx, |this, cx| {
-                                let width = &mut this.title_reveal.width;
-                                if settle_width(*width, bounds.size.width) {
-                                    *width = bounds.size.width;
-                                    cx.notify();
-                                }
-                            });
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
-            )
+            .child(chrome::measure(measure, |this: &mut Self, bounds, _| {
+                let width = &mut this.title_reveal.width;
+                let changed = settle_width(*width, bounds.size.width);
+                if changed {
+                    *width = bounds.size.width;
+                }
+                changed
+            }))
             .child(divider)
             .child(actions);
         // A bare capsule stretches a few pixels past its actions before

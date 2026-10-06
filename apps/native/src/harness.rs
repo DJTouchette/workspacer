@@ -3,8 +3,22 @@ use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use tokio::net::TcpListener;
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use std::time::Duration;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::time::{Instant, MissedTickBehavior, interval};
+use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
+
+type Socket = WebSocketStream<TcpStream>;
+
+/// The client went away (or sent something unreadable): the connection ends.
+struct Closed;
+
+async fn send(socket: &mut Socket, message: Message) -> Result<(), Closed> {
+    socket.send(message).await.map_err(|_| Closed)
+}
+
+/// What a file reads as until the editor saves over it.
+const FIXTURE_SOURCE: &str = "fn main() {\n    restore_workspace();\n    start();\n}\n";
 
 pub async fn serve(listener: TcpListener, sessions: usize, turns: usize) -> Result<()> {
     serve_with_transcript(listener, sessions, turns, false).await
@@ -36,288 +50,609 @@ pub async fn serve_feedback_fixture(
     pending_questions: bool,
     child_lifecycle: bool,
 ) -> Result<()> {
-    let child_lifecycle = child_lifecycle && rich;
+    let options = Options {
+        sessions,
+        turns,
+        rich,
+        missing_session_request,
+        pending_questions,
+        child_lifecycle: child_lifecycle && rich,
+    };
     loop {
         let (stream, _) = listener.accept().await?;
         tokio::spawn(async move {
             let Ok(mut socket) = accept_async(stream).await else {
                 return;
             };
-            if socket
-                .send(Message::Text(
-                    json!({"op":"hello", "scope":"operator"}).to_string(),
-                ))
-                .await
-                .is_err()
-            {
-                return;
-            }
-            let mut topics = BTreeSet::<String>::new();
-            let mut items: Vec<Value> = (0..turns).map(|i| {
-                if i % 2 == 0 { json!({"kind":"user_message", "text":format!("Review step {} and show the implementation.", i / 2 + 1)}) }
-                else { json!({"kind":"assistant_text", "text":"The native client keeps network work off the UI thread.\n\n```rust\nlet snapshot = controller.views.recv().await?;\n```\n\nOnly visible rows are rendered. Select this text or copy the message."}) }
-            }).collect();
-            if rich {
-                items.extend(rich_items());
-            }
-            let seed = items.clone();
-            let mut history: BTreeMap<String, (Vec<Value>, u64)> = BTreeMap::new();
-            let mut active_id = "demo-0000".to_owned();
-            let mut seq = items.len() as u64;
-            let mut pending = !pending_questions;
-            let mut answered = BTreeSet::<String>::new();
-            let mut tick = tokio::time::interval(std::time::Duration::from_millis(100));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut streaming = false;
-            let mut remaining = 0;
-            // Editor saves land in memory; nothing touches the disk.
-            let mut written: BTreeMap<String, String> = BTreeMap::new();
-            // Fixture shells: id → (cwd, typed line). They only echo.
-            let mut shells: BTreeMap<String, (String, String, Vec<u8>)> = BTreeMap::new();
-            let mut config = json!({"projects":{},"agents":{"childFullAccess":false,"autoTitle":{"enabled":true,"model":"haiku"}}});
-            // Sessions started through `agents.spawn`, and fixture events due
-            // later (a reply finishing, the hub's title landing).
-            let mut spawned: Vec<Value> = Vec::new();
-            let mut openings: BTreeMap<String, String> = BTreeMap::new();
-            let mut due: Vec<(tokio::time::Instant, String, Value)> = Vec::new();
-            let mut clock = tokio::time::interval(std::time::Duration::from_millis(100));
-            clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let finish_at = tokio::time::Instant::now() + std::time::Duration::from_secs(4);
-            let mut replay = tokio::time::interval(std::time::Duration::from_millis(1500));
-            let mut finished_parent: Option<Value> = None;
-            loop {
-                tokio::select! {
-                    _ = replay.tick(), if child_lifecycle => {
-                        if finished_parent.is_none() && tokio::time::Instant::now() >= finish_at {
-                            pending = false;
-                            finished_parent = Some(finished_rich_parent());
+            let _ = Fixture::new(options).run(&mut socket).await;
+        });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Options {
+    sessions: usize,
+    turns: usize,
+    rich: bool,
+    missing_session_request: bool,
+    pending_questions: bool,
+    child_lifecycle: bool,
+}
+
+/// One connection's fixture hub: what it serves and remembers between frames.
+struct Fixture {
+    options: Options,
+    topics: BTreeSet<String>,
+    /// The active session's transcript and sequence; other sessions keep
+    /// theirs in `history`, or read as `seed`.
+    items: Vec<Value>,
+    seq: u64,
+    active_id: String,
+    seed: Vec<Value>,
+    history: BTreeMap<String, (Vec<Value>, u64)>,
+    /// The first session's pending approval.
+    pending: bool,
+    answered: BTreeSet<String>,
+    streaming: bool,
+    /// Fragments left in the reply being streamed.
+    remaining: u32,
+    /// A new reply starts its fragments on a fresh beat.
+    restart_stream: bool,
+    /// Editor saves land in memory; nothing touches the disk.
+    written: BTreeMap<String, String>,
+    /// Fixture shells: id → (cwd, typed line, replay). They only echo.
+    shells: BTreeMap<String, (String, String, Vec<u8>)>,
+    config: Value,
+    /// Sessions started through `agents.spawn`, and fixture events due
+    /// later (a reply finishing, the hub's title landing).
+    spawned: Vec<Value>,
+    openings: BTreeMap<String, String>,
+    due: Vec<(Instant, String, Value)>,
+    finish_at: Instant,
+    finished_parent: Option<Value>,
+}
+
+impl Fixture {
+    fn new(options: Options) -> Self {
+        let mut items: Vec<Value> = (0..options.turns)
+            .map(|i| {
+                if i % 2 == 0 {
+                    json!({
+                        "kind": "user_message",
+                        "text": format!("Review step {} and show the implementation.", i / 2 + 1),
+                    })
+                } else {
+                    json!({
+                        "kind": "assistant_text",
+                        "text": "The native client keeps network work off the UI thread.\n\n```rust\nlet snapshot = controller.views.recv().await?;\n```\n\nOnly visible rows are rendered. Select this text or copy the message.",
+                    })
+                }
+            })
+            .collect();
+        if options.rich {
+            items.extend(rich_items());
+        }
+        Self {
+            options,
+            topics: BTreeSet::new(),
+            seq: items.len() as u64,
+            seed: items.clone(),
+            items,
+            active_id: "demo-0000".to_owned(),
+            history: BTreeMap::new(),
+            pending: !options.pending_questions,
+            answered: BTreeSet::new(),
+            streaming: false,
+            remaining: 0,
+            restart_stream: false,
+            written: BTreeMap::new(),
+            shells: BTreeMap::new(),
+            config: json!({
+                "projects": {},
+                "agents": {
+                    "childFullAccess": false,
+                    "autoTitle": {"enabled": true, "model": "haiku"},
+                },
+            }),
+            spawned: Vec::new(),
+            openings: BTreeMap::new(),
+            due: Vec::new(),
+            finish_at: Instant::now() + Duration::from_secs(4),
+            finished_parent: None,
+        }
+    }
+
+    async fn run(mut self, socket: &mut Socket) -> Result<(), Closed> {
+        let hello = json!({"op": "hello", "scope": "operator"});
+        send(socket, Message::Text(hello.to_string())).await?;
+        let mut stream = interval(Duration::from_millis(100));
+        stream.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut clock = interval(Duration::from_millis(100));
+        clock.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut replay = interval(Duration::from_millis(1500));
+        loop {
+            tokio::select! {
+                _ = replay.tick(), if self.options.child_lifecycle => self.replay_finished(socket).await?,
+                _ = clock.tick(), if !self.due.is_empty() => self.deliver_due(socket).await?,
+                _ = stream.tick(), if self.streaming => self.stream_fragment(socket).await?,
+                message = socket.next() => {
+                    let Some(Ok(message)) = message else {
+                        return Err(Closed);
+                    };
+                    let text = match message {
+                        Message::Text(text) => text,
+                        Message::Ping(bytes) => {
+                            let _ = socket.send(Message::Pong(bytes)).await;
+                            continue;
                         }
-                        if let Some(row) = &finished_parent
-                            && socket.send(event("agent.snapshot", row.clone())).await.is_err() { return; }
-                    }
-                    _ = clock.tick(), if !due.is_empty() => {
-                        let now = tokio::time::Instant::now();
-                        let (ready, later): (Vec<_>, Vec<_>) = due.drain(..).partition(|(at, _, _)| *at <= now);
-                        due = later;
-                        for (_, id, patch) in ready {
-                            let Some(row) = spawned.iter_mut().find(|row| row["sessionId"] == id.as_str()) else { continue };
-                            for (key, value) in patch.as_object().into_iter().flatten() { row[key] = value.clone(); }
-                            // The fixture hub's titler: one name after the first
-                            // answer, never over a launch label, with the
-                            // configured harness/model recorded truthfully.
-                            if row["mode"] == "input" && row["autoTitle"]["state"] == "pending" && config["agents"]["autoTitle"]["enabled"] != false {
-                                let (title, record) = fixture_title(&config, row, openings.get(&id).map(String::as_str).unwrap_or_default());
-                                if !title.is_empty() { row["label"] = json!(title); }
-                                row["autoTitle"] = record;
-                            }
-                            let row = row.clone();
-                            if socket.send(event("agent.snapshot", row)).await.is_err() { return; }
-                        }
-                    }
-                    _ = tick.tick(), if streaming => {
-                        let fragment = " Streaming native text.";
-                        seq += 1;
-                        if let Some(last) = items.last_mut() { let text = format!("{}{fragment}", last["text"].as_str().unwrap_or_default()); last["text"] = json!(text); }
-                        let topic = format!("agent.conversation.{active_id}");
-                        let delta = json!({"session_id":active_id, "seq":seq, "items":[{"kind":"assistant_text", "text":fragment}], "reset":false});
-                        if topics.contains(&topic) && socket.send(event(&topic, delta)).await.is_err() { return; }
-                        remaining -= 1;
-                        if remaining == 0 {
-                            streaming = false;
-                            let _ = socket.send(event("agent.snapshot", json!({"sessionId":active_id,"mode":"input"}))).await;
-                        }
-                    }
-                    message = socket.next() => {
-                        let Some(Ok(message)) = message else { return; };
-                        let text = match message {
-                            Message::Text(text) => text,
-                            Message::Ping(p) => { let _ = socket.send(Message::Pong(p)).await; continue; }
-                            Message::Close(_) => return,
-                            _ => continue,
-                        };
-                        let Ok(frame) = serde_json::from_str::<Value>(&text) else { return; };
-                        match frame["op"].as_str() {
-                            Some("subscribe" | "unsubscribe") => {
-                                for topic in frame["topics"].as_array().into_iter().flatten().filter_map(Value::as_str) {
-                                    if frame["op"] == "unsubscribe" { topics.remove(topic); }
-                                    else {
-                                        topics.insert(topic.into());
-                                        if missing_session_request && topic == "command.focus_agent" && socket.send(event(topic, json!({"sessionId":"missing-feedback-session"}))).await.is_err() { return; }
-                                        if topic.starts_with("agent.conversation.") && socket.send(event(topic, json!({"ready":true}))).await.is_err() { return; }
-                                    }
-                                }
-                            }
-                            Some("call") => {
-                                if child_lifecycle {
-                                    eprintln!("fixture child-lifecycle call {}", frame["method"].as_str().unwrap_or("unknown"));
-                                }
-                                let id = frame["params"]["sessionId"].as_str().unwrap_or_default();
-                                let result = match frame["method"].as_str().unwrap_or_default() {
-                                    "config.get" => config.clone(),
-                                    "config.save" => {
-                                        if let Some(projects) = frame["params"].get("projects") { config["projects"] = projects.clone(); }
-                                        if let Some(enabled) = frame["params"].pointer("/agents/childFullAccess") { config["agents"]["childFullAccess"] = enabled.clone(); }
-                                        if let Some(auto) = frame["params"].pointer("/agents/autoTitle").and_then(Value::as_object) {
-                                            for (key, value) in auto {
-                                                if key == "models" {
-                                                    for (provider, model) in value.as_object().into_iter().flatten() { config["agents"]["autoTitle"]["models"][provider] = model.clone(); }
-                                                } else { config["agents"]["autoTitle"][key] = value.clone(); }
-                                            }
-                                        }
-                                        config.clone()
-                                    }
-                                    "agents.spawn" => {
-                                        let params = &frame["params"];
-                                        let id = format!("fixture-spawn-{}", spawned.len() + 1);
-                                        let message = params["message"].as_str().unwrap_or_default().to_owned();
-                                        let mut row = json!({"sessionId":id,"provider":params["provider"],"cwd":params["cwd"],"model":params["model"].as_str().unwrap_or("sonnet"),"transport":"stream","mode":"responding"});
-                                        if let Some(label) = params["label"].as_str().filter(|l| !l.trim().is_empty()) { row["label"] = json!(label); }
-                                        else if params["autoTitle"] == true { row["autoTitle"] = json!({"state":"pending"}); }
-                                        let reply = "I traced the redirect to the session cookie check and will patch the guard.";
-                                        let opening = vec![json!({"kind":"user_message","text":message}), json!({"kind":"assistant_text","text":reply})];
-                                        history.insert(id.clone(), (opening, 2));
-                                        openings.insert(id.clone(), message.clone());
-                                        spawned.push(row.clone());
-                                        if socket.send(event("agent.snapshot", row)).await.is_err() { return; }
-                                        due.push((tokio::time::Instant::now() + std::time::Duration::from_millis(1200), id.clone(), json!({"mode":"input"})));
-                                        json!({"sessionId":id,"messageQueued":!message.is_empty()})
-                                    }
-                                    "claude.listModels" => json!({"aliases":[{"model":"sonnet"},{"model":"sonnet[1m]"},{"model":"opus"},{"model":"opus[1m]"},{"model":"haiku"}]}),
-                                    "providers.listModels" => json!([
-                                        {"id":"gpt-6-astra","label":"GPT-6 Astra","default":true,"effortLevels":["low","medium","high","xhigh","max"],"defaultEffort":"medium"},
-                                        {"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","effortLevels":["low","medium","high"],"defaultEffort":"low"}
-                                    ]),
-                                    "claude.setEffort" => json!({"ok":true,"disposition":"queued"}),
-                                    "desktop.downloadProjectIcon" => json!({"ok":true,"file":"fixture-project-icon.png"}),
-                                    "files.upload" => json!({"path":format!("/fixture/uploads/{}",frame["params"]["name"].as_str().unwrap_or("image.png"))}),
-                                    "fs.listDir" => json!({"path":frame["params"]["path"],"dirs":["src","docs"]}),
-                                    "sessions.recent" => {
-                                        let mut rows = vec![
-                                            json!({"sessionId":"demo-0000","provider":"claude","name":"Native client experiment","cwd":"/workspaces/project-0","mode":"input","transport":"stream"}),
-                                            json!({"sessionId":"past-session","provider":"codex","name":"Yesterday’s investigation","cwd":"/workspaces/project-1","mode":"stopped","transport":"stream"}),
-                                        ];
-                                        rows.extend(spawned.iter().map(|row| json!({"sessionId":row["sessionId"],"provider":row["provider"],"name":row["label"].as_str().unwrap_or(""),"cwd":row["cwd"],"mode":row["mode"],"transport":"stream"})));
-                                        Value::Array(rows)
-                                    }
-                                    "fs.readImage" => preview_image(),
-                                    "fs.read" => {
-                                        let path = frame["params"]["path"].as_str().unwrap_or_default();
-                                        let contents = written.get(path).cloned().unwrap_or_else(|| "fn main() {\n    restore_workspace();\n    start();\n}\n".into());
-                                        json!({"path":path,"contents":contents,"size":contents.len()})
-                                    }
-                                    "fs.compareWrite" => {
-                                        let path = frame["params"]["path"].as_str().unwrap_or_default().to_owned();
-                                        let current = written.get(&path).cloned().unwrap_or_else(|| "fn main() {\n    restore_workspace();\n    start();\n}\n".into());
-                                        if frame["params"]["force"] != true && frame["params"]["expected"].as_str() != Some(&current) {
-                                            json!({"saved":false,"conflict":"changed","current":current})
-                                        } else {
-                                            let contents = frame["params"]["contents"].as_str().unwrap_or_default().to_owned();
-                                            written.insert(path, contents.clone());
-                                            json!({"saved":true,"contents":contents,"size":contents.len()})
-                                        }
-                                    }
-                                    "fs.write" => {
-                                        let path = frame["params"]["path"].as_str().unwrap_or_default().to_owned();
-                                        written.insert(path, frame["params"]["contents"].as_str().unwrap_or_default().to_owned());
-                                        json!({"ok":true})
-                                    }
-                                    "fs.listEntries" => fixture_listing(frame["params"]["path"].as_str().unwrap_or_default()),
-                                    "terminals.create" => {
-                                        let shell = format!("fixture-shell-{}", shells.len() + 1);
-                                        let cwd = frame["params"]["cwd"].as_str().unwrap_or_default().to_owned();
-                                        let banner = format!("\x1b[2mFixture shell (echo only; nothing runs) in\x1b[0m {cwd}\r\n\x1b[32m$\x1b[0m ").into_bytes();
-                                        shells.insert(shell.clone(), (cwd, String::new(), banner));
-                                        json!({"sessionId":shell})
-                                    }
-                                    "sessions.attachTerminal" => {
-                                        if let Some((_, _, replay)) = shells.get(id) {
-                                            let topic = format!("pty.bytes.{id}");
-                                            if topics.contains(&topic) && socket.send(event(&topic, json!(base64_bytes(replay)))).await.is_err() { return; }
-                                            json!({"ok":true})
-                                        } else { json!({"ok":false,"error":"no PTY buffer for that session"}) }
-                                    }
-                                    "sessions.terminalInput" => {
-                                        let bytes = frame["params"]["bytesB64"].as_str().and_then(|b| { use base64::Engine; base64::engine::general_purpose::STANDARD.decode(b).ok() }).unwrap_or_default();
-                                        if let Some((cwd, line, replay)) = shells.get_mut(id) {
-                                            let output = fixture_echo(cwd, line, &bytes);
-                                            replay.extend_from_slice(&output);
-                                            if replay.len() > 1024 * 1024 { replay.drain(..replay.len() - 1024 * 1024); }
-                                            let topic = format!("pty.bytes.{id}");
-                                            if topics.contains(&topic) && socket.send(event(&topic, json!(base64_bytes(&output)))).await.is_err() { return; }
-                                        }
-                                        json!({"ok":true})
-                                    }
-                                    "sessions.terminalKeepalive" => json!({"ok":shells.contains_key(id)}),
-                                    "sessions.detachTerminal" | "sessions.terminalResize" => json!({"ok":true}),
-                                    "desktop.htmlCardReadDiff" => json!({"ok":true,"path":frame["params"]["target"],"before":"start();","after":"restore_workspace();\nstart();"}),
-                                    "git.numstat" => json!({"files":[{"path":"src/main.rs","added":2,"deleted":1}]}),
-                                    "git.status" => json!({"branch":"feature/native-basics","root":frame["params"]["cwd"],"files":[{"path":"src/main.rs","staged":" ","unstaged":"M"},{"path":"README.md","staged":"M","unstaged":" "},{"path":"tests/session.rs","staged":"?","unstaged":"?"}]}),
-                                    "git.diff" => json!({"diff":"diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"}),
-                                    // A fixture brief path: nothing is written and no
-                                    // provider runs; the successor is the fake spawn above.
-                                    "claude.handoffBrief" | "claude.handoffAgentBrief" => json!({"ok":true,"path":"/fixture/home/.workspacer/handoffs/20261005-120000-fixture.md"}),
-                                    "providers.checkAll" => json!([{"provider":"claude","found":true},{"provider":"codex","found":false}]),
-                                    "desktop.providerReadiness" => json!({"state":"unchecked"}),
-                                    "claude.setModel" => json!({"ok":true,"disposition":"queued"}),
-                                    "sessions.snapshots" => Value::Array((0..sessions).map(|i| {
-                                        let snapshot = json!({
-                                        "sessionId":format!("demo-{i:04}"), "label":if i == 0 {"Native client experiment".into()} else {format!("Worker {i}")},
-                                        "cwd":format!("/workspaces/project-{}", i % 8), "parentSessionId":if i==1 {"demo-0000"}else{""}, "provider":"claude", "model":"sonnet", "transport":"stream", "mode":if streaming && active_id == format!("demo-{i:04}") {"responding"} else {"input"},
-                                        "pendingApproval":if i == 0 && pending {json!({"toolName":"Bash", "toolInput":{"command":"cargo test"}})} else {Value::Null}
-                                        });
-                                        let mut snapshot = if rich { rich_snapshot(i, snapshot) } else { snapshot };
-                                        if i == 0 && let Some(row) = &finished_parent { snapshot = row.clone(); }
-                                        if pending_questions && !answered.contains(&format!("demo-{i:04}")) && let Some(questions) = fixture_questions(i) {
-                                            snapshot["pendingQuestions"] = questions;
-                                            snapshot["mode"] = json!("question");
-                                        }
-                                        snapshot
-                                    }).chain(spawned.iter().cloned()).collect()),
-                                    "sessions.subagentConversation" if rich => rich_subagent_conversation(id, frame["params"]["agentId"].as_str().unwrap_or_default()),
-                                    "sessions.conversation" => {
-                                        let limit = frame["params"]["limit"].as_u64().map(|l| l as usize);
-                                        if id == active_id { page(&items, seq, limit) }
-                                        else if let Some((items, seq)) = history.get(id) { page(items, *seq, limit) }
-                                        else { page(&seed, seed.len() as u64, limit) }
-                                    }
-                                    "usage.report" => usage_report(),
-                                    "agents.sendMessage" => {
-                                        if active_id != id {
-                                            let (next, next_seq) = history.remove(id).unwrap_or_else(|| (seed.clone(),seed.len() as u64));
-                                            history.insert(active_id, (std::mem::replace(&mut items,next),seq));
-                                            seq = next_seq;
-                                            active_id = id.to_owned();
-                                        }
-                                        items.push(json!({"kind":"user_message", "text":frame["params"]["text"]}));
-                                        items.push(json!({"kind":"assistant_text", "text":"Message received."}));
-                                        seq += 2;
-                                        streaming = true; remaining = 30;
-                                        tick.reset();
-                                        let topic = format!("agent.conversation.{active_id}");
-                                        if topics.contains(&topic) {
-                                            let _ = socket.send(event(&topic, json!({"seq":seq,"items":&items[items.len()-2..]}))).await;
-                                        }
-                                        json!({"ok":true})
-                                    }
-                                    "claude.approve" => { pending = false; json!({"ok":true}) }
-                                    "claude.signal" => { streaming = false; json!({"ok":true}) }
-                                    "claude.answer" => {
-                                        eprintln!("fixture claude.answer {}", frame["params"]);
-                                        answered.insert(id.to_owned());
-                                        let resolved = json!({"sessionId":id,"mode":"input","pendingQuestions":null});
-                                        if topics.contains("agent.snapshot") && socket.send(event("agent.snapshot", resolved)).await.is_err() { return; }
-                                        json!({"ok":true})
-                                    }
-                                    _ => json!({"ok":false,"error":"Unknown fixture method"}),
-                                };
-                                if socket.send(Message::Text(json!({"op":"result","id":frame["id"],"result":result}).to_string())).await.is_err() { return; }
-                            }
-                            _ => {}
-                        }
+                        Message::Close(_) => return Err(Closed),
+                        _ => continue,
+                    };
+                    let Ok(frame) = serde_json::from_str::<Value>(&text) else {
+                        return Err(Closed);
+                    };
+                    self.frame(socket, &frame).await?;
+                    if std::mem::take(&mut self.restart_stream) {
+                        stream.reset();
                     }
                 }
             }
+        }
+    }
+
+    /// Finishes the first session's children and turn once it is time, then
+    /// replays that identical snapshot.
+    async fn replay_finished(&mut self, socket: &mut Socket) -> Result<(), Closed> {
+        if self.finished_parent.is_none() && Instant::now() >= self.finish_at {
+            self.pending = false;
+            self.finished_parent = Some(finished_rich_parent());
+        }
+        if let Some(row) = &self.finished_parent {
+            send(socket, event("agent.snapshot", row.clone())).await?;
+        }
+        Ok(())
+    }
+
+    async fn deliver_due(&mut self, socket: &mut Socket) -> Result<(), Closed> {
+        let now = Instant::now();
+        let (ready, later): (Vec<_>, Vec<_>) =
+            self.due.drain(..).partition(|(at, _, _)| *at <= now);
+        self.due = later;
+        for (_, id, patch) in ready {
+            let Some(row) = self
+                .spawned
+                .iter_mut()
+                .find(|row| row["sessionId"] == id.as_str())
+            else {
+                continue;
+            };
+            for (key, value) in patch.as_object().into_iter().flatten() {
+                row[key] = value.clone();
+            }
+            // The fixture hub's titler: one name after the first answer,
+            // never over a launch label, with the configured harness/model
+            // recorded truthfully.
+            if row["mode"] == "input"
+                && row["autoTitle"]["state"] == "pending"
+                && self.config["agents"]["autoTitle"]["enabled"] != false
+            {
+                let opening = self.openings.get(&id).map(String::as_str);
+                let (title, record) = fixture_title(&self.config, row, opening.unwrap_or_default());
+                if !title.is_empty() {
+                    row["label"] = json!(title);
+                }
+                row["autoTitle"] = record;
+            }
+            let row = row.clone();
+            send(socket, event("agent.snapshot", row)).await?;
+        }
+        Ok(())
+    }
+
+    async fn stream_fragment(&mut self, socket: &mut Socket) -> Result<(), Closed> {
+        let fragment = " Streaming native text.";
+        self.seq += 1;
+        if let Some(last) = self.items.last_mut() {
+            let text = format!("{}{fragment}", last["text"].as_str().unwrap_or_default());
+            last["text"] = json!(text);
+        }
+        let topic = format!("agent.conversation.{}", self.active_id);
+        let delta = json!({
+            "session_id": self.active_id,
+            "seq": self.seq,
+            "items": [{"kind": "assistant_text", "text": fragment}],
+            "reset": false,
         });
+        if self.topics.contains(&topic) {
+            send(socket, event(&topic, delta)).await?;
+        }
+        self.remaining -= 1;
+        if self.remaining == 0 {
+            self.streaming = false;
+            let done = json!({"sessionId": self.active_id, "mode": "input"});
+            let _ = socket.send(event("agent.snapshot", done)).await;
+        }
+        Ok(())
+    }
+
+    async fn frame(&mut self, socket: &mut Socket, frame: &Value) -> Result<(), Closed> {
+        match frame["op"].as_str() {
+            Some("subscribe" | "unsubscribe") => {
+                let topics = frame["topics"].as_array().into_iter().flatten();
+                for topic in topics.filter_map(Value::as_str) {
+                    if frame["op"] == "unsubscribe" {
+                        self.topics.remove(topic);
+                        continue;
+                    }
+                    self.topics.insert(topic.into());
+                    if self.options.missing_session_request && topic == "command.focus_agent" {
+                        let missing = json!({"sessionId": "missing-feedback-session"});
+                        send(socket, event(topic, missing)).await?;
+                    }
+                    if topic.starts_with("agent.conversation.") {
+                        send(socket, event(topic, json!({"ready": true}))).await?;
+                    }
+                }
+                Ok(())
+            }
+            Some("call") => {
+                if self.options.child_lifecycle {
+                    let method = frame["method"].as_str().unwrap_or("unknown");
+                    eprintln!("fixture child-lifecycle call {method}");
+                }
+                let result = self.call(socket, frame).await?;
+                let reply = json!({"op": "result", "id": frame["id"], "result": result});
+                send(socket, Message::Text(reply.to_string())).await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    async fn call(&mut self, socket: &mut Socket, frame: &Value) -> Result<Value, Closed> {
+        let params = &frame["params"];
+        let id = params["sessionId"].as_str().unwrap_or_default();
+        Ok(match frame["method"].as_str().unwrap_or_default() {
+            "config.get" => self.config.clone(),
+            "config.save" => self.save_config(params),
+            "agents.spawn" => self.spawn(socket, params).await?,
+            "claude.listModels" => json!({"aliases": [
+                {"model": "sonnet"},
+                {"model": "sonnet[1m]"},
+                {"model": "opus"},
+                {"model": "opus[1m]"},
+                {"model": "haiku"},
+            ]}),
+            "providers.listModels" => json!([
+                {
+                    "id": "gpt-6-astra",
+                    "label": "GPT-6 Astra",
+                    "default": true,
+                    "effortLevels": ["low", "medium", "high", "xhigh", "max"],
+                    "defaultEffort": "medium",
+                },
+                {
+                    "id": "gpt-6.1-sol",
+                    "label": "GPT-6.1 Sol",
+                    "effortLevels": ["low", "medium", "high"],
+                    "defaultEffort": "low",
+                },
+            ]),
+            "claude.setEffort" => json!({"ok": true, "disposition": "queued"}),
+            "desktop.downloadProjectIcon" => {
+                json!({"ok": true, "file": "fixture-project-icon.png"})
+            }
+            "files.upload" => {
+                let name = params["name"].as_str().unwrap_or("image.png");
+                json!({"path": format!("/fixture/uploads/{name}")})
+            }
+            "fs.listDir" => json!({"path": params["path"], "dirs": ["src", "docs"]}),
+            "sessions.recent" => self.recent(),
+            "fs.readImage" => preview_image(),
+            "fs.read" => {
+                let path = params["path"].as_str().unwrap_or_default();
+                let contents = self.contents(path);
+                json!({"path": path, "contents": contents, "size": contents.len()})
+            }
+            "fs.compareWrite" => {
+                let path = params["path"].as_str().unwrap_or_default().to_owned();
+                let current = self.contents(&path);
+                if params["force"] != true && params["expected"].as_str() != Some(&current) {
+                    json!({"saved": false, "conflict": "changed", "current": current})
+                } else {
+                    let contents = params["contents"].as_str().unwrap_or_default().to_owned();
+                    self.written.insert(path, contents.clone());
+                    json!({"saved": true, "contents": contents, "size": contents.len()})
+                }
+            }
+            "fs.write" => {
+                let path = params["path"].as_str().unwrap_or_default().to_owned();
+                let contents = params["contents"].as_str().unwrap_or_default().to_owned();
+                self.written.insert(path, contents);
+                json!({"ok": true})
+            }
+            "fs.listEntries" => fixture_listing(params["path"].as_str().unwrap_or_default()),
+            "terminals.create" => {
+                let shell = format!("fixture-shell-{}", self.shells.len() + 1);
+                let cwd = params["cwd"].as_str().unwrap_or_default().to_owned();
+                let banner = format!(
+                    "\x1b[2mFixture shell (echo only; nothing runs) in\x1b[0m {cwd}\r\n\x1b[32m$\x1b[0m "
+                )
+                .into_bytes();
+                self.shells
+                    .insert(shell.clone(), (cwd, String::new(), banner));
+                json!({"sessionId": shell})
+            }
+            "sessions.attachTerminal" => match self.shells.get(id) {
+                Some((_, _, replay)) => {
+                    let topic = format!("pty.bytes.{id}");
+                    if self.topics.contains(&topic) {
+                        send(socket, event(&topic, json!(base64_bytes(replay)))).await?;
+                    }
+                    json!({"ok": true})
+                }
+                None => json!({"ok": false, "error": "no PTY buffer for that session"}),
+            },
+            "sessions.terminalInput" => {
+                use base64::Engine;
+                let bytes = params["bytesB64"]
+                    .as_str()
+                    .and_then(|b| base64::engine::general_purpose::STANDARD.decode(b).ok())
+                    .unwrap_or_default();
+                if let Some((cwd, line, replay)) = self.shells.get_mut(id) {
+                    let output = fixture_echo(cwd, line, &bytes);
+                    replay.extend_from_slice(&output);
+                    if replay.len() > 1024 * 1024 {
+                        replay.drain(..replay.len() - 1024 * 1024);
+                    }
+                    let topic = format!("pty.bytes.{id}");
+                    if self.topics.contains(&topic) {
+                        send(socket, event(&topic, json!(base64_bytes(&output)))).await?;
+                    }
+                }
+                json!({"ok": true})
+            }
+            "sessions.terminalKeepalive" => json!({"ok": self.shells.contains_key(id)}),
+            "sessions.detachTerminal" | "sessions.terminalResize" => json!({"ok": true}),
+            "desktop.htmlCardReadDiff" => json!({
+                "ok": true,
+                "path": params["target"],
+                "before": "start();",
+                "after": "restore_workspace();\nstart();",
+            }),
+            "git.numstat" => json!({"files": [{"path": "src/main.rs", "added": 2, "deleted": 1}]}),
+            "git.status" => json!({
+                "branch": "feature/native-basics",
+                "root": params["cwd"],
+                "files": [
+                    {"path": "src/main.rs", "staged": " ", "unstaged": "M"},
+                    {"path": "README.md", "staged": "M", "unstaged": " "},
+                    {"path": "tests/session.rs", "staged": "?", "unstaged": "?"},
+                ],
+            }),
+            "git.diff" => {
+                json!({"diff": "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"})
+            }
+            // A fixture brief path: nothing is written and no provider runs;
+            // the successor is the fake spawn above.
+            "claude.handoffBrief" | "claude.handoffAgentBrief" => json!({
+                "ok": true,
+                "path": "/fixture/home/.workspacer/handoffs/20261005-120000-fixture.md",
+            }),
+            "providers.checkAll" => json!([
+                {"provider": "claude", "found": true},
+                {"provider": "codex", "found": false},
+            ]),
+            "desktop.providerReadiness" => json!({"state": "unchecked"}),
+            "claude.setModel" => json!({"ok": true, "disposition": "queued"}),
+            "sessions.snapshots" => self.snapshots(),
+            "sessions.subagentConversation" if self.options.rich => {
+                rich_subagent_conversation(id, params["agentId"].as_str().unwrap_or_default())
+            }
+            "sessions.conversation" => {
+                let limit = params["limit"].as_u64().map(|l| l as usize);
+                if id == self.active_id {
+                    page(&self.items, self.seq, limit)
+                } else if let Some((items, seq)) = self.history.get(id) {
+                    page(items, *seq, limit)
+                } else {
+                    page(&self.seed, self.seed.len() as u64, limit)
+                }
+            }
+            "usage.report" => usage_report(),
+            "agents.sendMessage" => {
+                self.send_message(socket, id, &params["text"]).await;
+                json!({"ok": true})
+            }
+            "claude.approve" => {
+                self.pending = false;
+                json!({"ok": true})
+            }
+            "claude.signal" => {
+                self.streaming = false;
+                json!({"ok": true})
+            }
+            "claude.answer" => {
+                eprintln!("fixture claude.answer {params}");
+                self.answered.insert(id.to_owned());
+                let resolved = json!({"sessionId": id, "mode": "input", "pendingQuestions": null});
+                if self.topics.contains("agent.snapshot") {
+                    send(socket, event("agent.snapshot", resolved)).await?;
+                }
+                json!({"ok": true})
+            }
+            _ => json!({"ok": false, "error": "Unknown fixture method"}),
+        })
+    }
+
+    fn contents(&self, path: &str) -> String {
+        self.written
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| FIXTURE_SOURCE.into())
+    }
+
+    fn save_config(&mut self, params: &Value) -> Value {
+        if let Some(projects) = params.get("projects") {
+            self.config["projects"] = projects.clone();
+        }
+        if let Some(enabled) = params.pointer("/agents/childFullAccess") {
+            self.config["agents"]["childFullAccess"] = enabled.clone();
+        }
+        let auto = params
+            .pointer("/agents/autoTitle")
+            .and_then(Value::as_object);
+        for (key, value) in auto.into_iter().flatten() {
+            let titles = &mut self.config["agents"]["autoTitle"];
+            if key == "models" {
+                for (provider, model) in value.as_object().into_iter().flatten() {
+                    titles["models"][provider] = model.clone();
+                }
+            } else {
+                titles[key] = value.clone();
+            }
+        }
+        self.config.clone()
+    }
+
+    /// A launched session: answers its opening at once, and finishes its
+    /// turn (and gets its title) a moment later.
+    async fn spawn(&mut self, socket: &mut Socket, params: &Value) -> Result<Value, Closed> {
+        let id = format!("fixture-spawn-{}", self.spawned.len() + 1);
+        let message = params["message"].as_str().unwrap_or_default().to_owned();
+        let mut row = json!({
+            "sessionId": id,
+            "provider": params["provider"],
+            "cwd": params["cwd"],
+            "model": params["model"].as_str().unwrap_or("sonnet"),
+            "transport": "stream",
+            "mode": "responding",
+        });
+        if let Some(label) = params["label"].as_str().filter(|l| !l.trim().is_empty()) {
+            row["label"] = json!(label);
+        } else if params["autoTitle"] == true {
+            row["autoTitle"] = json!({"state": "pending"});
+        }
+        let reply = "I traced the redirect to the session cookie check and will patch the guard.";
+        let opening = vec![
+            json!({"kind": "user_message", "text": message}),
+            json!({"kind": "assistant_text", "text": reply}),
+        ];
+        self.history.insert(id.clone(), (opening, 2));
+        self.openings.insert(id.clone(), message.clone());
+        self.spawned.push(row.clone());
+        send(socket, event("agent.snapshot", row)).await?;
+        let finish = Instant::now() + Duration::from_millis(1200);
+        self.due
+            .push((finish, id.clone(), json!({"mode": "input"})));
+        Ok(json!({"sessionId": id, "messageQueued": !message.is_empty()}))
+    }
+
+    fn recent(&self) -> Value {
+        let mut rows = vec![
+            json!({
+                "sessionId": "demo-0000",
+                "provider": "claude",
+                "name": "Native client experiment",
+                "cwd": "/workspaces/project-0",
+                "mode": "input",
+                "transport": "stream",
+            }),
+            json!({
+                "sessionId": "past-session",
+                "provider": "codex",
+                "name": "Yesterday’s investigation",
+                "cwd": "/workspaces/project-1",
+                "mode": "stopped",
+                "transport": "stream",
+            }),
+        ];
+        rows.extend(self.spawned.iter().map(|row| {
+            json!({
+                "sessionId": row["sessionId"],
+                "provider": row["provider"],
+                "name": row["label"].as_str().unwrap_or(""),
+                "cwd": row["cwd"],
+                "mode": row["mode"],
+                "transport": "stream",
+            })
+        }));
+        Value::Array(rows)
+    }
+
+    fn snapshots(&self) -> Value {
+        let fixed = (0..self.options.sessions).map(|i| {
+            let id = format!("demo-{i:04}");
+            let snapshot = json!({
+                "sessionId": id,
+                "label": if i == 0 {
+                    "Native client experiment".into()
+                } else {
+                    format!("Worker {i}")
+                },
+                "cwd": format!("/workspaces/project-{}", i % 8),
+                "parentSessionId": if i == 1 { "demo-0000" } else { "" },
+                "provider": "claude",
+                "model": "sonnet",
+                "transport": "stream",
+                "mode": if self.streaming && self.active_id == id {
+                    "responding"
+                } else {
+                    "input"
+                },
+                "pendingApproval": if i == 0 && self.pending {
+                    json!({"toolName": "Bash", "toolInput": {"command": "cargo test"}})
+                } else {
+                    Value::Null
+                },
+            });
+            let mut snapshot = if self.options.rich {
+                rich_snapshot(i, snapshot)
+            } else {
+                snapshot
+            };
+            if i == 0
+                && let Some(row) = &self.finished_parent
+            {
+                snapshot = row.clone();
+            }
+            if self.options.pending_questions
+                && !self.answered.contains(&id)
+                && let Some(questions) = fixture_questions(i)
+            {
+                snapshot["pendingQuestions"] = questions;
+                snapshot["mode"] = json!("question");
+            }
+            snapshot
+        });
+        Value::Array(fixed.chain(self.spawned.iter().cloned()).collect())
+    }
+
+    /// A message to any session makes it the active one and streams a reply.
+    async fn send_message(&mut self, socket: &mut Socket, id: &str, text: &Value) {
+        if self.active_id != id {
+            let (next, next_seq) = self
+                .history
+                .remove(id)
+                .unwrap_or_else(|| (self.seed.clone(), self.seed.len() as u64));
+            let previous = std::mem::replace(&mut self.items, next);
+            self.history
+                .insert(std::mem::take(&mut self.active_id), (previous, self.seq));
+            self.seq = next_seq;
+            self.active_id = id.to_owned();
+        }
+        self.items
+            .push(json!({"kind": "user_message", "text": text}));
+        self.items
+            .push(json!({"kind": "assistant_text", "text": "Message received."}));
+        self.seq += 2;
+        self.streaming = true;
+        self.remaining = 30;
+        self.restart_stream = true;
+        let topic = format!("agent.conversation.{}", self.active_id);
+        if self.topics.contains(&topic) {
+            let delta = json!({"seq": self.seq, "items": &self.items[self.items.len() - 2..]});
+            let _ = socket.send(event(&topic, delta)).await;
+        }
     }
 }
 

@@ -1,13 +1,26 @@
 //! Secondary views keep the conversation uncluttered and preserve its draft/scroll.
 use super::*;
 use gpui::AnyElement;
-use gpui_component::scroll::ScrollableElement;
 use serde_json::Value;
-use wks_native::features::{AttachmentSource, Request, attention_transition};
+use wks_native::features::{Request, attention_transition};
 
-/// A draft attachment: name, hub path, and its thumbnail (`None` loading,
-/// `Some(None)` unavailable or not an image).
-pub(super) type DraftFile = (String, String, Option<Option<Arc<gpui::Image>>>);
+const HANDOFF_DESCRIPTION: &str = "Start a new agent in this session’s folder with a brief of its work. The handoff message waits in the new agent’s composer for you to review and send.";
+const MODEL_DESCRIPTION: &str = "Choose the model and reasoning effort for this session’s next work. A busy provider may queue the change.";
+const HISTORY_DESCRIPTION: &str =
+    "A snapshot of retained conversation history. Live messages continue in chat.";
+const CLEARED_TOOLTIP: &str =
+    "Cleared from the sidebar on this device · show it under its parent again";
+const RECENT_FOOTER: &str = "Names are saved on this device. Archives are shared with every client of this hub, web included. Archiving keeps the conversation and does not stop an agent.";
+const NAME_DESCRIPTION: &str =
+    "Shown in the sidebar on this device. Leave empty to use the agent’s own title.";
+const END_CONFIRMATION: &str =
+    "End this agent? Its current work stops. You can resume its conversation later.";
+const SESSION_FOOTER: &str = "Archiving hides the session from the list in every client of this hub and keeps it running. Ending stops the agent.";
+const HISTORY_TRIMMED: &str =
+    "The server has trimmed earlier events; this starts at its oldest retained event.";
+const SETUP_INFO: &str = "Checking a connection sends a small test request and may use your provider allowance. Git is required for reviewing changes.";
+const CLAUDE_SETUP: &str = "Install Claude Code, then run claude in a terminal to sign in.";
+const CODEX_SETUP: &str = "Install Codex CLI, then run codex login in a terminal to sign in.";
 
 /// Starts the installer helper; returns once it is waiting for the app.
 pub(super) trait UpdateStarter:
@@ -221,13 +234,6 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn questions(value: &Value) -> Vec<Value> {
-    value
-        .as_array()
-        .or_else(|| value.get("questions").and_then(Value::as_array))
-        .cloned()
-        .unwrap_or_default()
-}
 impl Workspace {
     pub fn configure_local(
         &mut self,
@@ -251,133 +257,6 @@ impl Workspace {
             .and_then(|m| m.get(&session.id))
             .cloned()
             .unwrap_or_else(|| session.title().into())
-    }
-    /// Hidden from the normal list. The hub's shared archive (so web and
-    /// every other client agree) plus any device-only archive not yet moved
-    /// there; an unconfirmed change shows as already made.
-    pub(super) fn archived(&self, id: &str) -> bool {
-        if let Some(&pending) = self.extras.archive_pending.get(id) {
-            return pending;
-        }
-        self.locally_archived(id)
-            || self
-                .view
-                .session_archive
-                .as_ref()
-                .is_some_and(|doc| wks_native::features::archive_contains(doc, id))
-    }
-    fn locally_archived(&self, id: &str) -> bool {
-        self.settings
-            .archived
-            .get(&self.project_scope)
-            .is_some_and(|ids| ids.iter().any(|s| s == id))
-    }
-    /// The connected hub keeps a shared archive (older hubs do not).
-    fn hub_archive(&self) -> bool {
-        self.view.connected && !self.demo && self.view.session_archive.is_some()
-    }
-    pub(super) fn archive_loading(&self) -> bool {
-        !self.demo
-            && self.view.connected
-            && self.view.session_archive.is_none()
-            && self
-                .view
-                .requests
-                .get("archive")
-                .is_some_and(|request| request.loading)
-    }
-    fn send_archive(&mut self, id: &str, archived: bool) {
-        self.extras.archive_pending.insert(id.into(), archived);
-        if self.extras.archive_inflight.contains_key(id) {
-            return;
-        }
-        match self
-            .controller
-            .command(Command::Request(Request::SetArchive {
-                session: id.into(),
-                archived,
-            })) {
-            Ok(()) => {
-                self.extras.archive_inflight.insert(id.into(), archived);
-            }
-            Err(error) => {
-                self.extras.archive_pending.remove(id);
-                self.extras.notice = error.to_string();
-            }
-        }
-    }
-    /// Settle sent archive changes and move device-only archives to the hub,
-    /// so a session archived here before archives were shared hides on the
-    /// web too. A device copy is dropped only once the hub holds it.
-    fn sync_archive(&mut self, next: &View, cx: &mut Context<Self>) {
-        if !next.connected {
-            // The backend fences old-connection receipts. Keep no optimistic
-            // choice stranded forever waiting for one; reconnect reads truth.
-            self.extras.archive_pending.clear();
-            self.extras.archive_inflight.clear();
-            self.extras.archive_migrating.clear();
-        }
-        let mut followups = Vec::new();
-        for receipt in next
-            .archive_receipts
-            .iter()
-            .filter(|r| r.number > self.extras.archive_receipt)
-        {
-            if self.extras.archive_inflight.get(&receipt.session) != Some(&receipt.archived) {
-                continue;
-            }
-            self.extras.archive_inflight.remove(&receipt.session);
-            if let Some(error) = &receipt.error {
-                self.extras.archive_pending.remove(&receipt.session);
-                let verb = if receipt.archived {
-                    "archive"
-                } else {
-                    "restore"
-                };
-                self.extras.notice = format!("Could not {verb} the session: {error}");
-            } else if let Some(&desired) = self.extras.archive_pending.get(&receipt.session) {
-                if desired != receipt.archived {
-                    followups.push((receipt.session.clone(), desired));
-                } else {
-                    self.extras.archive_pending.remove(&receipt.session);
-                }
-            }
-        }
-        for (id, archived) in followups {
-            self.send_archive(&id, archived);
-        }
-        if let Some(last) = next.archive_receipts.back() {
-            self.extras.archive_receipt = self.extras.archive_receipt.max(last.number);
-        }
-        let Some(doc) = next.session_archive.clone() else {
-            return;
-        };
-        if !next.connected || self.demo {
-            return;
-        }
-        let local = self
-            .settings
-            .archived
-            .get(&self.project_scope)
-            .cloned()
-            .unwrap_or_default();
-        let mut moved = false;
-        for id in local {
-            if wks_native::features::archive_contains(&doc, &id) {
-                if let Some(ids) = self.settings.archived.get_mut(&self.project_scope) {
-                    ids.retain(|s| s != &id);
-                }
-                moved = true;
-            } else if !self.extras.archive_pending.contains_key(&id)
-                && self.extras.archive_migrating.insert(id.clone())
-            {
-                self.send_archive(&id, true);
-            }
-        }
-        if moved {
-            self.settings.archived.retain(|_, ids| !ids.is_empty());
-            self.save_settings(cx);
-        }
     }
     pub(super) fn request(&mut self, request: Request, cx: &mut Context<Self>) {
         self.extras.notice.clear();
@@ -501,17 +380,7 @@ impl Workspace {
             && next.connected
             && !window.is_window_active()
         {
-            let mut alerts = Vec::new();
-            for s in next.sessions.iter() {
-                if let Some(old) = self.view.sessions.iter().find(|old| old.id == s.id)
-                    && let Some(title) = attention_transition(old, s)
-                {
-                    alerts.push((title.to_owned(), self.session_title(s)));
-                }
-            }
-            if !alerts.is_empty() {
-                post_attention_alerts(alerts, cx);
-            }
+            self.alert_attention(next, cx);
         }
         if let Some(state) = next.requests.get("child-access")
             && !state.loading
@@ -535,102 +404,8 @@ impl Workspace {
                 self.extras.titles = Some((*state.value).clone());
             }
         }
-        if let Some(state) = next.requests.get("upload")
-            && !state.loading
-            && state.number > self.extras.upload_receipt
-        {
-            self.extras.upload_receipt = state.number;
-            if let Some(error) = &state.error {
-                self.extras.notice = format!("Attachment failed: {error}");
-            } else if let Request::Upload { session, .. } = &state.request
-                && let (Some(name), Some(path)) =
-                    (state.value["name"].as_str(), state.value["path"].as_str())
-            {
-                self.extras
-                    .attachments
-                    .entry(session.clone())
-                    .or_default()
-                    .push((name.into(), path.into()));
-            }
-        }
-        if let Some(receipt) = &next.receipt
-            && receipt.number > self.last_receipt
-        {
-            if receipt.error.is_none() && matches!(receipt.action, Action::Send(_)) {
-                if let Some(sent) = self.extras.sent_drafts.remove(&receipt.session) {
-                    if self.view.selected.as_ref() == Some(&receipt.session) {
-                        if self.composer.read(cx).value().as_ref() == sent {
-                            self.composer
-                                .update(cx, |i, cx| i.set_value("", window, cx));
-                        }
-                    } else if self.drafts.get(&receipt.session) == Some(&sent) {
-                        self.drafts.remove(&receipt.session);
-                    }
-                }
-                if let Some(sent) = self.extras.sent_attachments.remove(&receipt.session)
-                    && let Some(draft) = self.extras.attachments.get_mut(&receipt.session)
-                {
-                    draft.retain(|item| !sent.contains(item));
-                }
-            } else {
-                self.extras.sent_attachments.remove(&receipt.session);
-                self.extras.sent_drafts.remove(&receipt.session);
-            }
-        }
-        let pending = next
-            .sessions
-            .iter()
-            .find(|s| Some(&s.id) == next.selected.as_ref())
-            .and_then(|s| s.questions.as_ref());
-        let signature = format!(
-            "{:?}:{}",
-            next.selected,
-            pending.map(Value::to_string).unwrap_or_default()
-        );
-        if signature != self.extras.question_signature {
-            self.extras.question_signature = signature;
-            self.extras.answer_watches.clear();
-            self.extras.selected_options =
-                vec![Default::default(); pending.map(questions).unwrap_or_default().len()];
-            self.extras.answers_sent = false;
-            self.extras.answer_error = None;
-            self.extras
-                .question_scroll
-                .set_offset(gpui::Point::default());
-            self.extras.question_focused.set(None);
-            self.extras.option_focus = pending
-                .map(questions)
-                .unwrap_or_default()
-                .iter()
-                .map(|q| {
-                    let count = q["options"].as_array().map_or(0, Vec::len);
-                    (0..count)
-                        .map(|_| cx.focus_handle().tab_stop(true))
-                        .collect()
-                })
-                .collect();
-            self.extras.answers = pending
-                .map(questions)
-                .unwrap_or_default()
-                .iter()
-                .map(|q| {
-                    let has_options = q["options"].as_array().is_some_and(|o| !o.is_empty());
-                    cx.new(|cx| {
-                        InputState::new(window, cx).placeholder(if has_options {
-                            "Or type a different answer"
-                        } else {
-                            "Type your answer"
-                        })
-                    })
-                })
-                .collect();
-        }
-        self.extras.answer_watches = self
-            .extras
-            .answers
-            .iter()
-            .map(|input| cx.observe(input, |_, _, cx| cx.notify()))
-            .collect();
+        self.sync_attachments(next, window, cx);
+        self.sync_questions(next, window, cx);
         if self.view.selected != next.selected {
             self.extras.confirm_end = None;
             if matches!(
@@ -645,313 +420,21 @@ impl Workspace {
             }
         }
     }
-    pub(super) fn pick_folder(
-        &mut self,
-        bookmark: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.extras.local_paths {
-            return;
-        }
-        let pick = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Choose project folder".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let result = pick.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                match result {
-                    Ok(Ok(Some(paths))) => {
-                        if let Some(path) = paths.first() {
-                            let path = path.to_string_lossy().into_owned();
-                            if bookmark {
-                                this.project_path
-                                    .update(cx, |input, cx| input.set_value(path, window, cx));
-                            } else {
-                                this.select_project(&path, window, cx);
-                            }
-                        }
-                    }
-                    Ok(Ok(None)) => {}
-                    _ if !bookmark && this.new_session => {
-                        // The hub is on this machine, so its listing is the
-                        // same filesystem the system dialog would have shown.
-                        this.projects.notice =
-                            "The system folder picker is unavailable; browsing folders on the hub instead.".into();
-                        let start = this.projects.cwd.clone();
-                        this.browse_to(start, cx);
-                    }
-                    _ => {
-                        this.extras.notice =
-                            "Could not open the folder picker. You can enter the path instead."
-                                .into()
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-    pub(super) fn pick_attachment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.view.selected.clone() else {
-            return;
-        };
-        if self.uploading() {
-            return;
-        }
-        let pick = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Attach image or PDF (up to 8 MiB)".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            let result = pick.await;
-            let _ = this.update_in(cx, |this, _, cx| match result {
-                Ok(Ok(Some(paths))) => {
-                    if let Some(path) = paths.first() {
-                        this.request(
-                            Request::Upload {
-                                session,
-                                source: AttachmentSource::File(path.clone()),
-                            },
-                            cx,
-                        );
-                    }
-                }
-                Ok(Ok(None)) => {}
-                _ => {
-                    this.extras.notice = "Could not open the attachment picker.".into();
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-    pub(super) fn paste_image(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(session) = self.view.selected.clone() else {
-            return false;
-        };
-        if self.uploading() {
-            return false;
-        }
-        if let Some(clipboard) = cx.read_from_clipboard() {
-            if clipboard.text().is_some() {
-                return false;
-            }
-            for entry in clipboard.entries() {
-                if let gpui::ClipboardEntry::Image(image) = entry {
-                    let name = format!(
-                        "Screenshot.{}",
-                        match image.format() {
-                            gpui::ImageFormat::Png => "png",
-                            gpui::ImageFormat::Jpeg => "jpg",
-                            gpui::ImageFormat::Webp => "webp",
-                            gpui::ImageFormat::Gif => "gif",
-                            gpui::ImageFormat::Tiff => "tiff",
-                            gpui::ImageFormat::Bmp => "bmp",
-                            _ => {
-                                self.extras.notice =
-                                    "Paste a PNG, JPEG, GIF, or WebP screenshot.".into();
-                                cx.notify();
-                                return true;
-                            }
-                        }
-                    );
-                    if image.bytes().len() > wks_native::features::MAX_ATTACHMENT_BYTES {
-                        self.extras.notice =
-                            "Screenshot exceeds 8 MiB. Save a smaller image and attach it.".into();
-                        cx.notify();
-                        return true;
-                    }
-                    self.request(
-                        Request::Upload {
-                            session,
-                            source: AttachmentSource::Image {
-                                name,
-                                bytes: Arc::new(image.bytes().to_vec()),
-                            },
-                        },
-                        cx,
-                    );
-                    return true;
-                }
-            }
-        }
-        #[cfg(target_os = "windows")]
-        {
-            self.request(
-                Request::Upload {
-                    session,
-                    source: AttachmentSource::WindowsClipboard,
-                },
-                cx,
-            );
-            true
-        }
-        #[cfg(not(target_os = "windows"))]
-        false
-    }
-    /// Draft attachments above the composer: images as thumbnails (read back
-    /// from the hub, so they show the uploaded file), PDFs and images whose
-    /// preview is loading or unavailable as named chips. Each keeps Remove;
-    /// a thumbnail opens the image in the viewer.
-    pub(super) fn render_draft_attachments(
-        &self,
-        files: Vec<DraftFile>,
-        cwd: &str,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let p = self.appearance.palette();
-        let busy = self.view.busy;
-        let remove = |this: &Self, ix: usize, cx: &mut Context<Self>| {
-            this.icon_button(
-                "remove-attachment",
-                "Remove attachment",
-                IconName::Close,
-                !busy,
-            )
-            .size(px(24.))
-            .when(!busy, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some(id) = &this.view.selected
-                        && let Some(files) = this.extras.attachments.get_mut(id)
-                        && ix < files.len()
-                    {
-                        files.remove(ix);
-                    }
-                    cx.notify();
-                }))
+    /// OS notifications for sessions that newly need the user, while this
+    /// window is in the background.
+    fn alert_attention(&self, next: &View, cx: &mut Context<Self>) {
+        let alerts: Vec<_> = next
+            .sessions
+            .iter()
+            .filter_map(|s| {
+                let old = self.view.sessions.iter().find(|old| old.id == s.id)?;
+                let title = attention_transition(old, s)?;
+                Some((title.to_owned(), self.session_title(s)))
             })
-        };
-        let uploading = self.uploading()
-            && self.view.requests.get("upload").is_some_and(|state| {
-                matches!(&state.request, Request::Upload { session, .. }
-                    if Some(session) == self.view.selected.as_ref())
-            });
-        div()
-            .flex()
-            .flex_wrap()
-            .items_end()
-            .gap_2()
-            .children(
-                files
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, (name, path, preview))| {
-                        match preview {
-                            Some(Some(image)) => {
-                                let link = wks_native::links::tool_file(cwd, &path, None);
-                                let owner = self.view.selected.clone().unwrap_or_default();
-                                div()
-                                    .id(("attachment", ix))
-                                    .debug_selector(move || format!("draft-thumbnail-{ix}"))
-                                    .relative()
-                                    .rounded_md()
-                                    .overflow_hidden()
-                                    .border_1()
-                                    .border_color(rgb(p.border))
-                                    .bg(rgb(p.base))
-                                    .child(
-                                        div()
-                                            .id(("attachment-preview", ix))
-                                            .cursor_pointer()
-                                            .tooltip({
-                                                let name = SharedString::from(name.clone());
-                                                move |window, cx| {
-                                                    gpui_component::tooltip::Tooltip::new(
-                                                        name.clone(),
-                                                    )
-                                                    .build(window, cx)
-                                                }
-                                            })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.open_link(&owner, link.clone(), cx)
-                                            }))
-                                            .child(
-                                                // A fixed tile: the decode is async, and
-                                                // the row must not jump when it lands.
-                                                gpui::img(image)
-                                                    .w(px(96.))
-                                                    .h(px(72.))
-                                                    .object_fit(gpui::ObjectFit::Cover),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .top(px(2.))
-                                            .right(px(2.))
-                                            .rounded_full()
-                                            .bg(rgb(p.surface))
-                                            .child(remove(self, ix, cx)),
-                                    )
-                            }
-                            preview => div()
-                                .id(("attachment", ix))
-                                .debug_selector(move || format!("draft-attachment-{ix}"))
-                                .pl_2()
-                                .pr_1()
-                                .py_1()
-                                .rounded_md()
-                                .bg(rgb(p.selected))
-                                .max_w_full()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(match preview {
-                                    None => brand_spinner(
-                                        12.,
-                                        p,
-                                        SharedString::from(format!("draft-preview-{ix}")),
-                                    )
-                                    .into_any_element(),
-                                    Some(_) => Icon::new(IconName::File)
-                                        .size(px(14.))
-                                        .text_color(rgb(p.accent))
-                                        .into_any_element(),
-                                })
-                                .child(div().min_w_0().truncate().text_size(px(12.)).child(name))
-                                .child(remove(self, ix, cx)),
-                        }
-                    }),
-            )
-            .when(uploading, |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "draft-uploading".into())
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(p.selected))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(12.))
-                        .text_color(rgb(p.muted))
-                        .child(brand_spinner(12., p, "draft-uploading-spinner"))
-                        .child("Attaching…"),
-                )
-            })
-    }
-    pub(super) fn uploading(&self) -> bool {
-        self.view.requests.get("upload").is_some_and(|s| s.loading)
-    }
-    pub(super) fn attachment_text(&self, id: &str, text: &str) -> String {
-        let mut result = String::new();
-        for (name, path) in self.extras.attachments.get(id).into_iter().flatten() {
-            let kind = if name.to_lowercase().ends_with(".pdf") {
-                "PDF"
-            } else {
-                "Image"
-            };
-            result.push_str(&format!("[{kind}: {path}]\n"));
+            .collect();
+        if !alerts.is_empty() {
+            post_attention_alerts(alerts, cx);
         }
-        result.push_str(text);
-        result
     }
     /// The request's loading or error line, toned; empty when settled.
     pub(super) fn feature_message(&self, key: &str) -> Div {
@@ -986,23 +469,14 @@ impl Workspace {
                 "Session history",
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
-            Screen::History => (
-                "Conversation history",
-                Some("A snapshot of retained conversation history. Live messages continue in chat.".into()),
-            ),
+            Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             Screen::Session => ("Session details", session_cwd.map(Into::into)),
             Screen::Setup => (
                 "Agent setup",
                 Some("Connect your agents on the machine running this workspace.".into()),
             ),
-            Screen::Handoff => (
-                handoff_title.as_str(),
-                Some("Start a new agent in this session’s folder with a brief of its work. The handoff message waits in the new agent’s composer for you to review and send.".into()),
-            ),
-            Screen::Model => (
-                "Model and effort",
-                Some("Choose the model and reasoning effort for this session’s next work. A busy provider may queue the change.".into()),
-            ),
+            Screen::Handoff => (handoff_title.as_str(), Some(HANDOFF_DESCRIPTION.into())),
+            Screen::Model => ("Model and effort", Some(MODEL_DESCRIPTION.into())),
             _ => ("", None),
         };
         let trailing = match self.screen {
@@ -1120,128 +594,138 @@ impl Workspace {
                     p,
                 ))
             })
-            .children(sessions.into_iter().take(500).enumerate().map(|(ix, s)| {
-                let open = s.clone();
-                let resume = s.clone();
-                let id = s.id.clone();
-                chrome::card(p)
-                    .id(("recent-row", ix))
-                    .px_4()
-                    .py_3()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            // Actions wrap below a title that would otherwise
-                            // be truncated to a word in narrow windows.
-                            .flex_1()
-                            .min_w(px(220.))
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(chrome::scale::BODY))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(self.session_title(&s)),
-                                    )
-                                    .child(div().flex_shrink_0().child(session_badge(&s, p, self.view.connected))),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .min_w_0()
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.muted))
-                                    .child(div().flex_shrink_0().child(chrome::model_badge(&s, p, 11.)))
-                                    .child(div().flex_shrink_0().text_color(rgb(p.disabled)).child("·"))
-                                    .child(div().min_w_0().truncate().font_family(mono_font()).child(s.cwd.clone())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            // A child cleared from the sidebar on this device
-                            // comes back here; that is not an archive restore.
-                            .when(self.clear_marked(&s.id), |d| {
-                                let id = s.id.clone();
-                                d.child(self.button("unclear-recent", "Show in sidebar", true)
-                                    .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Cleared from the sidebar on this device · show it under its parent again").build(window, cx))
-                                    .on_click(cx.listener(move |this, _, _, cx| this.unclear_session(&id, cx))))
-                            })
-                            .child(self.button("archive-recent", if self.archived(&s.id) { "Restore" } else { "Archive" }, true)
-                                .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx))))
-                            .when(s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"), |d| {
-                                d.child(self.button("resume-recent", "Resume…", self.view.connected)
-                                    .on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx))))
-                            })
-                            .child(self.primary_button("open-recent", "Open", self.view.connected)
-                                .when(self.view.connected, |d| d.on_click(cx.listener(move |this, _, window, cx| {
-                                    this.show_screen(Screen::Conversation, window, cx);
-                                    this.command(Command::OpenRecent(Box::new(open.clone())), cx);
-                                })))),
-                    )
-            }))
+            .children(
+                sessions
+                    .into_iter()
+                    .take(500)
+                    .enumerate()
+                    .map(|(ix, s)| self.render_recent_row(ix, s, cx)),
+            )
             .child(
                 div()
                     .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
-                    .child("Names are saved on this device. Archives are shared with every client of this hub, web included. Archiving keeps the conversation and does not stop an agent."),
+                    .child(RECENT_FOOTER),
             )
     }
 
-    /// Archive or restore. Only ever a visibility change: no stop, signal,
-    /// selection change or forget is sent, and a running session keeps
-    /// running. Shared through the hub when it supports it; otherwise kept on
-    /// this device for this connection, as before.
-    pub(super) fn toggle_archive(&mut self, id: &str, cx: &mut Context<Self>) {
-        if !self.view.connected && self.view.session_archive.is_some() {
-            self.extras.notice = "Reconnect to archive or restore this session.".into();
-            cx.notify();
-            return;
-        }
-        let archive = !self.archived(id);
-        if !archive && self.locally_archived(id) {
-            if let Some(ids) = self.settings.archived.get_mut(&self.project_scope) {
-                ids.retain(|s| s != id);
-            }
-            self.settings.archived.retain(|_, ids| !ids.is_empty());
-            self.save_settings(cx);
-        }
-        let shared = !archive
-            && self
-                .view
-                .session_archive
-                .as_ref()
-                .is_some_and(|doc| wks_native::features::archive_contains(doc, id));
-        if self.hub_archive() && (archive || shared || self.extras.archive_pending.contains_key(id))
-        {
-            self.extras.notice.clear();
-            self.send_archive(id, archive);
-        } else if archive {
-            self.settings
-                .archived
-                .entry(self.project_scope.clone())
-                .or_default()
-                .push(id.into());
-            self.save_settings(cx);
-        }
-        cx.notify();
+    fn render_recent_row(&self, ix: usize, s: Session, cx: &mut Context<Self>) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        let open = s.clone();
+        let resume = s.clone();
+        let id = s.id.clone();
+        chrome::card(p)
+            .id(("recent-row", ix))
+            .px_4()
+            .py_3()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    // Actions wrap below a title that would otherwise
+                    // be truncated to a word in narrow windows.
+                    .flex_1()
+                    .min_w(px(220.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(chrome::scale::BODY))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(self.session_title(&s)),
+                            )
+                            .child(div().flex_shrink_0().child(session_badge(
+                                &s,
+                                p,
+                                self.view.connected,
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(div().flex_shrink_0().child(chrome::model_badge(&s, p, 11.)))
+                            .child(div().flex_shrink_0().text_color(rgb(p.disabled)).child("·"))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_family(mono_font())
+                                    .child(s.cwd.clone()),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    // A child cleared from the sidebar on this device
+                    // comes back here; that is not an archive restore.
+                    .when(self.clear_marked(&s.id), |d| {
+                        let id = s.id.clone();
+                        d.child(
+                            self.button("unclear-recent", "Show in sidebar", true)
+                                .tooltip(|window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(CLEARED_TOOLTIP)
+                                        .build(window, cx)
+                                })
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.unclear_session(&id, cx)
+                                    }),
+                                ),
+                        )
+                    })
+                    .child(
+                        self.button(
+                            "archive-recent",
+                            if self.archived(&s.id) {
+                                "Restore"
+                            } else {
+                                "Archive"
+                            },
+                            true,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx))),
+                    )
+                    .when(
+                        s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"),
+                        |d| {
+                            d.child(
+                                self.button("resume-recent", "Resume…", self.view.connected)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.resume_session(&resume, window, cx)
+                                    })),
+                            )
+                        },
+                    )
+                    .child(
+                        self.primary_button("open-recent", "Open", self.view.connected)
+                            .when(self.view.connected, |d| {
+                                d.on_click(cx.listener(move |this, _, window, cx| {
+                                    this.show_screen(Screen::Conversation, window, cx);
+                                    this.command(Command::OpenRecent(Box::new(open.clone())), cx);
+                                }))
+                            }),
+                    ),
+            )
     }
     pub(super) fn resume_session(
         &mut self,
@@ -1353,13 +837,18 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .child(card_heading("Name", Some("Shown in the sidebar on this device. Leave empty to use the agent’s own title."), p))
+            .child(card_heading("Name", Some(NAME_DESCRIPTION), p))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.extras.name)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.extras.name)),
+                    )
                     .child(
                         self.primary_button("save-session-name", "Save name", true)
                             .flex_shrink_0()
@@ -1412,36 +901,115 @@ impl Workspace {
                     .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .child(self.button("archive-session", if archived { "Restore from archive" } else { "Archive" }, true)
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&archive, cx))))
-                    .when(s.stopped() && self.supported_session(), |d| d.child(self.button("resume-session", "Resume session…", !busy)
-                        .when(!busy, |d| d.on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx))))))
-                    .when_some(wks_native::handoff::target(s).ok().filter(|_| self.view.connected), |d, target| d.child(
-                        self.button("handoff-session", format!("Continue with {}…", wks_native::handoff::provider_name(target)), !busy)
-                            .debug_selector(|| "handoff-session".into())
-                            .when(!busy, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Handoff, window, cx))))))
-                    .when(!s.stopped() && !confirming, |d| d.child(self.danger_button("end-session", "End session…", !busy).debug_selector(|| "end-session".into())
-                        .when(!busy, |d| d.on_click(cx.listener(move |this, _, _, cx| { this.extras.confirm_end = Some(end.clone()); cx.notify(); }))))),
+                    .child(
+                        self.button(
+                            "archive-session",
+                            if archived {
+                                "Restore from archive"
+                            } else {
+                                "Archive"
+                            },
+                            true,
+                        )
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.toggle_archive(&archive, cx)),
+                        ),
+                    )
+                    .when(s.stopped() && self.supported_session(), |d| {
+                        d.child(
+                            self.button("resume-session", "Resume session…", !busy)
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(move |this, _, window, cx| {
+                                        this.resume_session(&resume, window, cx)
+                                    }))
+                                }),
+                        )
+                    })
+                    .when_some(
+                        wks_native::handoff::target(s)
+                            .ok()
+                            .filter(|_| self.view.connected),
+                        |d, target| {
+                            d.child(
+                                self.button(
+                                    "handoff-session",
+                                    format!(
+                                        "Continue with {}…",
+                                        wks_native::handoff::provider_name(target)
+                                    ),
+                                    !busy,
+                                )
+                                .debug_selector(|| "handoff-session".into())
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_feature(Screen::Handoff, window, cx)
+                                    }))
+                                }),
+                            )
+                        },
+                    )
+                    .when(!s.stopped() && !confirming, |d| {
+                        d.child(
+                            self.danger_button("end-session", "End session…", !busy)
+                                .debug_selector(|| "end-session".into())
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(move |this, _, _, cx| {
+                                        this.extras.confirm_end = Some(end.clone());
+                                        cx.notify();
+                                    }))
+                                }),
+                        )
+                    }),
             )
-            .when(confirming, |d| d.child(
+            .when(confirming, |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "confirm-end-panel".into())
+                        .p_3()
+                        .rounded(px(p.control_radius))
+                        .border_1()
+                        .border_color(gpui::Hsla::from(rgb(p.error)).opacity(0.45))
+                        .bg(gpui::Hsla::from(rgb(p.error)).opacity(0.08))
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(chrome::notice_line(
+                            END_CONFIRMATION,
+                            chrome::Tone::Warning,
+                            p,
+                            "confirm-end-copy",
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    self.button("cancel-end", "Keep running", true)
+                                        .debug_selector(|| "cancel-end".into())
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.extras.confirm_end = None;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    self.danger_button("confirm-end", "End session", !busy)
+                                        .debug_selector(|| "confirm-end".into())
+                                        .when(!busy, |d| {
+                                            d.on_click(cx.listener(|this, _, _, cx| {
+                                                this.act(Action::Terminate, cx);
+                                                this.extras.confirm_end = None;
+                                            }))
+                                        }),
+                                ),
+                        ),
+                )
+            })
+            .child(
                 div()
-                    .debug_selector(|| "confirm-end-panel".into())
-                    .p_3()
-                    .rounded(px(p.control_radius))
-                    .border_1()
-                    .border_color(gpui::Hsla::from(rgb(p.error)).opacity(0.45))
-                    .bg(gpui::Hsla::from(rgb(p.error)).opacity(0.08))
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(chrome::notice_line("End this agent? Its current work stops. You can resume its conversation later.", chrome::Tone::Warning, p, "confirm-end-copy"))
-                    .child(div().flex().gap_2()
-                        .child(self.button("cancel-end", "Keep running", true).debug_selector(|| "cancel-end".into()).on_click(cx.listener(|this, _, _, cx| { this.extras.confirm_end = None; cx.notify(); })))
-                        .child(self.danger_button("confirm-end", "End session", !busy).debug_selector(|| "confirm-end".into()).when(!busy, |d| d.on_click(cx.listener(|this, _, _, cx| { this.act(Action::Terminate, cx); this.extras.confirm_end = None; }))))),
-            ))
-            .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(
-                "Archiving hides the session from the list in every client of this hub and keeps it running. Ending stops the agent.",
-            ));
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(SESSION_FOOTER),
+            );
         let notice = self.view.notice.clone();
         div()
             .flex()
@@ -1468,71 +1036,323 @@ impl Workspace {
         let pages = count.div_ceil(50).max(1);
         let page = self.extras.history_page.min(pages - 1);
         let start = page * 50;
-        div().flex().flex_col().gap_3().child(self.feature_message("history"))
-            .child(div().flex().items_center().gap_2()
-                .child(self.quiet_button("older-history", "Previous", IconName::ChevronLeft, page > 0).when(page > 0, |d| d.on_click(cx.listener(|this, _, _, cx| { this.extras.history_page = this.extras.history_page.saturating_sub(1); this.extras.history_scroll.set_offset(gpui::point(px(0.), px(0.))); cx.notify(); }))))
-                .child(div().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(format!("Page {} of {}", page + 1, pages)))
-                .child(self.quiet_button("newer-history", "Next", IconName::ChevronRight, page + 1 < pages).when(page + 1 < pages, |d| d.on_click(cx.listener(|this, _, _, cx| { this.extras.history_page += 1; this.extras.history_scroll.set_offset(gpui::point(px(0.), px(0.))); cx.notify(); })))))
-            .when(state.is_some_and(|s| s.value["first_seq"].as_u64().unwrap_or(0) > 1), |d| d.child(chrome::notice_line("The server has trimmed earlier events; this starts at its oldest retained event.", chrome::Tone::Info, p, "history-trimmed")))
-            .when(count == 0 && state.is_some_and(|s| !s.loading && s.error.is_none()), |d| d.child(empty_note("No retained messages are available for this session.", p)))
-            .child(div().id("history-content").max_h(px(600.)).overflow_y_scroll().track_scroll(&self.extras.history_scroll)
-                .children(items.into_iter().flatten().skip(start).take(50).filter_map(|value| {
-                    let row = serde_json::from_value::<wks_native::model::Row>(value.clone()).ok()?;
-                    Some(div().when(value["continued"] == true, |d| d.child(overline(format!("Long message · part {} · literal text", value["part"]), p)))
-                        .child(self.render_message(&row, "history", value["continued"] == true, window, cx)))
-                })))
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(self.feature_message("history"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        self.quiet_button(
+                            "older-history",
+                            "Previous",
+                            IconName::ChevronLeft,
+                            page > 0,
+                        )
+                        .when(page > 0, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| {
+                                this.extras.history_page =
+                                    this.extras.history_page.saturating_sub(1);
+                                this.extras
+                                    .history_scroll
+                                    .set_offset(gpui::point(px(0.), px(0.)));
+                                cx.notify();
+                            }))
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(chrome::scale::META))
+                            .text_color(rgb(p.muted))
+                            .child(format!("Page {} of {}", page + 1, pages)),
+                    )
+                    .child(
+                        self.quiet_button(
+                            "newer-history",
+                            "Next",
+                            IconName::ChevronRight,
+                            page + 1 < pages,
+                        )
+                        .when(page + 1 < pages, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| {
+                                this.extras.history_page += 1;
+                                this.extras
+                                    .history_scroll
+                                    .set_offset(gpui::point(px(0.), px(0.)));
+                                cx.notify();
+                            }))
+                        }),
+                    ),
+            )
+            .when(
+                state.is_some_and(|s| s.value["first_seq"].as_u64().unwrap_or(0) > 1),
+                |d| {
+                    d.child(chrome::notice_line(
+                        HISTORY_TRIMMED,
+                        chrome::Tone::Info,
+                        p,
+                        "history-trimmed",
+                    ))
+                },
+            )
+            .when(
+                count == 0 && state.is_some_and(|s| !s.loading && s.error.is_none()),
+                |d| {
+                    d.child(empty_note(
+                        "No retained messages are available for this session.",
+                        p,
+                    ))
+                },
+            )
+            .child(
+                div()
+                    .id("history-content")
+                    .max_h(px(600.))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.extras.history_scroll)
+                    .children(items.into_iter().flatten().skip(start).take(50).filter_map(
+                        |value| {
+                            let row =
+                                serde_json::from_value::<wks_native::model::Row>(value.clone())
+                                    .ok()?;
+                            Some(
+                                div()
+                                    .when(value["continued"] == true, |d| {
+                                        d.child(overline(
+                                            format!(
+                                                "Long message · part {} · literal text",
+                                                value["part"]
+                                            ),
+                                            p,
+                                        ))
+                                    })
+                                    .child(self.render_message(
+                                        &row,
+                                        "history",
+                                        value["continued"] == true,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                        },
+                    )),
+            )
     }
     fn render_setup(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
+        let busy = self.view.requests.get("setup").is_some_and(|s| s.loading);
+        let can_check = !busy && self.view.connected;
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .children(
+                ["claude", "codex"]
+                    .into_iter()
+                    .map(|provider| self.render_setup_card(provider, cx)),
+            )
+            .child(chrome::notice_line(
+                SETUP_INFO,
+                chrome::Tone::Info,
+                p,
+                "setup-info",
+            ))
+            .child(
+                div().flex().child(
+                    self.quiet_button(
+                        "setup-refresh",
+                        "Recheck installed agents",
+                        IconName::Redo,
+                        can_check,
+                    )
+                    .when(can_check, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            let provider = this.provider.into();
+                            this.request(
+                                Request::Setup {
+                                    provider,
+                                    check: false,
+                                },
+                                cx,
+                            )
+                        }))
+                    }),
+                ),
+            )
+    }
+
+    /// One provider: whether it is installed, and its connection check.
+    fn render_setup_card(&self, provider: &'static str, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
         let state = self.view.requests.get("setup");
         let busy = state.is_some_and(|s| s.loading);
+        let can_check = !busy && self.view.connected;
         let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
-        let detected = value["installed"].as_array();
-        div().flex().flex_col().gap_4()
-            .children(["claude", "codex"].into_iter().map(|provider| {
-                let found = detected.and_then(|rows| rows.iter().find(|r| r["provider"] == provider)).and_then(|r| r["found"].as_bool());
-                let label = if provider == "claude" { "Claude" } else { "Codex" };
-                let current = state.is_some_and(|s| matches!(&s.request, Request::Setup { provider: checked, .. } if checked == provider));
-                let status = if current && !busy { value["readiness"]["state"].as_str().unwrap_or("unchecked") } else { "unchecked" };
-                let color = match status {
-                    "responding" => p.success,
-                    "unchecked" | "unsupported" => p.muted,
-                    _ => p.warning,
-                };
-                let description = if busy && current { "Checking this agent…" } else { match status {
-                    "responding" => "Ready · the agent responded",
-                    "unauthenticated" => "Sign-in required",
-                    "limited" => "Account limit reached",
-                    "timeout" => "The connection check timed out",
-                    "network-error" => "Network unavailable",
-                    "unchecked" => "Connection not verified",
-                    "unsupported" => "Connection check unavailable on this host",
-                    _ => "Connection check failed",
-                }};
-                chrome::card(p).p_4().flex().flex_col().gap_3()
-                    .child(div().flex().items_center().gap_3()
-                        .child(chrome::provider_mark(provider, 40., p))
-                        .child(div().flex_1().min_w_0().flex().flex_col().gap_1()
-                            .child(div().text_size(px(chrome::scale::HEADING)).font_weight(FontWeight::SEMIBOLD).child(label))
-                            .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(if provider == "claude" { "Claude Code" } else { "Codex CLI" })))
-                        .child(div().flex().items_center().gap_2().text_size(px(chrome::scale::CAPTION)).text_color(rgb(if found == Some(true) { p.success } else { p.muted }))
-                            .child(status_dot(if found == Some(true) { p.success } else { p.muted }))
-                            .child(match found { Some(true) => "Installed", Some(false) => "Not found", None => "Not checked" })))
-                    .child(div().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(if provider == "claude" { "Install Claude Code, then run claude in a terminal to sign in." } else { "Install Codex CLI, then run codex login in a terminal to sign in." }))
-                    .child(div().pt_3().border_t_1().border_color(rgb(p.border)).flex().flex_wrap().items_center().justify_between().gap_3()
-                        .child(div().flex().items_center().gap_2().text_size(px(chrome::scale::META)).text_color(rgb(color))
-                            .child(if busy && current { brand_spinner(12., p, SharedString::from(format!("setup-{provider}-activity"))) } else { status_dot(color) })
-                            .child(description))
-                        .child(self.button(if provider == "claude" { "setup-claude" } else { "setup-codex" }, if busy && current { "Checking…" } else { "Check connection" }, !busy && self.view.connected)
-                            .when(!busy && self.view.connected, |d| d.on_click(cx.listener(move |this, _, _, cx| this.request(Request::Setup { provider: provider.into(), check: true }, cx))))))
-                    .when(current && !busy, |d| d
-                        .when_some(state.and_then(|s| s.error.as_ref()), |d, error| d.child(chrome::notice_line(error.clone(), chrome::Tone::Error, p, SharedString::from(format!("setup-{provider}-error")))))
-                        .when_some(value["readinessError"].as_str(), |d, error| d.child(chrome::notice_line(error.to_owned(), chrome::Tone::Warning, p, SharedString::from(format!("setup-{provider}-readiness"))))))
-            }))
-            .child(chrome::notice_line("Checking a connection sends a small test request and may use your provider allowance. Git is required for reviewing changes.", chrome::Tone::Info, p, "setup-info"))
-            .child(div().flex().child(self.quiet_button("setup-refresh", "Recheck installed agents", IconName::Redo, !busy && self.view.connected)
-                .when(!busy && self.view.connected, |d| d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Setup { provider: this.provider.into(), check: false }, cx))))))
+        let claude = provider == "claude";
+        let found = value["installed"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["provider"] == provider))
+            .and_then(|r| r["found"].as_bool());
+        let current = state.is_some_and(|s| {
+            matches!(&s.request, Request::Setup { provider: checked, .. } if checked == provider)
+        });
+        let checking = busy && current;
+        let status = if current && !busy {
+            value["readiness"]["state"].as_str().unwrap_or("unchecked")
+        } else {
+            "unchecked"
+        };
+        let color = match status {
+            "responding" => p.success,
+            "unchecked" | "unsupported" => p.muted,
+            _ => p.warning,
+        };
+        let description = if checking {
+            "Checking this agent…"
+        } else {
+            match status {
+                "responding" => "Ready · the agent responded",
+                "unauthenticated" => "Sign-in required",
+                "limited" => "Account limit reached",
+                "timeout" => "The connection check timed out",
+                "network-error" => "Network unavailable",
+                "unchecked" => "Connection not verified",
+                "unsupported" => "Connection check unavailable on this host",
+                _ => "Connection check failed",
+            }
+        };
+        let installed = if found == Some(true) {
+            p.success
+        } else {
+            p.muted
+        };
+        let identity = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(chrome::provider_mark(provider, 40., p))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(chrome::scale::HEADING))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(if claude { "Claude" } else { "Codex" }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(if claude { "Claude Code" } else { "Codex CLI" }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(installed))
+                    .child(status_dot(installed))
+                    .child(match found {
+                        Some(true) => "Installed",
+                        Some(false) => "Not found",
+                        None => "Not checked",
+                    }),
+            );
+        let check = div()
+            .pt_3()
+            .border_t_1()
+            .border_color(rgb(p.border))
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(chrome::scale::META))
+                    .text_color(rgb(color))
+                    .child(if checking {
+                        let id = SharedString::from(format!("setup-{provider}-activity"));
+                        brand_spinner(12., p, id)
+                    } else {
+                        status_dot(color)
+                    })
+                    .child(description),
+            )
+            .child(
+                self.button(
+                    if claude {
+                        "setup-claude"
+                    } else {
+                        "setup-codex"
+                    },
+                    if checking {
+                        "Checking…"
+                    } else {
+                        "Check connection"
+                    },
+                    can_check,
+                )
+                .when(can_check, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        let provider = provider.into();
+                        this.request(
+                            Request::Setup {
+                                provider,
+                                check: true,
+                            },
+                            cx,
+                        )
+                    }))
+                }),
+            );
+        chrome::card(p)
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(identity)
+            .child(
+                div()
+                    .text_size(px(chrome::scale::META))
+                    .text_color(rgb(p.muted))
+                    .child(if claude { CLAUDE_SETUP } else { CODEX_SETUP }),
+            )
+            .child(check)
+            .when(current && !busy, |d| {
+                d.when_some(state.and_then(|s| s.error.as_ref()), |d, error| {
+                    d.child(chrome::notice_line(
+                        error.clone(),
+                        chrome::Tone::Error,
+                        p,
+                        SharedString::from(format!("setup-{provider}-error")),
+                    ))
+                })
+                .when_some(value["readinessError"].as_str(), |d, error| {
+                    d.child(chrome::notice_line(
+                        error.to_owned(),
+                        chrome::Tone::Warning,
+                        p,
+                        SharedString::from(format!("setup-{provider}-readiness")),
+                    ))
+                })
+            })
     }
+
     fn render_model(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         if !self.supported_session() {
@@ -1647,712 +1467,6 @@ impl Workspace {
             Action::SetEffort(effort) if receipt.error.is_none() => base.2 = effort.clone(),
             _ => {}
         }
-    }
-    pub(super) fn question_answers(&self, cx: &App) -> Vec<String> {
-        let qs = self
-            .selected_session()
-            .and_then(|s| s.questions.as_ref())
-            .map(questions)
-            .unwrap_or_default();
-        self.extras
-            .answers
-            .iter()
-            .enumerate()
-            .map(|(ix, input)| {
-                let custom = input.read(cx).value().to_string();
-                if !custom.trim().is_empty() {
-                    return custom;
-                }
-                self.extras
-                    .selected_options
-                    .get(ix)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|option_ix| {
-                        let option = qs.get(ix)?.get("options")?.get(*option_ix)?;
-                        option["label"]
-                            .as_str()
-                            .or(option.as_str())
-                            .map(str::to_owned)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .collect()
-    }
-    /// Every question has a non-empty answer (a choice or typed text).
-    pub(super) fn answers_ready(&self, cx: &App) -> bool {
-        !self.extras.answers.is_empty()
-            && self
-                .question_answers(cx)
-                .iter()
-                .all(|s| !s.trim().is_empty())
-    }
-
-    /// The only way answers leave the picker: the Send button, Ctrl/Cmd+Enter
-    /// inside the picker, or Enter in a typed answer. All of them need every
-    /// question answered and nothing already sent for this question set.
-    pub(super) fn submit_answers(&mut self, cx: &mut Context<Self>) {
-        // The same gate as the rendered controls: keyboard sends must not
-        // reach a session the user is navigating away from.
-        if self.extras.answers_sent
-            || self.extras.answer_submission.is_some()
-            || self.view.child.is_some()
-            || self.view.busy
-            || !self.view.connected
-            || self.view.loading
-            || self
-                .navigation_selected
-                .as_ref()
-                .is_some_and(|id| Some(id) != self.view.selected.as_ref())
-            || !self
-                .selected_session()
-                .is_some_and(|s| s.questions.is_some() && !s.stopped())
-            || !self.answers_ready(cx)
-        {
-            return;
-        }
-        let answers = self.question_answers(cx);
-        let Some(session) = self.view.selected.clone() else {
-            return;
-        };
-        match self.controller.command(Command::Act {
-            session,
-            action: Action::Answers(answers.clone()),
-        }) {
-            Ok(()) => {
-                self.extras.answer_submission =
-                    Some((self.extras.question_signature.clone(), answers));
-                self.extras.answer_error = None;
-                self.local_notice.clear();
-            }
-            Err(error) => self.local_notice = error.to_string(),
-        }
-        cx.notify();
-    }
-
-    /// Toggle (multiple choice) or choose (single choice) one option. A choice
-    /// replaces typed text for that question, as typing replaces a choice.
-    fn pick_option(
-        &mut self,
-        ix: usize,
-        option_ix: usize,
-        multiple: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.extras.answers_sent
-            || self.extras.answer_submission.is_some()
-            || self.view.busy
-            || !self.view.connected
-        {
-            return;
-        }
-        let Some(input) = self.extras.answers.get(ix).cloned() else {
-            return;
-        };
-        if let Some(selected) = self.extras.selected_options.get_mut(ix) {
-            let typed = !input.read(cx).value().is_empty();
-            if multiple && !typed && selected.contains(&option_ix) {
-                selected.remove(&option_ix);
-            } else {
-                if !multiple || typed {
-                    selected.clear();
-                }
-                selected.insert(option_ix);
-            }
-        }
-        input.update(cx, |input, cx| input.set_value("", window, cx));
-        cx.notify();
-    }
-
-    /// Enter in a typed answer: send when every question is answered,
-    /// otherwise move to the next unanswered question's answer field. The
-    /// key is consumed either way, so it never becomes text in a field;
-    /// during an IME composition it is left to the input method.
-    pub(super) fn answer_enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ix) = self
-            .extras
-            .answers
-            .iter()
-            .position(|input| input.read(cx).focus_handle(cx).is_focused(window))
-        else {
-            cx.propagate();
-            return;
-        };
-        let composing = self.extras.answers[ix]
-            .update(cx, |input, cx| {
-                gpui::EntityInputHandler::marked_text_range(input, window, cx)
-            })
-            .is_some_and(|range| !range.is_empty());
-        if composing {
-            cx.propagate();
-            return;
-        }
-        if self.answers_ready(cx) {
-            self.submit_answers(cx);
-            return;
-        }
-        let answers = self.question_answers(cx);
-        let count = answers.len();
-        if let Some(next) = (1..count)
-            .map(|step| (ix + step) % count)
-            .find(|i| answers[*i].trim().is_empty())
-        {
-            let handle = self.extras.answers[next].read(cx).focus_handle(cx);
-            window.focus(&handle);
-        }
-    }
-
-    /// Docked AskUserQuestion picker: one themed card above the composer.
-    /// Questions scroll inside the card; the header and the Send row stay
-    /// visible so a long set can never push the submit control out of view.
-    pub(super) fn render_questions(
-        &self,
-        session: &Session,
-        enabled: bool,
-        compact: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = self.appearance.palette();
-        let list = session
-            .questions
-            .as_ref()
-            .map(questions)
-            .unwrap_or_default();
-        let answers = self.question_answers(cx);
-        let total = answers.len();
-        let answered = answers.iter().filter(|a| !a.trim().is_empty()).count();
-        let ready = self.answers_ready(cx);
-        let sent = self.extras.answers_sent;
-        let interactive = enabled && !sent && self.extras.answer_submission.is_none();
-        let failed = self.extras.answer_error.clone();
-        let pad = px(if compact { 8. } else { 12. });
-        let body_max = window.viewport_size().height * if compact { 0.4 } else { 0.46 };
-        let header = div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .text_size(px(12.))
-            .child(status_dot(p.warning))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(rgb(p.warning))
-                    .child(if total > 1 && !compact {
-                        format!("Needs your input · {total} questions")
-                    } else {
-                        "Needs your input".into()
-                    }),
-            )
-            .when(total > 1, |d| {
-                d.child(
-                    div()
-                        .debug_selector(|| "question-progress".into())
-                        .flex_shrink_0()
-                        .text_size(px(chrome::scale::CAPTION))
-                        .text_color(rgb(if answered == total {
-                            p.success
-                        } else {
-                            p.muted
-                        }))
-                        .child(format!("{answered} of {total} answered")),
-                )
-            });
-        let card = div()
-            .id("question-choices")
-            .debug_selector(|| "question-card".into())
-            .key_context("QuestionPicker")
-            .on_action(cx.listener(|this, _: &SubmitAnswers, _, cx| this.submit_answers(cx)))
-            .on_action(
-                cx.listener(|this, _: &AnswerEnter, window, cx| this.answer_enter(window, cx)),
-            )
-            .occlude()
-            .w_full()
-            .min_h_0()
-            .flex_shrink()
-            .p(pad)
-            .rounded(px(p.panel_radius))
-            .shadow(chrome::floating_shadow(p))
-            .bg(rgb(p.surface))
-            .border_1()
-            .border_color(rgb(p.border))
-            .flex()
-            .flex_col()
-            .gap(px(if compact { 6. } else { 10. }));
-        if list.is_empty() {
-            // A question the hub could not structure: answer from the composer.
-            return card
-                .child(header)
-                .child(
-                    div()
-                        .text_size(px(chrome::scale::META))
-                        .text_color(rgb(p.muted))
-                        .child(
-                            "The agent asked for input. Type your answer in the composer below.",
-                        ),
-                )
-                .child(
-                    div().flex().justify_end().child(
-                        self.primary_button("answer-text", "Answer with composer", enabled)
-                            .when(enabled, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| {
-                                    this.act(
-                                        Action::Answer(this.composer.read(cx).value().to_string()),
-                                        cx,
-                                    )
-                                }))
-                            }),
-                    ),
-                );
-        }
-        let failed = failed.filter(|_| !sent);
-        let status: Option<AnyElement> = if let Some(error) = failed {
-            Some(
-                chrome::notice_line(error, chrome::Tone::Error, p, "question-error")
-                    .into_any_element(),
-            )
-        } else if sent {
-            Some(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().flex_1().min_w_0().child(chrome::notice_line(
-                        "Answers sent. Waiting for the agent…",
-                        chrome::Tone::Loading,
-                        p,
-                        "question-sent",
-                    )))
-                    .child(
-                        self.button("edit-answers", "Edit answers", enabled)
-                            .debug_selector(|| "edit-answers".into())
-                            .when(enabled, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| {
-                                    this.extras.answers_sent = false;
-                                    cx.notify();
-                                }))
-                            }),
-                    )
-                    .into_any_element(),
-            )
-        } else if self.view.busy || self.extras.answer_submission.is_some() {
-            Some(
-                chrome::notice_line("Sending…", chrome::Tone::Loading, p, "question-sending")
-                    .into_any_element(),
-            )
-        } else if compact {
-            // Short windows: the header's progress and Send carry this.
-            None
-        } else if ready {
-            Some(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.muted))
-                    .child(keycap(
-                        if cfg!(target_os = "macos") {
-                            "⌘ Enter"
-                        } else {
-                            "Ctrl Enter"
-                        },
-                        p,
-                    ))
-                    .child("to send")
-                    .into_any_element(),
-            )
-        } else {
-            Some(
-                div()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.muted))
-                    .child(match total - answered {
-                        _ if total == 1
-                            && list[0]["options"].as_array().is_none_or(Vec::is_empty) =>
-                        {
-                            "Type an answer to send".to_owned()
-                        }
-                        _ if total == 1 => "Choose an option or type an answer".to_owned(),
-                        1 => "Answer 1 more question to send".to_owned(),
-                        left => format!("Answer {left} more questions to send"),
-                    })
-                    .into_any_element(),
-            )
-        };
-        let submit = self
-            .primary_button(
-                "submit-answers",
-                if total > 1 {
-                    "Send answers"
-                } else {
-                    "Send answer"
-                },
-                interactive && ready && !self.view.busy,
-            )
-            .debug_selector(|| "submit-answers".into())
-            .flex_shrink_0()
-            .when(interactive && ready, |d| {
-                d.on_click(cx.listener(|this, _, _, cx| this.submit_answers(cx)))
-            });
-        // Rows are direct children of the list so the focused one (Tab,
-        // arrows, Enter to the next answer) can be scrolled into view.
-        let mut children = Vec::new();
-        let mut focused = None;
-        for (ix, q) in list.iter().enumerate() {
-            self.push_question(
-                ix,
-                q,
-                total,
-                interactive,
-                compact,
-                window,
-                cx,
-                &mut children,
-                &mut focused,
-            );
-        }
-        if focused != self.extras.question_focused.get() {
-            self.extras.question_focused.set(focused);
-            if let Some(child) = focused {
-                self.extras.question_scroll.scroll_to_item(child);
-            }
-        }
-        let body = div()
-            .id("question-list")
-            .debug_selector(|| "question-list".into())
-            .relative()
-            .min_h_0()
-            .flex_shrink()
-            .max_h(body_max)
-            .pr_2()
-            .overflow_y_scroll()
-            .track_scroll(&self.extras.question_scroll)
-            .flex()
-            .flex_col()
-            .gap(px(if compact { 3. } else { 5. }))
-            .children(children)
-            // After the rows: the scrollbar layer is a child too, and
-            // scroll_to_item indexes children.
-            .vertical_scrollbar(&self.extras.question_scroll);
-        if compact {
-            // One header row holds progress and Send; any status sits under it.
-            return card
-                .child(header.child(submit))
-                .children(status.map(|status| div().flex_shrink_0().child(status)))
-                .child(body);
-        }
-        card.child(header).child(body).child(
-            div()
-                .debug_selector(|| "question-footer".into())
-                .flex_shrink_0()
-                .pt(px(8.))
-                .border_t_1()
-                .border_color(rgb(p.border))
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(div().flex_1().min_w_0().children(status))
-                .child(submit),
-        )
-    }
-
-    /// One question as list rows: overline (position, header, how to answer,
-    /// answered mark), the question, its options, then the typed answer.
-    #[allow(clippy::too_many_arguments)]
-    fn push_question(
-        &self,
-        ix: usize,
-        q: &Value,
-        total: usize,
-        interactive: bool,
-        compact: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-        children: &mut Vec<AnyElement>,
-        focused: &mut Option<usize>,
-    ) {
-        let p = self.appearance.palette();
-        let multiple = q["multiSelect"].as_bool().unwrap_or(false);
-        let options = q["options"].as_array().cloned().unwrap_or_default();
-        let header = q["header"]
-            .as_str()
-            .map(str::trim)
-            .filter(|h| !h.is_empty());
-        let text = q["question"]
-            .as_str()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .or(header)
-            .unwrap_or("Your answer is needed")
-            .to_owned();
-        let typed = self
-            .extras
-            .answers
-            .get(ix)
-            .is_some_and(|input| !input.read(cx).value().trim().is_empty());
-        let answered = typed
-            || self
-                .extras
-                .selected_options
-                .get(ix)
-                .is_some_and(|s| !s.is_empty());
-        // Free text needs no instruction: its field's placeholder says it.
-        let how = match (options.is_empty(), multiple) {
-            (true, _) => "",
-            (false, true) => "Choose any",
-            (false, false) => "Choose one",
-        };
-        let mut overline = String::new();
-        if total > 1 {
-            overline.push_str(&format!("{} of {total}", ix + 1));
-        }
-        if let Some(header) = header {
-            if !overline.is_empty() {
-                overline.push_str(" · ");
-            }
-            overline.push_str(header);
-        }
-        children.push(
-            div()
-                .debug_selector(move || format!("question-{ix}"))
-                .flex()
-                .items_center()
-                .gap_2()
-                .when(ix > 0, |d| {
-                    d.mt(px(if compact { 5. } else { 7. }))
-                        .pt(px(if compact { 8. } else { 12. }))
-                        .border_t_1()
-                        .border_color(rgb(p.border))
-                })
-                .text_size(px(chrome::scale::OVERLINE))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(p.muted))
-                .when(!overline.is_empty(), |d| {
-                    d.child(div().min_w_0().truncate().child(overline.to_uppercase()))
-                })
-                .when(!how.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex_shrink_0()
-                            .font_weight(FontWeight::NORMAL)
-                            .text_size(px(chrome::scale::CAPTION))
-                            .child(how),
-                    )
-                })
-                .child(div().flex_1())
-                .when(answered, |d| {
-                    d.child(
-                        div()
-                            .debug_selector(move || format!("question-{ix}-answered"))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .text_size(px(chrome::scale::CAPTION))
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(rgb(p.success))
-                            .child(Icon::new(IconName::CircleCheck).size(px(12.)))
-                            .child("Answered"),
-                    )
-                })
-                .into_any_element(),
-        );
-        children.push(
-            div()
-                .debug_selector(move || format!("question-{ix}-text"))
-                .mb(px(if compact { 1. } else { 3. }))
-                .text_size(px(14.))
-                .line_height(gpui::relative(1.4))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(p.text))
-                .child(text)
-                .into_any_element(),
-        );
-        for (option_ix, option) in options.iter().enumerate() {
-            let chosen = !typed
-                && self
-                    .extras
-                    .selected_options
-                    .get(ix)
-                    .is_some_and(|selected| selected.contains(&option_ix));
-            let handle = self
-                .extras
-                .option_focus
-                .get(ix)
-                .and_then(|row| row.get(option_ix));
-            if handle.is_some_and(|h| h.is_focused(window)) {
-                *focused = Some(children.len());
-            }
-            children.push(
-                self.render_option(
-                    ix,
-                    option_ix,
-                    option,
-                    options.len(),
-                    multiple,
-                    chosen,
-                    interactive,
-                    compact,
-                    handle,
-                    cx,
-                )
-                .into_any_element(),
-            );
-        }
-        if let Some(input) = self.extras.answers.get(ix) {
-            if input.read(cx).focus_handle(cx).is_focused(window) {
-                *focused = Some(children.len());
-            }
-            children.push(
-                div()
-                    .debug_selector(move || format!("question-{ix}-answer"))
-                    .mt(px(if compact { 1. } else { 3. }))
-                    .text_size(px(chrome::scale::BODY))
-                    .child(Input::new(input).disabled(!interactive))
-                    .into_any_element(),
-            );
-        }
-    }
-
-    /// An option row: a number (single choice) or checkbox (multiple choice)
-    /// badge, the literal label and its description. Tab/arrows move between
-    /// rows, Enter/Space choose, and 1–9 choose within the same question.
-    #[allow(clippy::too_many_arguments)]
-    fn render_option(
-        &self,
-        ix: usize,
-        option_ix: usize,
-        option: &Value,
-        count: usize,
-        multiple: bool,
-        chosen: bool,
-        interactive: bool,
-        compact: bool,
-        focus: Option<&FocusHandle>,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let p = self.appearance.palette();
-        let label = option["label"]
-            .as_str()
-            .or(option.as_str())
-            .unwrap_or("")
-            .to_owned();
-        let description = option["description"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_owned();
-        let badge_size = if compact { 16. } else { 18. };
-        let badge = div()
-            .debug_selector(move || format!("question-{ix}-option-{option_ix}-badge"))
-            .flex_shrink_0()
-            .mt(px(1.))
-            .size(px(badge_size))
-            .rounded(px(if multiple { 4. } else { badge_size / 2. }))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(10.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .map(|d| {
-                if chosen {
-                    d.bg(rgb(if interactive { p.primary } else { p.disabled }))
-                        .text_color(rgb(p.on_primary))
-                } else {
-                    d.border_1()
-                        .border_color(gpui::Hsla::from(rgb(p.muted)).opacity(0.5))
-                        .text_color(rgb(p.muted))
-                }
-            })
-            .map(|d| match (multiple, chosen) {
-                (true, true) => d.child(Icon::new(IconName::Check).size(px(11.))),
-                (true, false) => d,
-                (false, _) => d.child(format!("{}", option_ix + 1)),
-            });
-        chrome::interactive_control(
-            div().id(("question-option", ix * 1000 + option_ix)),
-            p,
-            interactive,
-        )
-        .when_some(focus.filter(|_| interactive), |d, focus| {
-            d.track_focus(focus)
-        })
-        .debug_selector(move || format!("question-{ix}-option-{option_ix}"))
-        .w_full()
-        .flex()
-        .items_start()
-        .gap_2()
-        .px(px(if compact { 6. } else { 8. }))
-        .py(px(if compact { 3. } else { 5. }))
-        .rounded(px(p.control_radius))
-        .bg(if chosen {
-            gpui::Hsla::from(rgb(p.accent)).opacity(0.16)
-        } else {
-            rgb(p.base).into()
-        })
-        .when(interactive && !chosen, |d| {
-            d.hover(|s| s.bg(rgb(p.selected)))
-        })
-        .child(badge)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(1.))
-                .child(
-                    div()
-                        .text_size(px(chrome::scale::BODY))
-                        .line_height(gpui::relative(1.4))
-                        .font_weight(if chosen {
-                            FontWeight::SEMIBOLD
-                        } else {
-                            FontWeight::MEDIUM
-                        })
-                        .text_color(rgb(if interactive { p.text } else { p.muted }))
-                        .child(label),
-                )
-                .when(!description.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .text_size(px(chrome::scale::META))
-                            .line_height(gpui::relative(1.4))
-                            .text_color(rgb(p.muted))
-                            .child(description),
-                    )
-                }),
-        )
-        .when(interactive, |d| {
-            d.on_click(cx.listener(move |this, _, window, cx| {
-                this.pick_option(ix, option_ix, multiple, window, cx)
-            }))
-            .on_key_down(cx.listener(
-                move |this, event: &gpui::KeyDownEvent, window, cx| {
-                    let stroke = &event.keystroke;
-                    if stroke.modifiers.modified() {
-                        return;
-                    }
-                    match stroke.key.as_str() {
-                        "down" => window.focus_next(),
-                        "up" => window.focus_prev(),
-                        key => match key.parse::<usize>() {
-                            Ok(n) if (1..=count.min(9)).contains(&n) => {
-                                this.pick_option(ix, n - 1, multiple, window, cx)
-                            }
-                            _ => return,
-                        },
-                    }
-                    cx.stop_propagation();
-                },
-            ))
-        })
     }
 }
 

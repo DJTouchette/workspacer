@@ -526,18 +526,7 @@ impl Workspace {
         let p = self.appearance.palette();
         let rows = self.project_rows(cx);
         let count = rows.len();
-        let saving = self
-            .view
-            .requests
-            .get("project-save")
-            .is_some_and(|s| s.loading);
-        let can_write = self.view.connected && !self.demo && !saving;
-        let caption = chrome::custom_caption();
-        let notice_tone = if self.projects.fallback.is_some() {
-            chrome::Tone::Warning
-        } else {
-            chrome::notice_tone(&self.projects.notice)
-        };
+        let can_write = self.can_write_projects();
         let header = self.page_header(
             None,
             Some("WORKSPACE"),
@@ -549,82 +538,356 @@ impl Workspace {
             None,
             short,
         );
-        div().relative().flex_1().min_w_0().h_full().flex().flex_col().bg(rgb(p.chat))
+        let top = if chrome::custom_caption() {
+            chrome::PAGE_CAPTION_INSET
+        } else if short {
+            12.
+        } else {
+            24.
+        };
+        let empty = if self
+            .view
+            .requests
+            .get("projects")
+            .is_some_and(|s| s.loading)
+            && self.projects.registry.is_none()
+        {
+            "Loading projects…"
+        } else {
+            "No matching projects. Pin a directory above or clear the sidebar filter."
+        };
+        let hint = if self.settings.vim_navigation {
+            "j / k navigate · Enter open · n new agent · / filter · i add · Ctrl Enter pin"
+        } else {
+            "Click a project to open it · New agent starts another · Ctrl Enter to pin a path"
+        };
+        let list = uniform_list(
+            "project-list",
+            count,
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|ix| this.render_project_row(ix, &rows[ix], cx))
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(self.projects_scroll.clone())
+        .flex_1()
+        .min_h_0();
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(p.chat))
             .children(chrome::page_drag_strip())
-            .child(div().w_full().max_w(px(CHAT_WIDTH + 48.)).mx_auto().flex_1().min_h_0().flex().flex_col()
-            .child(div().px(px(if short { 16. } else { 24. })).pt(px(if caption { chrome::PAGE_CAPTION_INSET } else if short { 12. } else { 24. })).pb_3().flex().flex_col().gap(px(if short { 8. } else { 16. }))
-                .child(header)
-                .child(chrome::card(p).p(px(if short { 10. } else { 16. })).flex().flex_col().gap_3()
-                    .child(div().flex().flex_wrap().items_center().gap_2()
-                        .child(div().flex_1().min_w(px(220.)).child(Input::new(&self.project_path)))
-                        .when(self.extras.local_paths, |d| d.child(self.button("browse-bookmark", "Browse…", true).on_click(cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)))))
-                        .child(self.primary_button("save-project", "Pin project", can_write).flex_shrink_0()
-                            .when(can_write, |d| d.on_click(cx.listener(|this, _, window, cx| this.add_project(window, cx))))))
-                    .when(!short, |d| d.child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child("Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent."))))
-                .when(!self.settings_error.is_empty(), |d| d.child(chrome::notice_line(self.settings_error.clone(), chrome::Tone::Error, p, "projects-settings-error")))
-                .when(!self.projects.notice.is_empty(), |d| d.child(div().flex().flex_wrap().items_center().gap_2()
-                    .child(div().flex_1().min_w(px(200.)).child(chrome::notice_line(self.projects.notice.clone(), notice_tone, p, "projects-notice")))
-                    .when(self.projects.fallback.is_some(), |d| d.child(self.quiet_button("keep-on-device-projects", "Keep on this device", IconName::Check, true).debug_selector(|| "keep-on-device-projects".into())
-                        .on_click(cx.listener(|this, _, _, cx| this.keep_project_on_device(cx)))))))
-                .children(self.render_identity_editor(cx))
-                .when_some(self.projects.registry_error.clone(), |d, error| d.child(chrome::notice_line(
-                    format!("Couldn’t read the hub’s projects ({error}). Showing this device’s projects and active folders."), chrome::Tone::Warning, p, "projects-registry-error"))))
-            .when(count == 0, |d| d.child(div().px_6().py_6().text_center().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(
-                if self.view.requests.get("projects").is_some_and(|s| s.loading) && self.projects.registry.is_none() { "Loading projects…" }
-                else { "No matching projects. Pin a directory above or clear the sidebar filter." })))
-            .child(uniform_list("project-list", count, cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                range.map(|ix| {
-                    let project = rows[ix].clone();
-                    let path = project.path.clone();
-                    let pin_path = path.clone();
-                    let forget = project.clone();
-                    let pinned = project.favourite;
-                    let new_path = path.clone();
-                    let edit_path = path.clone();
-                    let can_spawn = this.view.connected && !this.demo;
-                    let sessions = match (project.live_sessions, project.sessions) {
-                        (0, 0) => "No sessions yet · open to start one".to_owned(),
-                        (0, 1) => "1 ended · open to view it".to_owned(),
-                        (0, n) => format!("{n} ended · open to browse them"),
-                        (live, n) => format!("{live} running of {n} · open to browse them"),
-                    };
-                    div().h(px(84.)).px_6().pb_2().child(chrome::interactive_control(div().id(("project", ix)), p, true).h_full().p_3().rounded(px(p.panel_radius))
-                        .bg(rgb(if ix == this.project_cursor { p.selected } else { p.surface }))
-                        .cursor_pointer().hover(|style| style.bg(rgb(p.selected)))
-                        .on_click(cx.listener(move |this, _, window, cx| this.open_project_path(path.clone(), window, cx)))
-                        .flex().items_center().gap_3()
-                        .child(this.project_mark(Some(&project), &project.path, 36.))
-                        .child(div().flex_1().min_w_0().flex().flex_col().gap(px(2.))
-                            .child(div().flex().items_center().gap_2().min_w_0()
-                                .child(div().min_w_0().truncate().font_weight(FontWeight::SEMIBOLD).child(project.title().to_owned()))
-                                .when(project.source == wks_native::projects::Source::Device, |d| d.child(div().flex_shrink_0().text_size(px(10.)).text_color(rgb(p.muted)).child("this device"))))
-                            .child(div().truncate().font_family(mono_font()).text_size(px(11.)).text_color(rgb(p.muted)).child(project.path.clone()))
-                            .child(div().text_size(px(11.)).text_color(rgb(if project.live_sessions > 0 { p.busy } else { p.accent })).child(sessions)))
-                        .child(this.quiet_button(SharedString::from(format!("new-agent-in-project-{ix}")), "New agent", IconName::Plus, can_spawn)
-                            .debug_selector(move || format!("new-agent-in-project-{ix}"))
-                            .when(can_spawn, |d| d.on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.new_agent_in_project(new_path.clone(), window, cx);
-                            }))))
-                        .child(this.icon_button(SharedString::from(format!("edit-project-{ix}")), "Edit name and icon", IconName::Palette, can_write)
-                            .debug_selector(move || format!("edit-project-{ix}"))
-                            .when(can_write, |d| d.on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.open_identity_editor(edit_path.clone(), window, cx);
-                            }))))
-                        .when(project.removable(), |d| d.child(this.danger_button(SharedString::from(format!("forget-project-{ix}")), "Forget", project.source == wks_native::projects::Source::Device || can_write)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.forget_project(&forget, cx);
-                            }))))
-                        .child(this.icon_button(SharedString::from(format!("pin-project-{ix}")), if pinned { "Unpin project" } else { "Pin project" }, IconName::Star, can_write)
-                            .when(pinned, |d| d.text_color(rgb(p.accent)))
-                            .when(can_write, |d| d.on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.set_project_pin(pin_path.clone(), !pinned, cx);
-                            })))))
-                }).collect::<Vec<_>>()
-            })).track_scroll(self.projects_scroll.clone()).flex_1().min_h_0())
-            .child(div().px_6().py_3().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(if self.settings.vim_navigation { "j / k navigate · Enter open · n new agent · / filter · i add · Ctrl Enter pin" } else { "Click a project to open it · New agent starts another · Ctrl Enter to pin a path" })))
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(CHAT_WIDTH + 48.))
+                    .mx_auto()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .px(px(if short { 16. } else { 24. }))
+                            .pt(px(top))
+                            .pb_3()
+                            .flex()
+                            .flex_col()
+                            .gap(px(if short { 8. } else { 16. }))
+                            .child(header)
+                            .child(self.render_project_form(short, can_write, cx))
+                            .children(self.render_project_notices(cx))
+                            .children(self.render_identity_editor(cx))
+                            .when_some(self.projects.registry_error.clone(), |d, error| {
+                                d.child(chrome::notice_line(
+                                    projects::registry_error_notice(&error),
+                                    chrome::Tone::Warning,
+                                    p,
+                                    "projects-registry-error",
+                                ))
+                            }),
+                    )
+                    .when(count == 0, |d| {
+                        d.child(
+                            div()
+                                .px_6()
+                                .py_6()
+                                .text_center()
+                                .text_size(px(chrome::scale::META))
+                                .text_color(rgb(p.muted))
+                                .child(empty),
+                        )
+                    })
+                    .child(list)
+                    .child(
+                        div()
+                            .px_6()
+                            .py_3()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(hint),
+                    ),
+            )
+    }
+
+    /// The hub registry takes writes now: connected, not a demo, and no save
+    /// already in flight.
+    fn can_write_projects(&self) -> bool {
+        let saving = self
+            .view
+            .requests
+            .get("project-save")
+            .is_some_and(|s| s.loading);
+        self.view.connected && !self.demo && !saving
+    }
+
+    /// The path field that pins a project on the hub.
+    fn render_project_form(&self, short: bool, can_write: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        chrome::card(p)
+            .p(px(if short { 10. } else { 16. }))
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(220.))
+                            .child(Input::new(&self.project_path)),
+                    )
+                    .when(self.extras.local_paths, |d| {
+                        d.child(self.button("browse-bookmark", "Browse…", true).on_click(
+                            cx.listener(|this, _, window, cx| this.pick_folder(true, window, cx)),
+                        ))
+                    })
+                    .child(
+                        self.primary_button("save-project", "Pin project", can_write)
+                            .flex_shrink_0()
+                            .when(can_write, |d| {
+                                d.on_click(
+                                    cx.listener(|this, _, window, cx| this.add_project(window, cx)),
+                                )
+                            }),
+                    ),
+            )
+            .when(!short, |d| {
+                d.child(
+                    div()
+                        .text_size(px(chrome::scale::CAPTION))
+                        .text_color(rgb(p.muted))
+                        .child(
+                            "Paths belong to the connected hub. Pinning shares the project with Workspacer on that hub; it does not create a folder or launch an agent.",
+                        ),
+                )
+            })
+    }
+
+    /// Settings and project notices, with the offer to keep projects on
+    /// this device when the hub could not take them.
+    fn render_project_notices(&self, cx: &mut Context<Self>) -> Vec<Div> {
+        let p = self.appearance.palette();
+        let mut notices = Vec::new();
+        if !self.settings_error.is_empty() {
+            notices.push(chrome::notice_line(
+                self.settings_error.clone(),
+                chrome::Tone::Error,
+                p,
+                "projects-settings-error",
+            ));
+        }
+        if !self.projects.notice.is_empty() {
+            let tone = if self.projects.fallback.is_some() {
+                chrome::Tone::Warning
+            } else {
+                chrome::notice_tone(&self.projects.notice)
+            };
+            notices.push(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().min_w(px(200.)).child(chrome::notice_line(
+                        self.projects.notice.clone(),
+                        tone,
+                        p,
+                        "projects-notice",
+                    )))
+                    .when(self.projects.fallback.is_some(), |d| {
+                        d.child(
+                            self.quiet_button(
+                                "keep-on-device-projects",
+                                "Keep on this device",
+                                IconName::Check,
+                                true,
+                            )
+                            .debug_selector(|| "keep-on-device-projects".into())
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.keep_project_on_device(cx)),
+                            ),
+                        )
+                    }),
+            );
+        }
+        notices
+    }
+
+    fn render_project_row(&self, ix: usize, project: &KnownProject, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let can_write = self.can_write_projects();
+        let can_spawn = self.view.connected && !self.demo;
+        let pinned = project.favourite;
+        let on_device = project.source == wks_native::projects::Source::Device;
+        let sessions = match (project.live_sessions, project.sessions) {
+            (0, 0) => "No sessions yet · open to start one".to_owned(),
+            (0, 1) => "1 ended · open to view it".to_owned(),
+            (0, n) => format!("{n} ended · open to browse them"),
+            (live, n) => format!("{live} running of {n} · open to browse them"),
+        };
+        let path = project.path.clone();
+        let new_path = path.clone();
+        let edit_path = path.clone();
+        let pin_path = path.clone();
+        let forget = project.clone();
+        let details = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(project.title().to_owned()),
+                    )
+                    .when(on_device, |d| {
+                        d.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(10.))
+                                .text_color(rgb(p.muted))
+                                .child("this device"),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .truncate()
+                    .font_family(mono_font())
+                    .text_size(px(11.))
+                    .text_color(rgb(p.muted))
+                    .child(project.path.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(rgb(if project.live_sessions > 0 {
+                        p.busy
+                    } else {
+                        p.accent
+                    }))
+                    .child(sessions),
+            );
+        let row = chrome::interactive_control(div().id(("project", ix)), p, true)
+            .h_full()
+            .p_3()
+            .rounded(px(p.panel_radius))
+            .bg(rgb(if ix == self.project_cursor {
+                p.selected
+            } else {
+                p.surface
+            }))
+            .cursor_pointer()
+            .hover(|style| style.bg(rgb(p.selected)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_project_path(path.clone(), window, cx)
+            }))
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(self.project_mark(Some(project), &project.path, 36.))
+            .child(details)
+            .child(
+                self.quiet_button(
+                    SharedString::from(format!("new-agent-in-project-{ix}")),
+                    "New agent",
+                    IconName::Plus,
+                    can_spawn,
+                )
+                .debug_selector(move || format!("new-agent-in-project-{ix}"))
+                .when(can_spawn, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.new_agent_in_project(new_path.clone(), window, cx);
+                    }))
+                }),
+            )
+            .child(
+                self.icon_button(
+                    SharedString::from(format!("edit-project-{ix}")),
+                    "Edit name and icon",
+                    IconName::Palette,
+                    can_write,
+                )
+                .debug_selector(move || format!("edit-project-{ix}"))
+                .when(can_write, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.open_identity_editor(edit_path.clone(), window, cx);
+                    }))
+                }),
+            )
+            .when(project.removable(), |d| {
+                d.child(
+                    self.danger_button(
+                        SharedString::from(format!("forget-project-{ix}")),
+                        "Forget",
+                        on_device || can_write,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.forget_project(&forget, cx);
+                    })),
+                )
+            })
+            .child(
+                self.icon_button(
+                    SharedString::from(format!("pin-project-{ix}")),
+                    if pinned {
+                        "Unpin project"
+                    } else {
+                        "Pin project"
+                    },
+                    IconName::Star,
+                    can_write,
+                )
+                .when(pinned, |d| d.text_color(rgb(p.accent)))
+                .when(can_write, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        this.set_project_pin(pin_path.clone(), !pinned, cx);
+                    }))
+                }),
+            );
+        div().h(px(84.)).px_6().pb_2().child(row)
     }
 }

@@ -336,6 +336,31 @@ pub(super) fn floating_shadow(p: Palette) -> Vec<gpui::BoxShadow> {
     }]
 }
 
+/// An invisible overlay filling its parent that reports the parent's laid-out
+/// bounds. `measured` runs on the entity once the frame is done (never inside
+/// its own render) and returns whether anything changed worth a re-render.
+pub(super) fn measure<T: 'static>(
+    entity: gpui::WeakEntity<T>,
+    measured: impl FnOnce(&mut T, gpui::Bounds<gpui::Pixels>, &mut Context<T>) -> bool + 'static,
+) -> impl IntoElement {
+    canvas(
+        move |bounds, _, cx| {
+            cx.defer(move |cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    if measured(this, bounds, cx) {
+                        cx.notify();
+                    }
+                });
+            });
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 pub(super) fn project_label(path: &str) -> &str {
     path.rsplit(['/', '\\'])
         .find(|part| !part.is_empty())
@@ -582,25 +607,17 @@ impl Workspace {
         // the actions' current share, so the tray follows the outline in the
         // same frame as it grows or shrinks. (The bar, not the island: the
         // tray's own width must not feed back into it.)
-        let measure = cx.entity().downgrade();
-        let base = canvas(
-            move |bounds, _, cx| {
+        let base = measure(
+            cx.entity().downgrade(),
+            move |this: &mut Self, bounds, _| {
                 let base = bounds.size.width - extra;
-                cx.defer(move |cx| {
-                    let _ = measure.update(cx, |this, cx| {
-                        if (this.title_base_width - base).abs() > gpui::px(0.01) {
-                            this.title_base_width = base;
-                            cx.notify();
-                        }
-                    });
-                });
+                let changed = (this.title_base_width - base).abs() > gpui::px(0.01);
+                if changed {
+                    this.title_base_width = base;
+                }
+                changed
             },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full();
+        );
         let bar = bar
             .child(base)
             .children(gauge.map(|gauge| gauge::hairline(gauge, self.gauge_motion.fill(now), p)));
@@ -654,7 +671,7 @@ impl Workspace {
             let (shown, drift) = row.content(now);
             let height = row.height(now);
             let slot = row.slot;
-            let measure = cx.entity().downgrade();
+            let row_view = cx.entity().downgrade();
             tray_rows.push(
                 div()
                     .flex_shrink_0()
@@ -678,26 +695,10 @@ impl Workspace {
                             .top(drift)
                             .opacity(shown)
                             .child(content)
-                            .child(
-                                canvas(
-                                    move |bounds, _, cx| {
-                                        let height = bounds.size.height;
-                                        cx.defer(move |cx| {
-                                            let _ = measure.update(cx, |this, cx| {
-                                                let now = std::time::Instant::now();
-                                                if this.island_motion.measured(slot, height, now) {
-                                                    cx.notify();
-                                                }
-                                            });
-                                        });
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .size_full(),
-                            ),
+                            .child(measure(row_view, move |this: &mut Self, bounds, _| {
+                                let now = std::time::Instant::now();
+                                this.island_motion.measured(slot, bounds.size.height, now)
+                            })),
                     )
                     .into_any_element(),
             );

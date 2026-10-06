@@ -415,20 +415,10 @@ impl Workspace {
             let entity = cx.entity().downgrade();
             let session = session.clone();
             let row = row.clone();
-            canvas(
-                move |bounds, _, cx| {
-                    cx.defer(move |cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            this.resume_at_visible_tail(&session, &row, bounds, cx)
-                        });
-                    });
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
+            chrome::measure(entity, move |this: &mut Self, bounds, cx| {
+                this.resume_at_visible_tail(&session, &row, bounds, cx);
+                false
+            })
         });
         // Children with no spawning call in view, pinned where they started.
         if let Some(children) = self.child_ui.overview.get(&ix).cloned() {
@@ -1204,13 +1194,50 @@ impl Workspace {
         let copy = text.to_owned();
         let raw_key = format!("{key}-raw");
         let expanded = self.chat.open.get(&raw_key).copied().unwrap_or(false);
-        div().child(div().flex().gap_2()
-            .child(self.button(SharedString::from(format!("{key}-copy")),"Copy diff",true).on_click(move|_,_,cx|cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))))
-            .child(self.toggle_chat(raw_key.clone(),if expanded {"Hide selectable diff"}else{"Show selectable diff"}.into(),cx)))
-            .child(super::smooth_scroll::scroll_zone(div().id(SharedString::from(key.to_owned())).max_h(px(320.)).overflow_y_scroll().font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
-                .children(text.lines().take(1000).map(|line|div().text_color(rgb(if line.starts_with('+'){p.success}else if line.starts_with('-'){p.error}else{p.muted})).child(line.to_owned())))))
-            .when(text.lines().count()>1000,|d|d.child("Showing the first 1,000 lines. Copy or open the selectable diff for all lines."))
-            .when(expanded,|d|d.child(self.render_raw(&raw_key,text,window,cx)))
+        let toggle = if expanded {
+            "Hide selectable diff"
+        } else {
+            "Show selectable diff"
+        };
+        let lines = text.lines().take(1000).map(|line| {
+            let color = if line.starts_with('+') {
+                p.success
+            } else if line.starts_with('-') {
+                p.error
+            } else {
+                p.muted
+            };
+            div().text_color(rgb(color)).child(line.to_owned())
+        });
+        div()
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        self.button(SharedString::from(format!("{key}-copy")), "Copy diff", true)
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                            }),
+                    )
+                    .child(self.toggle_chat(raw_key.clone(), toggle.into(), cx)),
+            )
+            .child(super::smooth_scroll::scroll_zone(
+                div()
+                    .id(SharedString::from(key.to_owned()))
+                    .max_h(px(320.))
+                    .overflow_y_scroll()
+                    .font_family(gpui_component::Theme::global(cx).mono_font_family.clone())
+                    .children(lines),
+            ))
+            .when(text.lines().count() > 1000, |d| {
+                d.child(
+                    "Showing the first 1,000 lines. Copy or open the selectable diff for all lines.",
+                )
+            })
+            .when(expanded, |d| {
+                d.child(self.render_raw(&raw_key, text, window, cx))
+            })
     }
     pub(super) fn prefill(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.composer.read(cx).value().to_string();

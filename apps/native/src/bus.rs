@@ -181,6 +181,26 @@ fn offline_command(cmd: Option<Command>, topics: &mut BTreeSet<String>) -> bool 
     }
 }
 
+/// Sends one JSON control frame; false once the socket is gone.
+async fn send_json(socket: &mut (impl SinkExt<Message> + Unpin), frame: Value) -> bool {
+    socket.send(Message::Text(frame.to_string())).await.is_ok()
+}
+
+/// A call's reply frame as the caller's result.
+fn call_result(frame: &Value) -> Result<Value> {
+    if frame["op"] == "error" {
+        let error = frame["error"].as_str().unwrap_or("Hub rejected request");
+        return Err(anyhow!(error.to_owned()));
+    }
+    if frame["result"]["ok"] == false {
+        let error = frame["result"]["error"]
+            .as_str()
+            .unwrap_or("Operation failed");
+        return Err(anyhow!(error.to_owned()));
+    }
+    Ok(frame["result"].clone())
+}
+
 async fn run(
     config: Config,
     mut commands: mpsc::Receiver<Command>,
@@ -196,10 +216,14 @@ async fn run(
         if paused {
             loop {
                 tokio::select! {
-                    _=events.closed()=>return,
-                    command=commands.recv()=>match command {
-                        Some(Command::ResumePowerPause)=>{paused=false;backoff=Duration::from_millis(250);break;},
-                        other=>if !offline_command(other,&mut topics){return;},
+                    _ = events.closed() => return,
+                    command = commands.recv() => match command {
+                        Some(Command::ResumePowerPause) => {
+                            paused = false;
+                            backoff = Duration::from_millis(250);
+                            break;
+                        }
+                        other => if !offline_command(other, &mut topics) { return; },
                     }
                 }
             }
@@ -272,8 +296,11 @@ async fn run(
                         pending.retain(|_, (at, reply)| *at > Instant::now() && !reply.is_closed());
                     }
                     _ = heartbeat.tick() => {
-                        if last_received.elapsed() > Duration::from_secs(60) { break; }
-                        if socket.send(Message::Ping(Vec::new())).await.is_err() { break; }
+                        if last_received.elapsed() > Duration::from_secs(60)
+                            || socket.send(Message::Ping(Vec::new())).await.is_err()
+                        {
+                            break;
+                        }
                     }
                     cmd = commands.recv() => match cmd {
                         None => return,
@@ -283,53 +310,73 @@ async fn run(
                             if ready {
                                 let removed: Vec<_> = sent_topics.difference(&topics).cloned().collect();
                                 let added: Vec<_> = topics.difference(&sent_topics).cloned().collect();
-                                if !removed.is_empty() && socket.send(Message::Text(json!({"op":"unsubscribe", "topics":removed}).to_string())).await.is_err() { break; }
-                                if !added.is_empty() && socket.send(Message::Text(json!({"op":"subscribe", "topics":added}).to_string())).await.is_err() { break; }
+                                if !removed.is_empty()
+                                    && !send_json(&mut socket, json!({"op": "unsubscribe", "topics": removed})).await
+                                {
+                                    break;
+                                }
+                                if !added.is_empty()
+                                    && !send_json(&mut socket, json!({"op": "subscribe", "topics": added})).await
+                                {
+                                    break;
+                                }
                                 sent_topics = topics.clone();
                             }
                         }
                         Some(Command::Call { method, params, reply, expires }) => {
                             if !ready || expires <= Instant::now() || reply.is_closed() {
-                                let _ = reply.send(Err(anyhow!("Request expired or hub disconnected; request was not sent")));
+                                let _ = reply.send(Err(anyhow!(
+                                    "Request expired or hub disconnected; request was not sent"
+                                )));
                                 continue;
                             }
                             if pending.len() >= 64 {
-                                let _ = reply.send(Err(anyhow!("Too many pending requests; request was not sent")));
+                                let _ = reply.send(Err(anyhow!(
+                                    "Too many pending requests; request was not sent"
+                                )));
                                 continue;
                             }
                             counter += 1;
                             let id = counter.to_string();
-                            let frame = json!({"op":"call", "id":id, "method":method, "params":params});
+                            let frame = json!({"op": "call", "id": id, "method": method, "params": params});
                             pending.insert(id, (expires, reply));
-                            if !matches!(timeout(Duration::from_secs(5), socket.send(Message::Text(frame.to_string()))).await, Ok(Ok(()))) { break; }
+                            let sent = timeout(Duration::from_secs(5), send_json(&mut socket, frame));
+                            if !matches!(sent.await, Ok(true)) {
+                                break;
+                            }
                         }
                     },
                     message = socket.next() => {
                         last_received = Instant::now();
                         match message {
                             Some(Ok(Message::Text(text))) => {
-                                let Ok(v) = serde_json::from_str::<Value>(&text) else { break; };
+                                let Ok(v) = serde_json::from_str::<Value>(&text) else {
+                                    break;
+                                };
                                 match v["op"].as_str() {
                                     Some("hello") if !ready => {
                                         ready = true;
                                         backoff = Duration::from_millis(250);
                                         connected.store(true, Ordering::Release);
-                                        if socket.send(Message::Text(json!({"op":"subscribe", "topics":topics}).to_string())).await.is_err() { break; }
+                                        if !send_json(&mut socket, json!({"op": "subscribe", "topics": topics})).await {
+                                            break;
+                                        }
                                         sent_topics = topics.clone();
                                         if events.try_send(Event::Connected).is_err() { break; }
                                     }
                                     Some("result" | "error") => {
                                         if let Some((_, reply)) = v["id"].as_str().and_then(|id| pending.remove(id)) {
-                                            let result = if v["op"] == "error" { Err(anyhow!(v["error"].as_str().unwrap_or("Hub rejected request").to_owned())) }
-                                                else if v["result"]["ok"] == false { Err(anyhow!(v["result"]["error"].as_str().unwrap_or("Operation failed").to_owned())) }
-                                                else { Ok(v["result"].clone()) };
-                                            let _ = reply.send(result);
+                                            let _ = reply.send(call_result(&v));
                                         }
                                     }
                                     Some("event") if ready => {
                                         let event = &v["event"];
                                         if let Some(topic) = event["type"].as_str() {
-                                            let outgoing = Event::Data { topic: topic.into(), data: event["data"].clone(), hub: event["hub"].as_str().filter(|s| !s.is_empty()).map(str::to_owned) };
+                                            let outgoing = Event::Data {
+                                                topic: topic.into(),
+                                                data: event["data"].clone(),
+                                                hub: event["hub"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
+                                            };
                                             // Overflow deliberately reconnects and reseeds. Dropping a
                                             // fragment silently would leave an apparently live stale UI.
                                             if events.try_send(outgoing).is_err() { break; }
@@ -338,18 +385,22 @@ async fn run(
                                     _ => {}
                                 }
                             }
-                            Some(Ok(Message::Ping(bytes))) => if socket.send(Message::Pong(bytes)).await.is_err() { break; },
+                            Some(Ok(Message::Ping(bytes))) => {
+                                if socket.send(Message::Pong(bytes)).await.is_err() {
+                                    break;
+                                }
+                            }
                             Some(Ok(Message::Pong(_))) => {}
                             Some(Ok(Message::Close(frame))) => {
-                                if frame.is_some_and(|frame|u16::from(frame.code)==4001) {
-                                    paused=true;
-                                    power_paused.store(true,Ordering::Release);
+                                if frame.is_some_and(|frame| u16::from(frame.code) == 4001) {
+                                    paused = true;
+                                    power_paused.store(true, Ordering::Release);
                                 }
                                 // Flush only this socket's close acknowledgement;
-                                // failed draining cannot erase an observed4001.
-                                let _=timeout(Duration::from_secs(1),socket.flush()).await;
+                                // failed draining cannot erase an observed 4001.
+                                let _ = timeout(Duration::from_secs(1), socket.flush()).await;
                                 break;
-                            },
+                            }
                             None | Some(Err(_)) => break,
                             _ => {}
                         }

@@ -583,22 +583,6 @@ impl Row {
             .unwrap_or_else(|| self.text.clone())
     }
 
-    pub fn fingerprint(&self) -> u64 {
-        let mut hash = 0xcbf29ce484222325u64;
-        let mut add = |text: &str| {
-            for b in text.bytes() {
-                hash = (hash ^ u64::from(b)).wrapping_mul(0x100000001b3);
-            }
-        };
-        add(&self.text);
-        if let Some(t) = &self.tool {
-            add(&t.input);
-            add(&t.output);
-            add(if t.complete { "complete" } else { "pending" });
-            add(if t.is_error { "error" } else { "ok" });
-        }
-        hash
-    }
     fn identity(&self) -> String {
         let identity = self
             .tool

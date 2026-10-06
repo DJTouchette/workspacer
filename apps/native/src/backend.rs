@@ -136,32 +136,46 @@ impl Backend {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _=sender.closed()=>break,
-                    reason=close_client.disconnected_reason()=>{
-                        forward_embedded_close(&sender,&mut status,reason).await;
+                    _ = sender.closed() => break,
+                    reason = close_client.disconnected_reason() => {
+                        forward_embedded_close(&sender, &mut status, reason).await;
                         break;
-                    },
+                    }
                     changed = status.changed() => {
-                        if changed.is_err() || !matches!(*status.borrow(), workspacer_hub::Status::Ready { .. }) {
-                            let _ = sender.send(Event::Disconnected("Local Rust backend stopped".into())).await;
+                        let ready = matches!(*status.borrow(), workspacer_hub::Status::Ready { .. });
+                        if changed.is_err() || !ready {
+                            let stopped = Event::Disconnected("Local Rust backend stopped".into());
+                            let _ = sender.send(stopped).await;
                             break;
                         }
                     }
                     event = incoming.recv() => match event {
                         Ok(event) => {
-                            if sender.send(Event::Data { topic: event.topic, data: event.data.unwrap_or(Value::Null), hub:(!event.hub.is_empty()).then_some(event.hub) }).await.is_err() {break;}
+                            let data = Event::Data {
+                                topic: event.topic,
+                                data: event.data.unwrap_or(Value::Null),
+                                hub: (!event.hub.is_empty()).then_some(event.hub),
+                            };
+                            if sender.send(data).await.is_err() {
+                                break;
+                            }
                         }
                         Err(RecvError::Lagged(_)) => {
                             // Reuse the controller's reconnect reconciliation;
                             // a lost snapshot must not leave an ended row live.
-                            if sender.send(Event::Disconnected("Local event stream requires reconciliation".into())).await.is_err() {break;}
-                            if sender.send(Event::Connected).await.is_err() {break;}
+                            let lagged =
+                                Event::Disconnected("Local event stream requires reconciliation".into());
+                            if sender.send(lagged).await.is_err()
+                                || sender.send(Event::Connected).await.is_err()
+                            {
+                                break;
+                            }
                         }
                         Err(RecvError::Closed) => {
-                            let reason=close_client.disconnected_reason().await;
-                            forward_embedded_close(&sender,&mut status,reason).await;
+                            let reason = close_client.disconnected_reason().await;
+                            forward_embedded_close(&sender, &mut status, reason).await;
                             break;
-                        },
+                        }
                     },
                 }
             }
@@ -255,18 +269,24 @@ impl Backend {
             match effort_reply {
                 Ok(value) if value["ok"] != false => reply["effort"] = value["effort"].clone(),
                 Ok(value) => {
-                    let error = value["error"].as_str().unwrap_or("refused").to_owned();
-                    return Ok(serde_json::json!({"ok":false,"modelApplied":true,
-                        "error":format!("The model change was accepted, but the effort change was refused: {error}")}));
+                    let error = value["error"].as_str().unwrap_or("refused");
+                    return Ok(effort_after_model(format!("was refused: {error}")));
                 }
-                Err(error) => {
-                    return Ok(serde_json::json!({"ok":false,"modelApplied":true,
-                        "error":format!("The model change was accepted, but the effort change failed: {error}")}));
-                }
+                Err(error) => return Ok(effort_after_model(format!("failed: {error}"))),
             }
         }
         Ok(reply)
     }
+}
+
+/// The reply for a model change the hub accepted whose effort change then
+/// did not go through.
+fn effort_after_model(outcome: String) -> Value {
+    serde_json::json!({
+        "ok": false,
+        "modelApplied": true,
+        "error": format!("The model change was accepted, but the effort change {outcome}"),
+    })
 }
 
 #[cfg(feature = "rust-hub")]

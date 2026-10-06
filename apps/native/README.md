@@ -848,7 +848,13 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/bus.rs` | Socket ownership, authentication, subscriptions, deadlines, reconnects |
 | `src/model.rs` | Session projection and bounded, sequence-aware transcript reducer |
 | `src/controller.rs` | Selection, RPC lifecycle, snapshot/event reconciliation, UI mailbox |
-| `src/ui.rs` | GPUI views, virtualization, keyboard dispatch, drafts |
+| `src/ui.rs` | Workspace state, keyboard dispatch, view updates and page routing |
+| `src/ui/conversation.rs` | Conversation page: transcript, floating header, dock (approval, questions, composer) |
+| `src/ui/features.rs` | Secondary pages: session history and details, setup, model |
+| `src/ui/questions.rs` | Pending question sets: picker, answers and submission |
+| `src/ui/attachments.rs` | Draft attachments: picking, pasting, uploads and thumbnails |
+| `src/ui/archive.rs` | Archive and restore, shared through the hub |
+| `src/ui/tests.rs`, `src/ui/tests/` | Workspace UI tests, one file per area, with shared fixtures |
 | `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
 | `src/links.rs` | Chat link classification, path/line resolution, preview bounds and errors |
 | `src/ui/file_viewer.rs` | Link routing and the file editor / image / Markdown viewer (docked, sheet, popped-out window), saves and unsaved-edit guards |
