@@ -228,6 +228,75 @@ async fn proposals_remain_disarmed_and_hand_edits_are_content_checked() {
 }
 
 #[tokio::test]
+async fn proposed_changes_apply_in_place_only_when_the_owner_approves() {
+    let directory = tempfile::tempdir().unwrap();
+    let hub = Hub::start(Options::default()).unwrap();
+    hub.ready().await.unwrap();
+    let (service, _receiver) = Service::open(directory.path().join("jobs.json"), hub.handle());
+    let mut paused = spec();
+    paused["enabled"] = json!(false);
+    let original = service.call(&owner(), "jobs.upsert", paused).unwrap();
+    let id = original["id"].as_str().unwrap().to_owned();
+
+    // A change must name an approved job.
+    let mut stray = spec();
+    stray["replaces"] = json!("missing");
+    assert!(service.call(&owner(), "jobs.propose", stray).is_err());
+
+    let mut change = spec();
+    change["name"] = json!("renamed");
+    change["trigger"] = json!({"kind":"interval","everyMinutes":5});
+    change["replaces"] = json!(id);
+    let proposal = service.call(&owner(), "jobs.propose", change).unwrap();
+    assert_eq!(proposal["replaces"], json!(id));
+    assert_eq!(proposal["enabled"], false);
+    let listed = service.call(&owner(), "jobs.list", json!({})).unwrap();
+    assert_eq!(listed["jobs"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        listed["jobs"][0]["name"], original["name"],
+        "nothing changes before approval"
+    );
+    // A proposal cannot be the target of another change.
+    let mut chained = spec();
+    chained["replaces"] = proposal["id"].clone();
+    assert!(service.call(&owner(), "jobs.propose", chained).is_err());
+
+    // Approve exactly the way the CLI and the apps do: clear the stamp, arm it.
+    let mut approve = proposal.clone();
+    approve["proposedBy"] = json!("");
+    approve["enabled"] = json!(true);
+    let updated = service.call(&owner(), "jobs.upsert", approve).unwrap();
+    assert_eq!(updated["id"], json!(id));
+    assert_eq!(updated["name"], "renamed");
+    assert_eq!(updated["trigger"]["everyMinutes"], 5);
+    assert_eq!(
+        updated["enabled"], false,
+        "approving an edit keeps the job paused"
+    );
+    assert_eq!(updated["createdAt"], original["createdAt"]);
+    assert!(updated.get("replaces").is_none());
+    let listed = service.call(&owner(), "jobs.list", json!({})).unwrap();
+    assert_eq!(
+        listed["jobs"].as_array().unwrap().len(),
+        1,
+        "the proposal row is gone"
+    );
+
+    // Removing a job withdraws changes still waiting on it.
+    let mut pending = spec();
+    pending["replaces"] = json!(id);
+    service.call(&owner(), "jobs.propose", pending).unwrap();
+    service
+        .call(&owner(), "jobs.remove", json!({"id":id}))
+        .unwrap();
+    assert_eq!(
+        service.call(&owner(), "jobs.list", json!({})).unwrap(),
+        json!({"jobs":[]})
+    );
+    hub.shutdown().unwrap();
+}
+
+#[tokio::test]
 async fn real_job_runner_records_calls_skips_context_vetoes_and_survives_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("jobs.json");

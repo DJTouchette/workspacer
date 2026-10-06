@@ -23,7 +23,7 @@ fn generated_skills_match_desktop_hash_and_preserve_user_content() {
     assert!(install_skills(dir.path(), home.path()).is_err());
     assert_eq!(std::fs::read_to_string(user).unwrap(), "user-owned");
     let text = instructions("one", "claude", dir.path(), home.path(), false);
-    assert!(!text.contains("provides two project skills"));
+    assert!(!text.contains("provides three project skills"));
     assert!(install_skills(home.path(), home.path()).is_err());
 }
 #[test]
@@ -67,7 +67,7 @@ fn all_asset_bytes_and_pointer_only_instructions_match_the_bundle() {
     let pi = tempfile::tempdir().unwrap();
     assert!(
         !instructions("pi", "pi", pi.path(), home.path(), false)
-            .contains("provides two project skills")
+            .contains("provides three project skills")
     );
     assert!(!pi.path().join(".workspacer").exists());
     assert!(install_skills(std::path::Path::new("relative"), home.path()).is_err());
@@ -97,7 +97,7 @@ fn legacy_cleanup_removes_only_exact_provider_copies_even_for_managers() {
             let text = instructions("session", provider, cwd.path(), home.path(), manager);
             assert!(!exact.exists());
             assert_eq!(std::fs::read_to_string(custom).unwrap(), "user owned");
-            assert_eq!(text.contains("provides two project skills"), !manager);
+            assert_eq!(text.contains("provides three project skills"), !manager);
             assert_eq!(cwd.path().join(".workspacer").exists(), !manager);
         }
     }

@@ -16,7 +16,7 @@ desktop = root / "apps/desktop"
 def utf8(path):
     return path.read_bytes().decode("utf-8")
 
-files = {f"{name}/SKILL.md": utf8(desktop / f"assets/skills/{name}/SKILL.md") for name in ("project-brief", "spawn-agent")}
+files = {f"{name}/SKILL.md": utf8(desktop / f"assets/skills/{name}/SKILL.md") for name in ("project-brief", "scheduled-jobs", "spawn-agent")}
 version = hashlib.sha256(json.dumps(files, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()[:16]
 doctrine = utf8(desktop / "src/main/shared/managerDoctrine.ts")
 match = re.search(r"const MANAGER_PREAMBLE = `([^`]+)`;", doctrine)

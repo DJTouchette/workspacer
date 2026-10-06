@@ -45,6 +45,10 @@ pub(super) struct Extras {
     /// changes, or later repeats the same text, shows again.
     pub dismissed_notices: Vec<(&'static str, String)>,
     pub show_archived: bool,
+    /// The Jobs row showing its spec and runs.
+    pub job_expanded: Option<String>,
+    /// The job whose Remove was clicked once; the second click removes it.
+    pub job_confirm_remove: Option<String>,
     pub confirm_end: Option<String>,
     pub resume: Option<String>,
     pub local_paths: bool,
@@ -144,6 +148,8 @@ impl Extras {
             notice: String::new(),
             dismissed_notices: Vec::new(),
             show_archived: false,
+            job_expanded: None,
+            job_confirm_remove: None,
             confirm_end: None,
             resume: None,
             local_paths: false,
@@ -279,6 +285,10 @@ impl Workspace {
         self.extras.confirm_end = None;
         match screen {
             Screen::Recent => self.request(Request::Recent, cx),
+            Screen::Jobs => {
+                self.extras.job_confirm_remove = None;
+                self.request(Request::Jobs, cx);
+            }
             Screen::Changes => {
                 if let Some(s) = self.selected_session() {
                     self.request(Request::Changes { cwd: s.cwd.clone() }, cx);
@@ -469,6 +479,7 @@ impl Workspace {
                 "Session history",
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
+            Screen::Jobs => ("Jobs", Some(super::jobs::JOBS_DESCRIPTION.into())),
             Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             Screen::Session => ("Session details", session_cwd.map(Into::into)),
             Screen::Setup => (
@@ -492,11 +503,24 @@ impl Workspace {
                 })
                 .into_any_element(),
             ),
+            Screen::Jobs => Some(
+                self.quiet_button(
+                    "jobs-refresh",
+                    "Refresh",
+                    IconName::Redo,
+                    self.view.connected,
+                )
+                .when(self.view.connected, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Jobs, cx)))
+                })
+                .into_any_element(),
+            ),
             Screen::Handoff => self.handoff_continue(cx).map(IntoElement::into_any_element),
             _ => None,
         };
         let body = match self.screen {
             Screen::Recent => self.render_recent(cx),
+            Screen::Jobs => self.render_jobs(cx),
             Screen::History => self.render_history(window, cx),
             Screen::Session => self.render_session(cx),
             Screen::Setup => self.render_setup(cx),

@@ -1363,7 +1363,7 @@
       "name": "project_status"
     },
     {
-      "description": "Propose a scheduled job for the user to approve — pass a job spec ({name, trigger, action}; see help topic \"jobs\"). It is saved DISABLED and cannot run until the user approves it in Settings → Jobs, so say so rather than implying it is scheduled.",
+      "description": "Propose a scheduled job for the user to approve — pass a job spec ({name, trigger, action}; see help topic \"jobs\"). To change an existing job, pass its full new spec with \"replaces\" set to that job's id. It is saved DISABLED and cannot run (or change anything) until the user approves it in their Jobs view, so say so rather than implying it is scheduled.",
       "inputSchema": {
         "additionalProperties": true,
         "type": "object"

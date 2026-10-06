@@ -48,6 +48,7 @@ const JOB_FIELDS: &[&str] = &[
     "trigger",
     "action",
     "proposedBy",
+    "replaces",
     "createdAt",
     "updatedAt",
 ];
@@ -105,6 +106,12 @@ pub struct Job {
     #[serde(skip_serializing_if = "String::is_empty")]
     #[serde(deserialize_with = "null_default")]
     pub proposed_by: String,
+    /// On a proposal: the id of the existing job it would change. Approving
+    /// it rewrites that job's name, trigger and action in place (keeping its
+    /// id, history and on/off state) and drops the proposal row.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "null_default")]
+    pub replaces: String,
     #[serde(deserialize_with = "null_default")]
     pub created_at: i64,
     #[serde(deserialize_with = "null_default")]
@@ -205,6 +212,12 @@ pub fn validate(job: &Job) -> Result<()> {
         _ => bail!("unknown action kind {:?}", job.action["kind"]),
     }
     Ok(())
+}
+/// The index of the approved job a proposal names in `replaces`.
+fn live_target(jobs: &[Job], id: &str) -> Result<usize> {
+    jobs.iter()
+        .position(|j| j.id == id && !j.is_proposal())
+        .ok_or_else(|| anyhow!("replaces {id:?}, which is not an existing approved job"))
 }
 fn validate_step(action: &Value) -> Result<()> {
     match string(action, "kind") {
@@ -591,6 +604,7 @@ impl Service {
                 check_job_keys(&params)?;
                 let mut job: Job = serde_json::from_value(params)?;
                 let proposal = method == "jobs.propose";
+                job.replaces = job.replaces.trim().to_owned();
                 if proposal {
                     job.enabled = false;
                     job.id.clear();
@@ -602,9 +616,38 @@ impl Service {
                             "20 job proposals are already waiting for review — approve or remove some first"
                         );
                     }
+                    if !job.replaces.is_empty() {
+                        live_target(&state.jobs, &job.replaces)?;
+                    }
                 }
                 validate(&job)?;
                 job.updated_at = now.timestamp_millis();
+                // Approving a proposed change: the owner clears the stamp on a
+                // row that names the job it replaces. Only the spec moves; the
+                // target keeps its id, history, createdAt and on/off state, so
+                // approving an edit never resumes a job the user paused.
+                if !proposal && !job.is_proposal() && !job.replaces.is_empty() {
+                    let from = state
+                        .jobs
+                        .iter()
+                        .position(|j| j.id == job.id && j.is_proposal())
+                        .ok_or_else(|| anyhow!("no proposal {:?}", job.id))?;
+                    let target = live_target(&state.jobs, &job.replaces)?;
+                    let mut updated = state.jobs[target].clone();
+                    updated.name = job.name;
+                    updated.trigger = job.trigger;
+                    updated.action = job.action;
+                    updated.updated_at = job.updated_at;
+                    state.jobs[target] = updated.clone();
+                    state.jobs.remove(from);
+                    state.next.remove(&job.id);
+                    reschedule(&mut state, &updated, now);
+                    self.persist(&mut state);
+                    return Ok(json!(updated));
+                }
+                if !job.is_proposal() {
+                    job.replaces.clear();
+                }
                 if job.id.is_empty() {
                     job.id = uuid::Uuid::new_v4().simple().to_string()[..24].into();
                     job.created_at = job.updated_at;
@@ -621,7 +664,24 @@ impl Service {
                 reschedule(&mut state, &job, now);
                 self.persist(&mut state);
                 if proposal {
-                    let _=self.hub.publish(Event::new("notify.post","jobs",json!({"title":format!("Job proposed: {}",job.name),"body":format!("{} suggested a job. It won't run until you approve it — click to read the trigger and the action.",job.proposed_by),"level":"info","key":format!("job-proposal-{}",job.id),"paneType":"settings","paneSection":"jobs"})));
+                    let (title, body) = if job.replaces.is_empty() {
+                        (
+                            format!("Job proposed: {}", job.name),
+                            format!(
+                                "{} suggested a job. It won't run until you approve it — click to read the trigger and the action.",
+                                job.proposed_by
+                            ),
+                        )
+                    } else {
+                        (
+                            format!("Job change proposed: {}", job.name),
+                            format!(
+                                "{} suggested a change to a job. Nothing changes until you approve it — click to compare it with the current one.",
+                                job.proposed_by
+                            ),
+                        )
+                    };
+                    let _=self.hub.publish(Event::new("notify.post","jobs",json!({"title":title,"body":body,"level":"info","key":format!("job-proposal-{}",job.id),"paneType":"settings","paneSection":"jobs"})));
                 }
                 Ok(json!(job))
             }
@@ -634,7 +694,10 @@ impl Service {
                     return Ok(json!({"runs":state.history.get(id).cloned().unwrap_or_default()}));
                 }
                 if method == "jobs.remove" {
-                    state.jobs.retain(|j| j.id != id);
+                    // Pending changes to a removed job have nothing left to change.
+                    state
+                        .jobs
+                        .retain(|j| j.id != id && !(j.is_proposal() && j.replaces == id));
                     state.next.remove(id);
                     state.history.remove(id);
                     self.persist(&mut state);
@@ -653,7 +716,7 @@ impl Service {
                     .ok_or_else(|| anyhow!("no job {id:?}"))?;
                 if job.is_proposal() {
                     bail!(
-                        "job {:?} is an unapproved proposal — approve it in Settings → Jobs first",
+                        "job {:?} is an unapproved proposal — the user approves it in Jobs first",
                         job.name
                     );
                 }

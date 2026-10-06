@@ -11,6 +11,7 @@ mod fleet_card;
 mod gauge;
 mod handoff;
 mod island;
+mod jobs;
 mod launch;
 mod markdown;
 mod motion;
@@ -365,6 +366,7 @@ actions!(
         ShowSetup,
         ShowSessionDetails,
         ShowModel,
+        ShowJobs,
         Search,
         OpenProject,
         FirstItem,
@@ -419,6 +421,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("g a", ShowSetup, Some("VimNormal")),
         KeyBinding::new("g e", ShowSessionDetails, Some("VimNormal")),
         KeyBinding::new("g m", ShowModel, Some("VimNormal")),
+        KeyBinding::new("g j", ShowJobs, Some("VimNormal")),
         KeyBinding::new("h", ShowProjects, Some("VimNormal")),
         KeyBinding::new("l", OpenProject, Some("VimNormal")),
         KeyBinding::new("enter", OpenProject, Some("VimNormal")),
@@ -1512,6 +1515,7 @@ impl Render for Workspace {
             match self.screen {
                 Screen::Changes => self.render_review(window, cx).into_any_element(),
                 Screen::Recent
+                | Screen::Jobs
                 | Screen::History
                 | Screen::Session
                 | Screen::Setup

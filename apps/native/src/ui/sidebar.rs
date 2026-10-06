@@ -723,6 +723,15 @@ impl Workspace {
                 )
             })
             .child(
+                self.icon_button("jobs-rail", "Jobs", IconName::Calendar, true)
+                    .when(!self.new_session && self.screen == Screen::Jobs, |d| {
+                        d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Jobs, window, cx)
+                    })),
+            )
+            .child(
                 self.icon_button("settings-rail", "Settings", IconName::Settings, true)
                     .when(!self.new_session && self.screen == Screen::Settings, |d| {
                         d.bg(rgb(p.selected)).text_color(rgb(p.text))
@@ -1285,6 +1294,16 @@ impl Workspace {
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.show_screen(Screen::Settings, window, cx)
+                            })),
+                    )
+                    .child(
+                        self.quiet_button("nav-jobs", "Jobs", IconName::Calendar, true)
+                            .debug_selector(|| "nav-jobs".into())
+                            .when(!self.new_session && self.screen == Screen::Jobs, |d| {
+                                d.bg(rgb(p.selected)).text_color(rgb(p.text))
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_feature(Screen::Jobs, window, cx)
                             })),
                     )
                     .child(div().flex_1())

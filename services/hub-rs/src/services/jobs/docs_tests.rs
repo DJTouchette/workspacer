@@ -107,6 +107,7 @@ fn canonical_spec_fields_and_kinds_remain_documented() {
         trigger: trigger.clone(),
         action: json!({"kind":"call","call":{"method":"sessions.list"}}),
         proposed_by: "author".into(),
+        replaces: "target".into(),
         created_at: 1,
         updated_at: 1,
     };

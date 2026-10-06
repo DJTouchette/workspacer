@@ -167,7 +167,7 @@ pub fn instructions(
         parts.push(manager_doctrine().into());
     } else if provider != "pi" {
         if let Ok(root) = install_skills(cwd, home) {
-            parts.push(format!("Workspacer provides two project skills: read {:?} before spawning child agents, and {:?} before maintaining the project brief.",root.join("spawn-agent/SKILL.md"),root.join("project-brief/SKILL.md")));
+            parts.push(format!("Workspacer provides three project skills: read {:?} before spawning child agents, {:?} before maintaining the project brief, and {:?} before creating or changing scheduled jobs.",root.join("spawn-agent/SKILL.md"),root.join("project-brief/SKILL.md"),root.join("scheduled-jobs/SKILL.md")));
         }
     }
     parts.join("\n")

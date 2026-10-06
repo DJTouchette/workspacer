@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const desktop = fileURLToPath(new URL('../', import.meta.url));
 const files = {};
-for (const name of ['project-brief', 'spawn-agent']) {
+for (const name of ['project-brief', 'scheduled-jobs', 'spawn-agent']) {
   files[`${name}/SKILL.md`] = readFileSync(
     resolve(desktop, 'assets/skills', name, 'SKILL.md'),
     'utf8',

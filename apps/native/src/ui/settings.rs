@@ -728,6 +728,7 @@ impl Workspace {
                     ("Enter / l", "Open the selected project"),
                     ("g h / g d", "Session history / changes"),
                     ("g a / g e / g m", "Agent setup / session / model"),
+                    ("g j", "Jobs"),
                     ("g s", "Settings"),
                     ("g c", "Conversation"),
                     ("n", "New session in the selected project"),

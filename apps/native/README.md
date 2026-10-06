@@ -685,7 +685,7 @@ space. Without a selected session, the welcome state takes the full content area
 New-session fields and long approval details remain scrollable.
 
 Every non-chat screen (Settings, Projects, New Agent, Changes, Session details,
-Agent setup, Change model, Session history) is built from the same pieces in
+Agent setup, Change model, Session history, Jobs) is built from the same pieces in
 `src/ui/chrome.rs`: `page_view` (scrolling body, caption-safe top inset and a
 window drag strip where the app draws its own caption), `page_header` (back
 action, overline, title and description, trailing actions on the title row),
@@ -854,6 +854,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui/questions.rs` | Pending question sets: picker, answers and submission |
 | `src/ui/attachments.rs` | Draft attachments: picking, pasting, uploads and thumbnails |
 | `src/ui/archive.rs` | Archive and restore, shared through the hub |
+| `src/jobs.rs` | Hub jobs as the Jobs view reads them, and the owner's approve/pause payloads |
+| `src/ui/jobs.rs` | Jobs screen: review, approve, pause, run and remove (agents author jobs) |
 | `src/ui/tests.rs`, `src/ui/tests/` | Workspace UI tests, one file per area, with shared fixtures |
 | `src/ui/navigation.rs` | Projects view, shared navigation and focus handling |
 | `src/links.rs` | Chat link classification, path/line resolution, preview bounds and errors |

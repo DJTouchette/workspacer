@@ -164,9 +164,41 @@ describe('Settings -> Jobs', () => {
     api().jobsHistory = vi.fn().mockResolvedValue({ runs: [] });
   });
 
-  it('offers the draft button beside the templates', async () => {
+  it('is a view: it offers the agent, never a form', async () => {
     render(<JobsSection />);
     expect(await screen.findByText(DRAFT_BRIEFS.jobs.label)).toBeInTheDocument();
+    expect(screen.queryByText(/Add Job/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Edit')).not.toBeInTheDocument();
+  });
+
+  it('shows a proposed change beside the job it replaces and approves it via upsert', async () => {
+    const current = {
+      id: 'j1',
+      name: 'Prune',
+      enabled: false,
+      trigger: { kind: 'interval' as const, everyMinutes: 240 },
+      action: { kind: 'shell' as const, shell: { command: 'git worktree prune' } },
+    };
+    const change = {
+      ...current,
+      id: 'p1',
+      proposedBy: 'helper',
+      replaces: 'j1',
+      trigger: { kind: 'daily' as const, at: '03:00' },
+    };
+    api().jobsList = vi.fn().mockResolvedValue({ jobs: [current, change] });
+    api().jobsUpsert = vi.fn().mockResolvedValue({});
+    render(<JobsSection />);
+
+    fireEvent.click(await screen.findByText('change to Prune · by helper'));
+    expect(screen.getByText('Now')).toBeInTheDocument();
+    expect(screen.getByText('Proposed')).toBeInTheDocument();
+    expect(screen.getByText('daily 03:00')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Approve'));
+    await waitFor(() => expect(api().jobsUpsert).toHaveBeenCalled());
+    const sent = (api().jobsUpsert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sent).toMatchObject({ id: 'p1', replaces: 'j1', enabled: true });
+    expect(sent.proposedBy).toBeUndefined();
   });
 
   it('still shows a proposal as its actual spec, disarmed', async () => {

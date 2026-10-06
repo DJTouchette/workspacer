@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("native-smoke.png"))
     parser.add_argument("--settle-seconds", type=float, default=3)
     parser.add_argument("--sample-seconds", type=float, default=3)
-    parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "changes", "setup", "session", "model"), default="conversation")
+    parser.add_argument("--screen", choices=("conversation", "projects", "settings", "history", "jobs", "changes", "setup", "session", "model"), default="conversation")
     parser.add_argument("--theme", choices=("dark", "light", "nord", "tokyo-night", "catppuccin", "gruvbox",
                                             "everforest", "catppuccin-latte"), default="dark")
     parser.add_argument("--width", type=int, default=1000)
@@ -198,7 +198,7 @@ def main():
             drive("key", "ctrl+Return")
         if args.screen != "conversation":
             drive("key", "Escape")
-            drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "changes": "d", "setup": "a", "session": "e", "model": "m"}[args.screen])
+            drive("key", "--delay", "80", "g", {"projects": "p", "settings": "s", "history": "h", "jobs": "j", "changes": "d", "setup": "a", "session": "e", "model": "m"}[args.screen])
         if args.scroll_pages:
             drive("key", "Escape")
             drive("key", "--delay", "80", *(["ctrl+u"] * min(50, max(0, args.scroll_pages))))

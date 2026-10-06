@@ -16,6 +16,7 @@ mod child_agents;
 mod composer;
 mod connection;
 mod controls;
+mod job_list;
 mod new_agent;
 mod preferences;
 mod project_registry;

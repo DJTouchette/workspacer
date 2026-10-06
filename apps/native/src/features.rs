@@ -8,6 +8,16 @@ use std::{path::PathBuf, sync::Arc};
 pub const RELEASES_URL: &str = "https://github.com/DJTouchette/workspacer/releases";
 pub const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
 
+/// The owner's writes to a job from the Jobs view. Creating and editing jobs
+/// is left to agents; `Save` only ever carries a listed spec with one change
+/// (approved, paused or resumed).
+#[derive(Clone, Debug, PartialEq)]
+pub enum JobAction {
+    Save(Value),
+    Run(String),
+    Remove(String),
+}
+
 #[derive(Clone, Debug)]
 pub enum Request {
     /// Read-only view of a chat-linked file on the session's machine.
@@ -119,6 +129,15 @@ pub enum Request {
     ProjectIcons {
         files: Vec<String>,
     },
+    /// The hub's jobs (`jobs.list`): what the Jobs view shows.
+    Jobs,
+    /// One job's recent runs (`jobs.history`).
+    JobHistory {
+        id: String,
+    },
+    /// One owner write to a job, answered with the refreshed `jobs.list`.
+    /// Never superseded: a second click while one is in flight is dropped.
+    JobAction(JobAction),
     /// The hub's shared archived-session document (`sessionArchive.get`):
     /// which sessions every client of this hub hides from its normal list.
     Archive,
@@ -279,6 +298,9 @@ impl Request {
             Self::ProjectIcons { .. } => "project-icons",
             Self::ChildAccess { .. } => "child-access",
             Self::Titles { .. } => "titles",
+            Self::Jobs => "jobs",
+            Self::JobHistory { .. } => "job-history",
+            Self::JobAction(_) => "job-action",
             Self::Archive => "archive",
             Self::SetArchive { .. } => "archive-set",
         }
@@ -369,6 +391,26 @@ impl Request {
                 Ok(json!({"status":status?,"staged":staged?,"unstaged":unstaged?}))
             }
             Self::Recent => backend.call("sessions.recent", json!({})).await,
+            Self::Jobs => backend.call("jobs.list", json!({})).await,
+            Self::JobHistory { id } => backend.call("jobs.history", json!({"id":id})).await,
+            Self::JobAction(action) => {
+                match action {
+                    JobAction::Save(spec) => {
+                        backend.call("jobs.upsert", spec.clone()).await?;
+                    }
+                    JobAction::Remove(id) => {
+                        backend.call("jobs.remove", json!({"id":id})).await?;
+                    }
+                    JobAction::Run(id) => {
+                        let started = backend.call("jobs.run", json!({"id":id})).await?;
+                        if started["started"] != true {
+                            let reason = started["reason"].as_str().unwrap_or("it did not start");
+                            bail!("The job did not run: {reason}");
+                        }
+                    }
+                }
+                backend.call("jobs.list", json!({})).await
+            }
             Self::Archive => archive_document(backend.call("sessionArchive.get", json!({})).await?),
             Self::SetArchive { session, archived } => {
                 let document = archive_document(

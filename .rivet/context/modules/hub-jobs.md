@@ -149,15 +149,29 @@ can still be replaced by the atomic save.
 ## Proposals and approval
 
 `Propose` always creates a fresh ID, forces `enabled=false`, and stamps
-`proposedBy` (default “an agent”). It cannot replace an existing job. Pending
+`proposedBy` (default “an agent”). It never overwrites a row directly. A
+proposal may name `replaces: <id>` of an existing APPROVED job (validated at
+propose time; a proposal cannot target another proposal). Pending
 proposals are capped at 20 and publish an informational `notify.post` targeting
 Settings → Jobs. The label records who proposed it; it is not authenticated
 identity or a permission field.
 
 `IsProposal` also suppresses scheduling when a hand edit sets `enabled=true`;
 `RunNow` refuses proposals. Approval is an owner-authorized upsert clearing
-`proposedBy` and enabling the row, exposed by the Jobs editor and
-`workspacer jobs approve <id>`. The facade's omission of upsert is a tool-design
+`proposedBy` and enabling the row, exposed by the desktop Jobs view, the native
+Jobs screen and `workspacer jobs approve <id>`. When that upsert carries
+`replaces`, the hub instead copies name/trigger/action onto the target in place
+(keeping its id, createdAt, history and enabled state, so approving an edit
+never resumes a paused job) and deletes the proposal row; no new `jobs.*`
+method exists for it. `jobs.remove` of a job also drops proposals replacing it.
+
+Since 2026-10-06 there is NO job authoring UI in either app: jobs are written
+by agents via the app-owned `scheduled-jobs` collaboration skill
+(`apps/desktop/assets/skills/scheduled-jobs`, pointed at alongside spawn-agent
+and project-brief by both installers) plus `propose_job`. The views only
+approve/reject, pause/resume, run and remove. The power-down template chip was
+removed with the editor; `contracts/job-preset-power-down.json` is still pinned
+by the hub docs test. The facade's omission of upsert is a tool-design
 constraint, not an OS boundary preventing an agent with host shell access from
 editing the spec or invoking the owner CLI.
 

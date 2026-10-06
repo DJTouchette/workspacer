@@ -6,6 +6,8 @@ pub(super) enum Screen {
     Projects,
     Settings,
     Recent,
+    /// The hub's scheduled jobs: read and approve, never author.
+    Jobs,
     Changes,
     History,
     Session,
@@ -458,6 +460,9 @@ impl Workspace {
             }))
             .on_action(cx.listener(|this, _: &ShowModel, window, cx| {
                 this.open_feature(Screen::Model, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &ShowJobs, window, cx| {
+                this.open_feature(Screen::Jobs, window, cx)
             }))
             .on_action(cx.listener(|this, _: &ShowConversation, window, cx| {
                 this.show_screen(Screen::Conversation, window, cx)

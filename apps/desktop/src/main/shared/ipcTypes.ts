@@ -396,6 +396,9 @@ export interface HubJob {
    *  a trusted write clears this field. Approving is exactly that write — see
    *  JobsSection's approve(), or `workspacer jobs approve <id>`. */
   proposedBy?: string;
+  /** On a proposal: the id of the job it would change. Approving it makes the
+   *  hub rewrite that job's name/trigger/action in place and drop this row. */
+  replaces?: string;
   createdAt?: number;
   updatedAt?: number;
 }

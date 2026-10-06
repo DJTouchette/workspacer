@@ -209,7 +209,7 @@
             "type": "string"
           },
           "sessionId": {
-            "description": "OPTIONAL id of the session whose result this is. The host VALIDATES it and renders the canonical 'session:\u003cshort id\u003e' the briefs and the UI link on — a malformed id (a label, a round number, a nickname like '6a-round2') is REFUSED with nothing written, rather than left as a dead link. Copy it from list_agents or from the wake that reported the result; never compose one",
+            "description": "OPTIONAL id of the session whose result this is. The host VALIDATES it and renders the canonical 'session:<short id>' the briefs and the UI link on — a malformed id (a label, a round number, a nickname like '6a-round2') is REFUSED with nothing written, rather than left as a dead link. Copy it from list_agents or from the wake that reported the result; never compose one",
             "type": "string"
           }
         },
@@ -1363,7 +1363,7 @@
       "name": "project_status"
     },
     {
-      "description": "Propose a scheduled job for the user to approve — pass a job spec ({name, trigger, action}; see help topic \"jobs\"). It is saved DISABLED and cannot run until the user approves it in Settings → Jobs, so say so rather than implying it is scheduled.",
+      "description": "Propose a scheduled job for the user to approve — pass a job spec ({name, trigger, action}; see help topic \"jobs\"). To change an existing job, pass its full new spec with \"replaces\" set to that job's id. It is saved DISABLED and cannot run (or change anything) until the user approves it in their Jobs view, so say so rather than implying it is scheduled.",
       "inputSchema": {
         "additionalProperties": true,
         "type": "object"

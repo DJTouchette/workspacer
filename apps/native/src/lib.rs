@@ -9,6 +9,7 @@ pub mod features;
 pub mod handoff;
 pub mod harness;
 pub mod host;
+pub mod jobs;
 pub mod launch;
 pub mod links;
 pub mod live;

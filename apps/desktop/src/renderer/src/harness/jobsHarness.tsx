@@ -1,13 +1,14 @@
 /**
  * Standalone Jobs harness — Settings → Jobs against a STATEFUL in-memory fake
  * of the hub's jobs.* RPCs, with no Electron and no live hub. Fully
- * interactive: add/edit/toggle/delete jobs, hit Run now (runs "finish" after a
- * moment, alternating ok/failed so both chips appear), expand run history.
+ * interactive: approve proposals (including a proposed change), pause/resume
+ * and remove jobs, hit Run now (runs "finish" after a moment, alternating
+ * ok/failed so both chips appear), expand a row for its spec and history.
  *
  * Seeded with one job per interesting state: a healthy daily agent, a failing
  * shell job, a skipped-overlap job, one currently running, one disabled, and a
- * manual one that has never run. The empty state (template chips) is reachable
- * by deleting everything — or open with ?empty.
+ * manual one that has never run, plus two proposals. The empty state is
+ * reachable by deleting everything — or open with ?empty.
  *
  * Open http://localhost:5173/jobs-harness.html with the dev server running.
  */
@@ -184,6 +185,22 @@ function seed(): void {
       runs: [],
     },
     {
+      // A proposed change: approving applies it to j-cleanup in place.
+      j: {
+        id: 'j-cleanup-change',
+        name: 'Prune worktrees',
+        enabled: false,
+        proposedBy: 'housekeeping-agent',
+        replaces: 'j-cleanup',
+        trigger: { kind: 'daily', at: '03:00' },
+        action: {
+          kind: 'shell',
+          shell: { command: 'git worktree prune --expire 7.days.ago', cwd: '/home/you/work' },
+        },
+      },
+      runs: [],
+    },
+    {
       j: {
         id: 'j-cleanup',
         name: 'Prune worktrees',
@@ -228,6 +245,17 @@ let fakeRunFlip = false;
       })),
     }),
     jobsUpsert: async (job: HubJob): Promise<HubJob> => {
+      // Approving a proposed change, the way the hub does it: the target keeps
+      // its id and on/off state and takes the new spec; the proposal goes.
+      const target = !job.proposedBy && job.replaces ? jobs.get(job.replaces) : undefined;
+      if (target) {
+        const { name, trigger, action } = job;
+        const next: HubJobView = { ...target, name, trigger, action };
+        jobs.set(target.id, next);
+        jobs.delete(job.id);
+        history.delete(job.id);
+        return next;
+      }
       const id = job.id || `j-${Math.random().toString(36).slice(2, 8)}`;
       const prev = jobs.get(id);
       const next: HubJobView = {

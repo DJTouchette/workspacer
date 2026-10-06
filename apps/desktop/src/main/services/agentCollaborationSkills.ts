@@ -11,7 +11,11 @@ import { createHash } from 'crypto';
 import type { AgentProvider } from './agentProviders';
 import files from './agentCollaborationSkills.generated.json';
 
-export const AGENT_COLLABORATION_SKILL_NAMES = ['spawn-agent', 'project-brief'] as const;
+export const AGENT_COLLABORATION_SKILL_NAMES = [
+  'spawn-agent',
+  'project-brief',
+  'scheduled-jobs',
+] as const;
 const version = createHash('sha256').update(JSON.stringify(files)).digest('hex').slice(0, 16);
 
 export function agentCollaborationSkillsRoot(cwd: string): string {
@@ -100,7 +104,7 @@ function removeLegacyNativeCopies(provider: AgentProvider, cwd: string): void {
   }
 }
 
-/** Install and point at spawn-agent and project-brief for supported ORDINARY
+/** Install and point at spawn-agent, project-brief and scheduled-jobs for supported ORDINARY
  * agents. Fleet Managers receive neither a pointer nor a native-discovery
  * copy. Pi has no MCP bridge, so advertising tool-driven skills there would be
  * decorative and misleading.
@@ -115,8 +119,9 @@ export function installAgentCollaborationSkills(
   const root = agentCollaborationSkillsRoot(cwd);
   if (!installInto(cwd, root)) return '';
   return (
-    'Workspacer provides two project skills: read ' +
+    'Workspacer provides three project skills: read ' +
     `${JSON.stringify(path.join(root, 'spawn-agent', 'SKILL.md'))} before spawning child agents, ` +
-    `and ${JSON.stringify(path.join(root, 'project-brief', 'SKILL.md'))} before maintaining the project brief.`
+    `${JSON.stringify(path.join(root, 'project-brief', 'SKILL.md'))} before maintaining the project brief, ` +
+    `and ${JSON.stringify(path.join(root, 'scheduled-jobs', 'SKILL.md'))} before creating or changing scheduled jobs.`
   );
 }

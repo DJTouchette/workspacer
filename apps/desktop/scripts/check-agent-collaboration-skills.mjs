@@ -16,7 +16,7 @@ try {
       'utf8',
     ),
   );
-  for (const name of ['project-brief', 'spawn-agent']) {
+  for (const name of ['project-brief', 'scheduled-jobs', 'spawn-agent']) {
     assert.equal(
       generated[`${name}/SKILL.md`],
       readFileSync(join(desktop, 'assets/skills', name, 'SKILL.md'), 'utf8'),
