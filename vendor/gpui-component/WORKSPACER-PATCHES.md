@@ -134,4 +134,21 @@ Native interaction polish also patches:
   reason. Regression tests: `text::inline::tests` here and the native
   `chat_selection_follows_the_drag_in_reading_order`.
 
+- Hit-tested selection presses (`text/text_view.rs`): upstream started a
+  selection on any left press inside the view's `bounds`, even one aimed at
+  an occluding element painted over the text. The native chat scrolls under
+  its floating title island, so a press on a notice's dismiss (or any island
+  control) also started a transcript selection. The view now inserts a
+  `Normal` hitbox in prepaint. A press starts a selection only where
+  `hitbox.is_hovered` (so `.occlude()` above it wins). Any other press
+  clears the selection, in the capture phase so a control that stops
+  propagation still clears it. This merges upstream's "press outside the
+  bounds clears" listener. Separately, the mouse-up listener was only
+  registered when a frame had been painted mid-drag. A press and release in
+  one frame (a touchpad tap, a synthetic click) left `is_selecting` set, and
+  the selection followed the hovering pointer until the next release. The
+  release is now always observed (capture phase), and a mid-drag move with
+  no button pressed ends the drag. Regression test: native
+  `island_controls_do_not_select_the_transcript_under_them`.
+
 Reapply these interaction changes explicitly when upgrading the component.

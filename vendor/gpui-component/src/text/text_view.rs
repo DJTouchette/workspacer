@@ -7,9 +7,10 @@ use std::time::Duration;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, Bounds, ClipboardItem, Context, Element, ElementId, Entity,
-    EntityId, FocusHandle, GlobalElementId, InspectorElementId, InteractiveElement, IntoElement,
-    KeyBinding, LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Point, RenderOnce, SharedString, StyleRefinement, Styled, Timer, Window, div, px,
+    EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    InteractiveElement, IntoElement, KeyBinding, LayoutId, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce, SharedString,
+    StyleRefinement, Styled, Timer, Window, div, px,
 };
 use smol::stream::StreamExt;
 
@@ -635,7 +636,7 @@ impl IntoElement for TextView {
 
 impl Element for TextView {
     type RequestLayoutState = AnyElement;
-    type PrepaintState = ();
+    type PrepaintState = Hitbox;
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -757,12 +758,16 @@ impl Element for TextView {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        // Workspacer: selection presses are hit-tested, so an occluding
+        // element drawn over the text (a floating title bar) keeps them.
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         request_layout.prepaint(window, cx);
+        hitbox
     }
 
     fn paint(
@@ -771,7 +776,7 @@ impl Element for TextView {
         _: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
+        hitbox: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -792,19 +797,30 @@ impl Element for TextView {
 
         if self.selectable {
             let is_selecting = self.state.read(cx).is_selecting;
-            let has_selection = self.state.read(cx).has_selection();
 
+            // Workspacer: a press starts a selection only where this view is
+            // hit (`bounds.contains` let a press on an occluding control over
+            // the text start one), and any other press clears it, as a press
+            // outside the text does in a browser. Clearing runs in the
+            // capture phase, so a control that stops propagation still does.
             window.on_mouse_event({
                 let state = self.state.clone();
-                move |event: &MouseDownEvent, phase, _, cx| {
-                    if !bounds.contains(&event.position) || !phase.bubble() {
-                        return;
+                let hitbox = hitbox.clone();
+                move |event: &MouseDownEvent, phase, window, cx| {
+                    if hitbox.is_hovered(window) {
+                        if phase.bubble() {
+                            state.update(cx, |state, _| {
+                                state.start_selection(event.position);
+                            });
+                            cx.notify(entity_id);
+                        }
+                    } else if phase.capture() {
+                        let current = state.read(cx);
+                        if current.is_selecting || current.has_selection() {
+                            state.update(cx, |state, _| state.clear_selection());
+                            cx.notify(entity_id);
+                        }
                     }
-
-                    state.update(cx, |state, _| {
-                        state.start_selection(event.position);
-                    });
-                    cx.notify(entity_id);
                 }
             });
 
@@ -818,44 +834,34 @@ impl Element for TextView {
                         }
 
                         state.update(cx, |state, _| {
-                            state.update_selection(event.position);
+                            // Workspacer: a release this view never saw
+                            // (outside the window) ends the drag here.
+                            if event.pressed_button == Some(MouseButton::Left) {
+                                state.update_selection(event.position);
+                            } else {
+                                state.end_selection();
+                            }
                         });
                         cx.notify(entity_id);
                     }
                 });
+            }
 
-                // up to end selection
-                window.on_mouse_event({
-                    let state = self.state.clone();
-                    move |_: &MouseUpEvent, phase, _, cx| {
-                        if !phase.bubble() {
-                            return;
-                        }
-
+            // Workspacer: always listening, in the capture phase. A press and
+            // its release can arrive before the frame that would add this
+            // listener (a touchpad tap, a quick click), and a selection left
+            // running then followed the pointer until the next release.
+            window.on_mouse_event({
+                let state = self.state.clone();
+                move |_: &MouseUpEvent, phase, _, cx| {
+                    if phase.capture() && state.read(cx).is_selecting {
                         state.update(cx, |state, _| {
                             state.end_selection();
                         });
                         cx.notify(entity_id);
                     }
-                });
-            }
-
-            if has_selection {
-                // down outside to clear selection
-                window.on_mouse_event({
-                    let state = self.state.clone();
-                    move |event: &MouseDownEvent, _, _, cx| {
-                        if bounds.contains(&event.position) {
-                            return;
-                        }
-
-                        state.update(cx, |state, _| {
-                            state.clear_selection();
-                        });
-                        cx.notify(entity_id);
-                    }
-                });
-            }
+                }
+            });
         }
     }
 }

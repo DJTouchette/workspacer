@@ -1410,6 +1410,32 @@ impl Window {
         }
     }
 
+    /// Workspacer patch: the last rendered frame's solid-filled quads, in
+    /// logical pixels, so UI tests can check what a frame actually painted
+    /// (a text selection's highlight, for one).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rendered_fills(&self) -> Vec<(Bounds<Pixels>, Hsla)> {
+        let scale = self.scale_factor();
+        self.rendered_frame
+            .scene
+            .quads
+            .iter()
+            .filter(|quad| {
+                quad.background.tag == crate::BackgroundTag::Solid && quad.background.solid.a > 0.
+            })
+            .map(|quad| {
+                let b = quad.bounds;
+                (
+                    Bounds::new(
+                        point(px(b.origin.x.0 / scale), px(b.origin.y.0 / scale)),
+                        size(px(b.size.width.0 / scale), px(b.size.height.0 / scale)),
+                    ),
+                    quad.background.solid,
+                )
+            })
+            .collect()
+    }
+
     /// Workspacer patch: the last rendered frame's visibly bordered quads, in
     /// logical pixels, so UI tests can check what a frame actually painted.
     #[cfg(any(test, feature = "test-support"))]
