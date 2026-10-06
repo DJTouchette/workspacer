@@ -1,4 +1,5 @@
 //! Shared native chrome: quiet actions, readable sections, and preference rows.
+use super::gauge::{self, Gauge, context_notice};
 use super::island::Notice;
 use super::*;
 use gpui::AnyElement;
@@ -307,6 +308,23 @@ pub(super) fn chat_frame() -> Div {
     div().w_full().max_w(px(CHAT_WIDTH + 40.)).mx_auto()
 }
 
+/// A glow around the island in a notice's tone; `strength` 1 is a new
+/// notice's greeting at its peak.
+pub(super) fn tone_glow(tone: Tone, strength: f32, p: Palette) -> gpui::BoxShadow {
+    let color = match tone {
+        Tone::Info | Tone::Loading => p.accent,
+        Tone::Success => p.success,
+        Tone::Warning => p.warning,
+        Tone::Error => p.error,
+    };
+    gpui::BoxShadow {
+        color: gpui::Hsla::from(rgb(color)).opacity(0.45 * strength),
+        offset: gpui::point(px(0.), px(0.)),
+        blur_radius: px(22.),
+        spread_radius: px(2. * strength),
+    }
+}
+
 pub(super) fn floating_shadow(p: Palette) -> Vec<gpui::BoxShadow> {
     vec![gpui::BoxShadow {
         color: gpui::Hsla::from(rgb(p.shadow)).opacity(p.shadow_opacity),
@@ -347,6 +365,25 @@ impl Workspace {
             ""
         };
         let feature = self.extras.notice.clone();
+        // The context gauge rides the main capsule unless it is too narrow
+        // (then the composer keeps its meter); a subagent's capsule has none.
+        let carried = actions.is_some() && self.title_carries_context();
+        let gauge = self
+            .selected_session()
+            .filter(|_| carried)
+            .and_then(Gauge::of);
+        let context = self
+            .selected_session()
+            .filter(|_| carried)
+            .and_then(context_notice);
+        // Every chat's current context band, so a dismissal survives
+        // switching away and back but not a change of band.
+        let bands: Vec<String> = self
+            .view
+            .sessions
+            .iter()
+            .filter_map(|s| context_notice(s).map(|n| n.key))
+            .collect();
         // A dismissal hides one text in one slot; once the slot moves on,
         // the same words later are news again.
         self.extras
@@ -355,6 +392,7 @@ impl Workspace {
                 "status" => *text == status,
                 "feature" => *text == feature,
                 "omitted" => text == omitted,
+                "context" => bands.contains(text),
                 _ => false,
             });
         let shown = |slot: &str, text: &str| {
@@ -374,13 +412,16 @@ impl Workspace {
             shown("feature", &feature),
             shown("omitted", omitted),
         );
+        let context = context.filter(|n| shown("context", &n.key));
         // Each row with what it says, so the island can move it and, once
         // it goes, fade its words out in place.
         let mut rows: Vec<(Notice, AnyElement)> = Vec::new();
         if !self.view.connected && !self.view.transcript.rows.is_empty() {
+            let text: String = self.connection_copy().title.into();
             let notice = Notice {
                 slot: "connection",
-                text: self.connection_copy().title.into(),
+                key: text.clone(),
+                text,
                 tone: Tone::Warning,
                 dismissible: false,
             };
@@ -395,10 +436,12 @@ impl Workspace {
                     .into_any_element()
             });
             let tone = notice_tone(&status);
+            let dismiss = (!retry).then(|| status.clone());
             let row =
-                self.island_notice("status", status.clone(), tone, action, !retry, compact, cx);
+                self.island_notice("status", status.clone(), tone, action, dismiss, compact, cx);
             let notice = Notice {
                 slot: "status",
+                key: status.clone(),
                 text: status,
                 tone,
                 dismissible: !retry,
@@ -407,11 +450,36 @@ impl Workspace {
         }
         if show_feature {
             let tone = notice_tone(&feature);
-            let row = self.island_notice("feature", feature.clone(), tone, None, true, compact, cx);
+            let dismiss = Some(feature.clone());
+            let row =
+                self.island_notice("feature", feature.clone(), tone, None, dismiss, compact, cx);
             let notice = Notice {
                 slot: "feature",
+                key: feature.clone(),
                 text: feature,
                 tone,
+                dismissible: true,
+            };
+            rows.push((notice, row));
+        }
+        // A nearly full context. Its words keep the live figures, but the
+        // row is named (and dismissed) by its band, so a token tick neither
+        // greets again nor undoes a dismissal.
+        if let Some(context) = context {
+            let row = self.island_notice(
+                "context",
+                context.text.clone(),
+                context.tone,
+                None,
+                Some(context.key.clone()),
+                compact,
+                cx,
+            );
+            let notice = Notice {
+                slot: "context",
+                key: context.key,
+                text: context.text,
+                tone: context.tone,
                 dismissible: true,
             };
             rows.push((notice, row));
@@ -423,13 +491,14 @@ impl Workspace {
                 text.into(),
                 Tone::Loading,
                 None,
-                false,
+                None,
                 compact,
                 cx,
             );
             rows.push((
                 Notice {
                     slot: "refresh",
+                    key: text.into(),
                     text: text.into(),
                     tone: Tone::Loading,
                     dismissible: false,
@@ -450,13 +519,14 @@ impl Workspace {
                 omitted.into(),
                 Tone::Info,
                 Some(action),
-                true,
+                Some(omitted.into()),
                 compact,
                 cx,
             );
             rows.push((
                 Notice {
                     slot: "omitted",
+                    key: omitted.into(),
                     text: omitted.into(),
                     tone: Tone::Info,
                     dismissible: true,
@@ -478,7 +548,18 @@ impl Workspace {
             hash.finish()
         };
         self.island_motion.sync(&notices, chat, motion, now);
+        self.gauge_motion.sync(gauge, chat, motion, now);
         let open = self.island_motion.open(now);
+        // The exact figures sit at the head of the revealed actions.
+        let actions = actions.map(|actions| match gauge {
+            Some(gauge) => div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(gauge::detail(gauge, p))
+                .child(actions),
+            None => actions,
+        });
         // The island's width once grown around notices: rows lay out at it
         // throughout, so words never rewrap while the outline moves.
         let grown_width = self.title_base_width
@@ -491,7 +572,7 @@ impl Workspace {
             Some(actions) => self.reveal_title_actions(bar, actions, open, now, window, cx),
             None => (bar, gpui::px(0.)),
         };
-        if self.island_motion.moving(now) {
+        if self.island_motion.moving(now) || self.gauge_motion.moving(now) {
             window.request_animation_frame();
         }
         // Measures the capsule's width inside its border, less whatever its
@@ -518,9 +599,22 @@ impl Workspace {
         .top_0()
         .left_0()
         .size_full();
-        let bar = bar.child(base);
+        let bar = bar
+            .child(base)
+            .children(gauge.map(|gauge| gauge::hairline(gauge, self.gauge_motion.fill(now), p)));
+        // From 70% the capsule holds a quiet glow in the warning tone: the
+        // notice greeting's glow, held low and steady.
+        let warmth = self.gauge_motion.glow(now);
         if !self.island_motion.shows(now) {
-            return bar.into_any_element();
+            return match warmth {
+                Some((tone, strength)) => {
+                    let mut shadow = floating_shadow(p);
+                    shadow.push(tone_glow(tone, strength, p));
+                    bar.shadow(shadow)
+                }
+                None => bar,
+            }
+            .into_any_element();
         }
         // The island's 1px border replaces the bar's own, so the capsule's
         // outline stays where it was and only grows downward.
@@ -655,19 +749,8 @@ impl Workspace {
         };
         // A new notice greets with a short glow in its tone, then rests.
         let mut shadow = floating_shadow(p);
-        if let Some((tone, strength)) = self.island_motion.glow(now) {
-            let color = match tone {
-                Tone::Info | Tone::Loading => p.accent,
-                Tone::Success => p.success,
-                Tone::Warning => p.warning,
-                Tone::Error => p.error,
-            };
-            shadow.push(gpui::BoxShadow {
-                color: gpui::Hsla::from(rgb(color)).opacity(0.45 * strength),
-                offset: gpui::point(px(0.), px(0.)),
-                blur_radius: px(22.),
-                spread_radius: px(2. * strength),
-            });
+        for (tone, strength) in warmth.into_iter().chain(self.island_motion.glow(now)) {
+            shadow.push(tone_glow(tone, strength, p));
         }
         div()
             .id("title-island")
@@ -698,7 +781,8 @@ impl Workspace {
     }
 
     /// One island notice: tone icon and wrapped text, then its action and a
-    /// dismiss (keyboard reachable, like every native control).
+    /// dismiss (keyboard reachable, like every native control). `dismiss` is
+    /// what a dismissal records for the slot, `None` for a row that stays.
     #[allow(clippy::too_many_arguments)]
     fn island_notice(
         &self,
@@ -706,7 +790,7 @@ impl Workspace {
         text: String,
         tone: Tone,
         action: Option<AnyElement>,
-        dismissible: bool,
+        dismiss: Option<String>,
         compact: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -731,7 +815,7 @@ impl Workspace {
                     )),
             )
             .children(action)
-            .when(dismissible, |d| {
+            .when_some(dismiss, |d, dismiss| {
                 d.child(
                     self.icon_button(
                         SharedString::from(format!("dismiss-{slot}-notice")),
@@ -742,7 +826,7 @@ impl Workspace {
                     .debug_selector(move || format!("dismiss-{slot}-notice"))
                     .size(px(24.))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.extras.dismissed_notices.push((slot, text.clone()));
+                        this.extras.dismissed_notices.push((slot, dismiss.clone()));
                         cx.notify();
                     })),
                 )
@@ -1239,97 +1323,6 @@ const OMITTED_NOTICE: &str =
 /// Top inset of pages under an app-drawn caption: the caption's height plus
 /// breathing room, all of it drag surface except the caption buttons.
 pub(super) const PAGE_CAPTION_INSET: f32 = CAPTION_HEIGHT + 8.;
-
-fn token_label(tokens: u64) -> String {
-    match tokens {
-        t if t >= 1_000_000 => {
-            let m = t as f64 / 1_000_000.;
-            if m.fract() < 0.05 {
-                format!("{m:.0}M")
-            } else {
-                format!("{m:.1}M")
-            }
-        }
-        t if t >= 1_000 => format!("{}K", (t as f64 / 1_000.).round() as u64),
-        t => t.to_string(),
-    }
-}
-
-/// Context-window meter, following the desktop status bar's `ctx` gauge: a
-/// thin rounded track, green → amber (70%) → red (90%), the percentage, and
-/// tokens held of the window in the tooltip. `None` until the runtime reports.
-pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Div>> {
-    let usage = &session.context;
-    let (label, pct, tooltip) = match usage.reading() {
-        Some(reading) => {
-            let pct = reading.pct.clamp(0., 100.);
-            let detail = match (reading.tokens, reading.window) {
-                (Some(tokens), Some(window)) => format!(
-                    "{} of {} tokens in context",
-                    token_label(tokens),
-                    token_label(window)
-                ),
-                (Some(tokens), None) => format!("{} tokens in context", token_label(tokens)),
-                _ => "Share of the context window in use".to_owned(),
-            };
-            (
-                format!("{}%", pct.round() as u64),
-                Some(pct),
-                format!("Context {}% · {detail}", pct.round() as u64),
-            )
-        }
-        None if usage.waiting => (
-            "—".to_owned(),
-            None,
-            "The provider reported a context window but not current-request usage yet".to_owned(),
-        ),
-        None => return None,
-    };
-    let color = match pct {
-        Some(pct) if pct >= 90. => p.error,
-        Some(pct) if pct >= 70. => p.warning,
-        Some(_) => p.success,
-        None => p.muted,
-    };
-    const TRACK: f32 = 44.;
-    Some(
-        div()
-            .id("context-meter")
-            .debug_selector(|| "context-meter".into())
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .px_2()
-            .h(px(28.))
-            .rounded_full()
-            .text_size(px(11.))
-            .child(div().text_color(rgb(p.muted)).child("ctx"))
-            .child(
-                div()
-                    .w(px(TRACK))
-                    .h(px(4.))
-                    .rounded_full()
-                    .bg(rgb(p.border))
-                    .overflow_hidden()
-                    .when_some(pct, |d, pct| {
-                        d.child(
-                            div()
-                                .h_full()
-                                .rounded_full()
-                                .bg(rgb(color))
-                                .w(px(if pct > 0. {
-                                    (pct.max(2.) / 100.) as f32 * TRACK
-                                } else {
-                                    0.
-                                })),
-                        )
-                    }),
-            )
-            .child(div().text_color(rgb(color)).child(label))
-            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)),
-    )
-}
 
 /// Windows draws no system title bar; the app owns the caption buttons and the
 /// drag regions. `WKS_NATIVE_CAPTION=1` previews the same chrome elsewhere.

@@ -175,11 +175,22 @@ const GLOW: Duration = Duration::from_millis(700);
 /// How far content drifts as it fades: in from under the seam, out into it.
 const DRIFT: f32 = 4.;
 /// The island's rows in the order they stack.
-const SLOTS: [&str; 5] = ["connection", "status", "feature", "refresh", "omitted"];
+const SLOTS: [&str; 6] = [
+    "connection",
+    "status",
+    "feature",
+    "context",
+    "refresh",
+    "omitted",
+];
 
 /// One notice the island shows now.
 pub(super) struct Notice {
     pub(super) slot: &'static str,
+    /// What makes it news. A changed key greets again and re-measures,
+    /// while words that change under the same key (a live figure) just
+    /// update. For most notices it is the text itself.
+    pub(super) key: String,
     pub(super) text: String,
     pub(super) tone: Tone,
     /// Shows a dismiss button, which its ghost keeps while it fades.
@@ -190,6 +201,7 @@ pub(super) struct Notice {
 /// keeps its words so it can fade out in place before its room closes.
 pub(super) struct NoticeRow {
     pub(super) slot: &'static str,
+    key: String,
     pub(super) text: String,
     pub(super) tone: Tone,
     pub(super) dismissible: bool,
@@ -300,8 +312,9 @@ impl IslandMotion {
                     row.since = now;
                 }
                 row.dismissible = notice.dismissible;
-                if row.text != notice.text {
-                    row.text = notice.text.clone();
+                row.text.clone_from(&notice.text);
+                if row.key != notice.key {
+                    row.key.clone_from(&notice.key);
                     row.tone = notice.tone;
                     row.since = now;
                     row.pending = row.measured;
@@ -315,6 +328,7 @@ impl IslandMotion {
             presence.set_after(1., now, start - now);
             self.rows.push(NoticeRow {
                 slot: notice.slot,
+                key: notice.key.clone(),
                 text: notice.text.clone(),
                 tone: notice.tone,
                 dismissible: notice.dismissible,
@@ -732,6 +746,7 @@ mod tests {
     fn notice(slot: &'static str, text: &str, tone: Tone) -> Notice {
         Notice {
             slot,
+            key: text.into(),
             text: text.into(),
             tone,
             dismissible: true,
@@ -839,6 +854,48 @@ mod tests {
             !island.measured("status", px(71.5), at(start, 2000)),
             "sub-pixel jitter"
         );
+    }
+
+    #[test]
+    fn live_words_under_the_same_key_update_without_greeting_again() {
+        let start = Instant::now();
+        let mut island = IslandMotion::default();
+        island.sync(&[], 1, true, start);
+        let context = |key: &str, text: &str, tone| Notice {
+            slot: "context",
+            key: key.into(),
+            text: text.into(),
+            tone,
+            dismissible: true,
+        };
+        island.sync(
+            &[context("a@90", "Context 92% full", Tone::Warning)],
+            1,
+            true,
+            start,
+        );
+        island.measured("context", px(30.), start);
+        let rest = at(start, 1000);
+        assert!(!island.moving(rest));
+        island.sync(
+            &[context("a@90", "Context 93% full", Tone::Warning)],
+            1,
+            true,
+            rest,
+        );
+        assert_eq!(island.rows()[0].text, "Context 93% full");
+        assert!(!island.moving(rest), "a tick is no news");
+        assert_eq!(island.rows()[0].height(rest), None);
+        island.sync(
+            &[context("a@95", "Context 96% full", Tone::Error)],
+            1,
+            true,
+            rest,
+        );
+        assert!(matches!(
+            island.glow(at(start, 1100)),
+            Some((Tone::Error, _))
+        ));
     }
 
     #[test]
