@@ -9,6 +9,7 @@ mod handoff;
 mod island;
 mod launch;
 mod markdown;
+mod motion;
 mod navigation;
 mod projects;
 mod remote;
@@ -512,11 +513,13 @@ pub struct Workspace {
     /// The dock's composer layer, measured: the cards above it get the rest
     /// of the dock's share of the window.
     composer_layer_height: gpui::Pixels,
-    /// The title capsule's measured outer width: its notice island wraps
-    /// inside it.
-    title_bar_width: gpui::Pixels,
+    /// The title capsule's measured width inside its border, without what
+    /// its actions add: its notice island wraps inside it.
+    title_base_width: gpui::Pixels,
     /// Hover, focus and tap state behind the capsule's secondary actions.
     title_reveal: island::TitleReveal,
+    /// How the capsule's notice island grows, settles and lets go.
+    island_motion: island::IslandMotion,
     header_bounds: gpui::Bounds<gpui::Pixels>,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
@@ -776,8 +779,9 @@ impl Workspace {
             composer,
             composer_dock_bounds: Default::default(),
             composer_layer_height: Default::default(),
-            title_bar_width: Default::default(),
+            title_base_width: Default::default(),
             title_reveal: island::TitleReveal::new(cx),
+            island_motion: Default::default(),
             header_bounds: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
@@ -2042,7 +2046,13 @@ mod tests {
         let (controller, commands, updates) = Controller::test_channels();
         let mut workspace = None;
         let window = cx.add_window(|window, cx| {
-            let view = cx.new(|cx| Workspace::new(controller, true, window, cx));
+            let view = cx.new(|cx| {
+                let mut workspace = Workspace::new(controller, true, window, cx);
+                // The test platform draws no animation frames: chrome
+                // springs would rest mid-flight. Motion has its own tests.
+                workspace.settings.reduce_motion = true;
+                workspace
+            });
             workspace = Some(view.clone());
             Root::new(view, window, cx)
         });
@@ -6352,6 +6362,134 @@ mod tests {
                 vec![("feature", "Attachment failed: too large".to_owned())]
             );
         });
+    }
+
+    /// With motion on, the island grows into its notices rather than
+    /// snapping: mid-way it is part-tall and part-wide around its center,
+    /// the transcript follows the measured header, and at rest it is exactly
+    /// the snapped island. A dismissed row keeps its words while the room
+    /// closes, then the capsule is exactly the resting capsule again, and
+    /// nothing keeps rendering once it settles.
+    #[gpui::test]
+    fn title_island_springs_into_notices_and_lets_go(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let with_notice = |notice: &str| {
+            let mut view = state("a");
+            view.notice = notice.into();
+            view.transcript.snapshot(ConversationSnapshot {
+                seq: 12,
+                first_seq: 1,
+                items: (0..12)
+                    .map(|i| Item {
+                        kind: "assistant_text".into(),
+                        text: format!("Message {i}"),
+                        ..Default::default()
+                    })
+                    .collect(),
+            });
+            Arc::new(view)
+        };
+        let show = |visual: &mut VisualTestContext, notice: &str| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.update_view(with_notice(notice), window, cx)
+                })
+            });
+            visual.run_until_parked();
+        };
+        let island = |visual: &mut VisualTestContext, f: fn(&mut Workspace)| {
+            visual.update(|_, cx| {
+                workspace.update(cx, |this, cx| {
+                    f(this);
+                    cx.notify();
+                })
+            });
+            visual.run_until_parked();
+        };
+        let header = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.header_bounds.size.height)
+        };
+        let notice = "Model change refused: this provider cannot switch models while a turn is running, so nothing changed.";
+
+        // Where everything belongs, from the snapped (reduced motion) path.
+        show(&mut visual, "");
+        settle_title(&workspace, &mut visual);
+        let capsule = visual.debug_bounds("title-bar").unwrap();
+        let bare = header(&mut visual);
+        show(&mut visual, notice);
+        let snapped = visual.debug_bounds("title-island").unwrap();
+        let snapped_tray = visual.debug_bounds("title-island-notices").unwrap();
+        let snapped_header = header(&mut visual);
+        show(&mut visual, "");
+        assert_eq!(visual.debug_bounds("title-bar").unwrap(), capsule);
+
+        visual.update(|_, cx| workspace.update(cx, |this, _| this.settings.reduce_motion = false));
+        show(&mut visual, notice);
+        assert!(workspace.read_with(&visual, |this, _| this.island_moving()));
+        // Half-way: the island is part-grown down and out about its center,
+        // and the transcript is pushed by just that much.
+        island(&mut visual, |this| this.freeze_island(0.5));
+        let half = visual.debug_bounds("title-island").unwrap();
+        assert!(
+            half.size.width > capsule.size.width + px(40.)
+                && half.size.width < snapped.size.width - px(40.),
+            "{half:?} between {capsule:?} and {snapped:?}"
+        );
+        assert!((half.center().x - snapped.center().x).abs() <= px(1.));
+        assert_eq!(half.top(), snapped.top());
+        assert!(
+            half.size.height > capsule.size.height + px(4.)
+                && half.size.height < snapped.size.height - px(4.),
+            "{half:?}"
+        );
+        let tray = visual.debug_bounds("title-island-notices").unwrap();
+        assert!(tray.right() <= half.right() && tray.left() >= half.left());
+        let pushed = header(&mut visual);
+        assert!(
+            bare < pushed && pushed < snapped_header,
+            "{bare:?} {pushed:?}"
+        );
+
+        // At rest it is exactly the snapped island, and stays put.
+        island(&mut visual, |this| this.settle_island());
+        assert_eq!(visual.debug_bounds("title-island").unwrap(), snapped);
+        assert_eq!(
+            visual.debug_bounds("title-island-notices").unwrap(),
+            snapped_tray
+        );
+        assert_eq!(header(&mut visual), snapped_header);
+        assert!(!workspace.read_with(&visual, |this, _| this.island_moving()));
+
+        // Dismissed: the words stay a moment as a ghost, holding the room
+        // and no longer clickable; then the capsule is back exactly.
+        let dismiss = visual.debug_bounds("dismiss-status-notice").unwrap();
+        visual.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(workspace.read_with(&visual, |this, _| this.island_moving()));
+        let leaving = visual.debug_bounds("title-island").unwrap();
+        assert_eq!(
+            leaving.size.height, snapped.size.height,
+            "content leaves first"
+        );
+        island(&mut visual, |this| this.freeze_island(0.4));
+        let closing = visual.debug_bounds("title-island").unwrap();
+        assert!(closing.size.height < snapped.size.height - px(4.));
+        assert!(closing.size.height > capsule.size.height);
+        island(&mut visual, |this| this.settle_island());
+        assert_eq!(visual.debug_bounds("title-bar").unwrap(), capsule);
+        assert_eq!(header(&mut visual), bare);
+        assert!(!workspace.read_with(&visual, |this, _| this.island_moving()));
+
+        // In real time it settles by itself and stops asking for frames.
+        // (Once the slot moves on, the same words are news again.)
+        show(&mut visual, "");
+        show(&mut visual, notice);
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        // (The next frame, as the animation frame it asked for would draw.)
+        island(&mut visual, |_| {});
+        assert!(!workspace.read_with(&visual, |this, _| this.island_moving()));
+        assert_eq!(visual.debug_bounds("title-island").unwrap(), snapped);
+        assert_eq!(header(&mut visual), snapped_header);
     }
 
     /// The title capsule rests compact, like a Dynamic Island: its secondary
