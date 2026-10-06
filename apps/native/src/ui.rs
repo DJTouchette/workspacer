@@ -2367,6 +2367,151 @@ mod tests {
         );
     }
 
+    /// The last frame's text-selection highlights.
+    fn painted_selection(visual: &mut VisualTestContext) -> Vec<gpui::Bounds<gpui::Pixels>> {
+        visual.update(|window, cx| {
+            let selection = gpui_component::ActiveTheme::theme(cx).selection;
+            window
+                .rendered_fills()
+                .into_iter()
+                .filter(|(_, color)| *color == selection)
+                .map(|(bounds, _)| bounds)
+                .collect()
+        })
+    }
+
+    /// A press and its release delivered before the next frame, as a
+    /// touchpad tap or a synthetic click arrives.
+    fn tap(visual: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>) {
+        let (modifiers, button) = (gpui::Modifiers::default(), gpui::MouseButton::Left);
+        visual.simulate_events_in_one_frame(vec![
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                position: at,
+                modifiers,
+                button,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                position: at,
+                modifiers,
+                button,
+                click_count: 1,
+            }),
+        ]);
+    }
+
+    /// Chat history scrolls under the floating title island. A press on an
+    /// island control (here a notice's dismiss) belongs to that control: the
+    /// transcript under it must not start a text selection that the pointer
+    /// then drags on, and the press clears one already there, as any press
+    /// outside the text does.
+    #[gpui::test]
+    fn island_controls_do_not_select_the_transcript_under_them(cx: &mut TestAppContext) {
+        let (workspace, mut visual, _commands, _updates) = fixture(cx);
+        let paragraphs = (0..40)
+            .map(|i| format!("Paragraph {i}: a line long enough to reach under every island control and wrap."))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let show = |visual: &mut VisualTestContext| {
+            visual.update(|window, cx| {
+                workspace.update(cx, |this, cx| {
+                    let mut view = state("a");
+                    view.notice = "Model change accepted: claude-opus-5-5 · High effort".into();
+                    view.transcript.snapshot(ConversationSnapshot {
+                        seq: 1,
+                        first_seq: 1,
+                        items: vec![Item {
+                            kind: "assistant_text".into(),
+                            text: paragraphs.clone(),
+                            ..Default::default()
+                        }],
+                    });
+                    this.extras.dismissed_notices.clear();
+                    this.update_view(Arc::new(view), window, cx);
+                })
+            });
+            visual.run_until_parked();
+        };
+        let dismissed = |visual: &mut VisualTestContext| {
+            workspace.read_with(visual, |this, _| this.extras.dismissed_notices.len())
+        };
+        show(&mut visual);
+        let dismiss = visual.debug_bounds("dismiss-status-notice").unwrap();
+        // The transcript's text really is under the dismiss button.
+        let transcript = visual
+            .debug_bounds("markdown-inline-live:a:0-0")
+            .expect("assistant markdown");
+        assert!(
+            transcript.top() < dismiss.top() && transcript.right() > dismiss.right(),
+            "{transcript:?} under {dismiss:?}"
+        );
+        assert!(painted_selection(&mut visual).is_empty());
+
+        // A tap on the dismiss, then the pointer goes on its way over the
+        // transcript.
+        let away = gpui::point(transcript.left() + px(40.), dismiss.center().y + px(200.));
+        tap(&mut visual, dismiss.center());
+        assert_eq!(dismissed(&mut visual), 1);
+        visual.simulate_mouse_move(away, None, gpui::Modifiers::default());
+        visual.run_until_parked();
+        let painted = painted_selection(&mut visual);
+        assert!(painted.is_empty(), "tap left a selection: {painted:?}");
+
+        // Nor does a held press dragged off the control onto the text.
+        show(&mut visual);
+        let at = dismiss.center();
+        visual.simulate_mouse_down(at, gpui::MouseButton::Left, gpui::Modifiers::default());
+        visual.simulate_mouse_move(
+            at - gpui::point(px(200.), px(-100.)),
+            Some(gpui::MouseButton::Left),
+            gpui::Modifiers::default(),
+        );
+        let painted = painted_selection(&mut visual);
+        assert!(painted.is_empty(), "press selected: {painted:?}");
+        visual.simulate_mouse_up(at, gpui::MouseButton::Left, gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(dismissed(&mut visual), 1);
+
+        // Text selection itself still works, and a press on the island
+        // clears it, as a press anywhere outside the text does.
+        show(&mut visual);
+        let a = gpui::point(transcript.left() + px(10.), away.y);
+        let b = gpui::point(transcript.left() + px(300.), away.y + px(40.));
+        visual.simulate_mouse_down(a, gpui::MouseButton::Left, gpui::Modifiers::default());
+        visual.simulate_mouse_move(b, Some(gpui::MouseButton::Left), gpui::Modifiers::default());
+        visual.simulate_mouse_up(b, gpui::MouseButton::Left, gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert!(!painted_selection(&mut visual).is_empty(), "drag selects");
+        visual.simulate_click(dismiss.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        assert_eq!(dismissed(&mut visual), 1);
+        let painted = painted_selection(&mut visual);
+        assert!(painted.is_empty(), "island press kept: {painted:?}");
+
+        // The capsule itself (its title, its hover-revealed actions) is the
+        // same occluding island.
+        let bar = visual.debug_bounds("title-bar").unwrap();
+        tap(&mut visual, bar.center());
+        visual.simulate_mouse_move(away, None, gpui::Modifiers::default());
+        visual.run_until_parked();
+        let painted = painted_selection(&mut visual);
+        assert!(
+            painted.is_empty(),
+            "capsule tap left a selection: {painted:?}"
+        );
+
+        // A tap on the text itself selects nothing, and the pointer moving on
+        // afterwards does not drag a selection along.
+        visual.simulate_click(a, gpui::Modifiers::default());
+        visual.run_until_parked();
+        tap(&mut visual, a);
+        visual.simulate_mouse_move(b, None, gpui::Modifiers::default());
+        visual.run_until_parked();
+        let painted = painted_selection(&mut visual);
+        assert!(painted.is_empty(), "text tap kept selecting: {painted:?}");
+    }
+
     #[gpui::test]
     fn markdown_file_link_requests_preview_and_shows_the_result(cx: &mut TestAppContext) {
         let (workspace, mut visual, mut commands, _updates) = fixture(cx);

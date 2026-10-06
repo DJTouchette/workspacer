@@ -45,3 +45,17 @@ off by mouse kept its accent border, reading as still "on", until focus moved.
 Pinned by `pointer_focus_draws_no_ring_but_keyboard_focus_does` and
 `fleet_wakes_render_as_named_worker_cards_not_user_bubbles` (apps/native UI
 tests); both fail with `.focus(..)` in `chrome::interactive_control`.
+
+Test support only, for text-selection UI tests (2026-10-06):
+
+- `Window::rendered_fills()` (`src/window.rs`) lists the last frame's
+  solid-filled quads in logical pixels, so a test can find a painted
+  selection highlight by the theme's selection color.
+- `VisualTestContext::simulate_events_in_one_frame(..)`
+  (`src/app/test_context.rs`) dispatches several events with no frame drawn
+  between them. The other `simulate_*` helpers draw after every event, so
+  they cannot reproduce a touchpad tap or synthetic click whose press and
+  release arrive before the next frame. (`Window::dispatch_event` cannot be
+  called from outside the crate: it returns a crate-private type.)
+
+Used by `island_controls_do_not_select_the_transcript_under_them` (apps/native).

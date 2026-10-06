@@ -844,6 +844,18 @@ impl VisualTestContext {
         self.background_executor.run_until_parked();
     }
 
+    /// Workspacer patch: dispatch `events` back to back with no frame drawn
+    /// between them, as a touchpad tap or a synthetic click arrives (the
+    /// other `simulate_*` helpers draw after every event).
+    pub fn simulate_events_in_one_frame(&mut self, events: Vec<crate::PlatformInput>) {
+        self.update(|window, cx| {
+            for event in events {
+                window.dispatch_event(event, cx);
+            }
+        });
+        self.background_executor.run_until_parked();
+    }
+
     /// Simulates the user blurring the window.
     pub fn deactivate_window(&mut self) {
         if Some(self.window) == self.test_platform.active_window() {
