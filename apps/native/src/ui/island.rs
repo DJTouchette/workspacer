@@ -4,7 +4,7 @@
 //! open. Hidden actions are clipped to no width, so they have no hit area and
 //! cannot be clicked by accident; they stay in Tab order, and focusing one
 //! reveals them at once.
-use super::chrome::Tone;
+use super::chrome::{self, Tone};
 use super::motion::{Spring, Tune, smooth};
 use super::*;
 use gpui::{ClickEvent, DispatchPhase, MouseButton, MouseExitEvent, MouseMoveEvent};
@@ -559,26 +559,14 @@ impl Workspace {
             // Arrives behind the width and leaves ahead of it, so controls
             // show whole and the capsule never closes over visible ones.
             .opacity(smooth((progress - 0.4) / 0.5))
-            .child(
-                canvas(
-                    move |bounds, _, cx| {
-                        cx.defer(move |cx| {
-                            let _ = measure.update(cx, |this, cx| {
-                                let width = &mut this.title_reveal.width;
-                                if settle_width(*width, bounds.size.width) {
-                                    *width = bounds.size.width;
-                                    cx.notify();
-                                }
-                            });
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
-            )
+            .child(chrome::measure(measure, |this: &mut Self, bounds, _| {
+                let width = &mut this.title_reveal.width;
+                let changed = settle_width(*width, bounds.size.width);
+                if changed {
+                    *width = bounds.size.width;
+                }
+                changed
+            }))
             .child(divider)
             .child(actions);
         // A bare capsule stretches a few pixels past its actions before

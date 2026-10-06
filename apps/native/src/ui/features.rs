@@ -9,6 +9,24 @@ use wks_native::features::{AttachmentSource, Request, attention_transition};
 /// `Some(None)` unavailable or not an image).
 pub(super) type DraftFile = (String, String, Option<Option<Arc<gpui::Image>>>);
 
+const HANDOFF_DESCRIPTION: &str = "Start a new agent in this session’s folder with a brief of its work. The handoff message waits in the new agent’s composer for you to review and send.";
+const MODEL_DESCRIPTION: &str = "Choose the model and reasoning effort for this session’s next work. A busy provider may queue the change.";
+const HISTORY_DESCRIPTION: &str =
+    "A snapshot of retained conversation history. Live messages continue in chat.";
+const CLEARED_TOOLTIP: &str =
+    "Cleared from the sidebar on this device · show it under its parent again";
+const RECENT_FOOTER: &str = "Names are saved on this device. Archives are shared with every client of this hub, web included. Archiving keeps the conversation and does not stop an agent.";
+const NAME_DESCRIPTION: &str =
+    "Shown in the sidebar on this device. Leave empty to use the agent’s own title.";
+const END_CONFIRMATION: &str =
+    "End this agent? Its current work stops. You can resume its conversation later.";
+const SESSION_FOOTER: &str = "Archiving hides the session from the list in every client of this hub and keeps it running. Ending stops the agent.";
+const HISTORY_TRIMMED: &str =
+    "The server has trimmed earlier events; this starts at its oldest retained event.";
+const SETUP_INFO: &str = "Checking a connection sends a small test request and may use your provider allowance. Git is required for reviewing changes.";
+const CLAUDE_SETUP: &str = "Install Claude Code, then run claude in a terminal to sign in.";
+const CODEX_SETUP: &str = "Install Codex CLI, then run codex login in a terminal to sign in.";
+
 /// Starts the installer helper; returns once it is waiting for the app.
 pub(super) trait UpdateStarter:
     Fn(&wks_native::updates::Handoff) -> anyhow::Result<wks_native::updates::ReadyHelper> + Send + Sync
@@ -986,23 +1004,14 @@ impl Workspace {
                 "Session history",
                 Some("Every session this connection knows about, including ended ones.".into()),
             ),
-            Screen::History => (
-                "Conversation history",
-                Some("A snapshot of retained conversation history. Live messages continue in chat.".into()),
-            ),
+            Screen::History => ("Conversation history", Some(HISTORY_DESCRIPTION.into())),
             Screen::Session => ("Session details", session_cwd.map(Into::into)),
             Screen::Setup => (
                 "Agent setup",
                 Some("Connect your agents on the machine running this workspace.".into()),
             ),
-            Screen::Handoff => (
-                handoff_title.as_str(),
-                Some("Start a new agent in this session’s folder with a brief of its work. The handoff message waits in the new agent’s composer for you to review and send.".into()),
-            ),
-            Screen::Model => (
-                "Model and effort",
-                Some("Choose the model and reasoning effort for this session’s next work. A busy provider may queue the change.".into()),
-            ),
+            Screen::Handoff => (handoff_title.as_str(), Some(HANDOFF_DESCRIPTION.into())),
+            Screen::Model => ("Model and effort", Some(MODEL_DESCRIPTION.into())),
             _ => ("", None),
         };
         let trailing = match self.screen {
@@ -1120,91 +1129,139 @@ impl Workspace {
                     p,
                 ))
             })
-            .children(sessions.into_iter().take(500).enumerate().map(|(ix, s)| {
-                let open = s.clone();
-                let resume = s.clone();
-                let id = s.id.clone();
-                chrome::card(p)
-                    .id(("recent-row", ix))
-                    .px_4()
-                    .py_3()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            // Actions wrap below a title that would otherwise
-                            // be truncated to a word in narrow windows.
-                            .flex_1()
-                            .min_w(px(220.))
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_3()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(px(chrome::scale::BODY))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(self.session_title(&s)),
-                                    )
-                                    .child(div().flex_shrink_0().child(session_badge(&s, p, self.view.connected))),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .min_w_0()
-                                    .text_size(px(chrome::scale::CAPTION))
-                                    .text_color(rgb(p.muted))
-                                    .child(div().flex_shrink_0().child(chrome::model_badge(&s, p, 11.)))
-                                    .child(div().flex_shrink_0().text_color(rgb(p.disabled)).child("·"))
-                                    .child(div().min_w_0().truncate().font_family(mono_font()).child(s.cwd.clone())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            // A child cleared from the sidebar on this device
-                            // comes back here; that is not an archive restore.
-                            .when(self.clear_marked(&s.id), |d| {
-                                let id = s.id.clone();
-                                d.child(self.button("unclear-recent", "Show in sidebar", true)
-                                    .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Cleared from the sidebar on this device · show it under its parent again").build(window, cx))
-                                    .on_click(cx.listener(move |this, _, _, cx| this.unclear_session(&id, cx))))
-                            })
-                            .child(self.button("archive-recent", if self.archived(&s.id) { "Restore" } else { "Archive" }, true)
-                                .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx))))
-                            .when(s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"), |d| {
-                                d.child(self.button("resume-recent", "Resume…", self.view.connected)
-                                    .on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx))))
-                            })
-                            .child(self.primary_button("open-recent", "Open", self.view.connected)
-                                .when(self.view.connected, |d| d.on_click(cx.listener(move |this, _, window, cx| {
-                                    this.show_screen(Screen::Conversation, window, cx);
-                                    this.command(Command::OpenRecent(Box::new(open.clone())), cx);
-                                })))),
-                    )
-            }))
+            .children(
+                sessions
+                    .into_iter()
+                    .take(500)
+                    .enumerate()
+                    .map(|(ix, s)| self.render_recent_row(ix, s, cx)),
+            )
             .child(
                 div()
                     .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
-                    .child("Names are saved on this device. Archives are shared with every client of this hub, web included. Archiving keeps the conversation and does not stop an agent."),
+                    .child(RECENT_FOOTER),
             )
     }
 
+    fn render_recent_row(&self, ix: usize, s: Session, cx: &mut Context<Self>) -> Stateful<Div> {
+        let p = self.appearance.palette();
+        let open = s.clone();
+        let resume = s.clone();
+        let id = s.id.clone();
+        chrome::card(p)
+            .id(("recent-row", ix))
+            .px_4()
+            .py_3()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    // Actions wrap below a title that would otherwise
+                    // be truncated to a word in narrow windows.
+                    .flex_1()
+                    .min_w(px(220.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(chrome::scale::BODY))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(self.session_title(&s)),
+                            )
+                            .child(div().flex_shrink_0().child(session_badge(
+                                &s,
+                                p,
+                                self.view.connected,
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(div().flex_shrink_0().child(chrome::model_badge(&s, p, 11.)))
+                            .child(div().flex_shrink_0().text_color(rgb(p.disabled)).child("·"))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_family(mono_font())
+                                    .child(s.cwd.clone()),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    // A child cleared from the sidebar on this device
+                    // comes back here; that is not an archive restore.
+                    .when(self.clear_marked(&s.id), |d| {
+                        let id = s.id.clone();
+                        d.child(
+                            self.button("unclear-recent", "Show in sidebar", true)
+                                .tooltip(|window, cx| {
+                                    gpui_component::tooltip::Tooltip::new(CLEARED_TOOLTIP)
+                                        .build(window, cx)
+                                })
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.unclear_session(&id, cx)
+                                    }),
+                                ),
+                        )
+                    })
+                    .child(
+                        self.button(
+                            "archive-recent",
+                            if self.archived(&s.id) {
+                                "Restore"
+                            } else {
+                                "Archive"
+                            },
+                            true,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx))),
+                    )
+                    .when(
+                        s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"),
+                        |d| {
+                            d.child(
+                                self.button("resume-recent", "Resume…", self.view.connected)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.resume_session(&resume, window, cx)
+                                    })),
+                            )
+                        },
+                    )
+                    .child(
+                        self.primary_button("open-recent", "Open", self.view.connected)
+                            .when(self.view.connected, |d| {
+                                d.on_click(cx.listener(move |this, _, window, cx| {
+                                    this.show_screen(Screen::Conversation, window, cx);
+                                    this.command(Command::OpenRecent(Box::new(open.clone())), cx);
+                                }))
+                            }),
+                    ),
+            )
+    }
     /// Archive or restore. Only ever a visibility change: no stop, signal,
     /// selection change or forget is sent, and a running session keeps
     /// running. Shared through the hub when it supports it; otherwise kept on
@@ -1353,13 +1410,18 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_3()
-            .child(card_heading("Name", Some("Shown in the sidebar on this device. Leave empty to use the agent’s own title."), p))
+            .child(card_heading("Name", Some(NAME_DESCRIPTION), p))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(Input::new(&self.extras.name)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.extras.name)),
+                    )
                     .child(
                         self.primary_button("save-session-name", "Save name", true)
                             .flex_shrink_0()
@@ -1412,36 +1474,115 @@ impl Workspace {
                     .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .child(self.button("archive-session", if archived { "Restore from archive" } else { "Archive" }, true)
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&archive, cx))))
-                    .when(s.stopped() && self.supported_session(), |d| d.child(self.button("resume-session", "Resume session…", !busy)
-                        .when(!busy, |d| d.on_click(cx.listener(move |this, _, window, cx| this.resume_session(&resume, window, cx))))))
-                    .when_some(wks_native::handoff::target(s).ok().filter(|_| self.view.connected), |d, target| d.child(
-                        self.button("handoff-session", format!("Continue with {}…", wks_native::handoff::provider_name(target)), !busy)
-                            .debug_selector(|| "handoff-session".into())
-                            .when(!busy, |d| d.on_click(cx.listener(|this, _, window, cx| this.open_feature(Screen::Handoff, window, cx))))))
-                    .when(!s.stopped() && !confirming, |d| d.child(self.danger_button("end-session", "End session…", !busy).debug_selector(|| "end-session".into())
-                        .when(!busy, |d| d.on_click(cx.listener(move |this, _, _, cx| { this.extras.confirm_end = Some(end.clone()); cx.notify(); }))))),
+                    .child(
+                        self.button(
+                            "archive-session",
+                            if archived {
+                                "Restore from archive"
+                            } else {
+                                "Archive"
+                            },
+                            true,
+                        )
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.toggle_archive(&archive, cx)),
+                        ),
+                    )
+                    .when(s.stopped() && self.supported_session(), |d| {
+                        d.child(
+                            self.button("resume-session", "Resume session…", !busy)
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(move |this, _, window, cx| {
+                                        this.resume_session(&resume, window, cx)
+                                    }))
+                                }),
+                        )
+                    })
+                    .when_some(
+                        wks_native::handoff::target(s)
+                            .ok()
+                            .filter(|_| self.view.connected),
+                        |d, target| {
+                            d.child(
+                                self.button(
+                                    "handoff-session",
+                                    format!(
+                                        "Continue with {}…",
+                                        wks_native::handoff::provider_name(target)
+                                    ),
+                                    !busy,
+                                )
+                                .debug_selector(|| "handoff-session".into())
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_feature(Screen::Handoff, window, cx)
+                                    }))
+                                }),
+                            )
+                        },
+                    )
+                    .when(!s.stopped() && !confirming, |d| {
+                        d.child(
+                            self.danger_button("end-session", "End session…", !busy)
+                                .debug_selector(|| "end-session".into())
+                                .when(!busy, |d| {
+                                    d.on_click(cx.listener(move |this, _, _, cx| {
+                                        this.extras.confirm_end = Some(end.clone());
+                                        cx.notify();
+                                    }))
+                                }),
+                        )
+                    }),
             )
-            .when(confirming, |d| d.child(
+            .when(confirming, |d| {
+                d.child(
+                    div()
+                        .debug_selector(|| "confirm-end-panel".into())
+                        .p_3()
+                        .rounded(px(p.control_radius))
+                        .border_1()
+                        .border_color(gpui::Hsla::from(rgb(p.error)).opacity(0.45))
+                        .bg(gpui::Hsla::from(rgb(p.error)).opacity(0.08))
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(chrome::notice_line(
+                            END_CONFIRMATION,
+                            chrome::Tone::Warning,
+                            p,
+                            "confirm-end-copy",
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    self.button("cancel-end", "Keep running", true)
+                                        .debug_selector(|| "cancel-end".into())
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.extras.confirm_end = None;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    self.danger_button("confirm-end", "End session", !busy)
+                                        .debug_selector(|| "confirm-end".into())
+                                        .when(!busy, |d| {
+                                            d.on_click(cx.listener(|this, _, _, cx| {
+                                                this.act(Action::Terminate, cx);
+                                                this.extras.confirm_end = None;
+                                            }))
+                                        }),
+                                ),
+                        ),
+                )
+            })
+            .child(
                 div()
-                    .debug_selector(|| "confirm-end-panel".into())
-                    .p_3()
-                    .rounded(px(p.control_radius))
-                    .border_1()
-                    .border_color(gpui::Hsla::from(rgb(p.error)).opacity(0.45))
-                    .bg(gpui::Hsla::from(rgb(p.error)).opacity(0.08))
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(chrome::notice_line("End this agent? Its current work stops. You can resume its conversation later.", chrome::Tone::Warning, p, "confirm-end-copy"))
-                    .child(div().flex().gap_2()
-                        .child(self.button("cancel-end", "Keep running", true).debug_selector(|| "cancel-end".into()).on_click(cx.listener(|this, _, _, cx| { this.extras.confirm_end = None; cx.notify(); })))
-                        .child(self.danger_button("confirm-end", "End session", !busy).debug_selector(|| "confirm-end".into()).when(!busy, |d| d.on_click(cx.listener(|this, _, _, cx| { this.act(Action::Terminate, cx); this.extras.confirm_end = None; }))))),
-            ))
-            .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(
-                "Archiving hides the session from the list in every client of this hub and keeps it running. Ending stops the agent.",
-            ));
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(SESSION_FOOTER),
+            );
         let notice = self.view.notice.clone();
         div()
             .flex()
@@ -1468,71 +1609,323 @@ impl Workspace {
         let pages = count.div_ceil(50).max(1);
         let page = self.extras.history_page.min(pages - 1);
         let start = page * 50;
-        div().flex().flex_col().gap_3().child(self.feature_message("history"))
-            .child(div().flex().items_center().gap_2()
-                .child(self.quiet_button("older-history", "Previous", IconName::ChevronLeft, page > 0).when(page > 0, |d| d.on_click(cx.listener(|this, _, _, cx| { this.extras.history_page = this.extras.history_page.saturating_sub(1); this.extras.history_scroll.set_offset(gpui::point(px(0.), px(0.))); cx.notify(); }))))
-                .child(div().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(format!("Page {} of {}", page + 1, pages)))
-                .child(self.quiet_button("newer-history", "Next", IconName::ChevronRight, page + 1 < pages).when(page + 1 < pages, |d| d.on_click(cx.listener(|this, _, _, cx| { this.extras.history_page += 1; this.extras.history_scroll.set_offset(gpui::point(px(0.), px(0.))); cx.notify(); })))))
-            .when(state.is_some_and(|s| s.value["first_seq"].as_u64().unwrap_or(0) > 1), |d| d.child(chrome::notice_line("The server has trimmed earlier events; this starts at its oldest retained event.", chrome::Tone::Info, p, "history-trimmed")))
-            .when(count == 0 && state.is_some_and(|s| !s.loading && s.error.is_none()), |d| d.child(empty_note("No retained messages are available for this session.", p)))
-            .child(div().id("history-content").max_h(px(600.)).overflow_y_scroll().track_scroll(&self.extras.history_scroll)
-                .children(items.into_iter().flatten().skip(start).take(50).filter_map(|value| {
-                    let row = serde_json::from_value::<wks_native::model::Row>(value.clone()).ok()?;
-                    Some(div().when(value["continued"] == true, |d| d.child(overline(format!("Long message · part {} · literal text", value["part"]), p)))
-                        .child(self.render_message(&row, "history", value["continued"] == true, window, cx)))
-                })))
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(self.feature_message("history"))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        self.quiet_button(
+                            "older-history",
+                            "Previous",
+                            IconName::ChevronLeft,
+                            page > 0,
+                        )
+                        .when(page > 0, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| {
+                                this.extras.history_page =
+                                    this.extras.history_page.saturating_sub(1);
+                                this.extras
+                                    .history_scroll
+                                    .set_offset(gpui::point(px(0.), px(0.)));
+                                cx.notify();
+                            }))
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(chrome::scale::META))
+                            .text_color(rgb(p.muted))
+                            .child(format!("Page {} of {}", page + 1, pages)),
+                    )
+                    .child(
+                        self.quiet_button(
+                            "newer-history",
+                            "Next",
+                            IconName::ChevronRight,
+                            page + 1 < pages,
+                        )
+                        .when(page + 1 < pages, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| {
+                                this.extras.history_page += 1;
+                                this.extras
+                                    .history_scroll
+                                    .set_offset(gpui::point(px(0.), px(0.)));
+                                cx.notify();
+                            }))
+                        }),
+                    ),
+            )
+            .when(
+                state.is_some_and(|s| s.value["first_seq"].as_u64().unwrap_or(0) > 1),
+                |d| {
+                    d.child(chrome::notice_line(
+                        HISTORY_TRIMMED,
+                        chrome::Tone::Info,
+                        p,
+                        "history-trimmed",
+                    ))
+                },
+            )
+            .when(
+                count == 0 && state.is_some_and(|s| !s.loading && s.error.is_none()),
+                |d| {
+                    d.child(empty_note(
+                        "No retained messages are available for this session.",
+                        p,
+                    ))
+                },
+            )
+            .child(
+                div()
+                    .id("history-content")
+                    .max_h(px(600.))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.extras.history_scroll)
+                    .children(items.into_iter().flatten().skip(start).take(50).filter_map(
+                        |value| {
+                            let row =
+                                serde_json::from_value::<wks_native::model::Row>(value.clone())
+                                    .ok()?;
+                            Some(
+                                div()
+                                    .when(value["continued"] == true, |d| {
+                                        d.child(overline(
+                                            format!(
+                                                "Long message · part {} · literal text",
+                                                value["part"]
+                                            ),
+                                            p,
+                                        ))
+                                    })
+                                    .child(self.render_message(
+                                        &row,
+                                        "history",
+                                        value["continued"] == true,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                        },
+                    )),
+            )
     }
     fn render_setup(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
+        let busy = self.view.requests.get("setup").is_some_and(|s| s.loading);
+        let can_check = !busy && self.view.connected;
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .children(
+                ["claude", "codex"]
+                    .into_iter()
+                    .map(|provider| self.render_setup_card(provider, cx)),
+            )
+            .child(chrome::notice_line(
+                SETUP_INFO,
+                chrome::Tone::Info,
+                p,
+                "setup-info",
+            ))
+            .child(
+                div().flex().child(
+                    self.quiet_button(
+                        "setup-refresh",
+                        "Recheck installed agents",
+                        IconName::Redo,
+                        can_check,
+                    )
+                    .when(can_check, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| {
+                            let provider = this.provider.into();
+                            this.request(
+                                Request::Setup {
+                                    provider,
+                                    check: false,
+                                },
+                                cx,
+                            )
+                        }))
+                    }),
+                ),
+            )
+    }
+
+    /// One provider: whether it is installed, and its connection check.
+    fn render_setup_card(&self, provider: &'static str, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
         let state = self.view.requests.get("setup");
         let busy = state.is_some_and(|s| s.loading);
+        let can_check = !busy && self.view.connected;
         let value = state.map(|s| s.value.as_ref()).unwrap_or(&Value::Null);
-        let detected = value["installed"].as_array();
-        div().flex().flex_col().gap_4()
-            .children(["claude", "codex"].into_iter().map(|provider| {
-                let found = detected.and_then(|rows| rows.iter().find(|r| r["provider"] == provider)).and_then(|r| r["found"].as_bool());
-                let label = if provider == "claude" { "Claude" } else { "Codex" };
-                let current = state.is_some_and(|s| matches!(&s.request, Request::Setup { provider: checked, .. } if checked == provider));
-                let status = if current && !busy { value["readiness"]["state"].as_str().unwrap_or("unchecked") } else { "unchecked" };
-                let color = match status {
-                    "responding" => p.success,
-                    "unchecked" | "unsupported" => p.muted,
-                    _ => p.warning,
-                };
-                let description = if busy && current { "Checking this agent…" } else { match status {
-                    "responding" => "Ready · the agent responded",
-                    "unauthenticated" => "Sign-in required",
-                    "limited" => "Account limit reached",
-                    "timeout" => "The connection check timed out",
-                    "network-error" => "Network unavailable",
-                    "unchecked" => "Connection not verified",
-                    "unsupported" => "Connection check unavailable on this host",
-                    _ => "Connection check failed",
-                }};
-                chrome::card(p).p_4().flex().flex_col().gap_3()
-                    .child(div().flex().items_center().gap_3()
-                        .child(chrome::provider_mark(provider, 40., p))
-                        .child(div().flex_1().min_w_0().flex().flex_col().gap_1()
-                            .child(div().text_size(px(chrome::scale::HEADING)).font_weight(FontWeight::SEMIBOLD).child(label))
-                            .child(div().text_size(px(chrome::scale::CAPTION)).text_color(rgb(p.muted)).child(if provider == "claude" { "Claude Code" } else { "Codex CLI" })))
-                        .child(div().flex().items_center().gap_2().text_size(px(chrome::scale::CAPTION)).text_color(rgb(if found == Some(true) { p.success } else { p.muted }))
-                            .child(status_dot(if found == Some(true) { p.success } else { p.muted }))
-                            .child(match found { Some(true) => "Installed", Some(false) => "Not found", None => "Not checked" })))
-                    .child(div().text_size(px(chrome::scale::META)).text_color(rgb(p.muted)).child(if provider == "claude" { "Install Claude Code, then run claude in a terminal to sign in." } else { "Install Codex CLI, then run codex login in a terminal to sign in." }))
-                    .child(div().pt_3().border_t_1().border_color(rgb(p.border)).flex().flex_wrap().items_center().justify_between().gap_3()
-                        .child(div().flex().items_center().gap_2().text_size(px(chrome::scale::META)).text_color(rgb(color))
-                            .child(if busy && current { brand_spinner(12., p, SharedString::from(format!("setup-{provider}-activity"))) } else { status_dot(color) })
-                            .child(description))
-                        .child(self.button(if provider == "claude" { "setup-claude" } else { "setup-codex" }, if busy && current { "Checking…" } else { "Check connection" }, !busy && self.view.connected)
-                            .when(!busy && self.view.connected, |d| d.on_click(cx.listener(move |this, _, _, cx| this.request(Request::Setup { provider: provider.into(), check: true }, cx))))))
-                    .when(current && !busy, |d| d
-                        .when_some(state.and_then(|s| s.error.as_ref()), |d, error| d.child(chrome::notice_line(error.clone(), chrome::Tone::Error, p, SharedString::from(format!("setup-{provider}-error")))))
-                        .when_some(value["readinessError"].as_str(), |d, error| d.child(chrome::notice_line(error.to_owned(), chrome::Tone::Warning, p, SharedString::from(format!("setup-{provider}-readiness"))))))
-            }))
-            .child(chrome::notice_line("Checking a connection sends a small test request and may use your provider allowance. Git is required for reviewing changes.", chrome::Tone::Info, p, "setup-info"))
-            .child(div().flex().child(self.quiet_button("setup-refresh", "Recheck installed agents", IconName::Redo, !busy && self.view.connected)
-                .when(!busy && self.view.connected, |d| d.on_click(cx.listener(|this, _, _, cx| this.request(Request::Setup { provider: this.provider.into(), check: false }, cx))))))
+        let claude = provider == "claude";
+        let found = value["installed"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|r| r["provider"] == provider))
+            .and_then(|r| r["found"].as_bool());
+        let current = state.is_some_and(|s| {
+            matches!(&s.request, Request::Setup { provider: checked, .. } if checked == provider)
+        });
+        let checking = busy && current;
+        let status = if current && !busy {
+            value["readiness"]["state"].as_str().unwrap_or("unchecked")
+        } else {
+            "unchecked"
+        };
+        let color = match status {
+            "responding" => p.success,
+            "unchecked" | "unsupported" => p.muted,
+            _ => p.warning,
+        };
+        let description = if checking {
+            "Checking this agent…"
+        } else {
+            match status {
+                "responding" => "Ready · the agent responded",
+                "unauthenticated" => "Sign-in required",
+                "limited" => "Account limit reached",
+                "timeout" => "The connection check timed out",
+                "network-error" => "Network unavailable",
+                "unchecked" => "Connection not verified",
+                "unsupported" => "Connection check unavailable on this host",
+                _ => "Connection check failed",
+            }
+        };
+        let installed = if found == Some(true) {
+            p.success
+        } else {
+            p.muted
+        };
+        let identity = div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(chrome::provider_mark(provider, 40., p))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_size(px(chrome::scale::HEADING))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(if claude { "Claude" } else { "Codex" }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(chrome::scale::CAPTION))
+                            .text_color(rgb(p.muted))
+                            .child(if claude { "Claude Code" } else { "Codex CLI" }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(installed))
+                    .child(status_dot(installed))
+                    .child(match found {
+                        Some(true) => "Installed",
+                        Some(false) => "Not found",
+                        None => "Not checked",
+                    }),
+            );
+        let check = div()
+            .pt_3()
+            .border_t_1()
+            .border_color(rgb(p.border))
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(chrome::scale::META))
+                    .text_color(rgb(color))
+                    .child(if checking {
+                        let id = SharedString::from(format!("setup-{provider}-activity"));
+                        brand_spinner(12., p, id)
+                    } else {
+                        status_dot(color)
+                    })
+                    .child(description),
+            )
+            .child(
+                self.button(
+                    if claude {
+                        "setup-claude"
+                    } else {
+                        "setup-codex"
+                    },
+                    if checking {
+                        "Checking…"
+                    } else {
+                        "Check connection"
+                    },
+                    can_check,
+                )
+                .when(can_check, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        let provider = provider.into();
+                        this.request(
+                            Request::Setup {
+                                provider,
+                                check: true,
+                            },
+                            cx,
+                        )
+                    }))
+                }),
+            );
+        chrome::card(p)
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(identity)
+            .child(
+                div()
+                    .text_size(px(chrome::scale::META))
+                    .text_color(rgb(p.muted))
+                    .child(if claude { CLAUDE_SETUP } else { CODEX_SETUP }),
+            )
+            .child(check)
+            .when(current && !busy, |d| {
+                d.when_some(state.and_then(|s| s.error.as_ref()), |d, error| {
+                    d.child(chrome::notice_line(
+                        error.clone(),
+                        chrome::Tone::Error,
+                        p,
+                        SharedString::from(format!("setup-{provider}-error")),
+                    ))
+                })
+                .when_some(value["readinessError"].as_str(), |d, error| {
+                    d.child(chrome::notice_line(
+                        error.to_owned(),
+                        chrome::Tone::Warning,
+                        p,
+                        SharedString::from(format!("setup-{provider}-readiness")),
+                    ))
+                })
+            })
     }
+
     fn render_model(&self, cx: &mut Context<Self>) -> Div {
         let p = self.appearance.palette();
         if !self.supported_session() {

@@ -505,90 +505,125 @@ impl Worker {
         loop {
             tokio::select! {
                 command = commands.recv() => match command {
+                    Some(command) => self.handle_command(command).await,
                     None => break,
-                    Some(Command::Select(id)) if self.sessions.contains_key(&id) => self.select(Some(id)).await,
-                    Some(Command::OpenRecent(session)) => {
-                        let id = session.id.clone();
-                        self.sessions.entry(id.clone()).or_insert(*session);
-                        self.fleet_dirty = true;
-                        self.select(Some(id)).await;
-                    }
-                    Some(Command::ConsumeUiRequest(number)) => {
-                        self.view.ui_requests.retain(|r|r.number!=number);
-                        self.dirty=true;
-                    }
-                    Some(Command::Request(request)) => self.request(request),
-                    Some(Command::Act { session, action }) => self.act(session, action),
-                    Some(Command::Create(request)) => self.create(request),
-                    Some(Command::Handoff(request)) => self.handoff(request),
-                    Some(Command::LoadModels { key, refresh }) => self.load_models(key, refresh),
-                    Some(Command::ResumePowerPause(generation)) => {
-                        if self.view.power_paused && self.view.power_pause_generation==generation {
-                            match self.backend.resume_power_pause() {
-                                Ok(())=>{self.view.power_paused=false;self.view.notice="Reconnecting at your request…".into();},
-                                Err(error)=>self.view.notice=error.to_string(),
-                            }
-                            self.dirty=true;
-                        }
-                    }
-                    Some(Command::RefreshUsage) => self.fetch_usage(),
-                    Some(Command::Terminal(command)) => self.terminal(command).await,
-                    Some(Command::ViewChild(target)) => self.view_child(target).await,
-                    Some(Command::LoadOlder) => {
-                        if self.view.transcript.has_older && !self.conversation_pending {
-                            self.conversation_limit += CONVERSATION_PAGE;
-                            self.view.loading_older = true;
-                            self.fetch_conversation();
-                            self.dirty = true;
-                        }
-                    }
-                    Some(Command::Refresh) => {
-                        self.view.loading = self.view.connected && self.view.selected.is_some();
-                        self.fetch_fleet();
-                        if self.view.child.is_some() { self.fetch_child(); } else { self.fetch_conversation(); }
-                        self.dirty=true;
-                    }
-                    _ => {}
                 },
                 event = events.recv() => match event {
+                    Ok(event) => self.event(event).await,
                     Err(_) => {
-                        if self.view.connected {self.disconnected("Backend event stream closed".into(),false);}
-                        if self.fleet_dirty {self.view.sessions=self.session_list();}
+                        if self.view.connected {
+                            self.disconnected("Backend event stream closed".into(), false);
+                        }
+                        if self.fleet_dirty {
+                            self.view.sessions = self.session_list();
+                        }
                         updates.send_replace(Arc::new(self.view.clone()));
                         break;
-                    },
-                    Ok(event) => self.event(event).await,
+                    }
                 },
                 Some(result) = self.jobs.next(), if !self.jobs.is_empty() => self.complete(result).await,
-                _ = frame.tick(), if self.dirty => {
-                    if self.fleet_dirty {
-                        self.view.sessions = self.session_list();
-                        self.fleet_dirty = false;
-                    }
-                    self.reconcile_messages();
-                    let view = Arc::new(self.view.clone());
-                    // Replaces the latest state even when no window is open.
-                    updates.send_replace(view);
-                    self.dirty = false;
-                }
-                _ = maintenance.tick() => {
-                    if self.view.connected {
-                        if self.last_fleet.elapsed() >= Duration::from_secs(30) { self.fetch_fleet(); }
-                        // The hub's report is valid for 60s; account windows move slowly.
-                        if self.last_usage.elapsed() >= Duration::from_secs(60) { self.fetch_usage(); }
-                        self.keep_terminals_alive();
-                        // Ready suppresses fast polling. A slow reconciliation also
-                        // repairs a provider restart behind an otherwise healthy hub.
-                        let pace = if self.push_ready { Duration::from_secs(30) } else { Duration::from_secs(1) };
-                        if self.view.child.is_some() {
-                            // Subagent transcripts have no push feed: poll while it runs.
-                            if self.child_running() && self.last_child.elapsed() >= Duration::from_secs(2) { self.fetch_child(); }
-                        } else if self.last_conversation.elapsed() >= pace { self.fetch_conversation(); }
-                    }
-                }
+                _ = frame.tick(), if self.dirty => self.publish(&updates),
+                _ = maintenance.tick() => self.maintain(),
             }
         }
         // Dropping jobs and bus closes pending calls and releases subscriptions.
+    }
+
+    async fn handle_command(&mut self, command: Command) {
+        match command {
+            Command::Select(id) if self.sessions.contains_key(&id) => self.select(Some(id)).await,
+            Command::OpenRecent(session) => {
+                let id = session.id.clone();
+                self.sessions.entry(id.clone()).or_insert(*session);
+                self.fleet_dirty = true;
+                self.select(Some(id)).await;
+            }
+            Command::ConsumeUiRequest(number) => {
+                self.view.ui_requests.retain(|r| r.number != number);
+                self.dirty = true;
+            }
+            Command::Request(request) => self.request(request),
+            Command::Act { session, action } => self.act(session, action),
+            Command::Create(request) => self.create(request),
+            Command::Handoff(request) => self.handoff(request),
+            Command::LoadModels { key, refresh } => self.load_models(key, refresh),
+            Command::ResumePowerPause(generation) => {
+                if self.view.power_paused && self.view.power_pause_generation == generation {
+                    match self.backend.resume_power_pause() {
+                        Ok(()) => {
+                            self.view.power_paused = false;
+                            self.view.notice = "Reconnecting at your request…".into();
+                        }
+                        Err(error) => self.view.notice = error.to_string(),
+                    }
+                    self.dirty = true;
+                }
+            }
+            Command::RefreshUsage => self.fetch_usage(),
+            Command::Terminal(command) => self.terminal(command).await,
+            Command::ViewChild(target) => self.view_child(target).await,
+            Command::LoadOlder => {
+                if self.view.transcript.has_older && !self.conversation_pending {
+                    self.conversation_limit += CONVERSATION_PAGE;
+                    self.view.loading_older = true;
+                    self.fetch_conversation();
+                    self.dirty = true;
+                }
+            }
+            Command::Refresh => {
+                self.view.loading = self.view.connected && self.view.selected.is_some();
+                self.fetch_fleet();
+                if self.view.child.is_some() {
+                    self.fetch_child();
+                } else {
+                    self.fetch_conversation();
+                }
+                self.dirty = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// Sends the latest view, replacing it even when no window is open.
+    fn publish(&mut self, updates: &tokio::sync::watch::Sender<Arc<View>>) {
+        if self.fleet_dirty {
+            self.view.sessions = self.session_list();
+            self.fleet_dirty = false;
+        }
+        self.reconcile_messages();
+        updates.send_replace(Arc::new(self.view.clone()));
+        self.dirty = false;
+    }
+
+    /// Once a second: slow fleet and usage reads, terminal keepalives, and
+    /// conversation polling where there is no push feed.
+    fn maintain(&mut self) {
+        if !self.view.connected {
+            return;
+        }
+        if self.last_fleet.elapsed() >= Duration::from_secs(30) {
+            self.fetch_fleet();
+        }
+        // The hub's report is valid for 60s; account windows move slowly.
+        if self.last_usage.elapsed() >= Duration::from_secs(60) {
+            self.fetch_usage();
+        }
+        self.keep_terminals_alive();
+        // Ready suppresses fast polling. A slow reconciliation also repairs
+        // a provider restart behind an otherwise healthy hub.
+        let pace = if self.push_ready {
+            Duration::from_secs(30)
+        } else {
+            Duration::from_secs(1)
+        };
+        if self.view.child.is_some() {
+            // Subagent transcripts have no push feed: poll while it runs.
+            if self.child_running() && self.last_child.elapsed() >= Duration::from_secs(2) {
+                self.fetch_child();
+            }
+        } else if self.last_conversation.elapsed() >= pace {
+            self.fetch_conversation();
+        }
     }
 
     fn reconcile_messages(&mut self) {

@@ -68,6 +68,16 @@ const ROW_HEIGHT: f32 = 52.;
 const VISIBLE_ROWS: usize = 5;
 
 impl Workspace {
+    /// Arrow keys move through the project list while its search field has
+    /// focus, unless the folder browser is showing.
+    fn searching_projects(&self, window: &Window, cx: &App) -> bool {
+        self.project_query
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
+            && !self.projects.browsing
+    }
+
     pub(super) fn known_projects(&self) -> Vec<KnownProject> {
         projects::list(
             self.projects.registry.as_deref(),
@@ -1135,13 +1145,13 @@ impl Workspace {
             // Arrow keys move through the list while the search field keeps
             // focus, like a command palette.
             .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
-                if this.project_query.read(cx).focus_handle(cx).is_focused(window) && !this.projects.browsing {
+                if this.searching_projects(window, cx) {
                     this.move_project_cursor(-1, cx);
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
-                if this.project_query.read(cx).focus_handle(cx).is_focused(window) && !this.projects.browsing {
+                if this.searching_projects(window, cx) {
                     this.move_project_cursor(1, cx);
                     cx.stop_propagation();
                 }
@@ -1155,23 +1165,38 @@ impl Workspace {
                         .gap_2()
                         .text_size(px(11.))
                         .text_color(rgb(p.warning))
-                        .child(Icon::new(IconName::TriangleAlert).size(px(12.)).flex_shrink_0())
-                        .child(div().flex_1().min_w_0().child(format!(
-                            "Couldn't read the hub's projects ({error}). Showing this device's projects and active folders."
-                        )))
                         .child(
-                            self.quiet_button("launch-project-retry", "Retry", IconName::Redo, self.view.connected)
-                                .when(self.view.connected, |d| {
-                                    d.on_click(cx.listener(|this, _, _, cx| this.load_projects(cx)))
-                                }),
+                            Icon::new(IconName::TriangleAlert)
+                                .size(px(12.))
+                                .flex_shrink_0(),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(registry_error_notice(&error)),
+                        )
+                        .child(
+                            self.quiet_button(
+                                "launch-project-retry",
+                                "Retry",
+                                IconName::Redo,
+                                self.view.connected,
+                            )
+                            .when(self.view.connected, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| this.load_projects(cx)))
+                            }),
                         ),
                 )
             })
             .child(body)
             .when(!self.projects.browsing && has_rows, |d| {
-                d.child(div().text_size(px(11.)).text_color(rgb(p.muted)).child(
-                    "↑ ↓ to move · Enter to choose · paths belong to the connected hub",
-                ))
+                d.child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child("↑ ↓ to move · Enter to choose · paths belong to the connected hub"),
+                )
             })
     }
 
@@ -1542,6 +1567,13 @@ impl Workspace {
                 )
             })
     }
+}
+
+/// The hub's project registry could not be read; what shows instead.
+pub(super) fn registry_error_notice(error: &str) -> String {
+    format!(
+        "Couldn’t read the hub’s projects ({error}). Showing this device’s projects and active folders."
+    )
 }
 
 pub(super) fn section_label(label: &'static str, p: Palette) -> Div {
