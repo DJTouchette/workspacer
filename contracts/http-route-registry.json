@@ -394,6 +394,36 @@
     },
     {
       "server": "claudemon-api",
+      "pattern": "/sessions/:id/tasks/:task_id/output",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "GET": "get_task_output"
+      },
+      "proofs": {
+        "GET": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "one background task's log. sessions.taskOutput is VIEW-tier on the bus; the caller names a session and a task id only, and claudemon resolves the file from its own task row (the CLI-named <claude session>/tasks/<task id>.output), refusing symlinks and non-regular files",
+      "twin": "sessions.taskOutput",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
+      "pattern": "/sessions/:id/tasks/:task_id/stop",
+      "file": "services/claudemon/src/daemon/api.rs",
+      "verbs": {
+        "POST": "post_task_stop"
+      },
+      "proofs": {
+        "POST": "daemon-policy"
+      },
+      "disposition": "loopback-confined",
+      "reason": "stops one background task through the CLI's own stop_task control request (no signal is sent). sessions.taskStop is TRIAGE-tier like claude.signal, and claudemon only forwards it for a task that session's live stream driver reports as running",
+      "twin": "sessions.taskStop",
+      "twinKind": "bus-method"
+    },
+    {
+      "server": "claudemon-api",
       "pattern": "/sessions/:id/transcript",
       "file": "services/claudemon/src/daemon/api.rs",
       "verbs": {

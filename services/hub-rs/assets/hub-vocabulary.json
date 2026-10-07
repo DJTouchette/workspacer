@@ -165,6 +165,8 @@
     "sessions.snapshot",
     "sessions.snapshots",
     "sessions.subagentConversation",
+    "sessions.taskOutput",
+    "sessions.taskStop",
     "sessions.terminalInput",
     "sessions.terminalKeepalive",
     "sessions.terminalResize",
@@ -409,6 +411,24 @@
       "Disposition": "loopback-confined",
       "Reason": "the parsed provider-owned child-thread conversation. sessions.subagentConversation is VIEW-tier on the bus and claudemon validates the child id belongs to the parent session",
       "Twin": "sessions.subagentConversation",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/tasks/:task_id/output",
+      "Disposition": "loopback-confined",
+      "Reason": "one background task's log. sessions.taskOutput is VIEW-tier on the bus; the caller names a session and a task id only, and claudemon resolves the file from its own task row (the CLI-named <claude session>/tasks/<task id>.output), refusing symlinks and non-regular files",
+      "Twin": "sessions.taskOutput",
+      "TwinKind": "bus-method",
+      "Gate": ""
+    },
+    {
+      "Server": "claudemon-api",
+      "Pattern": "/sessions/:id/tasks/:task_id/stop",
+      "Disposition": "loopback-confined",
+      "Reason": "stops one background task through the CLI's own stop_task control request (no signal is sent). sessions.taskStop is TRIAGE-tier like claude.signal, and claudemon only forwards it for a task that session's live stream driver reports as running",
+      "Twin": "sessions.taskStop",
       "TwinKind": "bus-method",
       "Gate": ""
     },
@@ -849,7 +869,9 @@
       "push.test",
       "files.upload",
       "sessionArchive.get",
-      "sessionArchive.set"
+      "sessionArchive.set",
+      "sessions.taskOutput",
+      "sessions.taskStop"
     ],
     "view": [
       "remote.sharingInfo",
@@ -875,7 +897,8 @@
       "nodes.list",
       "push.key",
       "agents.reportProgress",
-      "sessionArchive.get"
+      "sessionArchive.get",
+      "sessions.taskOutput"
     ]
   },
   "spawnKeys": [

@@ -585,6 +585,7 @@ pub(crate) fn passive_request(method: &str, params: Option<&Value>) -> bool {
             | "sessions.list"
             | "sessions.recent"
             | "sessions.conversation"
+            | "sessions.taskOutput"
             | "sessions.get"
             | "sessions.stats"
             | "sessions.analytics"

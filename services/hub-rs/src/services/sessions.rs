@@ -113,6 +113,8 @@ pub(crate) async fn install(
         "sessions.transcript",
         "sessions.conversation",
         "sessions.subagentConversation",
+        "sessions.taskOutput",
+        "sessions.taskStop",
         "agents.sendMessage",
         "claude.approve",
         "claude.answer",
@@ -698,6 +700,25 @@ impl Sessions {
                 )
                 .await
             }
+            // A background task's log, read by claudemon from the CLI-named
+            // output file of THAT task on THAT session. The caller names ids
+            // only; claudemon resolves (and confines) the path.
+            "sessions.taskOutput" => {
+                let task = task_segment(&params)?;
+                self.request(
+                    "GET",
+                    format!("{root}/tasks/{task}/output{}", task_output_query(&params)),
+                    None,
+                )
+                .await
+            }
+            // Stop one background task through the CLI's own `stop_task`
+            // control request; claudemon returns the CLI's verdict.
+            "sessions.taskStop" => {
+                let task = task_segment(&params)?;
+                self.request("POST", format!("{root}/tasks/{task}/stop"), Some(json!({})))
+                    .await
+            }
             "agents.sendMessage" => {
                 let text = params["text"]
                     .as_str()
@@ -988,6 +1009,76 @@ mod projection_tests {
         hub.shutdown()?;
         engine.shutdown().await?;
         Ok(())
+    }
+}
+
+/// A background-task id as claudemon mints them (short alphanumerics). It
+/// becomes one URL path segment, so anything else is refused here.
+fn task_segment(params: &Value) -> Result<&str> {
+    let id = params["taskId"].as_str().unwrap_or("");
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        bail!("invalid task identifier");
+    }
+    Ok(id)
+}
+
+/// claudemon task-output query for `offset` (resume a follow) / `maxBytes`.
+fn task_output_query(params: &Value) -> String {
+    let query: Vec<String> = [
+        params["offset"].as_u64().map(|o| format!("offset={o}")),
+        params["maxBytes"]
+            .as_u64()
+            .filter(|m| *m > 0)
+            .map(|m| format!("max={m}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if query.is_empty() {
+        String::new()
+    } else {
+        format!("?{}", query.join("&"))
+    }
+}
+
+#[cfg(test)]
+mod task_query_tests {
+    use super::{task_output_query, task_segment};
+    use serde_json::json;
+
+    #[test]
+    fn task_ids_are_one_plain_segment() {
+        assert_eq!(
+            task_segment(&json!({"taskId":"bgznz35pp"})).unwrap(),
+            "bgznz35pp"
+        );
+        for bad in [
+            json!({}),
+            json!({"taskId":""}),
+            json!({"taskId":"../x"}),
+            json!({"taskId":"a/b"}),
+            json!({"taskId":"a.b"}),
+            json!({"taskId":7}),
+            json!({"taskId":"a".repeat(65)}),
+        ] {
+            assert!(task_segment(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn forwards_offset_and_max() {
+        assert_eq!(task_output_query(&json!({})), "");
+        assert_eq!(task_output_query(&json!({"offset":0})), "?offset=0");
+        assert_eq!(
+            task_output_query(&json!({"offset":9,"maxBytes":4096})),
+            "?offset=9&max=4096"
+        );
+        assert_eq!(task_output_query(&json!({"maxBytes":0})), "");
     }
 }
 

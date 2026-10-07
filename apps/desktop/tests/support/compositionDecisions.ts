@@ -588,6 +588,16 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'sessions.taskStop': {
+    reason:
+      "stops one background task of a running agent through the CLI's own `stop_task` control request. It can only ever STOP work: no signal is sent, nothing consults it, and it takes no path, argv or policy value. `taskId` selects a task the daemon already lists as running on that session and is validated as one plain id segment by both the hub and claudemon",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['taskId'],
+      },
+    ],
+  },
   'sessionArchive.set': {
     reason:
       "adds or removes one opaque `sessionId` in the hub's own session-archive.json, which every client reads only to decide which sidebar rows to LIST. WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; the id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no stop, signal, close or delete is reachable from it, and an archived session keeps running. Restoring is the same call with archived:false",
@@ -1280,6 +1290,13 @@ export const parameterDecisions: Record<
   string,
   Record<string, { kind: string; reason: string }>
 > = {
+  'sessions.taskStop': {
+    taskId: {
+      kind: 'id',
+      reason:
+        'selects one background task the daemon already lists on that session; one plain id segment, never a path, and never resolved to a process by the caller',
+    },
+  },
   'sessionArchive.set': {
     sessionId: {
       kind: 'id',
@@ -1673,6 +1690,7 @@ export const actors: string[] = [
   'sessions.delete',
   'sessions.load',
   'sessions.save',
+  'sessions.taskStop',
   'sessions.terminalInput',
   'sessions.transcript',
   'terminals.create',

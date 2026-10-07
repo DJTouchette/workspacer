@@ -167,6 +167,8 @@
     "sessions.snapshot",
     "sessions.snapshots",
     "sessions.subagentConversation",
+    "sessions.taskOutput",
+    "sessions.taskStop",
     "sessions.terminalInput",
     "sessions.terminalKeepalive",
     "sessions.terminalResize",
