@@ -288,7 +288,7 @@
 </ul>
 <p>Wakes for several workers finishing at once coalesce into one message, and a sweep catches a finish whose wake was missed and delivers it late as a catch-up. Nothing here depends on the worker cooperating: the finish and blocked wakes are driven by session state on the host, so a worker with no work{spacer} tools at all still wakes its manager when it lands.</p>
 <h3>slash commands</h3>
-<p>A manager gets three skills, written into its harness's personal skills directory (<code>~/.claude/skills</code>, <code>$CODEX_HOME/skills</code> for Codex, or <code>~/.copilot/skills</code> for GitHub Copilot) each time one spawns:</p>
+<p>A manager gets three skills for its own session only. Claude loads them as the <code>workspacer-fleet</code> plugin (so they run as <code>/workspacer-fleet:standup</code> and so on), Codex receives them as skills on the session's app-server, and GitHub Copilot, which has no per-session channel, gets them in its personal skills directory (<code>~/.copilot/skills</code>). Ordinary agents never see them, and a manager never sees the ordinary agents' skills:</p>
 <ul>
 <li><strong><code>/standup</code></strong>: one status digest, in four sections (in flight, landed recently, waiting on you, next up), composed from the briefs and the live agent list. It reads only. It spawns nothing and changes no brief.</li>
 <li><strong><code>/checkpoint</code></strong>: the considered end-of-session pass. It sweeps the conversation for what would be lost on a restart, files each finding to the most specific home, then prunes the briefs it touched. See <a href="#briefs">briefs</a>.</li>

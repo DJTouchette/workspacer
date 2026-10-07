@@ -1143,6 +1143,11 @@ pub struct SpawnExtras {
     pub env: HashMap<String, String>,
     /// Appended verbatim after the argv the daemon builds.
     pub extra_args: Vec<String>,
+    /// Extra skill directories for this session only (Workspacer's role
+    /// skills). Codex applies them to the session's own app-server with
+    /// `skills/extraRoots/set`; adapters without a per-session skills channel
+    /// ignore them (the launcher's instruction line names the files instead).
+    pub skill_roots: Vec<String>,
 }
 
 /// Spawn a PTY child and wire it into an already-registered session's byte

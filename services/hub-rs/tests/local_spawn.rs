@@ -209,21 +209,25 @@ async fn run(root: PathBuf) {
             .is_ok_and(|row| row["ambientState"] == "idle")
     })
     .await;
-    let pointer = rows(&root, &parent_id)
+    let launch = rows(&root, &parent_id)
         .into_iter()
-        .find_map(|row| row["launchInstructions"].as_str().map(str::to_owned))
+        .find(|row| row["launchInstructions"].is_string())
         .unwrap();
-    // The installer canonicalizes cwd (macOS temporary paths commonly use
-    // /var aliases for /private/var), so compare its canonical pointer.
-    let skill_root = std::fs::canonicalize(&project)
-        .unwrap()
-        .join(".workspacer/skills")
-        .join(workspacer_hub::services::launch_instructions::skill_version());
-    assert!(pointer.contains(&format!("{:?}", skill_root.join("spawn-agent/SKILL.md"))));
+    // The ordinary plugin rides `--plugin-dir` from the content-addressed bundle
+    // in the backend's home; the instruction line names the same files, and
+    // nothing is written into the project.
+    let plugin = root
+        .join("home/.workspacer/agent-skills")
+        .join(workspacer_hub::services::launch_instructions::skill_version())
+        .join("workspacer");
+    assert_eq!(launch["pluginDir"], json!(plugin));
+    let pointer = launch["launchInstructions"].as_str().unwrap();
+    assert!(pointer.contains(&serde_json::to_string(&plugin.join("skills")).unwrap()));
     assert_eq!(
-        std::fs::read_to_string(skill_root.join("spawn-agent/SKILL.md")).unwrap(),
+        std::fs::read_to_string(plugin.join("skills/spawn-agent/SKILL.md")).unwrap(),
         include_str!("../../../apps/desktop/assets/skills/spawn-agent/SKILL.md")
     );
+    assert!(!project.join(".workspacer").exists());
     client
         .call(
             "agents.sendMessage",
@@ -573,7 +577,19 @@ async fn run(root: PathBuf) {
     })
     .await;
     let codex_turns = std::fs::read_to_string(root.join("codex-turns.jsonl")).unwrap();
-    assert!(codex_turns.contains("spawn-agent/SKILL.md"));
+    // The ordinary skills reach Codex's own app-server before any thread exists,
+    // and the first turn's instructions name them (and their directory).
+    let skills = root
+        .join("home/.workspacer/agent-skills")
+        .join(workspacer_hub::services::launch_instructions::skill_version())
+        .join("workspacer/skills");
+    let roots: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("codex-skill-roots.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(roots["id"], "workspacer-skill-roots");
+    assert_eq!(roots["params"]["extraRoots"], json!([skills]));
+    assert!(codex_turns.contains("spawn-agent (before spawning child agents)"));
     assert!(codex_turns.contains("fixture subagent parent"));
     let day = root.join("home/.codex/sessions/2026/09/30");
     std::fs::create_dir_all(&day).unwrap();

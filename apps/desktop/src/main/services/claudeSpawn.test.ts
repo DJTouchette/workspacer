@@ -25,12 +25,12 @@ const prepareLaunchMock = vi.hoisted(() =>
 );
 vi.mock('./launchIntegrations', () => ({ prepareLaunchIntegration: prepareLaunchMock }));
 
-const cardSkill = vi.hoisted(() => vi.fn(() => ''));
-vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: cardSkill }));
-const collaborationSkills = vi.hoisted(() => vi.fn(() => ''));
-vi.mock('./agentCollaborationSkills', () => ({
-  installAgentCollaborationSkills: collaborationSkills,
-}));
+type SkillLaunch = { args: string[]; skillRoots: string[]; instruction: string };
+const noSkills = (): SkillLaunch => ({ args: [], skillRoots: [], instruction: '' });
+const agentSkills = vi.hoisted(() =>
+  vi.fn((..._a: unknown[]): SkillLaunch => ({ args: [], skillRoots: [], instruction: '' })),
+);
+vi.mock('./agentSkillPlugins', () => ({ prepareAgentSkills: agentSkills }));
 const ensureMcpFacadeReady = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('./mcpFacadeDaemon', () => ({ ensureMcpFacadeReady }));
 
@@ -104,7 +104,6 @@ const ensureSupervisorHome = vi.fn(() => '/home/super');
 vi.mock('../lib/workspacerHome', () => ({
   ensureSupervisorHome: (...a: unknown[]) => ensureSupervisorHome(...a),
 }));
-vi.mock('./managerSkills', () => ({ installManagerSkills: vi.fn() }));
 
 const buildSessionMcpConfig = vi.fn();
 const facadeSpawnArgs = vi.fn(() => ({
@@ -162,8 +161,7 @@ function lastSpawn(): {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  cardSkill.mockReturnValue('');
-  collaborationSkills.mockReturnValue('');
+  agentSkills.mockReturnValue(noSkills());
   mockConfig = {};
   getProfile.mockReturnValue(undefined);
   libraryList.mockReturnValue([]);
@@ -173,15 +171,31 @@ beforeEach(() => {
   });
 });
 
-describe('spawnClaudeAgent — ordinary collaboration skills', () => {
-  it('installs them for every Claude PTY spawn', async () => {
+describe('spawnClaudeAgent — Workspacer agent skills', () => {
+  it('prepares the ordinary plugin for every Claude PTY spawn', async () => {
     await spawnClaudeAgent({ cwd: '/proj' });
-    expect(collaborationSkills).toHaveBeenCalledWith('claude', '/proj', false);
+    expect(agentSkills).toHaveBeenCalledWith('claude', '/proj', { manager: false });
   });
 
-  it('withholds ordinary collaboration skills from Fleet Managers', async () => {
+  it('prepares the Fleet Manager plugin instead for managers', async () => {
     await spawnClaudeAgent({ cwd: '/proj', manager: true });
-    expect(collaborationSkills).toHaveBeenCalledWith('claude', '/proj', true);
+    expect(agentSkills).toHaveBeenCalledWith('claude', '/proj', { manager: true });
+  });
+
+  it('loads the plugin for this session only, ahead of profile arguments', async () => {
+    agentSkills.mockReturnValue({
+      args: ['--plugin-dir', '/home/u/.workspacer/agent-skills/v1/workspacer'],
+      skillRoots: [],
+      instruction: 'Workspacer loads these skills into this session: spawn-agent.',
+    });
+    await spawnClaudeAgent({ cwd: '/proj' });
+    const argv = lastArgv();
+    expect(argv[argv.indexOf('--plugin-dir') + 1]).toBe(
+      '/home/u/.workspacer/agent-skills/v1/workspacer',
+    );
+    expect(argv[argv.indexOf('--append-system-prompt') + 1]).toContain(
+      'Workspacer loads these skills into this session',
+    );
   });
 
   it('fails before minting a token when the facade readiness gate fails', async () => {
@@ -796,16 +810,6 @@ describe('spawnClaudeAgent — role effort reaches the argv', () => {
     await spawnClaudeAgent({ cwd: '/proj', manager: true });
     expect(argvEffort()).toBeUndefined();
   });
-});
-
-it('delivers the product skill fallback pointer through the Claude instruction channel', async () => {
-  cardSkill.mockReturnValue('Read /project/product-skill/SKILL.md for cards.');
-  await spawnClaudeAgent({ cwd: '/proj' });
-  const argv = lastArgv();
-  expect(cardSkill).toHaveBeenCalledWith('claude', '/proj');
-  expect(argv[argv.indexOf('--append-system-prompt') + 1]).toContain(
-    'Read /project/product-skill/SKILL.md for cards.',
-  );
 });
 
 describe('spawnClaudeAgent — clean-profile retry boundary', () => {

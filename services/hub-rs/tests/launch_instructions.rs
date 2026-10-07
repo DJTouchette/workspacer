@@ -1,124 +1,210 @@
 use workspacer_hub::services::launch_instructions::{
-    install_skills, instructions, manager_doctrine, skill_version,
+    MANAGER_PLUGIN, ORDINARY_PLUGIN, bundle_root, launch, manager_doctrine, materialize,
+    prepare_skills, skill_version,
 };
-#[test]
-fn generated_skills_match_desktop_hash_and_preserve_user_content() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
-    use sha2::{Digest, Sha256};
-    let desktop: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../apps/desktop/src/main/services/agentCollaborationSkills.generated.json"
+
+fn desktop_bundle() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../../../apps/desktop/src/main/services/agentSkillPlugins.generated.json"
     ))
-    .unwrap();
-    let hash = format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&desktop).unwrap())
-    );
-    assert_eq!(skill_version(), &hash[..16]);
-    let root = install_skills(dir.path(), home.path()).unwrap();
-    assert!(root.join("spawn-agent/SKILL.md").is_file());
-    assert_eq!(install_skills(dir.path(), home.path()).unwrap(), root);
-    let user = root.join("spawn-agent/SKILL.md");
-    std::fs::write(&user, "user-owned").unwrap();
-    assert!(install_skills(dir.path(), home.path()).is_err());
-    assert_eq!(std::fs::read_to_string(user).unwrap(), "user-owned");
-    let text = instructions("one", "claude", dir.path(), home.path(), false);
-    assert!(!text.contains("provides three project skills"));
-    assert!(install_skills(home.path(), home.path()).is_err());
+    .unwrap()
 }
-#[test]
-fn manager_instructions_do_not_install_ordinary_skills() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
-    let text = instructions("manager", "codex", dir.path(), home.path(), true);
-    assert!(text.contains(manager_doctrine()));
-    assert!(!dir.path().join(".workspacer").exists());
-    assert!(manager_doctrine().contains("SELECTED FLEET POLICY:"));
-}
-#[cfg(unix)]
-#[test]
-fn symlinked_destination_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let home = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    std::os::unix::fs::symlink(outside.path(), dir.path().join(".workspacer")).unwrap();
-    assert!(install_skills(dir.path(), home.path()).is_err());
-    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+
+fn quoted(path: &std::path::Path) -> String {
+    serde_json::to_string(&path.to_string_lossy()).unwrap()
 }
 
 #[test]
-fn all_asset_bytes_and_pointer_only_instructions_match_the_bundle() {
-    let cwd = tempfile::tempdir().unwrap();
+fn bundle_matches_desktop_and_materializes_every_file_idempotently() {
     let home = tempfile::tempdir().unwrap();
-    let files: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../apps/desktop/src/main/services/agentCollaborationSkills.generated.json"
-    ))
-    .unwrap();
-    let text = instructions("ordinary", "codex", cwd.path(), home.path(), false);
-    let root = install_skills(cwd.path(), home.path()).unwrap();
-    for (relative, body) in files.as_object().unwrap() {
+    let bundle = desktop_bundle();
+    assert_eq!(skill_version(), bundle["version"].as_str().unwrap());
+    let root = materialize(home.path()).unwrap();
+    assert_eq!(root, bundle_root(home.path()));
+    for (relative, body) in bundle["files"].as_object().unwrap() {
         assert_eq!(
             std::fs::read_to_string(root.join(relative)).unwrap(),
-            body.as_str().unwrap()
+            body.as_str().unwrap(),
+            "{relative}"
         );
-        assert!(text.contains(&format!("{:?}", root.join(relative))));
-        assert!(!text.contains(body.as_str().unwrap()));
     }
-    let pi = tempfile::tempdir().unwrap();
-    assert!(
-        !instructions("pi", "pi", pi.path(), home.path(), false)
-            .contains("provides three project skills")
+    // App-owned and content-addressed: an altered or missing file is restored.
+    let spawn = root.join("workspacer/skills/spawn-agent/SKILL.md");
+    std::fs::write(&spawn, "tampered").unwrap();
+    std::fs::remove_file(root.join("workspacer-fleet/skills/standup/SKILL.md")).unwrap();
+    assert_eq!(materialize(home.path()).unwrap(), root);
+    assert_eq!(
+        std::fs::read_to_string(&spawn).unwrap(),
+        bundle["files"]["workspacer/skills/spawn-agent/SKILL.md"]
+            .as_str()
+            .unwrap()
     );
-    assert!(!pi.path().join(".workspacer").exists());
-    assert!(install_skills(std::path::Path::new("relative"), home.path()).is_err());
-    let root = cwd.path().ancestors().last().unwrap();
-    assert!(install_skills(root, home.path()).is_err());
+    assert!(
+        root.join("workspacer-fleet/skills/standup/SKILL.md")
+            .is_file()
+    );
+    let leftovers = std::fs::read_dir(root.join("workspacer/skills/spawn-agent"))
+        .unwrap()
+        .count();
+    assert_eq!(leftovers, 1, "no temporary files remain");
 }
 
 #[test]
-fn legacy_cleanup_removes_only_exact_provider_copies_even_for_managers() {
-    let files: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../apps/desktop/src/main/services/agentCollaborationSkills.generated.json"
-    ))
-    .unwrap();
-    for (provider, native) in [("", ".claude"), ("claude", ".claude"), ("codex", ".agents")] {
-        for manager in [false, true] {
-            let cwd = tempfile::tempdir().unwrap();
-            let home = tempfile::tempdir().unwrap();
-            let exact = cwd.path().join(native).join("skills/spawn-agent/SKILL.md");
-            let custom = cwd
-                .path()
-                .join(native)
-                .join("skills/project-brief/SKILL.md");
-            std::fs::create_dir_all(exact.parent().unwrap()).unwrap();
-            std::fs::create_dir_all(custom.parent().unwrap()).unwrap();
-            std::fs::write(&exact, files["spawn-agent/SKILL.md"].as_str().unwrap()).unwrap();
-            std::fs::write(&custom, "user owned").unwrap();
-            let text = instructions("session", provider, cwd.path(), home.path(), manager);
-            assert!(!exact.exists());
-            assert_eq!(std::fs::read_to_string(custom).unwrap(), "user owned");
-            assert_eq!(text.contains("provides three project skills"), !manager);
-            assert_eq!(cwd.path().join(".workspacer").exists(), !manager);
+fn claude_takes_the_role_plugin_by_plugin_dir_and_codex_by_skill_roots() {
+    let cwd = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let root = bundle_root(home.path());
+
+    let claude = launch("one", "claude", cwd.path(), home.path(), false);
+    let plugin = root.join(ORDINARY_PLUGIN);
+    assert_eq!(
+        claude.skills.args,
+        vec!["--plugin-dir".to_string(), plugin.to_string_lossy().into()]
+    );
+    assert!(claude.skills.skill_roots.is_empty());
+    assert!(claude.text.contains(&quoted(&plugin.join("skills"))));
+    assert!(
+        claude
+            .text
+            .contains("spawn-agent (before spawning child agents)")
+    );
+
+    let codex = launch("two", "codex", cwd.path(), home.path(), true);
+    let fleet = root.join(MANAGER_PLUGIN);
+    assert!(codex.skills.args.is_empty());
+    assert_eq!(
+        codex.skills.skill_roots,
+        vec![fleet.join("skills").to_string_lossy().into_owned()]
+    );
+    assert!(codex.text.contains(manager_doctrine()));
+    assert!(
+        codex
+            .text
+            .contains("standup (for an on-demand fleet status digest)")
+    );
+    // A manager never sees the ordinary plugin, nor the reverse.
+    assert!(!codex.text.contains("spawn-agent"));
+    assert!(!claude.text.contains("standup"));
+    for dir in [".workspacer", ".claude", ".agents"] {
+        assert!(!cwd.path().join(dir).exists(), "{dir}");
+    }
+}
+
+#[test]
+fn pointer_harnesses_get_each_file_and_pi_gets_nothing() {
+    let cwd = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let skills = bundle_root(home.path())
+        .join(ORDINARY_PLUGIN)
+        .join("skills");
+    for provider in ["copilot", "opencode"] {
+        let launch = prepare_skills(provider, cwd.path(), home.path(), false);
+        assert!(launch.args.is_empty() && launch.skill_roots.is_empty());
+        for name in [
+            "spawn-agent",
+            "project-brief",
+            "scheduled-jobs",
+            "workspacer-response-cards",
+        ] {
+            assert!(
+                launch
+                    .instruction
+                    .contains(&quoted(&skills.join(name).join("SKILL.md")))
+            );
         }
+    }
+    let pi = launch("pi", "pi", cwd.path(), home.path(), false);
+    assert_eq!(pi.skills, Default::default());
+    assert!(!pi.text.contains("skills"));
+}
+
+#[test]
+fn legacy_cleanup_removes_only_exact_project_copies() {
+    let bundle = desktop_bundle();
+    let body = |rel: &str| bundle["files"][rel].as_str().unwrap().to_owned();
+    for manager in [false, true] {
+        let cwd = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let write = |rel: &str, text: &str| {
+            let path = cwd.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            ".claude/skills/spawn-agent/SKILL.md",
+            &body("workspacer/skills/spawn-agent/SKILL.md"),
+        );
+        write(
+            ".agents/skills/workspacer-response-cards/references/schema.md",
+            &body("workspacer/skills/workspacer-response-cards/references/schema.md"),
+        );
+        write(".claude/skills/project-brief/SKILL.md", "user owned");
+        write(
+            ".workspacer/skills/8480e9fb4e9c36ed/scheduled-jobs/SKILL.md",
+            &body("workspacer/skills/scheduled-jobs/SKILL.md"),
+        );
+        write(".workspacer/skills/feedface/spawn-agent/SKILL.md", "edited");
+        write(".workspacer/brief.md", "keep");
+        launch("session", "codex", cwd.path(), home.path(), manager);
+        assert!(!cwd.path().join(".claude/skills/spawn-agent").exists());
+        assert!(!cwd.path().join(".agents").join("skills").exists());
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join(".claude/skills/project-brief/SKILL.md"))
+                .unwrap(),
+            "user owned"
+        );
+        assert!(
+            !cwd.path()
+                .join(".workspacer/skills/8480e9fb4e9c36ed")
+                .exists()
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                cwd.path()
+                    .join(".workspacer/skills/feedface/spawn-agent/SKILL.md")
+            )
+            .unwrap(),
+            "edited"
+        );
+        assert!(cwd.path().join(".workspacer/brief.md").is_file());
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn symlink_cwd_and_legacy_parent_are_never_followed() {
+fn symlinks_are_never_followed() {
     use std::os::unix::fs::symlink;
-    let cwd = tempfile::tempdir().unwrap();
+    // A symlinked bundle directory refuses materialization; the launch still
+    // proceeds without skills rather than writing through the link.
     let home = tempfile::tempdir().unwrap();
-    let links = tempfile::tempdir().unwrap();
-    let alias = links.path().join("alias");
-    symlink(cwd.path(), &alias).unwrap();
-    assert!(install_skills(&alias, home.path()).is_err());
+    let outside = tempfile::tempdir().unwrap();
+    symlink(outside.path(), home.path().join(".workspacer")).unwrap();
+    assert!(materialize(home.path()).is_err());
+    let cwd = tempfile::tempdir().unwrap();
+    assert_eq!(
+        prepare_skills("claude", cwd.path(), home.path(), false),
+        Default::default()
+    );
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+
+    // Cleanup never follows a symlinked cwd or legacy parent.
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let exact = outside.path().join("skills/spawn-agent/SKILL.md");
     std::fs::create_dir_all(exact.parent().unwrap()).unwrap();
     let body = include_str!("../../../apps/desktop/assets/skills/spawn-agent/SKILL.md");
     std::fs::write(&exact, body).unwrap();
     symlink(outside.path(), cwd.path().join(".agents")).unwrap();
-    instructions("manager", "codex", cwd.path(), home.path(), true);
+    let links = tempfile::tempdir().unwrap();
+    let alias = links.path().join("alias");
+    symlink(cwd.path(), &alias).unwrap();
+    launch("manager", "codex", cwd.path(), home.path(), true);
+    launch("alias", "codex", &alias, home.path(), false);
     assert_eq!(std::fs::read_to_string(exact).unwrap(), body);
+}
+
+#[test]
+fn manager_doctrine_carries_the_selected_fleet_policy() {
+    assert!(manager_doctrine().contains("SELECTED FLEET POLICY:"));
 }

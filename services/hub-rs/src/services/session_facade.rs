@@ -167,8 +167,10 @@ impl LaunchPreparation for SessionFacade {
             if enabled {
                 self.ready().await?;
             }
-            let mut instructions = if enabled {
-                super::launch_instructions::instructions(
+            // The role's skills ride the same readiness gate as the facade
+            // they drive: Claude gets `--plugin-dir`, Codex `skill_roots`.
+            let (mut instructions, skills) = if enabled {
+                let launch = super::launch_instructions::launch(
                     &plan.session_id,
                     &plan.provider,
                     std::path::Path::new(
@@ -178,9 +180,10 @@ impl LaunchPreparation for SessionFacade {
                     ),
                     &self.home,
                     plan.metadata["isWakeTarget"] == true,
-                )
+                );
+                (launch.text, launch.skills)
             } else {
-                String::new()
+                Default::default()
             };
             if !self.instructions.trim().is_empty() {
                 if !instructions.is_empty() {
@@ -235,6 +238,7 @@ impl LaunchPreparation for SessionFacade {
                         json!(allowed.join(",")),
                     ]);
                 }
+                argv.extend(skills.args.iter().map(|arg| json!(arg)));
                 if !instructions.is_empty() {
                     argv.extend([json!("--append-system-prompt"), json!(instructions)]);
                 }
@@ -255,6 +259,9 @@ impl LaunchPreparation for SessionFacade {
                     .extend_pairs(pairs)
                     .append_pair("t", token);
                 plan.request["mcp"] = json!(endpoint.as_str());
+            }
+            if plan.endpoint == "/sessions/spawn-managed" && !skills.skill_roots.is_empty() {
+                plan.request["skill_roots"] = json!(skills.skill_roots);
             }
             if plan.endpoint == "/sessions/spawn-managed" && !instructions.is_empty() {
                 let existing = plan.request["instructions"].as_str().unwrap_or("");

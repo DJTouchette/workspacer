@@ -99,6 +99,9 @@ class Server(http.server.BaseHTTPRequestHandler):
                 if method == "turn/start":
                     with (root / "codex-turns.jsonl").open("a") as output:
                         output.write(json.dumps(request["params"]) + "\n")
+                if method == "skills/extraRoots/set":
+                    with (root / "codex-skill-roots.json").open("w") as output:
+                        output.write(json.dumps(request))
                 if "id" not in request:
                     continue
                 result = {"thread": {"id": parent}} if method in ("thread/start", "thread/resume") else {}

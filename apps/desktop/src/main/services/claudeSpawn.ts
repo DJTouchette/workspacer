@@ -42,9 +42,7 @@ import {
   resolveManagerModel,
   resolveManagerEffort,
 } from '../lib/roleModels';
-import { installManagerSkills } from './managerSkills';
-import { installResponseCardSkill } from './responseCardSkill';
-import { installAgentCollaborationSkills } from './agentCollaborationSkills';
+import { prepareAgentSkills } from './agentSkillPlugins';
 import { mintSessionFacadeToken, revokeSessionFacadeTokens } from './remoteTokens';
 import { ensureMcpFacadeReady } from './mcpFacadeDaemon';
 import { buildResultContract, checkResultSchema } from '../shared/structuredResult';
@@ -275,11 +273,6 @@ async function spawnClaude(
   // the spawn payload, which is what lets the daemon know this session's window
   // from token zero instead of guessing 200k off a marker-stripped transcript
   // id. See lib/spawnModel.
-  // The Fleet Manager's invocable skills (/bearings, /stow) — parity with the
-  // stream path (managedSpawn), where the manager normally runs.
-  if (opts.manager) {
-    installManagerSkills();
-  }
   const cardCwd = normalizeSpawnCwd(opts.cwd);
   assertSpawnCwd(cardCwd);
   // The app starts the facade asynchronously at boot. Agent launch is the hard
@@ -287,12 +280,10 @@ async function spawnClaude(
   // facade has a connected hub and its initial plugin catalog.
   timing.mark('preflight', sessionId);
   await timing.measure('facade_ready', () => ensureMcpFacadeReady());
-  const cardInstruction = installResponseCardSkill('claude', cardCwd);
-  const collaborationInstruction = installAgentCollaborationSkills(
-    'claude',
-    cardCwd,
-    !!opts.manager,
-  );
+  // The role's Workspacer skills as a session-only plugin (`--plugin-dir`),
+  // plus the one instruction line that names their files — see
+  // agentSkillPlugins. Ordinary agents and Fleet Managers get different plugins.
+  const skills = prepareAgentSkills('claude', cardCwd, { manager: !!opts.manager });
 
   // The facade fragment is built BEFORE the argv so the structured-result
   // contract can be appended to its --append-system-prompt instead of racing it
@@ -327,14 +318,13 @@ async function spawnClaude(
       facadeArgs ? facadeArgs.appendSystemPrompt : '',
       escalationContract,
       resultContract,
-      cardInstruction,
-      collaborationInstruction,
+      skills.instruction,
     ]
       .filter(Boolean)
       .join('\n\n');
 
     const argv = buildClaudeArgv({
-      extraArgs: profile?.extraArgs,
+      extraArgs: [...skills.args, ...(profile?.extraArgs ?? [])],
       resumeSessionId: opts.resumeSessionId,
       model,
       contextWindow: modelSelection?.contextWindow,

@@ -588,6 +588,11 @@ pub struct SpawnManagedPayload {
     /// `extraArgs` a profile carries.
     #[serde(default)]
     pub extra_args: Vec<String>,
+    /// Extra skill directories for this session only — Workspacer's role skills
+    /// for Codex, applied to the session's app-server (`skills/extraRoots/set`).
+    /// Other adapters ignore them; the launcher's instructions name the files.
+    #[serde(default)]
+    pub skill_roots: Vec<String>,
     /// Extra env vars merged on top of the daemon's environment: a profile's
     /// config root under whichever name its harness uses (`CLAUDE_CONFIG_DIR`
     /// / `CODEX_HOME` / `COPILOT_HOME`), plus Copilot's resolved auth token.
@@ -878,6 +883,7 @@ pub(crate) fn start_native_managed(
                     crate::providers::SpawnExtras {
                         env: payload.env.clone(),
                         extra_args: payload.extra_args.clone(),
+                        skill_roots: payload.skill_roots.clone(),
                     },
                 )
             }
@@ -899,6 +905,7 @@ pub(crate) fn start_native_managed(
                     extras: crate::providers::SpawnExtras {
                         env: payload.env.clone(),
                         extra_args: payload.extra_args.clone(),
+                        skill_roots: payload.skill_roots.clone(),
                     },
                 },
             ),

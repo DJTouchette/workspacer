@@ -43,11 +43,15 @@ vi.mock('./launchIntegrations', () => ({ prepareLaunchIntegration: prepareLaunch
 // normalization real and stub only the assertion — its own behavior is pinned in
 // lib/spawnCwd.test.ts, and the test below pins that this path still calls it.
 const assertSpawnCwdMock = vi.fn();
-const cardSkill = vi.hoisted(() => vi.fn(() => ''));
-vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: cardSkill }));
-const collaborationSkills = vi.hoisted(() => vi.fn(() => ''));
-vi.mock('./agentCollaborationSkills', () => ({
-  installAgentCollaborationSkills: collaborationSkills,
+type SkillLaunch = { args: string[]; skillRoots: string[]; instruction: string };
+const noSkills = (): SkillLaunch => ({ args: [], skillRoots: [], instruction: '' });
+const agentSkills = vi.hoisted(() =>
+  vi.fn((..._a: unknown[]): SkillLaunch => ({ args: [], skillRoots: [], instruction: '' })),
+);
+vi.mock('./agentSkillPlugins', () => ({
+  prepareAgentSkills: agentSkills,
+  agentSkillLoading: (provider: string) =>
+    provider === 'claude' ? 'plugin-dir' : provider === 'codex' ? 'skill-roots' : 'pointer',
 }));
 const ensureMcpFacadeReady = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('./mcpFacadeDaemon', () => ({ ensureMcpFacadeReady }));
@@ -156,17 +160,19 @@ function lastMeta(): Payload {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  cardSkill.mockReturnValue('');
-  collaborationSkills.mockReturnValue('');
+  agentSkills.mockReturnValue(noSkills());
   mockConfig = {};
 });
 
-describe('spawnManagedAgent — ordinary collaboration skills', () => {
+describe('spawnManagedAgent — Workspacer agent skills', () => {
   it.each(['claude', 'codex', 'copilot', 'opencode'] as const)(
-    'runs the provider-aware installer for %s spawns',
+    'prepares the ordinary plugin for %s spawns',
     async (provider) => {
       await spawnManagedAgent({ provider, cwd: '/proj', transport: 'stream' });
-      expect(collaborationSkills).toHaveBeenCalledWith(provider, '/proj', false);
+      expect(agentSkills).toHaveBeenCalledWith(provider, '/proj', {
+        manager: false,
+        strict: false,
+      });
       expect(mintSessionFacadeToken).toHaveBeenCalledWith(
         expect.any(String),
         'operator',
@@ -179,14 +185,14 @@ describe('spawnManagedAgent — ordinary collaboration skills', () => {
     },
   );
 
-  it('withholds ordinary collaboration skills from Fleet Managers', async () => {
+  it('prepares the Fleet Manager plugin instead for managers', async () => {
     await spawnManagedAgent({
       provider: 'codex',
       cwd: '/proj',
       transport: 'stream',
       manager: true,
     });
-    expect(collaborationSkills).toHaveBeenCalledWith('codex', '/proj', true);
+    expect(agentSkills).toHaveBeenCalledWith('codex', '/proj', { manager: true, strict: false });
   });
 
   it('fails before minting a token when the facade readiness gate fails', async () => {
@@ -202,13 +208,53 @@ describe('spawnManagedAgent — ordinary collaboration skills', () => {
     await expect(spawnManagedAgent({ provider: 'pi', cwd: '/proj' })).rejects.toThrow(
       'Pi is not supported',
     );
-    expect(collaborationSkills).not.toHaveBeenCalled();
+    expect(agentSkills).not.toHaveBeenCalled();
   });
 
-  it('carries the fallback pointer in the managed instruction channel', async () => {
-    collaborationSkills.mockReturnValue('READ THE ORDINARY AGENT SKILLS');
+  it('carries the instruction line in the managed instruction channel', async () => {
+    agentSkills.mockReturnValue({ ...noSkills(), instruction: 'READ THE ORDINARY AGENT SKILLS' });
     await spawnManagedAgent({ provider: 'opencode', cwd: '/proj' });
     expect(lastManaged().instructions).toContain('READ THE ORDINARY AGENT SKILLS');
+  });
+
+  it('hands Claude stream its plugin dir on the argv', async () => {
+    agentSkills.mockReturnValue({
+      ...noSkills(),
+      args: ['--plugin-dir', '/h/.workspacer/agent-skills/v/workspacer'],
+    });
+    await spawnManagedAgent({ provider: 'claude', cwd: '/proj', transport: 'stream' });
+    const extra = lastManaged().extraArgs as string[];
+    expect(extra[extra.indexOf('--plugin-dir') + 1]).toBe(
+      '/h/.workspacer/agent-skills/v/workspacer',
+    );
+    expect(lastManaged()).not.toHaveProperty('skillRoots');
+  });
+
+  it('hands Codex its skill roots for the daemon to apply to its app-server', async () => {
+    agentSkills.mockReturnValue({
+      ...noSkills(),
+      skillRoots: ['/h/.workspacer/agent-skills/v/workspacer/skills'],
+    });
+    await spawnManagedAgent({ provider: 'codex', cwd: '/proj', transport: 'stream' });
+    expect(lastManaged().skillRoots).toEqual(['/h/.workspacer/agent-skills/v/workspacer/skills']);
+    expect(lastManaged()).not.toHaveProperty('extraArgs');
+  });
+
+  it('makes a manager replacement fail rather than lose its skills', async () => {
+    agentSkills.mockImplementationOnce(() => {
+      throw new Error('Workspacer agent skills could not be prepared');
+    });
+    await expect(
+      spawnManagedAgent({
+        provider: 'codex',
+        cwd: '/proj',
+        transport: 'stream',
+        manager: true,
+        replacementSessionId: 'old-manager',
+      }),
+    ).rejects.toThrow('could not be prepared');
+    expect(agentSkills).toHaveBeenCalledWith('codex', '/proj', { manager: true, strict: true });
+    expect(spawnManagedMock).not.toHaveBeenCalled();
   });
 });
 
@@ -904,7 +950,7 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
     expect(String(lastManaged().mcp)).toContain('t=tok-abc');
   });
 
-  it('installs its slash commands into codex’s skills dir, not claude’s', async () => {
+  it('takes its slash commands per session, never into codex’s personal skills dir', async () => {
     await spawnManagedAgent({
       provider: 'codex',
       transport: 'stream',
@@ -912,7 +958,11 @@ describe('spawnManagedAgent — a Fleet Manager on codex', () => {
       manager: true,
       toolScope: 'operator',
     });
-    expect(installManagerSkills).toHaveBeenCalledWith('codex');
+    expect(agentSkills).toHaveBeenCalledWith('codex', '/home/u/Work', {
+      manager: true,
+      strict: false,
+    });
+    expect(installManagerSkills).not.toHaveBeenCalled();
   });
 
   it('does not mint a yolo grant when config changes, while retaining the role', async () => {
@@ -977,7 +1027,7 @@ describe('spawnManagedAgent — a Fleet Manager on copilot', () => {
 
   it('installs its slash commands into copilot’s skills dir', async () => {
     await spawnCopilotManager();
-    expect(installManagerSkills).toHaveBeenCalledWith('copilot');
+    expect(installManagerSkills).toHaveBeenCalledWith('copilot', false);
   });
 
   it('takes agents.managerModels/managerEfforts for copilot, never another harness’s', async () => {
@@ -1394,12 +1444,12 @@ describe('spawnManagedAgent — per-harness profiles', () => {
   });
 });
 
-it('delivers the product skill pointer through managed and hybrid instruction channels', async () => {
-  const note = 'Read /project/product-skill/SKILL.md for cards.';
-  cardSkill.mockReturnValue(note);
+it('delivers the skill instruction line through managed and hybrid instruction channels', async () => {
+  const note = 'Workspacer provides these skills: read "/h/x/SKILL.md" for cards.';
+  agentSkills.mockReturnValue({ ...noSkills(), instruction: note });
   await spawnManagedAgent({ provider: 'codex', cwd: '/proj', transport: 'stream' });
   expect(lastManaged().instructions).toContain(note);
-  expect(cardSkill).toHaveBeenCalledWith('codex', '/proj');
+  expect(agentSkills).toHaveBeenCalledWith('codex', '/proj', { manager: false, strict: false });
   const platform = process.platform;
   Object.defineProperty(process, 'platform', { value: 'win32' });
   try {
@@ -1407,8 +1457,15 @@ it('delivers the product skill pointer through managed and hybrid instruction ch
   } finally {
     Object.defineProperty(process, 'platform', { value: platform });
   }
+  // The PTY-only rollout path has no app-server, so it asks for pointers.
+  expect(agentSkills).toHaveBeenLastCalledWith('codex', '/proj', {
+    manager: false,
+    loading: 'pointer',
+  });
   const argv = (spawnMock.mock.calls.at(-1)![0] as Payload).argv as string[];
-  expect(argv.find((arg) => arg.startsWith('developer_instructions='))).toContain(note);
+  expect(argv.find((arg) => arg.startsWith('developer_instructions='))).toContain(
+    JSON.stringify(note).slice(1, -1),
+  );
 });
 
 describe('spawnManagedAgent — clean-profile retry boundary', () => {

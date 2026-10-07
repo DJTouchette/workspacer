@@ -1,0 +1,168 @@
+---
+name: handoff
+description: End this Fleet Manager session and write everything a FRESH manager needs to pick the fleet up mid-flight — live dispatches and what each was told, escalations waiting on the user, the immediate next action, and context that only exists in this conversation. Run it when context is nearly spent. Only useful inside a Workspacer Fleet Manager session (requires the mcp__workspacer__* tools).
+---
+
+# /handoff — end this session so the next one loses nothing
+
+When the host sends a HOST-OWNED MANAGER HANDOFF request with an operation ID
+and an exact JSON output path, follow that request's checkpoint and receipt
+protocol. Do not execute the standalone termination/reopen/adoption steps below.
+The host creates and binds the successor and transfers workers and tasks.
+Do not fall back to a mechanical digest or the shared handoff.md.
+The remaining instructions are the standalone /handoff fallback only.
+
+Your context is nearly spent and the user wants to continue in a fresh session.
+You are writing to a SUCCESSOR: a Fleet Manager that boots with your briefs,
+your fleet, your projects — and none of your conversation. Everything it cannot
+re-derive from disk dies with you unless you write it down now.
+
+## The line between /checkpoint and /handoff — do not blur it
+
+**/checkpoint files what should OUTLIVE the session. /handoff records what a
+successor needs to RESUME MID-FLIGHT.** Checkpoint's output is still true next
+week; handoff's output is true for the next hour, and the successor deletes it
+the moment it has absorbed it.
+
+So: **run /checkpoint first, in full, as your literal first step — invoke the
+skill, do not reimplement it.** It is the one place that knows the brief shape,
+the routing order, and the archival rules; a second copy of that logic here
+would drift from it within a release. When it returns, everything durable is
+already filed where it belongs, and what is left in your head is exactly this
+skill's subject matter. Use that as your test for every line you are about to
+write: if it would still matter next week, it is checkpoint's, not yours — put
+it in a brief and let the handoff point at the brief.
+
+**Pointers, never copies.** Never restate a brief in the handoff. Link it
+(`<abs path>/.workspacer/brief.md`) and say in one clause why the successor
+should open it. A handoff that duplicates its own sources goes stale against
+them the first time anyone edits either one.
+
+## Step 1 — /checkpoint
+
+Run it. Wait for it. Do not continue until it reports.
+
+## Step 2 — inventory, from cheapest source to dearest
+
+- `list_agents` — every live session, its id, label, cwd, and state. This is
+  the authoritative list of what is in flight; your memory of it is not.
+- `get_config` — `projects[<dir>].delivery` for each project holding a live
+  dispatch, so the successor lands the work the way that project wants.
+- **Your own conversation** — the only source for what each worker was actually
+  TOLD, what you owe it when it lands, what the user asked that you never
+  answered, and what you were about to do next. Re-read it deliberately; this
+  is the part that is about to be deleted.
+
+## Step 3 — write `<your cwd>/.workspacer/handoff.md`
+
+One file, beside your fleet brief. Overwrite any existing one — a handoff is
+never a log. Use `write_file`. Follow this shape; drop a section only if it is
+genuinely empty, and keep every session id exact.
+
+```markdown
+# Fleet handoff — <YYYY-MM-DD HH:MM>
+Written by session:<your own session id> at <your cwd>.
+You are the successor. Read this once, act on it, then follow "Close out" and
+delete this file. If every session id below is dead and the date is stale, this
+handoff has already been consumed — delete it and carry on from the briefs.
+
+## Read first
+- Fleet brief: ./brief.md — durable fleet state, checkpointed just before this.
+- <project>: <abs path>/.workspacer/brief.md — <one clause: why it matters now>
+
+## In flight (<n>)
+### session:<id> — <project> — <the task in one line>
+- Told to: <the substance of the dispatch in 1-3 lines — the task, the
+  constraints it was given, and how it was told to report back>
+- Shape: ship|scout · tracking <taskId | explicitly untracked> · requested model/effort <user choice | automatic> · worktree <yes: abs path | no> · delivery <local|pr> ·
+  tier <view|triage|operator> · provider <claude|codex|…> · dispatched <time>
+- When it lands I owe it: <the exact follow-up — merge the branch into X, prepend
+  a dated line to Y's brief, tell the user Z, dispatch the follow-up W>
+- User has been told: <what the user already knows about this one, or "nothing">
+
+## Waiting on the user (<n>)
+- <the question or decision, worded as it was put to them> — asked <when>, via
+  <notify|chat> — blocks: session:<id> | nothing — my recommendation: <one line>
+
+## Established in conversation only
+- <a preference, a correction the user made, a decision half-taken — stated as a
+  fact the successor can act on, with enough of the why that it can apply it to
+  a case I never saw>
+
+## Next action
+- <the ONE thing I was about to do, concrete enough that the successor can just
+  do it without reconstructing my reasoning>
+
+## Adopt the fleet — your FIRST action, before anything else
+Every fleet wake is routed to a worker's PARENT SESSION: its finished report and
+its `report_progress` notes go to whatever dispatched it, which is the session
+that wrote this file and is gone. Left alone, every worker under "In flight"
+finishes SILENTLY. One call moves them onto you:
+
+`adopt_workers({fromSessionId: "<the id on the 'Written by' line at the top of
+this file>", toSessionId: "<your own session id>"})`
+
+It moves every dispatch still parented to me — including one spawned so recently
+it has not reported yet, and a finish already on its way — and from then on they
+wake YOU when they land. No polling, no reconciliation by hand. It tells you what
+it moved; "nothing was still parented" is a real answer (they all finished
+already), not a failure, and it is refused out loud if you are not a live manager
+session rather than quietly silencing anyone.
+
+Then, ONCE, `list_agents` and reconcile it against the ids above for the ones
+that finished BEFORE you adopted them: `get_conversation` each, do what its
+entry says is owed, and file the outcome. That pass is bounded — only these ids,
+only once — and everything after it arrives as a wake, the way it does for a
+dispatch you made yourself.
+
+## Close out
+When every "In flight" entry is resolved and every fact above is either acted on
+or filed into a brief: delete this file and remove the HANDOFF PENDING line from
+the fleet brief's "## Now".
+```
+
+## Step 4 — make it impossible to miss
+
+Prepend one line to the fleet brief's "## Now" (inspect-then-edit, never blind-
+append):
+
+`- HANDOFF PENDING → .workspacer/handoff.md (written <date> by session:<your id>) — read it before anything else`
+
+The successor reads its fleet brief on its first turn no matter what, so the
+pointer is what guarantees discovery even on an older build whose doctrine does
+not mention handoffs. It removes the line as part of "Close out".
+
+## Step 5 — leave the fleet a paper trail as well
+
+Your successor adopts your workers on its first turn, so their reports are no
+longer lost by default — but a wake is one message in one conversation, and a
+dated brief line outlives it. For each in-flight worker, `send_message` it one
+short instruction: a ship worker leaves a dated line in its project's brief
+"## Recently" when it finishes; a scout writes its findings to the report file
+it was told to produce. A queued message does not disturb a worker mid-turn. And
+remind it that `report_progress` reaches its manager from ANY tier, view scouts
+included — one line after the handover tells your successor what it is holding
+without waiting for the whole task to land.
+
+## Step 6 — hand it to the user, and be honest that you cannot do it yourself
+
+**You cannot start the successor.** Do not try. `spawn_agent` has no manager
+role: a session you spawn comes up without the manager doctrine, without the
+manager skills (/standup, /checkpoint and /handoff), task ownership, or
+wake-target registration — a manager-shaped agent that silently is not one. Terminating
+yourself is no better: the card would go Stopped, and the next Fleet Manager
+click RESUMES your conversation, which is the exact thing the user is trying to
+escape.
+
+So finish by telling the user, in this order:
+
+1. The handoff is written — name the file and how many dispatches are in flight.
+2. Right-click the **Fleet Manager** card in the sidebar → **Terminate**. That
+   kills this session AND drops the card, so nothing resumes it.
+3. Open the Fleet Manager again from the Overview. With no card to reuse, it
+   spawns a genuinely fresh session — new context, same manager role and lifecycle identity,
+   re-minted from current config — and reads the handoff on its first turn,
+   whose first instruction is to adopt your workers so their wakes follow it.
+
+Then stop. Do not dispatch anything new: a dispatch you make now is a dispatch
+nobody is waiting for.

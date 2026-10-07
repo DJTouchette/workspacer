@@ -60,7 +60,11 @@ vi.mock('./launchIntegrations', () => ({
 }));
 vi.mock('./libraryService', () => ({ libraryService: { list: () => [] } }));
 vi.mock('./managerSkills', () => ({ installManagerSkills: vi.fn() }));
-vi.mock('./responseCardSkill', () => ({ installResponseCardSkill: () => '' }));
+vi.mock('./agentSkillPlugins', () => ({
+  prepareAgentSkills: vi.fn(() => ({ args: [], skillRoots: ['/skills/fleet'], instruction: '' })),
+  agentSkillLoading: (provider: string) =>
+    provider === 'claude' ? 'plugin-dir' : provider === 'codex' ? 'skill-roots' : 'pointer',
+}));
 vi.mock('./systemNotice', () => ({ notifySystem: vi.fn() }));
 vi.mock('./mcpConfig', () => ({
   MCP_FACADE_URL: 'http://127.0.0.1:0',
@@ -137,7 +141,7 @@ import { dispatchHistoryStore } from './dispatchHistoryStore';
 import { supervisorNudge } from './supervisorNudge';
 import { ownerTask } from './fleetWorkflowRuntime';
 import { sessionFacadeGrantFingerprint } from './remoteTokens';
-import { installManagerSkills } from './managerSkills';
+import { prepareAgentSkills } from './agentSkillPlugins';
 import { startProviderReadiness, providerReadinessService } from './providerReadinessRuntime';
 import { completeReadinessPing } from './directCompletion';
 
@@ -335,7 +339,12 @@ it('runs the real local transaction without resuming, transferring both task kin
   });
   expect(spawn.resumeSessionId).toBeUndefined();
   expect(spawn.firstMessage).toBeUndefined();
-  expect(installManagerSkills).toHaveBeenCalledWith('codex', true);
+  // The successor must come up with /checkpoint and /handoff or not at all.
+  expect(prepareAgentSkills).toHaveBeenCalledWith(expect.any(String), expect.any(String), {
+    manager: true,
+    strict: true,
+  });
+  expect(spawn.skillRoots).toEqual(['/skills/fleet']);
   expect(sessionFacadeGrantFingerprint(op.successorSessionId)).toBe(grants);
   expect(claudeSessionStore.getSnapshot(worker)?.parentSessionId).toBe(op.successorSessionId);
   expect(dispatchHistoryStore.task(ordinary.taskId)?.ownerSessionId).toBe(op.successorSessionId);

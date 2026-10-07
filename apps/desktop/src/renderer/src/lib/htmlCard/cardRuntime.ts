@@ -10,7 +10,7 @@
  * day misses one.
  *
  * The attribute vocabulary here is the contract the skill teaches, so a change
- * to either has to land in both (`main/services/responseCardSkill.ts`).
+ * to either has to land in both (`assets/skills/workspacer-response-cards`).
  *
  * Everything else `<details>`/`<summary>` already does natively, with no script
  * at all — the runtime deliberately adds nothing there.

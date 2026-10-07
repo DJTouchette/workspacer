@@ -45,15 +45,18 @@ export const SUPERVISOR_PROVIDERS: readonly RoleProviderOption[] = [
 /**
  * Harnesses the FLEET MANAGER role is verified on. Still narrower than
  * SUPERVISOR_PROVIDERS: the manager needs an MCP client to dispatch at all, and
- * a personal-skills directory for /standup, /checkpoint and /handoff. Listing a
+ * a way to receive /standup, /checkpoint and /handoff as skills. Listing a
  * harness that silently loses half the role is the failure mode this picker
  * exists to avoid, so a value earns its place here by having BOTH.
  *
- *  - claude  → `~/.claude/skills`, facade via `--mcp-config`.
- *  - codex   → `$CODEX_HOME/skills`, facade via `-c mcp_servers.workspacer.url`.
- *  - copilot → `~/.copilot/skills`, facade via `--additional-mcp-config`
- *    (`lib/agentSkills`, `providers/copilot.rs`). Same SKILL.md format on all
- *    three. Copilot is the one harness whose MCP surface is not decidable
+ *  - claude  → the `workspacer-fleet` plugin via `--plugin-dir` (per session),
+ *    facade via `--mcp-config`.
+ *  - codex   → the same plugin's skills via the app-server's
+ *    `skills/extraRoots/set` (per session), facade via
+ *    `-c mcp_servers.workspacer.url`.
+ *  - copilot → `~/.copilot/skills` (personal install, `managerSkills`), facade
+ *    via `--additional-mcp-config` (`lib/agentSkills`, `providers/copilot.rs`).
+ *    Same SKILL.md format on all three. Copilot is the one harness whose MCP surface is not decidable
  *    ahead of time — a GitHub org policy can disable third-party MCP servers —
  *    but that failure ANNOUNCES itself: the adapter checks
  *    `session.mcp_servers_loaded` and raises a session error rather than

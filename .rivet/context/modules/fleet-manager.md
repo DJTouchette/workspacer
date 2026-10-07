@@ -72,13 +72,15 @@ modes are provider configuration. Pi is rejected by normal Workspacer spawning.
 The Windows Codex PTY hybrid has its own facade-ready/token-injection path and
 must not be described as an intentionally tool-less manager.
 
-`installManagerSkills` writes standup/checkpoint/handoff through `agentSkillsRoot`:
-Claude’s personal skills directory, Codex’s configured/default home, or Copilot’s
-personal skills directory. Unsupported skill-root conventions are skipped in
-best-effort mode; strict installation throws. Existing content is rewritten only
-when different, and retired skill names are removed. This native manager skill
-path is separate from pointer-only ordinary-agent skills under the project’s
-versioned Workspacer directory.
+Managers receive standup/checkpoint/handoff (plus response cards) as the
+`workspacer-fleet` plugin for their session only: Claude via `--plugin-dir`,
+Codex via its app-server's `skills/extraRoots/set`, both from the bundle in
+`~/.workspacer/agent-skills/<version>/` (see the agent-spawn domain doc).
+`installManagerSkills` now serves only harnesses with no per-session channel
+(Copilot's `~/.copilot/skills`) and refuses Claude/Codex, whose personal copies
+would leak into every later session. Strict mode (manager replacement) throws
+instead of degrading, on both paths. Ordinary agents get the separate
+`workspacer` plugin, so neither role discovers the other's skills.
 
 ## Finish wakes
 

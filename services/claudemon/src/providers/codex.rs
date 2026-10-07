@@ -1711,6 +1711,21 @@ fn codex_override_args(
     argv
 }
 
+/// JSON-RPC id for the one `skills/extraRoots/set` request. A string, so it can
+/// never collide with the numeric ids the bootstrap and user turns count up.
+const SKILL_ROOTS_RPC_ID: &str = "workspacer-skill-roots";
+
+/// The request handing this session's skill directories to its app-server, or
+/// None when the launcher sent none (an older desktop, or a provider default).
+fn skill_roots_request(roots: &[String]) -> Option<Value> {
+    (!roots.is_empty()).then(|| {
+        json!({
+            "jsonrpc": "2.0", "id": SKILL_ROOTS_RPC_ID, "method": "skills/extraRoots/set",
+            "params": { "extraRoots": roots }
+        })
+    })
+}
+
 /// Prepend the role instructions (once) to what the agent actually receives.
 /// The user's own message is echoed verbatim into the conversation separately;
 /// this is only the wire text. Taking the Option is what makes it once-only —
@@ -1827,6 +1842,12 @@ async fn run_session(
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": { "clientInfo": { "name": "workspacer", "version": "0.1" } }
     }));
+    // This session's Workspacer skills, before any thread exists. The setting is
+    // server-wide, and this app-server serves only this session — so a hybrid
+    // TUI attaching over `--remote` sees the same skills.
+    if let Some(request) = skill_roots_request(&extras.skill_roots) {
+        let _ = out_tx.send(request);
+    }
 
     #[cfg(test)]
     evidence.before_registration();
@@ -2276,6 +2297,16 @@ fn handle_message(
     //    to fall back to — so surface it in the conversation.
     if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some())
     {
+        if value.get("id").and_then(Value::as_str) == Some(SKILL_ROOTS_RPC_ID) {
+            // An older Codex without the method still runs; the launcher's
+            // instruction line names the skill files, so this only costs native
+            // discovery — say so instead of failing the session.
+            if let Some(err) = value.get("error") {
+                tracing::warn!(session = %session_id, error = %err,
+                    "codex skills/extraRoots/set failed — Workspacer skills reach this session only through its instructions");
+            }
+            return;
+        }
         let id = value.get("id").and_then(Value::as_u64);
         if id == Some(2) {
             if let Some(err) = value.get("error") {
@@ -4983,6 +5014,66 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(sent["method"], "turn/start");
         assert_eq!(sent["params"]["threadId"], "th-9");
         assert_eq!(sent["params"]["input"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn skill_roots_request_is_sent_only_when_the_launcher_supplied_roots() {
+        assert!(skill_roots_request(&[]).is_none());
+        let sent = skill_roots_request(&["/h/.workspacer/agent-skills/v/workspacer/skills".into()])
+            .expect("roots produce a request");
+        assert_eq!(sent["method"], "skills/extraRoots/set");
+        assert_eq!(sent["id"], SKILL_ROOTS_RPC_ID);
+        assert_eq!(
+            sent["params"]["extraRoots"],
+            json!(["/h/.workspacer/agent-skills/v/workspacer/skills"])
+        );
+    }
+
+    #[test]
+    fn skill_roots_response_is_consumed_without_touching_thread_discovery() {
+        // A hybrid session discovers its TUI thread from the first response that
+        // carries `result.data`; the skill-roots reply must never be mistaken
+        // for it, whether it succeeds or (older Codex) fails.
+        for reply in [
+            json!({ "jsonrpc": "2.0", "id": SKILL_ROOTS_RPC_ID, "result": { "data": ["th-x"] } }),
+            json!({ "jsonrpc": "2.0", "id": SKILL_ROOTS_RPC_ID,
+                    "error": { "code": -32601, "message": "method not found" } }),
+        ] {
+            let store = SessionStore::new();
+            store.register_managed("s", "/w", "codex");
+            let conv = ConversationStore::new();
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+            let mut thread_id: Option<String> = None;
+            let mut subscribed = false;
+            let mut pending_prompts = vec!["hello".to_string()];
+            let mut req_id = 2u64;
+            let mut cur_mode = SessionMode::Input;
+            let mut acc = UsageAcc::new();
+            let policy = policy_for(false, false);
+            let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+            let mut pending_switch = None;
+            handle_message(
+                &reply,
+                &store,
+                &conv,
+                "s",
+                &out_tx,
+                &mut thread_id,
+                &mut subscribed,
+                &mut pending_prompts,
+                &mut req_id,
+                &mut cur_mode,
+                &mut acc,
+                &policy,
+                &mut pending_approvals,
+                &mut pending_switch,
+                false,
+            );
+            assert!(thread_id.is_none());
+            assert!(!subscribed);
+            assert_eq!(pending_prompts, vec!["hello".to_string()]);
+            assert!(out_rx.try_recv().is_err(), "nothing is sent in reply");
+        }
     }
 
     #[test]

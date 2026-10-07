@@ -246,6 +246,10 @@ class ClaudemonSessionClient {
     env?: Record<string, string>;
     /** Workspacer MCP facade URL to register with the provider (supervisors). */
     mcp?: string;
+    /** Codex only: extra skill roots the daemon applies to the session's own
+     *  app-server (`skills/extraRoots/set`) — the role's Workspacer skills for
+     *  this session only. Ignored by daemons and providers without it. */
+    skillRoots?: string[];
     /** Role instructions to prepend to the agent's first turn (supervisors).
      *  NOT the dispatch prompt — this is a passive PREFIX the adapter holds and
      *  prepends to whatever prompt arrives first; on its own it never starts a
@@ -264,6 +268,7 @@ class ClaudemonSessionClient {
       permissionMode,
       resumeSessionId,
       extraArgs,
+      skillRoots,
       firstMessage,
       modelIdentity,
       contextWindow,
@@ -277,6 +282,7 @@ class ClaudemonSessionClient {
       ...(permissionMode ? { permission_mode: permissionMode } : {}),
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
       ...(extraArgs?.length ? { extra_args: extraArgs } : {}),
+      ...(skillRoots?.length ? { skill_roots: skillRoots } : {}),
       ...(modelIdentity ? { model_identity: modelIdentity } : {}),
       ...(contextWindow != null ? { context_window: contextWindow } : {}),
       ...(firstMessage ? { first_message: firstMessage } : {}),

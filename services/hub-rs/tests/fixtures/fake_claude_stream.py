@@ -72,7 +72,8 @@ config = rpc("tools/call", {"name": "get_config", "arguments": {}})
 assert not config.get("isError", False)
 record({"ready": True, "pid": os.getpid(), "session": session, "scopedMcpCall": True, "hostCredentialsAbsent": True})
 instructions = args[args.index("--append-system-prompt") + 1]
-record({"launchInstructions": instructions})
+plugin_dir = args[args.index("--plugin-dir") + 1] if "--plugin-dir" in args else None
+record({"launchInstructions": instructions, "pluginDir": plugin_dir})
 emit({"type": "system", "subtype": "init", "session_id": session, "model": "claude-sonnet-4-6", "tools": [], "mcp_servers": [{"name": "workspacer", "status": "connected"}]})
 
 for line in sys.stdin:

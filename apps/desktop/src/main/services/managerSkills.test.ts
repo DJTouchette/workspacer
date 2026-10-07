@@ -1,8 +1,8 @@
 /**
- * installManagerSkills writes the Fleet Manager's invocable skills (/standup,
- * /checkpoint, /handoff) into ~/.claude/skills so a manager session can run
- * them. Twin of installSupervisorSkill; best-effort, idempotent,
- * content-addressed.
+ * The Fleet Manager's invocable skills (/standup, /checkpoint, /handoff): their
+ * bundled text, and the personal-dir install kept for harnesses with no
+ * per-session skill loading (Copilot). Claude and Codex take the same text as
+ * the session-only `workspacer-fleet` plugin, so a personal copy is refused.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
@@ -18,7 +18,7 @@ vi.mock('os', async (importOriginal) => {
   return { ...actual, homedir: () => holder.home || actual.homedir() };
 });
 
-import { installManagerSkills } from './managerSkills';
+import { installManagerSkills, managerSkillBody } from './managerSkills';
 
 let home: string;
 beforeEach(() => {
@@ -31,11 +31,11 @@ afterEach(() => {
 });
 
 describe('installManagerSkills', () => {
-  const skillDir = (name: string) => path.join(home, '.claude', 'skills', name);
+  const skillDir = (name: string) => path.join(home, '.copilot', 'skills', name);
   const skillFile = (name: string) => path.join(skillDir(name), 'SKILL.md');
 
   it('writes both /standup and /checkpoint with matching skill-name frontmatter', () => {
-    installManagerSkills();
+    installManagerSkills('copilot');
     const standup = fs.readFileSync(skillFile('standup'), 'utf8');
     const checkpoint = fs.readFileSync(skillFile('checkpoint'), 'utf8');
     expect(standup).toMatch(/^---\nname: standup\n/);
@@ -71,7 +71,7 @@ describe('installManagerSkills', () => {
   });
 
   it('writes /handoff with the succession contract a fresh manager needs', () => {
-    installManagerSkills();
+    installManagerSkills('copilot');
     const handoff = fs.readFileSync(skillFile('handoff'), 'utf8');
     expect(handoff).toMatch(/^---\nname: handoff\n/);
     // The load-bearing distinction: handoff must NOT reimplement checkpoint —
@@ -122,7 +122,7 @@ describe('installManagerSkills', () => {
       fs.mkdirSync(skillDir(old), { recursive: true });
       fs.writeFileSync(skillFile(old), 'old', 'utf8');
     }
-    installManagerSkills();
+    installManagerSkills('copilot');
     expect(fs.existsSync(skillDir('bearings'))).toBe(false);
     expect(fs.existsSync(skillDir('stow'))).toBe(false);
     expect(fs.existsSync(skillDir('supervise'))).toBe(false);
@@ -131,49 +131,37 @@ describe('installManagerSkills', () => {
   });
 
   it('is idempotent — a second install leaves identical content', () => {
-    installManagerSkills();
+    installManagerSkills('copilot');
     const body = fs.readFileSync(skillFile('checkpoint'), 'utf8');
-    installManagerSkills();
+    installManagerSkills('copilot');
     expect(fs.readFileSync(skillFile('checkpoint'), 'utf8')).toBe(body);
   });
 
-  // A Fleet Manager on codex was previously left with NO slash commands: the
-  // install was gated on Claude. Codex reads $CODEX_HOME/skills (else
-  // ~/.codex/skills) and parses the identical SKILL.md format, so the fix is a
-  // destination change — and the doctrine text must stay byte-identical, since
-  // a per-provider copy is exactly what would drift.
-  describe('per-provider destination', () => {
-    const codexSkillFile = (name: string) => path.join(home, '.codex', 'skills', name, 'SKILL.md');
+  it('installs exactly the bundled plugin text', () => {
+    installManagerSkills('copilot');
+    for (const name of ['standup', 'checkpoint', 'handoff'] as const) {
+      expect(fs.readFileSync(skillFile(name), 'utf8')).toBe(managerSkillBody(name));
+    }
+  });
 
-    it('writes the SAME skills into codex’s skills dir', () => {
-      delete process.env.CODEX_HOME;
-      installManagerSkills('claude');
-      installManagerSkills('codex');
-      for (const name of ['standup', 'checkpoint', 'handoff']) {
-        expect(fs.existsSync(codexSkillFile(name))).toBe(true);
-        expect(fs.readFileSync(codexSkillFile(name), 'utf8')).toBe(
-          fs.readFileSync(skillFile(name), 'utf8'),
-        );
-      }
-    });
-
-    it('honours $CODEX_HOME', () => {
-      const alt = path.join(home, 'alt-codex');
-      process.env.CODEX_HOME = alt;
-      try {
-        installManagerSkills('codex');
-        expect(fs.existsSync(path.join(alt, 'skills', 'standup', 'SKILL.md'))).toBe(true);
-      } finally {
-        delete process.env.CODEX_HOME;
-      }
-    });
-
-    it('skips (loudly) a provider with no known skills directory', () => {
+  it.each(['claude', 'codex'] as const)(
+    'refuses a personal copy for %s, which takes the skills per session',
+    (provider) => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      installManagerSkills('pi');
+      installManagerSkills(provider);
       expect(warn).toHaveBeenCalled();
-      expect(fs.existsSync(path.join(home, '.pi'))).toBe(false);
+      expect(() => installManagerSkills(provider, true)).toThrow();
+      expect(fs.existsSync(path.join(home, '.claude'))).toBe(false);
+      expect(fs.existsSync(path.join(home, '.codex'))).toBe(false);
       warn.mockRestore();
-    });
+    },
+  );
+
+  it('skips (loudly) a provider with no known skills directory', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    installManagerSkills('pi');
+    expect(warn).toHaveBeenCalled();
+    expect(fs.existsSync(path.join(home, '.pi'))).toBe(false);
+    warn.mockRestore();
   });
 });

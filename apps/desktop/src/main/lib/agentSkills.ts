@@ -1,18 +1,11 @@
 /**
  * Where a coding agent looks for the user's personal SKILL.md packages.
  *
- * The Fleet Manager's `/standup`, `/checkpoint` and `/handoff` — and the
- * supervisor's `/supervise` — were installed only into `~/.claude/skills`, so a
- * manager running on any other harness came up without its invocable skills.
- * That is a DESTINATION problem, not a doctrine problem: Codex reads
- * `$CODEX_HOME/skills` (falling back to `~/.codex/skills`) and parses the exact
- * same `SKILL.md` frontmatter — name + description, body loaded when the skill
- * applies. So the same text, written to the right directory, works on both.
- *
- * Deliberately NOT a per-provider fork of the skill CONTENT: the manager
- * doctrine is load-bearing and a second copy would drift. Where a skill must
- * name its own install path (the /supervise helper script), that ONE line is
- * parameterized on the directory resolved here.
+ * Claude and Codex no longer need this for Workspacer's own skills — they take
+ * them per session (services/agentSkillPlugins). It remains the destination for
+ * harnesses Workspacer cannot hand skills to per launch (the Fleet Manager's
+ * skills on Copilot, see services/managerSkills), and the map of where older
+ * builds wrote copies that migration cleanup removes.
  *
  * Providers with no known personal-skills convention return null — their
  * caller logs and skips rather than writing files into a directory the agent

@@ -24,8 +24,10 @@ No push, merge, live application restart, or personal skill/config installation 
 | Browser isolation and UI | renderer `components/claude/HtmlResponseCard.tsx`, `lib/htmlCard/sanitizeCardHtml.ts`, `cardShell.ts`, `cardRuntime.ts` |
 | Action authority and draft routing | renderer `lib/htmlCard/cardActions.ts`, `panes/ClaudePane.tsx` |
 | Guarded diff and IPC | main `services/htmlCardPaths.ts`, `services/gitService.ts`, `ipc.ts`, `preload.ts`, `shared/htmlCardDiff.ts`, `shared/ipcChannels.ts`; renderer `backend/bridgedBackend.ts`, `types/electron.d.ts` |
-| Product skill distribution | `apps/desktop/assets/skills/workspacer-response-cards/`, `scripts/gen-response-card-skill.mjs`, main `services/responseCardSkill.ts` and generated JSON, `claudeSpawn.ts`, `managedSpawn.ts` |
-| Verification | main HTML card/path/diff/skill tests, IPC and spawn tests; renderer HTML card/action/sanitizer/shell tests and ClaudePane regression; `tests/e2e/htmlCard.test.ts`, renderer harness; `scripts/check-response-card-discovery.py` |
+| Product skill distribution | `apps/desktop/assets/skills/workspacer-response-cards/` (listed in `assets/skills/plugins.json`), `scripts/gen-agent-skill-plugins.mjs`, main `services/agentSkillPlugins.ts` and generated JSON, `claudeSpawn.ts`, `managedSpawn.ts`; Rust twin `services/hub-rs/src/services/launch_instructions.rs` |
+| Verification | main HTML card/path/diff/skill tests, IPC and spawn tests; renderer HTML card/action/sanitizer/shell tests and ClaudePane regression; `tests/e2e/htmlCard.test.ts`, renderer harness; `scripts/check-agent-skill-discovery.py` |
+
+> **2026-10-07:** the card skill no longer installs into the project's `.claude/skills` / `.agents/skills`. It ships in both per-session agent skill plugins (`workspacer`, `workspacer-fleet`): Claude loads it through `--plugin-dir`, Codex through its app-server's `skills/extraRoots/set`, and other harnesses get an instruction line naming the file. `check:response-card-assets` and `check-response-card-discovery.py` were replaced by `check:agent-skill-plugins` and `check-agent-skill-discovery.py`; the verification record below is the original run.
 
 The default bridged desktop backend explicitly retains the guarded diff IPC as a host-only method. Web/older clients without it refuse the action. Package/lockfile changes add DOMPurify and main build asset generation; Playwright's renderer project includes the new harness.
 

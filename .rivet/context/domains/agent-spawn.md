@@ -4,12 +4,13 @@ tags: [spawn, agents, providers, ipc, hub-bus, federation, skills, facade]
 related_paths:
   - "apps/desktop/src/main/services/managedSpawn.ts"
   - "apps/desktop/src/main/services/claudeSpawn.ts"
-  - "apps/desktop/src/main/services/agentCollaborationSkills.ts"
+  - "apps/desktop/src/main/services/agentSkillPlugins.ts"
+  - "services/hub-rs/src/services/launch_instructions.rs"
   - "apps/desktop/src/main/services/claudeSessionStore.ts"
   - "services/hub/cmd/brain/handlers.go"
   - "services/hub/cmd/brain/agent_collaboration_skills.go"
 owner: Damien Touchette
-last_reviewed: 2026-09-26
+last_reviewed: 2026-10-07
 ---
 
 # Agent spawning and ordinary-agent collaboration
@@ -40,22 +41,53 @@ omitted bearer as a narrower tool tier. The bearer records session identity/role
 routing; it is not a directory allowlist. It is revoked after the session ends,
 with duplicate stopped observations retrying a failed persistent revocation.
 
-## Ordinary-agent skills
+## Per-session agent skills (ordinary and manager)
 
-Eligible ordinary launches receive pointer-only instructions for two versioned
-skills installed beneath `<cwd>/.workspacer/skills/<content-hash>/`:
+Workspacer's own skills ship as two Claude-Code-layout plugins generated from
+`apps/desktop/assets/skills` (membership and instruction phrases in
+`assets/skills/plugins.json`): `workspacer` (spawn-agent, project-brief,
+scheduled-jobs, workspacer-response-cards) for ordinary agents and
+`workspacer-fleet` (standup, checkpoint, handoff, response cards) for Fleet
+Managers. `gen-agent-skill-plugins.mjs` (desktop) and
+`scripts/generate-rust-launch-assets.py` (hub-rs) build byte-identical bundles;
+`check:agent-skill-plugins` pins TS/Rust parity and the compiled launcher.
 
-- `spawn-agent` teaches an ordinary agent to create child sessions and preserve
-  its own parent lineage.
-- `project-brief` teaches it to keep `.workspacer/brief.md` current through the
-  atomic brief tools.
+Each launch writes the bundle once to a content-addressed
+`~/.workspacer/agent-skills/<version>/` (atomic, symlink-refusing, restores
+altered files) and hands its role's plugin to THAT session only:
 
-Desktop and headless launch use the same generated assets and hash. Managers
-keep manager doctrine instead of these pointers. Installation refuses the home
-or filesystem root, symlinked destinations, and conflicting preexisting files;
-a failed install returns no pointer rather than overwriting user content. Pi
-is rejected by normal Workspacer spawning because it lacks the required MCP
-bridge, even though its low-level adapter remains in claudemon.
+- Claude (PTY and stream): `--plugin-dir <plugin>`; skills appear as
+  `workspacer:<skill>` and the init frame lists `workspacer@inline`.
+- Codex on an app-server (headless and non-Windows hybrid): claudemon
+  `skill_roots` → `skills/extraRoots/set` sent right after `initialize`
+  (string RPC id `workspacer-skill-roots`). The setting is server-wide, so the
+  hybrid TUI attaching over `--remote` sees it too.
+- Copilot, OpenCode and Codex's PTY-only rollout path: an instruction line
+  naming each SKILL.md. Copilot managers additionally keep the personal
+  `~/.copilot/skills` install (`managerSkills.ts`) for slash commands.
+
+Every launch also carries one instruction line naming the skills and their
+directory, which doubles as the fallback when a plugin does not load (managed
+policy, `--safe-mode`, an older CLI, a failed `extraRoots/set`). Nothing is
+written into the project or a harness discovery root, so managers never
+discover ordinary skills (or the reverse). Manager replacement passes
+`strict` and fails rather than come up without /checkpoint and /handoff. Pi
+gets nothing. Twins: `agentSkillPlugins.ts` and `launch_instructions.rs`
+(the latter reached through `session_facade::prepare`, after facade readiness).
+
+Migration cleanup removes byte-identical copies older builds wrote into the
+project (`.claude/skills`, `.agents/skills`, `.workspacer/skills/<hash>/`) and,
+desktop only, personal `~/.claude/skills` / `$CODEX_HOME/skills`
+standup/checkpoint/handoff dirs recognized by their "Workspacer Fleet Manager"
+frontmatter (older builds wrote older text, so not byte-matched).
+
+Verified CLI behaviour (Claude 2.1.286, Codex 0.159.0): Codex ignores `-c`
+overrides for `plugins.*` and `marketplaces.*` (plugins need a persistent
+install + config.toml), and `skills.config` does not add roots — only the
+app-server's `skills/extraRoots/set` is per session. An app-server client's
+`$skill` text is not expanded (that needs an explicit `skill` input item); the
+listing in context is what agents get. `scripts/check-agent-skill-discovery.py`
+proves both CLIs against a mock API.
 
 ## Completion routing
 
@@ -109,8 +141,8 @@ a separate message for an older peer that did not acknowledge it. Do not infer
 that every local metadata field or launch feature automatically crosses this
 branch. Dedicated worker dispatch has its own origin/admission contract.
 
-Headless ordinary-skill installation is reached through successful facade
-building; a missing/unhealthy facade can omit both the bearer and that pointer.
+Headless skill preparation is reached through successful facade building; a
+deliberately disabled facade omits both the bearer and the skills.
 `normalizeCwd` and the desktop twin trim ASCII whitespace, preserve non-ASCII
 filename characters, and use home for empty input. Keep those semantics aligned
 without treating normalization as a path authorization or existence check.

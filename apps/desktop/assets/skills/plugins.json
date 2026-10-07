@@ -1,0 +1,20 @@
+{
+  "workspacer": {
+    "description": "Workspacer skills for ordinary agents: spawning child agents, the project brief, scheduled jobs and chat response cards.",
+    "skills": {
+      "spawn-agent": "before spawning child agents",
+      "project-brief": "before maintaining the project brief",
+      "scheduled-jobs": "before creating or changing scheduled jobs",
+      "workspacer-response-cards": "for a structured visual answer in Workspacer chat"
+    }
+  },
+  "workspacer-fleet": {
+    "description": "Workspacer Fleet Manager skills: standup, checkpoint, handoff and chat response cards.",
+    "skills": {
+      "standup": "for an on-demand fleet status digest",
+      "checkpoint": "to file this session's durable knowledge where it belongs",
+      "handoff": "to end this session with a handoff for the next manager",
+      "workspacer-response-cards": "for a structured visual answer in Workspacer chat"
+    }
+  }
+}

@@ -56,8 +56,7 @@ import {
 import type { RemoteTokenScope } from '../shared/ipcTypes';
 import { claudemonOverlayPath, claudeSettingsOverlayEnabled } from './claudemonDaemon';
 import { installManagerSkills } from './managerSkills';
-import { installResponseCardSkill } from './responseCardSkill';
-import { installAgentCollaborationSkills } from './agentCollaborationSkills';
+import { agentSkillLoading, prepareAgentSkills } from './agentSkillPlugins';
 import { notifySystem } from './systemNotice';
 import { ensureMcpFacadeReady } from './mcpFacadeDaemon';
 import { assertSpawnCwd, normalizeSpawnCwd } from '../lib/spawnCwd';
@@ -439,20 +438,22 @@ async function spawnManaged(
     if (isClaudeStream && claudeSettingsOverlayEnabled()) {
       extraArgs.push('--settings', claudemonOverlayPath());
     }
-    // The Fleet Manager gets its own invocable skills (/standup, /checkpoint,
-    // /handoff) — the considered counterpart to its reactive brief doctrine.
-    // The install is routed to the directory THIS harness reads
-    // (~/.claude/skills vs $CODEX_HOME/skills — identical SKILL.md format).
-    if (opts.manager) {
-      if (opts.replacementSessionId) installManagerSkills(provider, true);
-      else installManagerSkills(provider);
+    // The role's Workspacer skills for THIS session only (see agentSkillPlugins):
+    // Claude takes them as a `--plugin-dir` plugin, Codex as app-server skill
+    // roots, other harnesses through the instruction line that names each file.
+    // A manager replacement must not come up without /checkpoint and /handoff,
+    // so it fails instead of degrading.
+    const strictSkills = !!opts.manager && !!opts.replacementSessionId;
+    const skills = prepareAgentSkills(provider, cwd, {
+      manager: !!opts.manager,
+      strict: strictSkills,
+    });
+    extraArgs.push(...skills.args);
+    // A harness with no per-session loading keeps the Fleet Manager's slash
+    // commands in its personal skills directory (Copilot).
+    if (opts.manager && agentSkillLoading(provider) === 'pointer') {
+      installManagerSkills(provider, strictSkills);
     }
-    // Response cards are a capability of the app, not of one role, so every
-    // managed session gets the skill — discovered natively where the harness has
-    // a skills root, and pointed at by one line of instructions where it does not
-    // (see responseCardSkill for why the split, and why nothing is pasted).
-    const cardInstruction = installResponseCardSkill(provider, cwd);
-    const collaborationInstruction = installAgentCollaborationSkills(provider, cwd, !!opts.manager);
     // Claude stream + facade: the per-session config file (token as an
     // Authorization header — a file path on argv, never the token itself, since
     // /proc/<pid>/cmdline is world-readable). The PTY path's twin lives in
@@ -537,8 +538,7 @@ async function spawnManaged(
         : '',
       isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
       resultSchema ? buildResultContract(resultSchema) : '',
-      cardInstruction,
-      collaborationInstruction,
+      skills.instruction,
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -576,6 +576,8 @@ async function spawnManaged(
         // profile-less spawn is byte-identical to what it sent before.
         ...(prepared.args.length && { extraArgs: prepared.args }),
         ...(Object.keys(prepared.env).length && { env: prepared.env }),
+        // Codex: skill roots the daemon applies to the session's own app-server.
+        ...(skills.skillRoots.length && { skillRoots: skills.skillRoots }),
         ...(wantsFacade && {
           // Claude stream carries the facade via the --mcp-config file above, so
           // no `mcp` URL for it. Codex/OpenCode registrations are URL-only (a `-c`
@@ -664,8 +666,9 @@ async function spawnManaged(
 async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
   let cwd = opts.cwd || process.env.HOME || os.homedir();
   assertSpawnCwd(cwd);
-  const cardInstruction = installResponseCardSkill('codex', cwd);
-  const collaborationInstruction = installAgentCollaborationSkills('codex', cwd, !!opts.manager);
+  // No app-server on this PTY-only path, so the skills ride the instruction
+  // line (developer_instructions below) as file pointers.
+  const skills = prepareAgentSkills('codex', cwd, { manager: !!opts.manager, loading: 'pointer' });
   const bin = resolveAgentBinary('codex', configuredBin('codex'));
   const sessionId = opts.resumeSessionId || randomUUID();
   await ensureMcpFacadeReady();
@@ -737,8 +740,7 @@ async function spawnCodexHybrid(opts: ManagedSpawnOptions): Promise<string> {
         [
           managedFacadeInstructions({ sessionId }),
           isFleetDispatchedWorker(opts) ? buildWorkerEscalationContract() : '',
-          cardInstruction,
-          collaborationInstruction,
+          skills.instruction,
         ]
           .filter(Boolean)
           .join('\n\n'),
