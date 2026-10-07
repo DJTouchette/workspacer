@@ -244,6 +244,8 @@ pub fn key_bytes(
         "backspace" if control => esc(vec![0x08]),
         "backspace" => esc(vec![0x7f]),
         "space" if control => vec![0],
+        // Windows reports the space bar as a named key with no `key_char`.
+        "space" => esc(vec![b' ']),
         "up" => csi('A', true),
         "down" => csi('B', true),
         "right" => csi('C', true),
@@ -509,6 +511,21 @@ mod tests {
             b"\x1b[Z"
         );
         assert_eq!(key("é", Some("é")), "é".as_bytes());
+        // Linux sends the space bar with key_char " ", Windows with none.
+        assert_eq!(key("space", Some(" ")), b" ");
+        assert_eq!(key("space", None), b" ");
+        assert_eq!(
+            key_bytes("space", None, false, false, true, false, false).unwrap(),
+            b" "
+        );
+        assert_eq!(
+            key_bytes("space", None, false, true, false, false, false).unwrap(),
+            b"\x1b "
+        );
+        assert_eq!(
+            key_bytes("space", None, true, false, false, false, false).unwrap(),
+            [0]
+        );
         assert!(key_bytes("v", Some("v"), false, false, false, true, false).is_none());
         assert!(key_bytes("shift", None, false, false, true, false, false).is_none());
     }
