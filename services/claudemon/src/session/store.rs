@@ -360,6 +360,9 @@ pub struct SessionStore {
     /// SIGINT-equivalent (the stream driver's `interrupt` control request).
     /// `/signal {sigint}` routes here when present.
     managed_interrupts: Arc<DashMap<String, mpsc::UnboundedSender<()>>>,
+    /// Background-task control for stream sessions (provider pid + the
+    /// `stop_task` channel). Absent for every other transport.
+    managed_task_controls: Arc<DashMap<String, ManagedTaskControl>>,
     /// Latest account-level rate-limit reading from the OAuth usage endpoint
     /// (see `session::account_usage`), keyed by Claude config root (`""` = the
     /// daemon's default). One entry per logged-in account: a profile spawn
@@ -427,6 +430,24 @@ pub struct ManagedAnswer {
 pub struct ManagedPermissionSwitch {
     pub mode: String,
     pub reply: oneshot::Sender<Result<String, String>>,
+}
+
+/// A request to stop one background task through the provider's own control
+/// protocol (the stream CLI's `stop_task`). `reply` carries the CLI's verdict
+/// so the caller answers with what actually happened, not fire-and-forget.
+#[derive(Debug)]
+pub struct ManagedTaskStop {
+    pub task_id: String,
+    pub reply: oneshot::Sender<Result<(), String>>,
+}
+
+/// What a stream driver exposes for its session's background tasks: the
+/// provider process id (the root every task-process proof is anchored to) and
+/// the structural stop channel.
+#[derive(Clone)]
+pub struct ManagedTaskControl {
+    pub provider_pid: Option<u32>,
+    pub stop: mpsc::UnboundedSender<ManagedTaskStop>,
 }
 
 /// A managed session's approval policy, shared with its driver task.
@@ -665,6 +686,7 @@ impl SessionStore {
             managed_answers: Arc::new(DashMap::new()),
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
+            managed_task_controls: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             account_usage_errors: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -1944,6 +1966,46 @@ impl SessionStore {
         self.managed_interrupts.insert(session_id.to_string(), tx);
     }
 
+    /// Register a stream session's background-task control (see
+    /// [`ManagedTaskControl`]).
+    pub fn register_managed_task_control(&self, session_id: &str, control: ManagedTaskControl) {
+        self.managed_task_controls
+            .insert(session_id.to_string(), control);
+    }
+
+    /// The live task control for a session, if its driver offers one.
+    pub fn managed_task_control(&self, session_id: &str) -> Option<ManagedTaskControl> {
+        self.managed_task_controls
+            .get(session_id)
+            .map(|c| c.value().clone())
+    }
+
+    /// Mutate a session's background-task list in place. `f` reports whether
+    /// it changed anything a client can see; only then is the row broadcast.
+    /// Never touches the mode or the `background_tasks` count.
+    pub fn update_background_task_list(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut Vec<super::background_tasks::BackgroundTask>) -> bool,
+    ) -> bool {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return false;
+            };
+            if !f(&mut entry.background_task_list) {
+                return false;
+            }
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+        true
+    }
+
     /// Interrupt a managed session's current turn. Returns false when the
     /// session has no structural interrupt (caller falls back to the PTY /
     /// terminate paths).
@@ -2040,6 +2102,7 @@ impl SessionStore {
         self.managed_answers.remove(session_id);
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
+        self.managed_task_controls.remove(session_id);
         existed
     }
 
@@ -2097,6 +2160,7 @@ impl SessionStore {
         self.managed_answers.remove(session_id);
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
+        self.managed_task_controls.remove(session_id);
         // Release the hybrid Term view's resources (attached by `attach_pty`).
         // The 256 KiB byte ring per session is the bulk of a managed session's
         // memory; leaving it (and the input wrapper + broadcast) around after the
@@ -2113,6 +2177,7 @@ impl SessionStore {
             // badge a dead row as "working in background".
             entry.background_tasks = 0;
             let completed_at = now_millis();
+            super::background_tasks::end_all(&mut entry.background_task_list, completed_at);
             for sub in &mut entry.subagents {
                 if sub.status == SubagentStatus::Running {
                     sub.status = SubagentStatus::Complete;
@@ -2331,6 +2396,7 @@ impl SessionStore {
                 entry.mode = SessionMode::Stopped;
                 entry.clear_pending();
                 entry.background_tasks = 0;
+                super::background_tasks::end_all(&mut entry.background_task_list, now_millis());
                 entry.updated_at = OffsetDateTime::now_utc();
                 entry.clone()
             };

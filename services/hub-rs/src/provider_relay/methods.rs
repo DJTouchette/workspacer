@@ -48,6 +48,8 @@ const FULL: &[&str] = &[
     "sessions.transcript",
     "sessions.conversation",
     "sessions.subagentConversation",
+    "sessions.taskOutput",
+    "sessions.taskStop",
     "sessions.snapshots",
     "sessions.snapshot",
     "sessions.terminalInput",

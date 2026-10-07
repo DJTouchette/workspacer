@@ -1,4 +1,5 @@
 pub mod account_usage;
+pub mod background_tasks;
 pub mod claude_subagents;
 pub mod conversation;
 pub mod handoff;

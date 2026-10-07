@@ -465,6 +465,10 @@ impl Fixture {
             "sessions.subagentConversation" if self.options.rich => {
                 rich_subagent_conversation(id, params["agentId"].as_str().unwrap_or_default())
             }
+            "sessions.taskOutput" if self.options.rich => rich_task_output(id, params),
+            "sessions.taskStop" if self.options.rich => {
+                json!({"ok": true, "task_id": params["taskId"]})
+            }
             "sessions.conversation" => {
                 let limit = params["limit"].as_u64().map(|l| l as usize);
                 if id == self.active_id {
@@ -980,6 +984,17 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
                 // No spawning call in view: lands in a timeline overview card.
                 {"id":"fixture-native-audit","type":"Explore","description":"Audit settings search","status":"running","model":"claude-haiku-4-5","startedAt":chrono::Utc::now().timestamp_millis() - 59_000,"toolCalls":3}
             ]);
+            // Background work beside the turn (stream transport): a dev
+            // server with a proven pid, the running audit child, and two
+            // finished tasks. Logs are answered by `sessions.taskOutput`.
+            let now = chrono::Utc::now().timestamp_millis();
+            snapshot["background_tasks"] = json!(2);
+            snapshot["background_task_list"] = json!([
+                {"id":"bdevsrv01","taskType":"local_bash","status":"running","description":"npm run dev -- --port 5173","startedAt":now - 754_000,"hasOutput":true,"pid":48213,"toolUseId":"fixture-bg-dev"},
+                {"id":"fixture-native-audit","taskType":"local_agent","status":"running","description":"Audit settings search","startedAt":now - 59_000,"subagentId":"fixture-native-audit","usage":{"totalTokens":9100,"toolUses":3,"durationMs":59000},"lastToolName":"Grep","summary":"Running Search settings labels"},
+                {"id":"btestwch2","taskType":"local_bash","status":"failed","description":"cargo test --locked -- --test-threads=1","startedAt":now - 1_900_000,"endedAt":now - 1_640_000,"hasOutput":true,"summary":"Background command \"cargo test --locked -- --test-threads=1\" failed with exit code 101"},
+                {"id":"wfrelease3","taskType":"local_workflow","status":"completed","description":"Release checklist","workflowName":"release-checklist","startedAt":now - 3_600_000,"endedAt":now - 3_420_000,"hasOutput":true}
+            ]);
         }
         1 => {
             snapshot["label"] = json!("Session creation review");
@@ -995,6 +1010,65 @@ fn rich_snapshot(index: usize, mut snapshot: Value) -> Value {
         _ => (),
     }
     snapshot
+}
+
+/// A background task's log for the rich fixture: a dev server's output,
+/// served like claudemon's bounded read (tail first, then from `offset`).
+fn rich_task_output(session: &str, params: &Value) -> Value {
+    let task = params["taskId"].as_str().unwrap_or_default();
+    let text = match task {
+        "bdevsrv01" => {
+            let mut lines = vec![
+                "> project@0.4.0 dev".to_owned(),
+                "> vite --port 5173".to_owned(),
+                String::new(),
+                "  VITE v6.2.1  ready in 412 ms".to_owned(),
+                String::new(),
+                "  ➜  Local:   http://localhost:5173/".to_owned(),
+                "  ➜  Network: use --host to expose".to_owned(),
+            ];
+            for i in 0..36 {
+                lines.push(format!(
+                    "{:02}:{:02}:{:02} [vite] hmr update /src/{}.tsx",
+                    9 + i / 30,
+                    (12 + i * 7) % 60,
+                    (i * 13) % 60,
+                    ["App", "Sidebar", "TaskPanel", "routes/index"][i % 4]
+                ));
+            }
+            lines.push("10:41:07 [vite] page reload src/main.tsx".to_owned());
+            lines.join("\n") + "\n"
+        }
+        "btestwch2" => "running 214 tests\ntest ui::tests::title::chip ... ok\ntest model::merge ... FAILED\n\nfailures:\n    model::merge\n\ntest result: FAILED. 213 passed; 1 failed\n\n[exited with code 101]\n".to_owned(),
+        "wfrelease3" => "step 1/3 changelog ... done\nstep 2/3 version bump ... done\nstep 3/3 tag ... done\n".to_owned(),
+        _ => return json!({"ok": false, "error": "background task not found for that session"}),
+    };
+    let size = text.len() as u64;
+    let max = params["maxBytes"].as_u64().unwrap_or(65_536).max(1);
+    let start = match params["offset"].as_u64() {
+        Some(offset) if offset <= size => offset,
+        _ => size.saturating_sub(max),
+    };
+    let (mut start, mut end) = (start as usize, (start + max).min(size) as usize);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let running = task == "bdevsrv01";
+    json!({
+        "session_id": session, "task_id": task,
+        "status": if running { "running" } else if task == "btestwch2" { "failed" } else { "completed" },
+        "running": running, "offset": start, "next_offset": end, "size": size,
+        "text": &text[start..end], "reset": false,
+        "done": !running && end as u64 >= size,
+        "process": if running {
+            json!({"pid":48213,"alive":true,"processes":3,"rss_bytes":187_432_960u64,"cpu_seconds":41.2,"cpu_percent":2.4})
+        } else {
+            Value::Null
+        },
+    })
 }
 
 /// The first rich session after its native children finish and its turn

@@ -679,8 +679,10 @@ impl Worker {
         let key = request.key();
         // A write already on its way cannot be recalled: superseding it would
         // report "superseded" for a change the hub may still apply.
-        if matches!(key, "upload" | "project-save" | "file-save" | "job-action")
-            && self.view.requests.get(key).is_some_and(|s| s.loading)
+        if matches!(
+            key,
+            "upload" | "project-save" | "file-save" | "job-action" | "task-stop"
+        ) && self.view.requests.get(key).is_some_and(|s| s.loading)
         {
             return;
         }

@@ -1,6 +1,7 @@
 //! UI-independent protocol, bounded transcript state, and hub connection.
 pub mod appearance;
 pub mod backend;
+pub mod background_tasks;
 pub mod bus;
 pub mod child_agents;
 pub mod controller;

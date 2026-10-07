@@ -371,6 +371,7 @@ impl Workspace {
             .children(self.render_caption(window))
             .children(self.render_usage_modal(cx))
             .children(self.render_file_viewer(window, cx))
+            .children(self.render_tasks_sheet(window, cx))
             .key_context(if viewer {
                 "FileViewer"
             } else if self.settings.vim_navigation && self.focus.is_focused(window) {

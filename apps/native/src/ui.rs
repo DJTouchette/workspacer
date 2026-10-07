@@ -28,6 +28,7 @@ mod sidebar;
 mod smooth_scroll;
 mod states;
 mod syntax;
+mod tasks;
 mod terminal;
 mod titles;
 mod tools;
@@ -495,6 +496,7 @@ pub struct Workspace {
     remote: remote::RemoteUi,
     chat: transcript::ChatUi,
     child_ui: children::ChildUi,
+    tasks: tasks::TasksUi,
     screen: Screen,
     settings: Settings,
     fonts: typography::FontControls,
@@ -764,6 +766,7 @@ impl Workspace {
             remote: Default::default(),
             chat: transcript::ChatUi::default(),
             child_ui: children::ChildUi::default(),
+            tasks: tasks::TasksUi::default(),
             ui_bus: Default::default(),
             screen: Screen::Conversation,
             settings: Settings::default(),
@@ -880,6 +883,7 @@ impl Workspace {
         let children_changed = self.sync_children(&view, cx);
         self.receive_chat_requests(&view, cx);
         self.sync_features(&view, window, cx);
+        self.sync_tasks(&view, cx);
         self.sync_explorer(&view, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt
@@ -1539,6 +1543,7 @@ impl Render for Workspace {
             .child(sidebar)
             .child(content)
             .children(self.render_docked_viewer(window, cx))
+            .children(self.render_docked_tasks(window, cx))
     }
 }
 

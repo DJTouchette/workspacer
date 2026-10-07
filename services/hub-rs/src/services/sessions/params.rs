@@ -31,6 +31,23 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
             bail!("{key} must be an integer");
         }
     }
+    if method == "sessions.taskOutput" {
+        for key in ["offset", "maxBytes"] {
+            if params
+                .get(key)
+                .is_some_and(|value| !value.is_null() && value.as_u64().is_none())
+            {
+                bail!("{key} must be a non-negative integer");
+            }
+        }
+    }
+    if matches!(method, "sessions.taskOutput" | "sessions.taskStop")
+        && params
+            .get("taskId")
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
+        bail!("taskId must be text");
+    }
     if method == "sessions.conversation"
         && params
             .get("limit")

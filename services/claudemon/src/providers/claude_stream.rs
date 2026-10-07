@@ -37,12 +37,15 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, UsageAcc};
+use crate::session::background_tasks;
 use crate::session::conversation::ConversationItem;
 use crate::session::state::{
     Capabilities, ContextInventory, ContextItem, Pending, PendingOwner, PendingQuestion,
     PendingWrite, SessionMode, CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
-use crate::session::store::{ManagedAnswer, ManagedPermissionSwitch};
+use crate::session::store::{
+    ManagedAnswer, ManagedPermissionSwitch, ManagedTaskControl, ManagedTaskStop,
+};
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
 use crate::session::{ConversationStore, SessionStore};
 
@@ -992,8 +995,15 @@ struct ParkedCanUse {
 enum PendingControl {
     Initialize(std::time::Instant),
     Interrupt,
-    SetModel { model: String },
+    SetModel {
+        model: String,
+    },
     SetPermissionMode(ManagedPermissionSwitch),
+    /// `stop_task` — the CLI's own per-task stop (the control its task UI's
+    /// `x` sends). Verified on CLI 2.1.286: the task's `task_updated
+    /// {status: killed}` + `task_notification {status: stopped}` land before
+    /// the empty success response.
+    StopTask(ManagedTaskStop),
 }
 
 /// `{"type":"control_response","response":{"subtype":"success","request_id":…,
@@ -1313,6 +1323,16 @@ async fn run_session(
     store.register_managed_permission_mode(&session_id, ptx);
     let (itx, mut irx) = mpsc::unbounded_channel::<()>();
     store.register_managed_interrupt(&session_id, itx);
+    // Background-task control: the claude pid anchors every task-process
+    // proof, and stops ride the CLI's own `stop_task` request — never a signal.
+    let (sttx, mut strx) = mpsc::unbounded_channel::<ManagedTaskStop>();
+    store.register_managed_task_control(
+        &session_id,
+        ManagedTaskControl {
+            provider_pid: child.id(),
+            stop: sttx,
+        },
+    );
     // Auto-approve flag, live-switchable via the yolo half of
     // `/permission-mode`'s managed vocabulary as well as the structural
     // switch. A yolo *spawn* also bypasses at the source, but flipping this on
@@ -1351,8 +1371,11 @@ async fn run_session(
     // was still running — the drain frame owes it back (see handle_line).
     let mut idle_suppressed = false;
     // A resumed session reuses its row; a previous life's task count must not
-    // survive into this one.
+    // survive into this one, and nothing that life launched is still running.
     store.set_background_tasks(&session_id, 0);
+    store.update_background_task_list(&session_id, |tasks| {
+        background_tasks::end_all(tasks, unix_ms())
+    });
     // Role instructions to prepend to the first prompt only (supervisors).
     let mut pending_instructions: Option<String> = cfg.facade.instructions.clone();
 
@@ -1497,6 +1520,27 @@ async fn run_session(
                     PendingControl::Interrupt,
                 );
             },
+            stop = strx.recv() => {
+                if let Some(stop) = stop {
+                    let running = store.get(&session_id).is_some_and(|s| {
+                        s.background_task_list
+                            .iter()
+                            .any(|t| t.id == stop.task_id && t.is_running())
+                    });
+                    if running {
+                        let request = json!({ "subtype": "stop_task", "task_id": stop.task_id });
+                        send_control(
+                            &out_tx,
+                            &mut next_ctl,
+                            &mut pending_controls,
+                            request,
+                            PendingControl::StopTask(stop),
+                        );
+                    } else {
+                        let _ = stop.reply.send(Err("no running background task with that id".into()));
+                    }
+                }
+            },
             status = child.wait() => {
                 tracing::info!(?status, session = %session_id, "claude stream child exited");
                 // The unbiased select! can pick this arm while the CLI's final
@@ -1522,6 +1566,56 @@ async fn run_session(
 
     let _ = child.start_kill();
     Ok(())
+}
+
+fn unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Fold a frame's `task_*` / live-set / launch-result facts into the session's
+/// background-task list, then try to PROVE the process behind any running
+/// shell that has none yet (see [`background_tasks::discover_process`]).
+fn observe_background_tasks(store: &SessionStore, session_id: &str, value: &Value) {
+    let events = background_tasks::parse_frame(value);
+    if events.is_empty() {
+        return;
+    }
+    let now = unix_ms();
+    let provider_pid = store
+        .managed_task_control(session_id)
+        .and_then(|c| c.provider_pid);
+    store.update_background_task_list(session_id, |tasks| {
+        let mut changed = false;
+        for event in events {
+            changed |= background_tasks::apply(tasks, event, now);
+        }
+        if let Some(pid) = provider_pid {
+            changed |= prove_task_processes(pid, tasks);
+        }
+        changed
+    });
+}
+
+/// Attach a verified pid to running shell tasks that lack one.
+pub(crate) fn prove_task_processes(
+    provider_pid: u32,
+    tasks: &mut [background_tasks::BackgroundTask],
+) -> bool {
+    let mut changed = false;
+    for task in tasks
+        .iter_mut()
+        .filter(|t| t.is_running() && t.process.is_none() && t.task_type == "local_bash")
+    {
+        if let Some(vp) = background_tasks::discover_process(provider_pid, task) {
+            task.pid = Some(vp.pid);
+            task.process = Some(vp);
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Queue a control request to the CLI, parking what the eventual
@@ -1561,6 +1655,9 @@ fn handle_line(
     bg_tasks_active: &mut bool,
     idle_suppressed: &mut bool,
 ) {
+    // Background-task enrichment rides beside, never inside, the state
+    // machine below: it reads the same frames and owns only the task list.
+    observe_background_tasks(store, session_id, value);
     match value.get("type").and_then(Value::as_str).unwrap_or("") {
         // The CLI answered one of our control requests.
         "control_response" => {
@@ -1588,6 +1685,12 @@ fn handle_line(
                     tracing::info!(session = %session_id, provider = "claude", stage = "provider_initialized",
                         elapsed_ms = started.elapsed().as_millis() as u64, outcome = "error", "spawn-timing");
                     tracing::warn!(session = %session_id, error = %err, "claude stream: initialize failed");
+                }
+                (PendingControl::StopTask(stop), err) => {
+                    if let Some(err) = &err {
+                        tracing::warn!(session = %session_id, task = %stop.task_id, error = %err, "claude stream: stop_task refused");
+                    }
+                    let _ = stop.reply.send(err.map_or(Ok(()), Err));
                 }
                 (PendingControl::Interrupt, err) => {
                     if let Some(err) = err {
@@ -3581,6 +3684,162 @@ done
             store.get(sid).is_some_and(|s| s.pending().is_none()),
             "a finished turn leaves no phantom card"
         );
+
+        store.terminate_managed(sid);
+    }
+
+    /// A stand-in `claude` that launches a REAL background shell the way the
+    /// CLI does (a direct child whose stdout is `<cwd>/<sid>/tasks/t1.output`),
+    /// reports it with the frame shapes captured from CLI 2.1.286, and answers
+    /// a `stop_task` control request by killing it and emitting the same
+    /// `task_updated {killed}` + `task_notification {stopped}` + success the
+    /// real CLI sent.
+    #[cfg(unix)]
+    fn write_task_stub(dir: &std::path::Path, sid: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("stub-claude-tasks");
+        let script = r#"#!/bin/sh
+SID=__SID__
+out="$PWD/$SID/tasks/t1.output"
+mkdir -p "$PWD/$SID/tasks"
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      (echo started; exec sleep 30) > "$out" 2>&1 &
+      bg=$!
+      printf '%s\n' "{\"type\":\"system\",\"subtype\":\"background_tasks_changed\",\"tasks\":[{\"task_id\":\"t1\",\"task_type\":\"local_bash\",\"description\":\"sleep 30\"}],\"session_id\":\"$SID\"}"
+      printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"t1\",\"tool_use_id\":\"tu-bg\",\"description\":\"sleep 30\",\"is_backgrounded\":true,\"task_type\":\"local_bash\",\"session_id\":\"$SID\"}"
+      printf '%s\n' "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"tu-bg\",\"type\":\"tool_result\",\"content\":\"Command running in background with ID: t1. Output is being written to: $out. You will be notified when it completes.\",\"is_error\":false}]},\"parent_tool_use_id\":null,\"session_id\":\"$SID\",\"tool_use_result\":{\"backgroundTaskId\":\"t1\"}}"
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"ok","duration_ms":1,"usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0.01}'
+      ;;
+    *'"subtype":"stop_task"'*)
+      rid=$(printf '%s' "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
+      kill "$bg" 2>/dev/null
+      printf '%s\n' "{\"type\":\"system\",\"subtype\":\"background_tasks_changed\",\"tasks\":[],\"session_id\":\"$SID\"}"
+      printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"t1\",\"patch\":{\"status\":\"killed\",\"end_time\":1791393567729},\"session_id\":\"$SID\"}"
+      printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"t1\",\"tool_use_id\":\"tu-bg\",\"status\":\"stopped\",\"output_file\":\"$out\",\"summary\":\"sleep 30\",\"session_id\":\"$SID\"}"
+      printf '%s\n' "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"$rid\",\"response\":{}}}"
+      ;;
+  esac
+done
+kill "$bg" 2>/dev/null
+"#
+        .replace("__SID__", sid);
+        std::fs::write(&path, script).expect("writing the stub CLI");
+        let mut perms = std::fs::metadata(&path)
+            .expect("stub metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod the stub CLI");
+        path
+    }
+
+    /// Background tasks end to end through the real driver: the list fills
+    /// from the frames, the shell's pid is PROVEN (Linux), the log is the
+    /// task's own file, `stop_task` round-trips through the control protocol,
+    /// and none of it moves the mode — an ambient shell never holds busy.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn background_task_list_pid_and_stop_task_round_trip() {
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-tasks-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        let sid = "e2e-tasks";
+        let bin = write_task_stub(&dir.0, sid);
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed(sid, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: sid.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+        assert!(settles(|| store.is_managed(sid)).await);
+        assert!(matches!(
+            store.submit_message(sid, "start a server".into()),
+            crate::session::MessageOutcome::Sent
+        ));
+        let task = |s: &SessionStore| {
+            s.get(sid).and_then(|st| {
+                st.background_task_list
+                    .iter()
+                    .find(|t| t.id == "t1")
+                    .cloned()
+            })
+        };
+        assert!(
+            settles(|| task(&store).is_some_and(|t| t.has_output)).await,
+            "the launch result should name the task's output file: {:?}",
+            task(&store)
+        );
+        assert!(
+            settles(|| store.get(sid).is_some_and(|s| s.mode == SessionMode::Input)).await,
+            "an ambient background shell must not hold the session busy"
+        );
+        let running = task(&store).unwrap();
+        assert!(running.is_running());
+        assert_eq!(running.description.as_deref(), Some("sleep 30"));
+        let expected = dir.0.join(sid).join("tasks").join("t1.output");
+        assert_eq!(running.output_file.as_deref(), Some(expected.as_path()));
+        #[cfg(target_os = "linux")]
+        {
+            let pid = running.pid.expect("the shell's pid is provable on Linux");
+            let cmd = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+            assert!(
+                String::from_utf8_lossy(&cmd).contains("sleep"),
+                "the proven pid must be the task's own process"
+            );
+        }
+        let read = crate::session::background_tasks::read_output(&expected, Some(0), 1024)
+            .expect("the log is readable");
+        assert_eq!(read.text, "started\n");
+
+        // Stop through the CLI's own control request.
+        let control = store
+            .managed_task_control(sid)
+            .expect("stream task control");
+        let (reply, verdict) = tokio::sync::oneshot::channel();
+        control
+            .stop
+            .send(ManagedTaskStop {
+                task_id: "t1".into(),
+                reply,
+            })
+            .unwrap();
+        let verdict = tokio::time::timeout(std::time::Duration::from_secs(5), verdict)
+            .await
+            .expect("stop_task answered")
+            .expect("driver replied");
+        assert_eq!(verdict, Ok(()));
+        let stopped = task(&store).unwrap();
+        assert_eq!(stopped.status, "stopped");
+        assert!(stopped.ended_at.is_some());
+        assert_eq!(store.get(sid).unwrap().mode, SessionMode::Input);
+
+        // A task that is no longer running is refused without asking the CLI.
+        let (reply, verdict) = tokio::sync::oneshot::channel();
+        control
+            .stop
+            .send(ManagedTaskStop {
+                task_id: "t1".into(),
+                reply,
+            })
+            .unwrap();
+        assert!(verdict.await.unwrap().is_err());
 
         store.terminate_managed(sid);
     }

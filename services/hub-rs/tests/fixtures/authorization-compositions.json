@@ -123,6 +123,7 @@
     "sessions.delete",
     "sessions.load",
     "sessions.save",
+    "sessions.taskStop",
     "sessions.terminalInput",
     "sessions.transcript",
     "terminals.create",
@@ -174,6 +175,7 @@
     "sessions.snapshot",
     "sessions.snapshots",
     "sessions.subagentConversation",
+    "sessions.taskOutput",
     "sessions.terminalKeepalive",
     "sessions.terminalResize",
     "terminals.shells",
@@ -257,7 +259,8 @@
       "push.subscribe",
       "push.unsubscribe",
       "files.upload",
-      "sessionArchive.set"
+      "sessionArchive.set",
+      "sessions.taskStop"
     ]
   }
 }
