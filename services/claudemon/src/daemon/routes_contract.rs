@@ -38,7 +38,7 @@ const FIXTURE: &str = include_str!("../../../../contracts/claudemon-routes.json"
 /// comparison below runs over two empty lists, and the test reports ok — the
 /// failure mode every guard in this repo keeps re-learning. Raise when routes
 /// are added.
-const API_ROUTE_FLOOR: usize = 33;
+const API_ROUTE_FLOOR: usize = 35;
 const HOOK_ROUTE_FLOOR: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]

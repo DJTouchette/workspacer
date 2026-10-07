@@ -294,6 +294,8 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
             "/sessions/:id/subagents/:agent_id/conversation",
             get(get_subagent_conversation),
         )
+        .route("/sessions/:id/tasks/:task_id/output", get(get_task_output))
+        .route("/sessions/:id/tasks/:task_id/stop", post(post_task_stop))
         .route("/sessions/:id/handoff", post(post_handoff))
         .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
@@ -1491,6 +1493,158 @@ async fn get_subagent_conversation(
     let seq = items.len();
     Json(json!({ "session_id": id, "agent_id": agent_id, "seq": seq, "items": items }))
         .into_response()
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TaskOutputQuery {
+    /// Resume from this byte offset (the previous read's `next_offset`);
+    /// absent = the tail of the file.
+    offset: Option<u64>,
+    /// Bytes to return, capped at `background_tasks::MAX_READ_BYTES`.
+    max: Option<u64>,
+}
+
+fn task_not_found(error: &str) -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "ok": false, "error": error })),
+    )
+        .into_response()
+}
+
+/// A bounded, follow-able read of ONE background task's log. The caller names
+/// a session and a task id, never a path: the file is the one the CLI named
+/// for that task on that session (`…/<claude session>/tasks/<task id>.output`,
+/// see `background_tasks::confined_output_path`), and the read refuses a
+/// symlink or anything but a regular file. When the task's process is proven
+/// (Linux), the reply also carries its re-verified liveness and CPU/RSS.
+async fn get_task_output(
+    State(store): State<SessionStore>,
+    Path((id, task_id)): Path<(String, String)>,
+    Query(q): Query<TaskOutputQuery>,
+) -> Response {
+    use crate::session::background_tasks as bg;
+    if !valid_session_id(&id) || !bg::valid_task_id(&task_id) {
+        return (StatusCode::BAD_REQUEST, "invalid session or task id").into_response();
+    }
+    let Some(state) = store.get(&id) else {
+        return task_not_found("session not found");
+    };
+    let Some(mut task) = state
+        .background_task_list
+        .iter()
+        .find(|t| t.id == task_id)
+        .cloned()
+    else {
+        return task_not_found("background task not found for that session");
+    };
+    let Some(path) = task.output_file.clone().filter(|_| task.has_output) else {
+        return task_not_found("this task has no log (agents open their own transcript)");
+    };
+    let max = q.max.unwrap_or(bg::DEFAULT_READ_BYTES);
+    let offset = q.offset;
+    let chunk = match tokio::task::spawn_blocking(move || bg::read_output(&path, offset, max)).await
+    {
+        Ok(Ok(chunk)) => chunk,
+        Ok(Err(bg::OutputError::NoOutput)) => return task_not_found("no log for this task"),
+        Ok(Err(bg::OutputError::Unavailable(error))) => return task_not_found(&error),
+        Err(error) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+        }
+    };
+    // A running shell whose process was not provable at launch gets one more
+    // try now; the proof (not this request) decides.
+    let provider_pid = store.managed_task_control(&id).and_then(|c| c.provider_pid);
+    if let (Some(pid), true, None) = (provider_pid, task.is_running(), task.process) {
+        store.update_background_task_list(&id, |tasks| {
+            crate::providers::claude_stream::prove_task_processes(pid, tasks)
+        });
+        if let Some(fresh) = store
+            .get(&id)
+            .and_then(|s| s.background_task_list.into_iter().find(|t| t.id == task_id))
+        {
+            task = fresh;
+        }
+    }
+    let process = match (provider_pid, task.process) {
+        (Some(pid), Some(vp)) if task.is_running() => Some(bg::sample_process(&id, pid, &task, vp)),
+        _ => None,
+    };
+    let running = task.is_running();
+    Json(json!({
+        "session_id": id,
+        "task_id": task_id,
+        "status": task.status,
+        "running": running,
+        "offset": chunk.offset,
+        "next_offset": chunk.next_offset,
+        "size": chunk.size,
+        "text": chunk.text,
+        "reset": chunk.reset,
+        // Nothing more will ever be appended.
+        "done": !running && chunk.next_offset >= chunk.size,
+        "process": process,
+    }))
+    .into_response()
+}
+
+/// Stop ONE background task through the CLI's own `stop_task` control
+/// request — the same request its task UI sends. No signal is ever sent from
+/// here: the CLI owns its task processes and reports the outcome through the
+/// usual `task_updated` / `task_notification` frames. Stream transport only.
+async fn post_task_stop(
+    State(store): State<SessionStore>,
+    Path((id, task_id)): Path<(String, String)>,
+) -> Response {
+    use crate::session::background_tasks as bg;
+    if !valid_session_id(&id) || !bg::valid_task_id(&task_id) {
+        return (StatusCode::BAD_REQUEST, "invalid session or task id").into_response();
+    }
+    let Some(state) = store.get(&id) else {
+        return task_not_found("session not found");
+    };
+    let Some(task) = state.background_task_list.iter().find(|t| t.id == task_id) else {
+        return task_not_found("background task not found for that session");
+    };
+    if !task.is_running() {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "ok": false, "error": format!("task already {}", task.status) })),
+        )
+            .into_response();
+    }
+    let Some(control) = store.managed_task_control(&id) else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({ "ok": false, "error": "stopping a background task needs a live stream-transport session" })),
+        )
+            .into_response();
+    };
+    let (reply, verdict) = tokio::sync::oneshot::channel();
+    if control
+        .stop
+        .send(crate::session::store::ManagedTaskStop {
+            task_id: task_id.clone(),
+            reply,
+        })
+        .is_err()
+    {
+        return (StatusCode::GONE, "session driver is gone").into_response();
+    }
+    match tokio::time::timeout(Duration::from_secs(10), verdict).await {
+        Ok(Ok(Ok(()))) => Json(json!({ "ok": true, "task_id": task_id })).into_response(),
+        Ok(Ok(Err(error))) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+        Ok(Err(_)) => (StatusCode::GONE, "session driver is gone").into_response(),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({ "ok": false, "error": "the CLI did not answer stop_task" })),
+        )
+            .into_response(),
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2911,6 +3065,171 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // --- /tasks ---------------------------------------------------------------
+
+    /// Seed a stream session's task list the way the driver does: the live set
+    /// names a shell and an agent, the shell's launch result names its file.
+    fn seed_tasks(state: &ApiState, sid: &str, dir: &std::path::Path) -> std::path::PathBuf {
+        use crate::session::background_tasks::{apply, TaskEvent};
+        state.store.register_managed(sid, "/project", "claude");
+        state
+            .store
+            .set_transport(sid, crate::session::Transport::Stream);
+        let tasks_dir = dir.join(sid).join("tasks");
+        std::fs::create_dir_all(&tasks_dir).unwrap();
+        let file = tasks_dir.join("sh1.output");
+        std::fs::write(&file, "line one\nline two\n").unwrap();
+        let out = file.clone();
+        state.store.update_background_task_list(sid, move |tasks| {
+            apply(
+                tasks,
+                TaskEvent::LiveSet(vec![
+                    (
+                        "sh1".into(),
+                        "local_bash".into(),
+                        Some("npm run dev".into()),
+                        false,
+                    ),
+                    (
+                        "ag1".into(),
+                        "local_agent".into(),
+                        Some("explore".into()),
+                        false,
+                    ),
+                ]),
+                1,
+            );
+            apply(
+                tasks,
+                TaskEvent::Output {
+                    id: "sh1".into(),
+                    output_file: out,
+                },
+                2,
+            )
+        });
+        file
+    }
+
+    #[tokio::test]
+    async fn task_output_reads_only_the_named_tasks_own_log() {
+        let dir = std::env::temp_dir().join(format!("claudemon-task-api-{}", uuid::Uuid::new_v4()));
+        let state = test_state();
+        let file = seed_tasks(&state, "s-tasks", &dir);
+
+        // The snapshot carries the row, without the path.
+        let (status, body) = request(state.clone(), get("/sessions/s-tasks")).await;
+        assert_eq!(status, StatusCode::OK);
+        let snap: Value = serde_json::from_slice(&body).unwrap();
+        let rows = snap["background_task_list"]
+            .as_array()
+            .expect("task list on the wire");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["hasOutput"], true);
+        assert_eq!(rows[1]["subagentId"], "ag1");
+        assert!(!String::from_utf8_lossy(&body).contains(".output"));
+
+        let (status, body) = request(
+            state.clone(),
+            get("/sessions/s-tasks/tasks/sh1/output?offset=0&max=9"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let first: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(first["text"], "line one\n");
+        assert_eq!(first["running"], true);
+        assert_eq!(first["done"], false);
+        let next = first["next_offset"].as_u64().unwrap();
+        let (_, body) = request(
+            state.clone(),
+            get(&format!("/sessions/s-tasks/tasks/sh1/output?offset={next}")),
+        )
+        .await;
+        let rest: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(rest["text"], "line two\n");
+
+        // Agents have no log here (their transcript is the child view).
+        for (url, want) in [
+            ("/sessions/s-tasks/tasks/ag1/output", StatusCode::NOT_FOUND),
+            ("/sessions/s-tasks/tasks/nope/output", StatusCode::NOT_FOUND),
+            ("/sessions/other/tasks/sh1/output", StatusCode::NOT_FOUND),
+            (
+                "/sessions/s-tasks/tasks/a.b/output",
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            assert_eq!(request(state.clone(), get(url)).await.0, want, "{url}");
+        }
+
+        // A file swapped for a symlink is refused, whatever it points at.
+        #[cfg(unix)]
+        {
+            let secret = dir.join("secret");
+            std::fs::write(&secret, "nope").unwrap();
+            std::fs::remove_file(&file).unwrap();
+            std::os::unix::fs::symlink(&secret, &file).unwrap();
+            let (status, body) =
+                request(state.clone(), get("/sessions/s-tasks/tasks/sh1/output")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert!(!String::from_utf8_lossy(&body).contains("nope"));
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn task_stop_routes_through_the_driver_and_reports_its_verdict() {
+        let dir =
+            std::env::temp_dir().join(format!("claudemon-task-stop-{}", uuid::Uuid::new_v4()));
+        let state = test_state();
+        seed_tasks(&state, "s-stop", &dir);
+        let url = "/sessions/s-stop/tasks/sh1/stop";
+        // No live stream driver: nothing to ask.
+        assert_eq!(
+            request(state.clone(), post_json(url, json!({}))).await.0,
+            StatusCode::NOT_IMPLEMENTED
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel::<crate::session::store::ManagedTaskStop>();
+        state.store.register_managed_task_control(
+            "s-stop",
+            crate::session::store::ManagedTaskControl {
+                provider_pid: None,
+                stop: tx,
+            },
+        );
+        let driver = tokio::spawn(async move {
+            let first = rx.recv().await.unwrap();
+            assert_eq!(first.task_id, "sh1");
+            let _ = first.reply.send(Ok(()));
+            let second = rx.recv().await.unwrap();
+            let _ = second.reply.send(Err("Task sh1 is not running".into()));
+        });
+        let (status, body) = request(state.clone(), post_json(url, json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        let (status, body) = request(state.clone(), post_json(url, json!({}))).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(String::from_utf8_lossy(&body).contains("not running"));
+        driver.await.unwrap();
+
+        // A finished task is refused before the driver is asked.
+        state.store.update_background_task_list("s-stop", |tasks| {
+            crate::session::background_tasks::end_all(tasks, 5)
+        });
+        assert_eq!(
+            request(state.clone(), post_json(url, json!({}))).await.0,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            request(
+                state,
+                post_json("/sessions/s-stop/tasks/zzz/stop", json!({}))
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     // --- /input -------------------------------------------------------------

@@ -143,6 +143,16 @@
     },
     {
       "method": "GET",
+      "pattern": "/sessions/:id/tasks/:task_id/output",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/tasks/:task_id/stop",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "GET",
       "pattern": "/sessions/:id/transcript",
       "server": "claudemon-api"
     },

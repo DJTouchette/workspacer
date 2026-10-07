@@ -893,6 +893,14 @@ pub struct SessionState {
     /// honestly instead. Additive/back-compatible: absent rows read 0.
     #[serde(default)]
     pub background_tasks: u32,
+    /// What those background tasks ARE — one row per task (shell, async
+    /// agent, teammate, cloud agent, workflow) with status, progress and
+    /// whether a log can be read. Stream transport only (fed by the CLI's
+    /// `task_*` frames, see `session::background_tasks`); PTY sessions have
+    /// the count above and no list. Pure enrichment: the mode never reads it.
+    /// Additive/back-compatible: omitted when empty, absent rows read empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub background_task_list: Vec<super::background_tasks::BackgroundTask>,
     /// Count of background subagents (async Agent/Task tool) currently running,
     /// tracked from the `SubagentStart`/`SubagentStop` hooks. While this is
     /// non-zero, a parent `Stop` does NOT idle the session — the parent's own
@@ -993,6 +1001,7 @@ impl SessionState {
             last_compact_at: None,
             compaction_count: 0,
             background_tasks: 0,
+            background_task_list: Vec::new(),
             live_subagents: 0,
             parent_turn_ended: false,
             requested_model: None,
