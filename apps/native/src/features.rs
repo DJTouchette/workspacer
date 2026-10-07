@@ -76,6 +76,20 @@ pub enum Request {
         session: String,
         agent: String,
     },
+    /// One read of a background task's log (`sessions.taskOutput`): from
+    /// `offset` when following, else the tail. The daemon resolves the file
+    /// from the task id; no path is ever sent.
+    TaskOutput {
+        session: String,
+        task: String,
+        offset: Option<u64>,
+    },
+    /// Stop one background task through the CLI's own `stop_task` request
+    /// (`sessions.taskStop`). Never superseded while in flight.
+    TaskStop {
+        session: String,
+        task: String,
+    },
     Upload {
         session: String,
         source: AttachmentSource,
@@ -285,6 +299,8 @@ impl Request {
             Self::Setup { .. } => "setup",
             Self::History { .. } => "history",
             Self::SubagentHistory { .. } => "subagent-history",
+            Self::TaskOutput { .. } => "task-output",
+            Self::TaskStop { .. } => "task-stop",
             Self::Upload { .. } => "upload",
             Self::Updates => "updates",
             Self::DownloadUpdate { .. } => "update-download",
@@ -531,6 +547,32 @@ impl Request {
                 let rows: Vec<_> = transcript.rows.iter().map(AsRef::as_ref).collect();
                 Ok(json!({"rows":rows,"first_seq":first_seq,
                     "omitted":transcript.omitted,"session_id":session,"agent_id":agent}))
+            }
+            Self::TaskOutput {
+                session,
+                task,
+                offset,
+            } => {
+                let mut params = json!({"sessionId":session,"taskId":task,
+                    "maxBytes":crate::background_tasks::READ_BYTES});
+                if let Some(offset) = offset {
+                    params["offset"] = json!(offset);
+                }
+                let value = backend.call("sessions.taskOutput", params).await?;
+                ensure!(
+                    value["task_id"].as_str() == Some(task.as_str())
+                        && value["session_id"].as_str().is_none_or(|id| id == session),
+                    "The log belongs to another task"
+                );
+                Ok(value)
+            }
+            Self::TaskStop { session, task } => {
+                backend
+                    .call(
+                        "sessions.taskStop",
+                        json!({"sessionId":session,"taskId":task}),
+                    )
+                    .await
             }
             Self::Setup { provider, check } => {
                 let installed = backend.call("providers.checkAll", json!({})).await?;

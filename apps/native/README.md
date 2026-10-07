@@ -170,7 +170,8 @@ are never automatically forwarded to an explicitly remote hub.
 The client connects to existing sessions and creates sessions via `agents.spawn`.
 Existing-hub mode does not own or stop backend processes on exit. The connected hub needs a provider for `sessions.snapshots`,
 `sessions.conversation`, `agents.sendMessage`, `claude.approve`, `claude.answer`,
-`claude.signal`, and `agents.spawn`.
+`claude.signal`, and `agents.spawn`; background-task logs and stops use
+`sessions.taskOutput` and `sessions.taskStop` when the hub offers them.
 
 ## Typography
 
@@ -580,6 +581,32 @@ be expanded, and attachment controls share the composer action row.
   read. This is working-tree state, including edits outside the selected
   session, not an attribution claim. Diffs show up to 20,000 lines, scroll
   sideways for long lines, and say when they are cut short.
+- **Background tasks.** When the agent runs work beside the conversation
+  (a `run_in_background` shell such as a dev server, an async subagent, a
+  teammate, a cloud agent or a workflow), a chip with the number still running
+  appears in the title capsule. It opens a panel in the same right-side slot as
+  the file viewer (docked beside the chat when there is room, a sheet over it
+  otherwise; the viewer takes the slot back when it opens a file). Each row
+  shows the kind, what it runs, status, elapsed time and, for a running shell,
+  its pid. Choosing a shell or workflow opens its log, read by the hub from the
+  task's own output file (`sessions.taskOutput`, by task id; no path is ever
+  sent): the tail first, then once a second from where the last read stopped,
+  keeping the newest line in view until you scroll back up (**Follow** jumps
+  back). The client keeps the latest 1 MiB and says when earlier output is not
+  shown. Under the log, a proven process shows its pid, liveness, CPU and
+  memory for its whole process tree. Choosing a subagent opens its
+  conversation as the chat, like the sidebar's child rows. **Stop** asks first,
+  then sends Claude Code's own `stop_task` request (`sessions.taskStop`); it
+  never signals a process, and the list updates when the CLI reports the task
+  ended. Task details come from Claude's stream transport; a PTY session shows
+  only the count, and the panel says so. Codex sessions do not report
+  background tasks yet. The panel has no pop-out window.
+
+  A pid is shown only when the daemon proved it on Linux: exactly one direct
+  child of the session's own `claude` process has the task's output file as
+  its stdout, it started no earlier than shortly before the task appeared,
+  and the parent, start time and stdout are re-checked before every use, so a
+  recycled pid never matches. On macOS and Windows no pid is shown.
 - **Terminal.** The terminal button in the title bar (Ctrl/Cmd+\`, `g t`)
   opens the selected agent's own interactive shell under the conversation:
   the hub starts its login shell in the agent's folder (`terminals.create`)
@@ -865,6 +892,8 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/diff.rs` | Unified diff parsing into numbered rows |
 | `src/terminal.rs` | Per-agent shell protocol: output feed, key encoding, emulator, remembered shells |
 | `src/ui/terminal.rs` | Terminal panel and popped-out terminal window |
+| `src/background_tasks.rs` | A session's background tasks and the bounded, follow-able task log |
+| `src/ui/tasks.rs` | Background-task chip, task list and live log panel |
 | `src/ui/settings.rs` | Categorized, searchable settings |
 | `src/remote.rs` | Tailscale sharing and pairing state, phone links, QR modules |
 | `src/ui/remote.rs` | Settings → Remote panel |

@@ -1731,6 +1731,12 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The main window holds a viewer (docked or as a sheet), which owns the
+    /// right-side slot the background-task panel otherwise uses.
+    pub(super) fn viewer_in_slot(&self) -> bool {
+        self.chat.viewer.pane.is_some()
+    }
+
     /// The editor on screen: the popped-out window's, else the main window's.
     pub(super) fn showing_pane(&self) -> Option<Entity<PreviewPane>> {
         self.chat

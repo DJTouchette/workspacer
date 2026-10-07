@@ -960,7 +960,9 @@ impl Workspace {
                             ))
                         }),
                 )
-            })
+            }) // Background work is status, not a hidden action: the chip
+            // stays in the capsule, narrow windows included.
+            .children(session.and_then(|session| self.render_tasks_chip(session, cx)))
     }
 
     pub(super) fn chat_actions(&self, enabled: bool, cx: &mut Context<Self>) -> Div {

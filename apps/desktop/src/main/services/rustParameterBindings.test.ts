@@ -25,7 +25,7 @@ describe('Rust dispatcher caller parameter extraction', () => {
         (n, row) => n + row.fields.filter((field) => !!policy.dangerousKind(field)).length,
         0,
       ),
-    }).toEqual({ rows: 69, bindings: 47 }); // observed: one additional shared write arm
+    }).toEqual({ rows: 71, bindings: 47 }); // sessions.taskOutput / taskStop: id + integer arms, no dangerous field
     for (const [method, field] of [
       ['git.status', 'cwd'],
       ['git.stage', 'path'],

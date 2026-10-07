@@ -2879,3 +2879,85 @@ async fn manager_and_mismatched_handoffs_are_refused_before_the_hub() {
     assert_no_side_effects(&mut hub);
     assert_no_side_effects(&mut other);
 }
+
+#[tokio::test]
+async fn background_task_logs_and_stops_name_ids_never_paths() {
+    use wks_native::features::Request;
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let mut row = session("a");
+    row["background_tasks"] = json!(1);
+    row["background_task_list"] = json!([{"id":"t1","taskType":"local_bash","status":"running",
+        "description":"npm run dev","startedAt":1,"hasOutput":true,"pid":77}]);
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([row]))
+        .await;
+    hub.frame("call", Some("sessions.conversation"))
+        .await
+        .result(snapshot(1, "a"))
+        .await;
+    let ready = view(&controller, |v| {
+        v.selected.as_deref() == Some("a") && !v.loading
+    })
+    .await;
+    let tasks = &ready.sessions.iter().find(|s| s.id == "a").unwrap().tasks;
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].pid, Some(77));
+
+    // The first read asks for the tail; nothing but ids and integers go out.
+    let read = |offset| Request::TaskOutput {
+        session: "a".into(),
+        task: "t1".into(),
+        offset,
+    };
+    controller.command(Command::Request(read(None))).unwrap();
+    let call = hub.frame("call", Some("sessions.taskOutput")).await;
+    assert_eq!(
+        call.value["params"],
+        json!({"sessionId":"a","taskId":"t1","maxBytes":wks_native::background_tasks::READ_BYTES})
+    );
+    call.result(
+        json!({"session_id":"a","task_id":"t1","offset":0,"next_offset":6,"size":6,
+        "text":"ready\n","running":true,"status":"running","done":false}),
+    )
+    .await;
+    view(&controller, |v| {
+        v.requests
+            .get("task-output")
+            .is_some_and(|s| !s.loading && s.value["text"] == "ready\n")
+    })
+    .await;
+    // A follow-up continues from an offset; an answer for another task is
+    // refused rather than shown as this task's log.
+    controller.command(Command::Request(read(Some(6)))).unwrap();
+    let call = hub.frame("call", Some("sessions.taskOutput")).await;
+    assert_eq!(call.value["params"]["offset"], 6);
+    call.result(
+        json!({"session_id":"a","task_id":"other","offset":6,"next_offset":9,
+        "size":9,"text":"no\n"}),
+    )
+    .await;
+    view(&controller, |v| {
+        v.requests
+            .get("task-output")
+            .is_some_and(|s| s.error.as_deref() == Some("The log belongs to another task"))
+    })
+    .await;
+
+    controller
+        .command(Command::Request(Request::TaskStop {
+            session: "a".into(),
+            task: "t1".into(),
+        }))
+        .unwrap();
+    let call = hub.frame("call", Some("sessions.taskStop")).await;
+    assert_eq!(call.value["params"], json!({"sessionId":"a","taskId":"t1"}));
+    call.result(json!({"ok":true,"task_id":"t1"})).await;
+    view(&controller, |v| {
+        v.requests
+            .get("task-stop")
+            .is_some_and(|s| !s.loading && s.error.is_none())
+    })
+    .await;
+}

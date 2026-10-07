@@ -40,6 +40,11 @@ pub struct Session {
     /// Live permission mode when reported, else the launch setting, in the
     /// provider's own vocabulary (`default`, `bypassPermissions`, `ask`, `yolo`…).
     pub permission_mode: String,
+    /// Background tasks the daemon counts as live (any transport).
+    pub background_tasks: u32,
+    /// What those tasks are, newest work first; Claude stream sessions only
+    /// (PTY sessions report the count alone). See [`crate::background_tasks`].
+    pub tasks: Vec<crate::background_tasks::Task>,
 }
 
 /// Context-window occupancy as the runtime reports it: the status line's
@@ -290,6 +295,20 @@ impl Session {
                 }
             }
             self.subagents = projected;
+        }
+        if let Some(count) = ["background_tasks", "backgroundTasks"]
+            .iter()
+            .find_map(|key| value.get(*key).and_then(Value::as_u64))
+        {
+            self.background_tasks = u32::try_from(count).unwrap_or(u32::MAX);
+            // The daemon always sends the count and omits an empty list, so a
+            // row with the count and no list has no tasks left.
+            if value.get("background_task_list").is_none() {
+                self.tasks.clear();
+            }
+        }
+        if let Some(list) = value.get("background_task_list") {
+            self.tasks = crate::background_tasks::parse(list);
         }
         if let Some(items) = value.get("workflows") {
             self.workflows = bounded_inventory(
@@ -954,6 +973,35 @@ pub fn model_display_name(id: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The task list rides the daemon row: a PTY row has only the count, a
+    /// row that drops the list (all tasks aged out) has none, and an update
+    /// without either field leaves both alone.
+    #[test]
+    fn background_tasks_follow_the_daemon_row() {
+        let mut session = Session::default();
+        session.merge(
+            &json!({"session_id":"s","background_tasks":2,"background_task_list":[
+                {"id":"a","taskType":"local_bash","status":"running","startedAt":1},
+                {"id":"b","taskType":"local_agent","status":"completed","startedAt":1,"endedAt":2}
+            ]}),
+        );
+        assert_eq!(session.background_tasks, 2);
+        assert_eq!(session.tasks.len(), 2);
+        session.merge(&json!({"label":"renamed"}));
+        assert_eq!(session.tasks.len(), 2, "an unrelated update keeps the list");
+        session.merge(&json!({"session_id":"s","background_tasks":0}));
+        assert_eq!(session.background_tasks, 0);
+        assert!(
+            session.tasks.is_empty(),
+            "a row without the list has no tasks"
+        );
+        // A PTY row: the hub's camelCase count only.
+        let mut pty = Session::default();
+        pty.merge(&json!({"sessionId":"p","backgroundTasks":3}));
+        assert_eq!(pty.background_tasks, 3);
+        assert!(pty.tasks.is_empty());
+    }
 
     #[test]
     fn context_reading_follows_the_runtime_and_rejects_disproved_windows() {

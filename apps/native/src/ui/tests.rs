@@ -10,6 +10,7 @@ use wks_native::{
 };
 
 mod archiving;
+mod background_tasks;
 mod bus_requests;
 mod chat;
 mod child_agents;
