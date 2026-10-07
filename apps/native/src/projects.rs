@@ -263,6 +263,47 @@ pub fn in_worktree_root(path: &str, root: &str) -> bool {
         || key.contains(DEFAULT_WORKTREES)
 }
 
+/// Where Claude Code's own `--worktree` checkouts live inside a repository.
+const CLAUDE_WORKTREES: &str = "/.claude/worktrees/";
+
+/// The repository a worktree checkout was made from, as far as its path says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorktreeRepo {
+    /// Claude Code's `<repo>/.claude/worktrees/<name>`: the repository's own
+    /// directory is the path's prefix.
+    Dir(String),
+    /// The hub's `<worktreeRoot>/<repo name>/<slug>`: only the repository's
+    /// directory NAME survives; `dir` is that name's folder under the root.
+    Named { name: String, dir: String },
+}
+
+/// The repository behind a worktree checkout path, or `None` for a path
+/// that is not one.
+pub fn worktree_repo(path: &str, root: &str) -> Option<WorktreeRepo> {
+    let key = project_key(path);
+    if let Some(at) = key.find(CLAUDE_WORKTREES)
+        && at > 0
+        && key.len() > at + CLAUDE_WORKTREES.len()
+    {
+        return Some(WorktreeRepo::Dir(key[..at].to_owned()));
+    }
+    let root = project_key(root);
+    let start = if !root.is_empty()
+        && key.len() > root.len() + 1
+        && key.as_bytes()[root.len()] == b'/'
+        && same_dir(&key[..root.len()], &root)
+    {
+        root.len() + 1
+    } else {
+        key.find(DEFAULT_WORKTREES)? + DEFAULT_WORKTREES.len()
+    };
+    let name = key[start..].split('/').next().filter(|n| !n.is_empty())?;
+    Some(WorktreeRepo::Named {
+        name: name.to_owned(),
+        dir: format!("{}{name}", &key[..start]),
+    })
+}
+
 fn upsert(rows: &mut Vec<KnownProject>, path: &str, source: Source) -> usize {
     if let Some(ix) = rows.iter().position(|row| same_dir(&row.path, path)) {
         return ix;

@@ -8,6 +8,7 @@ pub mod diff;
 pub mod features;
 pub mod handoff;
 pub mod harness;
+pub mod history;
 pub mod host;
 pub mod jobs;
 pub mod launch;

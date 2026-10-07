@@ -8,9 +8,6 @@ const HANDOFF_DESCRIPTION: &str = "Start a new agent in this session’s folder 
 const MODEL_DESCRIPTION: &str = "Choose the model and reasoning effort for this session’s next work. A busy provider may queue the change.";
 const HISTORY_DESCRIPTION: &str =
     "A snapshot of retained conversation history. Live messages continue in chat.";
-const CLEARED_TOOLTIP: &str =
-    "Cleared from the sidebar on this device · show it under its parent again";
-const RECENT_FOOTER: &str = "Names are saved on this device. Archives are shared with every client of this hub, web included. Archiving keeps the conversation and does not stop an agent.";
 const NAME_DESCRIPTION: &str =
     "Shown in the sidebar on this device. Leave empty to use the agent’s own title.";
 const END_CONFIRMATION: &str =
@@ -126,6 +123,8 @@ pub(super) struct Extras {
     /// `handoff_seen` (the latest one when it asked).
     pub handoff_sent: bool,
     pub handoff_seen: u64,
+    /// Session history's search, groups and keyboard cursor.
+    pub recent: super::recent::RecentUi,
 }
 impl Extras {
     pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
@@ -195,6 +194,7 @@ impl Extras {
             handoff_brief: Default::default(),
             handoff_sent: false,
             handoff_seen: 0,
+            recent: super::recent::RecentUi::new(window, cx),
         }
     }
 }
@@ -284,7 +284,10 @@ impl Workspace {
         self.extras.notice.clear();
         self.extras.confirm_end = None;
         match screen {
-            Screen::Recent => self.request(Request::Recent, cx),
+            Screen::Recent => {
+                self.request(Request::Recent, cx);
+                self.enter_recent(window, cx);
+            }
             Screen::Jobs => {
                 self.extras.job_confirm_remove = None;
                 self.request(Request::Jobs, cx);
@@ -519,7 +522,6 @@ impl Workspace {
             _ => None,
         };
         let body = match self.screen {
-            Screen::Recent => self.render_recent(cx),
             Screen::Jobs => self.render_jobs(cx),
             Screen::History => self.render_history(window, cx),
             Screen::Session => self.render_session(cx),
@@ -546,6 +548,28 @@ impl Workspace {
             chrome::notice_line(self.extras.notice.clone(), tone, p, "feature-notice")
                 .debug_selector(|| "feature-notice".into())
         });
+        let header = self.page_header(
+            Some(back),
+            None,
+            title.to_owned(),
+            description,
+            trailing,
+            short,
+        );
+        if self.screen == Screen::Recent {
+            // Its rows are the page's own children, so the keyboard cursor
+            // can scroll one into view.
+            let mut items = vec![header.pb_2().into_any_element()];
+            items.extend(notice.map(|n| n.mb_2().into_any_element()));
+            items.extend(self.render_recent(cx));
+            return self.page_list(
+                "feature-view",
+                CHAT_WIDTH,
+                short,
+                &self.extras.recent.scroll,
+                items,
+            );
+        }
         self.page_view(
             "feature-view",
             CHAT_WIDTH,
@@ -554,202 +578,10 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap_5()
-                .child(self.page_header(
-                    Some(back),
-                    None,
-                    title.to_owned(),
-                    description,
-                    trailing,
-                    short,
-                ))
+                .child(header)
                 .children(notice)
                 .child(body),
         )
-    }
-    fn render_recent(&self, cx: &mut Context<Self>) -> Div {
-        let p = self.appearance.palette();
-        let rows = self
-            .view
-            .requests
-            .get("recent")
-            .and_then(|s| s.value.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let query = self.search.read(cx).value().to_lowercase();
-        let sessions: Vec<_> = rows
-            .iter()
-            .map(|row| {
-                let mut s = Session::default();
-                s.merge(row);
-                s
-            })
-            .filter(|s| {
-                !s.id.is_empty()
-                    && self.archived(&s.id) == self.extras.show_archived
-                    && (self.session_title(s).to_lowercase().contains(&query)
-                        || s.cwd.to_lowercase().contains(&query))
-            })
-            .collect();
-        let loading = self.view.requests.get("recent").is_some_and(|s| s.loading);
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div().flex().child(self.segmented(
-                    "history-filter",
-                    vec![(false, "All sessions".to_owned()), (true, "Archived".to_owned())],
-                    self.extras.show_archived,
-                    |this, archived, _, cx| {
-                        this.extras.show_archived = archived;
-                        cx.notify();
-                    },
-                    cx,
-                )),
-            )
-            .child(self.feature_message("recent"))
-            .when(sessions.is_empty() && !loading, |d| {
-                d.child(empty_note(
-                    if self.extras.show_archived {
-                        "No archived sessions match. Archive a session to tuck it away without stopping it."
-                    } else {
-                        "No matching sessions. Try clearing the sidebar search or refreshing."
-                    },
-                    p,
-                ))
-            })
-            .children(
-                sessions
-                    .into_iter()
-                    .take(500)
-                    .enumerate()
-                    .map(|(ix, s)| self.render_recent_row(ix, s, cx)),
-            )
-            .child(
-                div()
-                    .text_size(px(chrome::scale::CAPTION))
-                    .text_color(rgb(p.muted))
-                    .child(RECENT_FOOTER),
-            )
-    }
-
-    fn render_recent_row(&self, ix: usize, s: Session, cx: &mut Context<Self>) -> Stateful<Div> {
-        let p = self.appearance.palette();
-        let open = s.clone();
-        let resume = s.clone();
-        let id = s.id.clone();
-        chrome::card(p)
-            .id(("recent-row", ix))
-            .px_4()
-            .py_3()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    // Actions wrap below a title that would otherwise
-                    // be truncated to a word in narrow windows.
-                    .flex_1()
-                    .min_w(px(220.))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(chrome::scale::BODY))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(self.session_title(&s)),
-                            )
-                            .child(div().flex_shrink_0().child(session_badge(
-                                &s,
-                                p,
-                                self.view.connected,
-                            ))),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .min_w_0()
-                            .text_size(px(chrome::scale::CAPTION))
-                            .text_color(rgb(p.muted))
-                            .child(div().flex_shrink_0().child(chrome::model_badge(&s, p, 11.)))
-                            .child(div().flex_shrink_0().text_color(rgb(p.disabled)).child("·"))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_family(mono_font())
-                                    .child(s.cwd.clone()),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    // A child cleared from the sidebar on this device
-                    // comes back here; that is not an archive restore.
-                    .when(self.clear_marked(&s.id), |d| {
-                        let id = s.id.clone();
-                        d.child(
-                            self.button("unclear-recent", "Show in sidebar", true)
-                                .tooltip(|window, cx| {
-                                    gpui_component::tooltip::Tooltip::new(CLEARED_TOOLTIP)
-                                        .build(window, cx)
-                                })
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.unclear_session(&id, cx)
-                                    }),
-                                ),
-                        )
-                    })
-                    .child(
-                        self.button(
-                            "archive-recent",
-                            if self.archived(&s.id) {
-                                "Restore"
-                            } else {
-                                "Archive"
-                            },
-                            true,
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_archive(&id, cx))),
-                    )
-                    .when(
-                        s.stopped() && matches!(s.provider.as_str(), "claude" | "codex"),
-                        |d| {
-                            d.child(
-                                self.button("resume-recent", "Resume…", self.view.connected)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.resume_session(&resume, window, cx)
-                                    })),
-                            )
-                        },
-                    )
-                    .child(
-                        self.primary_button("open-recent", "Open", self.view.connected)
-                            .when(self.view.connected, |d| {
-                                d.on_click(cx.listener(move |this, _, window, cx| {
-                                    this.show_screen(Screen::Conversation, window, cx);
-                                    this.command(Command::OpenRecent(Box::new(open.clone())), cx);
-                                }))
-                            }),
-                    ),
-            )
     }
     pub(super) fn resume_session(
         &mut self,
@@ -1495,7 +1327,7 @@ impl Workspace {
 }
 
 /// Muted explanatory line for an empty list or a missing selection.
-fn empty_note(text: &'static str, p: Palette) -> Div {
+pub(super) fn empty_note(text: &'static str, p: Palette) -> Div {
     div()
         .py_6()
         .text_center()
