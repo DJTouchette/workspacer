@@ -290,15 +290,13 @@ impl ReviewStore {
             ],
         )
         .await?;
+        // Validate the whole name list before spawning any per-file diff: one
+        // Git process per file is slow on Windows, so learning a range is
+        // oversized only after 200 spawns can run past the capture deadline.
         let names: Vec<_> = names.split('\0').collect();
         let mut at = 0;
-        let mut bytes = 0;
-        let mut files = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut entries = Vec::new();
         while at < names.len() && !names[at].is_empty() {
-            if Instant::now() > deadline {
-                bail!("capture deadline exceeded");
-            }
             let status = names[at];
             at += 1;
             let first = *names
@@ -320,8 +318,17 @@ impl ReviewStore {
             {
                 bail!("restricted path");
             }
-            if files.len() >= 200 {
+            if entries.len() >= 200 {
                 return Err(Oversized.into());
+            }
+            entries.push((status, old, file));
+        }
+        let mut bytes = 0;
+        let mut files = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        for (status, old, file) in entries {
+            if Instant::now() > deadline {
+                bail!("review capture deadline exceeded");
             }
             let mut args = vec![
                 "diff",
@@ -704,6 +711,10 @@ mod diagnostic_tests {
         assert_eq!(
             super::capture_diagnostic(&anyhow::anyhow!("raw private stderr")),
             "unclassified-capture-failure"
+        );
+        assert_eq!(
+            super::capture_diagnostic(&anyhow::anyhow!("review capture deadline exceeded")),
+            "capture-timeout"
         );
         assert_eq!(
             super::capture_diagnostic(&anyhow::Error::new(
