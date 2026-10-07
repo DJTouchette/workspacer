@@ -107,6 +107,113 @@ pub fn hook(state: &mut SessionState, event: &HookEvent) -> bool {
     position.is_none() || *child != previous
 }
 
+/// The stream transport's own subagent lifecycle: Claude Code emits
+/// `task_started` / `task_progress` / `task_updated` / `task_notification`
+/// frames for every Agent/Task subagent, foreground or background, and the
+/// task id IS the agent id hooks and `subagents/agent-<id>.jsonl` use. Unlike
+/// hooks these need no shell or settings file, so a stream session's children
+/// appear even where hook delivery fails (Windows without Git Bash runs the
+/// curl hook under PowerShell; a profile's config dir carries no hooks).
+/// Enrichment only, like [`hook`]: never mode, pending or background counts.
+pub fn stream_frame(state: &mut SessionState, frame: &Value) -> bool {
+    if state.provider != "claude" || frame["type"] != "system" {
+        return false;
+    }
+    let subtype = frame["subtype"].as_str().unwrap_or("");
+    if !matches!(
+        subtype,
+        "task_started" | "task_progress" | "task_updated" | "task_notification"
+    ) {
+        return false;
+    }
+    let Some(id) = frame["task_id"].as_str().filter(|id| valid_id(id)) else {
+        return false;
+    };
+    let position = state.subagents.iter().position(|s| s.id == id);
+    if position.is_none() {
+        // Only an agent's start opens a row: shells and workflows are tasks,
+        // not children, and a late frame for an unknown id carries no type.
+        if subtype != "task_started"
+            || frame["task_type"] != "local_agent"
+            || state.subagents.len() >= MAX_CHILDREN
+        {
+            return false;
+        }
+        state.subagents.push(SubagentInfo {
+            id: id.into(),
+            agent_type: "Agent".into(),
+            status: SubagentStatus::Running,
+            started_at: now(),
+            completed_at: None,
+            description: None,
+            tool_use_id: None,
+            model: None,
+            last_tool_name: None,
+            last_tool_summary: None,
+            tokens: None,
+            cost_usd: None,
+            tool_calls: None,
+        });
+    }
+    let child = state.subagents.iter_mut().find(|s| s.id == id).unwrap();
+    let previous = child.clone();
+    if let Some(kind) = frame["subagent_type"].as_str().filter(|s| !s.is_empty()) {
+        child.agent_type = text(kind, 256);
+    }
+    if let Some(tool) = frame["tool_use_id"]
+        .as_str()
+        .filter(|s| s.len() <= 512 && !s.is_empty() && s.bytes().all(|b| b.is_ascii_graphic()))
+    {
+        child.tool_use_id.get_or_insert_with(|| tool.into());
+    }
+    let usage = &frame["usage"];
+    if let Some(calls) = usage["tool_uses"].as_u64() {
+        child.tool_calls = Some(calls);
+    }
+    // The transcript artifact scan sums exact per-message usage; the frame's
+    // running total only stands in until that scan has reported.
+    if let Some(tokens) = usage["total_tokens"].as_u64() {
+        child.tokens.get_or_insert(tokens);
+    }
+    match subtype {
+        "task_started" => {
+            if let Some(description) = frame["description"].as_str() {
+                child.description = Some(text(description, 180));
+            }
+            if child.status == SubagentStatus::Complete {
+                child.status = SubagentStatus::Running;
+                child.started_at = now();
+                child.completed_at = None;
+            }
+        }
+        // A progress frame's description is the agent's latest activity
+        // ("Reading README.md"), not its name.
+        "task_progress" => {
+            if let Some(tool) = frame["last_tool_name"].as_str() {
+                child.last_tool_name = Some(text(tool, 256));
+            }
+            if let Some(activity) = frame["description"].as_str() {
+                child.last_tool_summary = Some(text(activity, 512));
+            }
+        }
+        _ => {
+            let status = frame["patch"]["status"]
+                .as_str()
+                .or_else(|| frame["status"].as_str())
+                .unwrap_or("");
+            if matches!(
+                status,
+                "completed" | "failed" | "killed" | "stopped" | "error" | "cancelled"
+            ) {
+                child.status = SubagentStatus::Complete;
+                let ended = frame["patch"]["end_time"].as_i64().filter(|t| *t > 0);
+                child.completed_at.get_or_insert(ended.unwrap_or_else(now));
+            }
+        }
+    }
+    position.is_none() || *child != previous
+}
+
 /// Exact-session lookup only. Never fall back to a nearby/latest transcript.
 pub async fn discover_parent(state: &SessionState) -> Option<String> {
     if state.provider != "claude" || !valid_id(&state.session_id) {
@@ -414,6 +521,101 @@ mod tests {
             timestamp: None,
             payload: payload.as_object().unwrap().clone(),
         }
+    }
+
+    /// Frames captured from Claude Code 2.1.286 (`claude -p --output-format
+    /// stream-json`) for one foreground Agent call. No hooks were involved.
+    fn foreground_agent_frames() -> Vec<Value> {
+        vec![
+            json!({"type":"system","subtype":"task_started","task_id":"a3b3fa98f26be5951","tool_use_id":"toolu_0189BCcra1oujC1cG3tBgLCw","description":"read readme","subagent_type":"general-purpose","is_backgrounded":false,"spawn_depth":1,"task_type":"local_agent","prompt":"Read README.md and reply with its first line only."}),
+            json!({"type":"system","subtype":"task_progress","task_id":"a3b3fa98f26be5951","tool_use_id":"toolu_0189BCcra1oujC1cG3tBgLCw","description":"Reading README.md","subagent_type":"general-purpose","usage":{"total_tokens":15618,"tool_uses":1,"duration_ms":1657},"last_tool_name":"Read"}),
+            json!({"type":"system","subtype":"task_updated","task_id":"a3b3fa98f26be5951","patch":{"status":"completed","end_time":1_791_408_091_015_i64}}),
+            json!({"type":"system","subtype":"task_notification","task_id":"a3b3fa98f26be5951","tool_use_id":"toolu_0189BCcra1oujC1cG3tBgLCw","status":"completed","summary":"hello world","usage":{"total_tokens":17130,"tool_uses":1,"duration_ms":2975}}),
+        ]
+    }
+
+    #[test]
+    fn stream_frames_open_run_and_close_a_foreground_child_without_hooks() {
+        let mut state = SessionState::new("parent".into(), Some("/project".into()));
+        state.provider = "claude".into();
+        let mode = state.mode;
+        let frames = foreground_agent_frames();
+        assert!(stream_frame(&mut state, &frames[0]));
+        let child = &state.subagents[0];
+        assert_eq!(child.id, "a3b3fa98f26be5951");
+        assert_eq!(child.agent_type, "general-purpose");
+        assert_eq!(child.status, SubagentStatus::Running);
+        assert_eq!(child.description.as_deref(), Some("read readme"));
+        assert_eq!(
+            child.tool_use_id.as_deref(),
+            Some("toolu_0189BCcra1oujC1cG3tBgLCw")
+        );
+        assert!(stream_frame(&mut state, &frames[1]));
+        let child = &state.subagents[0];
+        assert_eq!(child.description.as_deref(), Some("read readme"));
+        assert_eq!(child.last_tool_name.as_deref(), Some("Read"));
+        assert_eq!(
+            child.last_tool_summary.as_deref(),
+            Some("Reading README.md")
+        );
+        assert_eq!(child.tool_calls, Some(1));
+        assert_eq!(child.tokens, Some(15618));
+        assert!(stream_frame(&mut state, &frames[2]));
+        assert_eq!(state.subagents[0].status, SubagentStatus::Complete);
+        assert_eq!(state.subagents[0].completed_at, Some(1791408091015));
+        // The notification repeats the end; nothing a client sees changes.
+        assert!(!stream_frame(&mut state, &frames[3]));
+        assert_eq!(state.subagents.len(), 1);
+        assert_eq!(state.mode, mode);
+        assert_eq!(state.background_tasks, 0);
+    }
+
+    #[test]
+    fn stream_frames_ignore_shells_unknown_ids_and_other_providers() {
+        let mut state = SessionState::new("parent".into(), None);
+        state.provider = "claude".into();
+        let shell = json!({"type":"system","subtype":"task_started","task_id":"b1","task_type":"local_bash","description":"npm test","is_backgrounded":true});
+        assert!(!stream_frame(&mut state, &shell));
+        let orphan = json!({"type":"system","subtype":"task_progress","task_id":"never-started","description":"x"});
+        assert!(!stream_frame(&mut state, &orphan));
+        let hostile = json!({"type":"system","subtype":"task_started","task_id":"../escape","task_type":"local_agent"});
+        assert!(!stream_frame(&mut state, &hostile));
+        assert!(state.subagents.is_empty());
+        let mut codex = SessionState::new("c".into(), None);
+        codex.provider = "codex".into();
+        assert!(!stream_frame(&mut codex, &foreground_agent_frames()[0]));
+    }
+
+    #[test]
+    fn stream_frames_and_hooks_converge_on_one_row() {
+        let store = super::super::SessionStore::new();
+        store.register_managed("parent", "/project", "claude");
+        store.set_transport("parent", super::super::state::Transport::Stream);
+        store.set_background_tasks("parent", 3);
+        let mut updates = store.subscribe();
+        let frames = foreground_agent_frames();
+        assert!(store.observe_claude_stream_subagents("parent", &frames[0]));
+        assert!(updates.try_recv().is_ok(), "a new child is broadcast");
+        // The hook for the same agent enriches the stream's row.
+        store.ingest(hook_event(
+            "SubagentStart",
+            json!({"agent_id":"a3b3fa98f26be5951","agent_type":"general-purpose","model":"claude-haiku-4-5"}),
+        ));
+        assert!(store.observe_claude_stream_subagents("parent", &frames[2]));
+        store.ingest(hook_event(
+            "SubagentStop",
+            json!({"agent_id":"a3b3fa98f26be5951"}),
+        ));
+        let state = store.get("parent").unwrap();
+        assert_eq!(state.subagents.len(), 1);
+        assert_eq!(
+            state.subagents[0].model.as_deref(),
+            Some("claude-haiku-4-5")
+        );
+        assert_eq!(state.subagents[0].status, SubagentStatus::Complete);
+        assert_eq!(state.subagents[0].completed_at, Some(1791408091015));
+        assert_eq!(state.background_tasks, 3, "counts are not ours to touch");
+        assert!(!store.observe_claude_stream_subagents("parent", &json!({"type":"assistant"})));
     }
 
     #[tokio::test]

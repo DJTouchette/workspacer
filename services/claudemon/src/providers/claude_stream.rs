@@ -1658,6 +1658,9 @@ fn handle_line(
     // Background-task enrichment rides beside, never inside, the state
     // machine below: it reads the same frames and owns only the task list.
     observe_background_tasks(store, session_id, value);
+    // Subagent rows from the same task frames, so children show without
+    // depending on hook delivery (see claude_subagents::stream_frame).
+    store.observe_claude_stream_subagents(session_id, value);
     match value.get("type").and_then(Value::as_str).unwrap_or("") {
         // The CLI answered one of our control requests.
         "control_response" => {

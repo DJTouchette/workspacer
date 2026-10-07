@@ -1980,6 +1980,27 @@ impl SessionStore {
             .map(|c| c.value().clone())
     }
 
+    /// Fold one Claude stream frame into the session's subagent rows (see
+    /// [`super::claude_subagents::stream_frame`]); broadcast only on change.
+    pub fn observe_claude_stream_subagents(&self, session_id: &str, frame: &Value) -> bool {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return false;
+            };
+            if !super::claude_subagents::stream_frame(&mut entry, frame) {
+                return false;
+            }
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+        true
+    }
+
     /// Mutate a session's background-task list in place. `f` reports whether
     /// it changed anything a client can see; only then is the row broadcast.
     /// Never touches the mode or the `background_tasks` count.
