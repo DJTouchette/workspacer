@@ -176,6 +176,7 @@
     "sessions.subagentConversation",
     "sessions.terminalKeepalive",
     "sessions.terminalResize",
+    "terminals.shells",
     "ui.fonts",
     "usage.pacingSchedule",
     "usage.report"

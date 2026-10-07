@@ -124,6 +124,14 @@ pub enum Request {
     Titles {
         set: Option<TitleChange>,
     },
+    /// The hub's default shell for new terminals (shared `terminal.shell`)
+    /// and the shells its host can start: read (`None`) or set and verified
+    /// on readback. It is argv[0] of the hub host's next terminal, so only
+    /// the hub's owner may write it (`desktop.saveConfig`; `config.save`
+    /// drops it).
+    TerminalShell {
+        set: Option<String>,
+    },
     /// Downloaded project icons (`iconFile`) from the hub's
     /// `<configDir>/project-icons/`, as small PNGs keyed by file name.
     ProjectIcons {
@@ -298,6 +306,7 @@ impl Request {
             Self::ProjectIcons { .. } => "project-icons",
             Self::ChildAccess { .. } => "child-access",
             Self::Titles { .. } => "titles",
+            Self::TerminalShell { .. } => "terminal-shell",
             Self::Jobs => "jobs",
             Self::JobHistory { .. } => "job-history",
             Self::JobAction(_) => "job-action",
@@ -472,6 +481,26 @@ impl Request {
                     None => backend.call("config.get", json!({})).await?,
                 };
                 Ok(title_settings(&config))
+            }
+            Self::TerminalShell { set } => {
+                let config = match set {
+                    Some(shell) => {
+                        let saved = backend
+                            .call(
+                                "desktop.saveConfig",
+                                json!({"partial":{"terminal":{"shell":shell}}}),
+                            )
+                            .await?;
+                        ensure!(
+                            crate::terminal::configured_shell(&saved) == *shell,
+                            "The hub did not save the setting (its config may be busy); try again"
+                        );
+                        saved
+                    }
+                    None => backend.call("config.get", json!({})).await?,
+                };
+                let listed = backend.call("terminals.shells", json!({})).await;
+                Ok(crate::terminal::shell_settings(&config, listed))
             }
             Self::ProjectIcons { files } => {
                 let mut icons = serde_json::Map::new();

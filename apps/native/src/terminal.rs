@@ -199,6 +199,105 @@ pub fn save_remembered(
     Ok(())
 }
 
+/// The hub's default shell for new terminals: the shared config's
+/// `terminal.shell`, which desktop's Settings → Terminal writes too. Empty
+/// means the hub host's own default (`$SHELL`, else the platform's).
+pub fn configured_shell(config: &serde_json::Value) -> String {
+    config["terminal"]["shell"]
+        .as_str()
+        .filter(|shell| !shell.trim().is_empty())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// `terminals.create` parameters: the configured shell travels verbatim (the
+/// hub checks it against the host's login shells); none means the default.
+pub fn create_params(cwd: &str, cols: u16, rows: u16, shell: &str) -> serde_json::Value {
+    let mut params = serde_json::json!({"cwd": cwd, "cols": cols, "rows": rows});
+    if !shell.is_empty() {
+        params["shell"] = shell.into();
+    }
+    params
+}
+
+/// What Settings shows for the default shell: the configured value and the
+/// shells the hub's host can start (`terminals.shells`, `null` from a hub
+/// that cannot list them).
+pub fn shell_settings(
+    config: &serde_json::Value,
+    listed: anyhow::Result<serde_json::Value>,
+) -> serde_json::Value {
+    let (shells, default, error) = match listed {
+        Ok(listed) if listed["shells"].is_array() => {
+            (listed["shells"].clone(), listed["default"].clone(), None)
+        }
+        Ok(_) => (
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+            Some("the hub returned no shell list".to_owned()),
+        ),
+        Err(error) => (
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+            Some(error.to_string()),
+        ),
+    };
+    serde_json::json!({
+        "shell": configured_shell(config),
+        "shells": shells,
+        "default": default.as_str().unwrap_or_default(),
+        "listError": error,
+    })
+}
+
+/// One row of the default-shell picker; `path` is what gets saved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShellChoice {
+    pub path: String,
+    pub label: String,
+    pub detail: String,
+}
+
+/// The picker's rows: the hub's default first, each shell installed on the
+/// hub's host, and a configured shell the hub does not list (set on desktop
+/// or another machine), shown as configured rather than silently replaced.
+pub fn shell_choices(settings: &serde_json::Value) -> Vec<ShellChoice> {
+    let default = settings["default"].as_str().unwrap_or_default();
+    let mut choices: Vec<ShellChoice> = settings["shells"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let path = row["path"].as_str()?;
+            let label = row["label"].as_str().filter(|l| !l.is_empty())?;
+            Some(ShellChoice {
+                path: path.to_owned(),
+                label: label.to_owned(),
+                detail: if path.is_empty() { default } else { path }.to_owned(),
+            })
+        })
+        .collect();
+    if !choices.iter().any(|c| c.path.is_empty()) {
+        choices.insert(
+            0,
+            ShellChoice {
+                path: String::new(),
+                label: "Hub default".into(),
+                detail: default.to_owned(),
+            },
+        );
+    }
+    let configured = settings["shell"].as_str().unwrap_or_default();
+    if !configured.is_empty() && !choices.iter().any(|c| c.path == configured) {
+        choices.push(ShellChoice {
+            path: configured.to_owned(),
+            label: "Configured".into(),
+            detail: configured.to_owned(),
+        });
+    }
+    choices
+}
+
 /// xterm's encoding of a key press, or `None` for keys the terminal leaves to
 /// the application (platform-modified shortcuts, bare modifiers).
 pub fn key_bytes(
@@ -581,6 +680,84 @@ mod tests {
         term.scroll_by(-100);
         assert_eq!(term.scroll, 0);
         assert!(term.text().contains("line9"));
+    }
+
+    #[test]
+    fn the_configured_shell_is_sent_to_terminals_create_only_when_set() {
+        use serde_json::json;
+        let zsh = json!({"terminal":{"shell":"/bin/zsh","shells":[]}});
+        assert_eq!(configured_shell(&zsh), "/bin/zsh");
+        for unset in [
+            json!({}),
+            json!({"terminal":{"shell":""}}),
+            json!({"terminal":{"shell":"  "}}),
+            json!({"terminal":{"shell":7}}),
+        ] {
+            assert_eq!(configured_shell(&unset), "", "{unset}");
+        }
+        assert_eq!(
+            create_params("/work", 100, 24, "/bin/zsh"),
+            json!({"cwd":"/work","cols":100,"rows":24,"shell":"/bin/zsh"})
+        );
+        // Windows paths travel verbatim; the hub checks them.
+        let git = r"C:\Program Files\Git\bin\bash.exe";
+        assert_eq!(create_params("C:\\w", 80, 20, git)["shell"], git);
+        let default = create_params("/work", 100, 24, "");
+        assert!(default.get("shell").is_none(), "{default}");
+    }
+
+    #[test]
+    fn shell_choices_list_the_hubs_shells_and_keep_an_unlisted_configured_one() {
+        use serde_json::json;
+        let listed = json!({"platform":"windows","default":"powershell.exe","shells":[
+            {"name":"default","path":"","label":"System default"},
+            {"name":"powershell","path":"powershell.exe","label":"PowerShell"},
+            {"name":"pwsh","path":"pwsh.exe","label":"PowerShell 7"},
+            {"name":"cmd","path":"cmd.exe","label":"Command Prompt"},
+            {"name":"wsl","path":"wsl.exe","label":"WSL"},
+            {"name":"gitbash","path":"C:\\Program Files\\Git\\bin\\bash.exe","label":"Git Bash"},
+        ]});
+        let settings = shell_settings(&json!({"terminal":{"shell":"wsl.exe"}}), Ok(listed.clone()));
+        assert_eq!(settings["shell"], "wsl.exe");
+        assert!(settings["listError"].is_null());
+        let choices = shell_choices(&settings);
+        let labels: Vec<_> = choices.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "System default",
+                "PowerShell",
+                "PowerShell 7",
+                "Command Prompt",
+                "WSL",
+                "Git Bash"
+            ]
+        );
+        assert_eq!(
+            choices[0].detail, "powershell.exe",
+            "the default names what it runs"
+        );
+        assert_eq!(choices[5].path, "C:\\Program Files\\Git\\bin\\bash.exe");
+        // Set elsewhere and not offered by this hub: shown, not swapped.
+        let custom = shell_settings(&json!({"terminal":{"shell":"/opt/nu/bin/nu"}}), Ok(listed));
+        let last = shell_choices(&custom).pop().unwrap();
+        assert_eq!(
+            last,
+            ShellChoice {
+                path: "/opt/nu/bin/nu".into(),
+                label: "Configured".into(),
+                detail: "/opt/nu/bin/nu".into()
+            }
+        );
+        // A hub that cannot list its shells still offers its default and
+        // the configured one, and says why.
+        let old = shell_settings(
+            &json!({"terminal":{"shell":"/bin/zsh"}}),
+            Err(anyhow::anyhow!("unknown method terminals.shells")),
+        );
+        assert_eq!(old["listError"], "unknown method terminals.shells");
+        let paths: Vec<_> = shell_choices(&old).into_iter().map(|c| c.path).collect();
+        assert_eq!(paths, ["", "/bin/zsh"]);
     }
 
     #[test]

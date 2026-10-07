@@ -2126,18 +2126,28 @@ impl Worker {
         shell.input_busy = false;
         shell.resize_busy = false;
         shell.resize_pending = false;
-        let params = json!({"cwd":shell.cwd,"cols":shell.size.0,"rows":shell.size.1});
+        let (cwd, (cols, rows)) = (shell.cwd.clone(), shell.size);
         self.set_terminal(agent, |t| {
             t.status = Status::Starting;
             t.error = None;
             t.shell = None;
         });
-        let cwd = self.shells[agent].cwd.clone();
-        self.set_terminal(agent, |t| t.cwd = cwd);
+        let shown = cwd.clone();
+        self.set_terminal(agent, |t| t.cwd = shown);
         let backend = self.backend.clone();
         let (epoch, agent) = (self.epoch, agent.to_owned());
         self.jobs.push(Box::pin(async move {
-            let result = backend.call("terminals.create", params).await;
+            // The shared default shell, read fresh: a change in Settings (here
+            // or on desktop) applies to the next shell; running ones keep theirs.
+            // An unreadable setting fails the start rather than guessing a shell.
+            let result = match backend.call("config.get", json!({})).await {
+                Ok(config) => {
+                    let shell = crate::terminal::configured_shell(&config);
+                    let params = crate::terminal::create_params(&cwd, cols, rows, &shell);
+                    backend.call("terminals.create", params).await
+                }
+                Err(error) => Err(error),
+            };
             Completion::Terminal(epoch, agent, generation, ShellStep::Created(result))
         }));
     }

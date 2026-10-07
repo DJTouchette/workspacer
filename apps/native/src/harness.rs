@@ -314,6 +314,22 @@ impl Fixture {
         Ok(match frame["method"].as_str().unwrap_or_default() {
             "config.get" => self.config.clone(),
             "config.save" => self.save_config(params),
+            "desktop.saveConfig" => {
+                let partial = &params["partial"];
+                if let Some(shell) = partial.pointer("/terminal/shell") {
+                    self.config["terminal"]["shell"] = shell.clone();
+                }
+                self.save_config(partial)
+            }
+            "terminals.shells" => json!({
+                "platform": "unix",
+                "default": "/bin/bash",
+                "shells": [
+                    {"name": "default", "path": "", "label": "Default ($SHELL)"},
+                    {"name": "bash", "path": "/bin/bash", "label": "Bash"},
+                    {"name": "zsh", "path": "/bin/zsh", "label": "Zsh"},
+                ],
+            }),
             "agents.spawn" => self.spawn(socket, params).await?,
             "claude.listModels" => json!({"aliases": [
                 {"model": "sonnet"},
@@ -374,8 +390,9 @@ impl Fixture {
             "terminals.create" => {
                 let shell = format!("fixture-shell-{}", self.shells.len() + 1);
                 let cwd = params["cwd"].as_str().unwrap_or_default().to_owned();
+                let program = params["shell"].as_str().unwrap_or("default shell");
                 let banner = format!(
-                    "\x1b[2mFixture shell (echo only; nothing runs) in\x1b[0m {cwd}\r\n\x1b[32m$\x1b[0m "
+                    "\x1b[2mFixture {program} (echo only; nothing runs) in\x1b[0m {cwd}\r\n\x1b[32m$\x1b[0m "
                 )
                 .into_bytes();
                 self.shells

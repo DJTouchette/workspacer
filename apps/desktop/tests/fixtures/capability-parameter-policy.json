@@ -180,7 +180,8 @@
     "push.test": "no params; sends one canned notification to every registered subscription so a phone can answer \"is push reaching me at all\" without reading hub logs. Nothing about the message is caller-supplied — title and body are literals in RPCTest — so there is no text a caller can put on someone's lock screen, which is the shape that made a forged agent.snapshot worth closing. It is a SEND trigger available to the triage tier, bounded by the same recipient set every other push already goes to: subscriptions this hub stored, still-valid credential, endpoint already validated by validatePushEndpoint at subscribe time. The tier that may subscribe may already provoke real pushes by approving or answering, so this adds no reach it lacked — only a way to test it deliberately",
     "ui.fonts": "No caller parameters; reads uploaded font labels from the fixed display cache.",
     "remote.sharingInfo": "No caller parameters; reports configured sharing state and caller manageability without changing the listener.",
-    "sessionArchive.get": "no params; returns the hub's archived-session document (session ids and archive times). Discloses only ids the agent.snapshot feed already carries"
+    "sessionArchive.get": "no params; returns the hub's archived-session document (session ids and archive times). Discloses only ids the agent.snapshot feed already carries",
+    "terminals.shells": "no params; lists the login shells installed on the hub's host (name, label and the path terminals.create would accept). Every path is drawn from the same allowlist terminals.create enforces ($SHELL, /etc/shells, platform defaults, Git for Windows' install paths), filtered to files that exist, so it names nothing a caller could not already learn by being refused. Operator-only by construction: it appears in neither scoped tier"
   },
   "parameterDecisions": {
     "fleet.selectDispatchModel": {
