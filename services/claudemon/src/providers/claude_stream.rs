@@ -3715,8 +3715,10 @@ while IFS= read -r line; do
     *'"subtype":"stop_task"'*)
       rid=$(printf '%s' "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
       kill "$bg" 2>/dev/null
+      # The CLI stamps the real end time; a fixed one ages out of retention.
+      ended="$(date +%s)000"
       printf '%s\n' "{\"type\":\"system\",\"subtype\":\"background_tasks_changed\",\"tasks\":[],\"session_id\":\"$SID\"}"
-      printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"t1\",\"patch\":{\"status\":\"killed\",\"end_time\":1791393567729},\"session_id\":\"$SID\"}"
+      printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"t1\",\"patch\":{\"status\":\"killed\",\"end_time\":$ended},\"session_id\":\"$SID\"}"
       printf '%s\n' "{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"t1\",\"tool_use_id\":\"tu-bg\",\"status\":\"stopped\",\"output_file\":\"$out\",\"summary\":\"sleep 30\",\"session_id\":\"$SID\"}"
       printf '%s\n' "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"$rid\",\"response\":{}}}"
       ;;
