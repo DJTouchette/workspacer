@@ -74,6 +74,104 @@ fn child_agent_full_access_is_a_hub_setting_toggled_from_agents(cx: &mut TestApp
     });
 }
 
+/// Settings → Workspace offers the hub host's shells for new terminals,
+/// marks the hub's configured one, saves a pick to the hub, and keeps the
+/// last confirmed choice when the hub refuses.
+#[gpui::test]
+fn default_terminal_shell_is_a_hub_setting_picked_from_its_hosts_shells(cx: &mut TestAppContext) {
+    use wks_native::features::{Request, RequestState};
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.show_screen(Screen::Settings, window, cx);
+            this.settings_section = settings::SettingsSection::Workspace;
+        })
+    });
+    let read = std::iter::from_fn(|| commands.try_recv().ok())
+        .any(|c| matches!(c, Command::Request(Request::TerminalShell { set: None })));
+    assert!(read, "opening Settings reads the hub's shells");
+    visual.simulate_resize(size(px(1000.), px(1600.)));
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("setting-terminal-shell").is_some());
+    let shells = |number, request, value: serde_json::Value, error: Option<&str>| {
+        let mut next = state("a");
+        next.requests.insert(
+            "terminal-shell",
+            RequestState {
+                number,
+                request,
+                loading: false,
+                value: Arc::new(value),
+                error: error.map(str::to_owned),
+            },
+        );
+        Arc::new(next)
+    };
+    let listed = serde_json::json!({"shell":"wsl.exe","default":"powershell.exe","listError":null,"shells":[
+        {"name":"default","path":"","label":"System default"},
+        {"name":"powershell","path":"powershell.exe","label":"PowerShell"},
+        {"name":"wsl","path":"wsl.exe","label":"WSL"},
+        {"name":"gitbash","path":"C:\\Program Files\\Git\\bin\\bash.exe","label":"Git Bash"},
+    ]});
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(
+                shells(
+                    1,
+                    Request::TerminalShell { set: None },
+                    listed.clone(),
+                    None,
+                ),
+                window,
+                cx,
+            )
+        })
+    });
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.extras.terminal_shell.as_ref(), Some(&listed))
+    });
+    // Picking the configured shell again sends nothing.
+    let wsl = visual.debug_bounds("terminal-shell-2").unwrap();
+    visual.simulate_click(wsl.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    assert!(
+        !std::iter::from_fn(|| commands.try_recv().ok())
+            .any(|c| matches!(c, Command::Request(Request::TerminalShell { set: Some(_) })))
+    );
+    let git = visual.debug_bounds("terminal-shell-3").unwrap();
+    visual.simulate_click(git.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    let set = std::iter::from_fn(|| commands.try_recv().ok()).find_map(|c| match c {
+        Command::Request(Request::TerminalShell { set: Some(path) }) => Some(path),
+        _ => None,
+    });
+    assert_eq!(set.as_deref(), Some(r"C:\Program Files\Git\bin\bash.exe"));
+    // A refused save (not the hub's owner) keeps the confirmed choice and
+    // says why.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(
+                shells(
+                    2,
+                    Request::TerminalShell {
+                        set: Some(r"C:\Program Files\Git\bin\bash.exe".into()),
+                    },
+                    serde_json::Value::Null,
+                    Some("desktop services require the authenticated server owner's connection"),
+                ),
+                window,
+                cx,
+            );
+            assert_eq!(this.extras.terminal_shell.as_ref(), Some(&listed));
+        })
+    });
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("terminal-shell-status").is_some());
+}
+
 /// Settings → Agents shows the hub's automatic-title settings as read,
 /// changes one field per action, offers the edited harness's live
 /// catalog (plus a configured ID it does not list, never substituted), and

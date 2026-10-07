@@ -2879,3 +2879,76 @@ async fn manager_and_mismatched_handoffs_are_refused_before_the_hub() {
     assert_no_side_effects(&mut hub);
     assert_no_side_effects(&mut other);
 }
+
+/// A new agent terminal starts the hub's configured default shell: the
+/// shared `terminal.shell` is read fresh for each shell and travels in
+/// `terminals.create`; unset means none is named (the hub's default), and an
+/// unreadable setting fails the start instead of guessing a shell.
+#[tokio::test]
+async fn agent_terminals_start_the_hubs_configured_default_shell() {
+    use wks_native::terminal::{Command as T, Status};
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([])).await;
+    view(&controller, |v| v.connected).await;
+    let open = |agent: &str| {
+        controller
+            .command(Command::Terminal(T::Open {
+                agent: agent.into(),
+                cwd: "/work/repo".into(),
+                cols: 90,
+                rows: 20,
+            }))
+            .unwrap()
+    };
+
+    open("configured");
+    hub.frame("call", Some("config.get"))
+        .await
+        .result(json!({"terminal":{"shell":"C:\\Program Files\\Git\\bin\\bash.exe","shells":[]}}))
+        .await;
+    let create = hub.frame("call", Some("terminals.create")).await;
+    assert_eq!(
+        create.value["params"],
+        json!({"cwd":"/work/repo","cols":90,"rows":20,"shell":"C:\\Program Files\\Git\\bin\\bash.exe"})
+    );
+
+    open("default");
+    hub.frame("call", Some("config.get"))
+        .await
+        .result(json!({"terminal":{"shell":""}}))
+        .await;
+    let create = hub.frame("call", Some("terminals.create")).await;
+    assert_eq!(
+        create.value["params"],
+        json!({"cwd":"/work/repo","cols":90,"rows":20})
+    );
+
+    open("unreadable");
+    let read = hub.frame("call", Some("config.get")).await;
+    read.send
+        .send(Message::Text(
+            json!({"op":"error","id":read.value["id"],"error":"config busy"}).to_string(),
+        ))
+        .await
+        .unwrap();
+    let failed = view(&controller, |v| {
+        v.terminals
+            .get("unreadable")
+            .is_some_and(|t| t.status == Status::Failed)
+    })
+    .await;
+    assert!(
+        failed.terminals["unreadable"]
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("config busy")),
+        "{:?}",
+        failed.terminals["unreadable"].error
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    while let Ok(frame) = hub.frames.try_recv() {
+        assert_ne!(frame.value["method"], "terminals.create");
+    }
+}

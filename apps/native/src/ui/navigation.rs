@@ -164,6 +164,9 @@ impl Workspace {
             self.request(wks_native::features::Request::ChildAccess { set: None }, cx);
         }
         if screen == Screen::Settings {
+            self.load_terminal_shell(cx);
+        }
+        if screen == Screen::Settings {
             if !self.extras.title_harness_seeded {
                 self.extras.title_harness_seeded = true;
                 self.extras.title_harness = self.settings.default_provider.id();

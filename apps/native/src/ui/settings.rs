@@ -481,6 +481,15 @@ impl Workspace {
         ));
         entries.push(Entry::new(
             S::Workspace,
+            "terminal-shell",
+            "Default terminal shell",
+            "What an agent's terminal starts. Shells are the ones installed on the hub's machine. Saved in the hub's shared settings (desktop's Terminal setting is the same one); only the hub's owner can change it.",
+            "terminal shell console bash zsh fish powershell pwsh cmd command prompt wsl git bash default",
+            Layout::Block,
+            self.render_terminal_shell(cx),
+        ));
+        entries.push(Entry::new(
+            S::Workspace,
             "agent-setup",
             "Agent setup",
             "Install and connect the agents on your workspace host.",

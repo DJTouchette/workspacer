@@ -101,6 +101,10 @@ pub(super) struct Extras {
     /// `features::title_settings`); `None` until read.
     pub titles: Option<Value>,
     pub titles_receipt: u64,
+    /// The hub's default terminal shell and installable shells as last read
+    /// or saved (see `terminal::shell_settings`); `None` until read.
+    pub terminal_shell: Option<Value>,
+    pub terminal_shell_receipt: u64,
     /// Harness whose title model is edited while titles follow each agent;
     /// seeded from the default agent on the first Settings visit.
     pub title_harness: &'static str,
@@ -181,6 +185,8 @@ impl Extras {
             child_access_receipt: 0,
             titles: None,
             titles_receipt: 0,
+            terminal_shell: None,
+            terminal_shell_receipt: 0,
             title_harness: "claude",
             title_harness_seeded: false,
             title_picker,
@@ -412,6 +418,15 @@ impl Workspace {
             // A failed write leaves the last verified state, never the guess.
             if state.error.is_none() {
                 self.extras.titles = Some((*state.value).clone());
+            }
+        }
+        if let Some(state) = next.requests.get("terminal-shell")
+            && !state.loading
+            && state.number > self.extras.terminal_shell_receipt
+        {
+            self.extras.terminal_shell_receipt = state.number;
+            if state.error.is_none() {
+                self.extras.terminal_shell = Some((*state.value).clone());
             }
         }
         self.sync_attachments(next, window, cx);

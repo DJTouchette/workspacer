@@ -4,6 +4,7 @@ mod bus_commands;
 mod children;
 mod chrome;
 mod conversation;
+mod default_shell;
 mod explorer;
 mod features;
 mod file_viewer;
@@ -1143,6 +1144,7 @@ impl Workspace {
             self.sync_title_picker(window, cx);
             if reconnected {
                 self.load_titles(cx);
+                self.load_terminal_shell(cx);
             }
         }
         // Project names and icons appear beside every session, so the shared

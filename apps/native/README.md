@@ -509,8 +509,8 @@ when agents already run there; nothing launches until you confirm the form.
 The sidebar search matches session names/paths and project paths. Keyboard
 navigation follows the filtered list and keeps the highlighted row in view.
 
-**Settings** has a category rail (Appearance, Typography, Workspace, Agents,
-Chat, Keyboard, About) beside grouped cards, and a search box (`/`) that filters
+**Settings** has a category rail (Appearance, Typography, Workspace, Remote,
+Agents, Chat, Keyboard, About) beside grouped cards, and a search box (`/`) that filters
 every preference across categories by title, description and keywords; `j` / `k`
 step through categories in Normal mode. Keyboard preferences, default
 provider, and older device-only project bookmarks persist in `workspacer/native-settings.json`
@@ -597,6 +597,18 @@ be expanded, and attachment controls share the composer action row.
   session list. Scrollback keeps 5,000 lines (mouse wheel; full-screen
   programs get arrow keys). Copy takes the visible screen; there is no mouse
   selection or mouse reporting yet. ANSI colours follow the selected theme.
+  **Settings → Workspace → Default terminal shell** picks what new agent
+  terminals start: the hub's default, or one of the shells installed on the
+  hub's host as the hub lists them (`terminals.shells`): PowerShell,
+  PowerShell 7, Command Prompt, WSL and Git Bash on Windows; bash, zsh and fish
+  elsewhere. It is the hub's shared `terminal.shell`, the same setting desktop
+  Settings → Terminal edits, so it follows the hub (a remote hub lists its own
+  shells), is saved through the owner-only `desktop.saveConfig` (it is argv[0]
+  of a host process, so `config.save` drops it and non-owner clients see a
+  refusal) and is checked on readback. The controller reads it fresh before
+  every `terminals.create` and sends it as `shell`; the hub still refuses
+  anything that is not one of the host's login shells. Shells already running
+  keep theirs; Restart starts the new one.
 - **Agent setup** is available in Settings, the welcome state and the launch form.
   It reports installed CLIs and allows an explicit connection check (which may use
   provider allowance). Sign-in stays with each CLI. A setup detour preserves a
@@ -866,6 +878,7 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/terminal.rs` | Per-agent shell protocol: output feed, key encoding, emulator, remembered shells |
 | `src/ui/terminal.rs` | Terminal panel and popped-out terminal window |
 | `src/ui/settings.rs` | Categorized, searchable settings |
+| `src/ui/default_shell.rs` | Settings → Workspace default terminal shell (hub's `terminal.shell`) |
 | `src/remote.rs` | Tailscale sharing and pairing state, phone links, QR modules |
 | `src/ui/remote.rs` | Settings → Remote panel |
 | `src/navigation.rs` | Project grouping and persistent native preferences |
