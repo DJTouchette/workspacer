@@ -19,6 +19,7 @@ mod motion;
 mod navigation;
 mod projects;
 mod questions;
+mod recent;
 mod remote;
 mod review;
 mod scroll;
@@ -1388,6 +1389,10 @@ impl Workspace {
     fn move_selection(&mut self, step: isize, cx: &mut Context<Self>) {
         if self.screen == Screen::Settings && !self.new_session {
             self.step_settings_section(step, cx);
+            return;
+        }
+        if self.screen == Screen::Recent && !self.new_session {
+            self.move_recent_cursor(step, cx);
             return;
         }
         if self.new_session || !matches!(self.screen, Screen::Conversation | Screen::Projects) {

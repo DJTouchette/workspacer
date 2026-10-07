@@ -556,9 +556,25 @@ and **Model…** open secondary views without sending or discarding the composer
 At short window sizes, the approval command stays visible while full details can
 be expanded, and attachment controls share the composer action row.
 
-- **Session history** lists the hub’s recent sessions. Open reads an existing
-  conversation; Resume opens a launch form with its identity, known model/context,
-  and Ask permissions. Creation is explicit. Claude and Codex resumes are supported.
+- **Session history** lists every session the hub knows, grouped by project.
+  A session in a subfolder of a saved project counts toward it (the most
+  specific saved project wins); a worktree checkout counts toward the repository
+  it was made from: the live fleet's lineage when it knows the session, else the
+  path (Claude Code's `<repo>/.claude/worktrees/…`, or the hub's
+  `<worktreeRoot>/<repo>/…` matched to a project or folder of that name). Other
+  folders group by themselves. Groups and their rows are ordered by latest
+  activity; each header shows the project's mark, name, path, last activity and
+  count, and folds on click (**Collapse all** folds every group). A group shows
+  six rows, then **Show more** adds 25 at a time, so nothing is silently cut off.
+  The page's own search field (focused on open, or `/`) matches name, project,
+  folder, provider, model and id, case-insensitively, every word; groups without
+  a match hide and headers read “2 of 9”. A search opens every group with a
+  match, and it composes with the **All sessions / Archived** toggle. ↑/↓ (or
+  `j`/`k`, `g g`/`G` in Vim mode) move a highlight and Enter opens it; `Esc`
+  clears the search, then leaves the page. The logic lives in
+  `src/history.rs`. Open reads an existing conversation; Resume opens a launch
+  form with its identity, known model/context, and Ask permissions. Creation is
+  explicit. Claude and Codex resumes are supported.
   **Session…** renames, archives/restores, and offers a confirmed **End session**;
   Interrupt remains a separate control. Names are client-local and scoped to the
   connection. Archives are the hub's shared `sessionArchive` document, so a
@@ -862,7 +878,9 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/controller.rs` | Selection, RPC lifecycle, snapshot/event reconciliation, UI mailbox |
 | `src/ui.rs` | Workspace state, keyboard dispatch, view updates and page routing |
 | `src/ui/conversation.rs` | Conversation page: transcript, floating header, dock (approval, questions, composer) |
-| `src/ui/features.rs` | Secondary pages: session history and details, setup, model |
+| `src/ui/features.rs` | Secondary pages: session details, setup, model |
+| `src/history.rs` | Session history grouped by project (worktrees to their repository), ordering and search |
+| `src/ui/recent.rs` | Session history page: search field, folding groups, Show more, keyboard cursor |
 | `src/ui/questions.rs` | Pending question sets: picker, answers and submission |
 | `src/ui/attachments.rs` | Draft attachments: picking, pasting, uploads and thumbnails |
 | `src/ui/archive.rs` | Archive and restore, shared through the hub |

@@ -196,6 +196,14 @@ impl Workspace {
         if self.new_session && self.close_project_picker(window, cx) {
             return;
         }
+        // Esc in Session history clears its search, then leaves the page.
+        if self.clear_recent_search(window, cx) {
+            return;
+        }
+        if self.searching_recent(window, cx) {
+            self.back_from_feature(window, cx);
+            return;
+        }
         if self.focus.is_focused(window) {
             if self.view.child.is_some() && self.screen == Screen::Conversation && !self.new_session
             {
@@ -276,6 +284,10 @@ impl Workspace {
     }
 
     fn open_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen == Screen::Recent && !self.new_session {
+            self.open_recent_cursor(window, cx);
+            return;
+        }
         if self.screen != Screen::Projects || self.new_session {
             return;
         }
@@ -308,6 +320,10 @@ impl Workspace {
     }
 
     fn edge(&mut self, last: bool, cx: &mut Context<Self>) {
+        if self.screen == Screen::Recent && !self.new_session {
+            self.recent_cursor_edge(last, cx);
+            return;
+        }
         if self.new_session || !matches!(self.screen, Screen::Conversation | Screen::Projects) {
             return;
         }
@@ -492,6 +508,11 @@ impl Workspace {
             .on_action(cx.listener(|this, _: &Search, window, cx| {
                 if this.screen == Screen::Settings && !this.new_session {
                     this.settings_search
+                        .update(cx, |input, cx| input.focus(window, cx));
+                } else if this.screen == Screen::Recent && !this.new_session {
+                    this.extras
+                        .recent
+                        .query
                         .update(cx, |input, cx| input.focus(window, cx));
                 } else {
                     this.search.update(cx, |input, cx| input.focus(window, cx));

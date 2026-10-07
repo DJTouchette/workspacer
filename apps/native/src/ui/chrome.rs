@@ -1210,30 +1210,60 @@ impl Workspace {
         short: bool,
         content: impl IntoElement,
     ) -> Div {
+        self.page_frame(
+            Self::page_scroller(id, short)
+                .child(div().w_full().max_w(px(max_width)).mx_auto().child(content)),
+        )
+    }
+
+    /// [`Self::page_view`] whose items are the scroll container's own
+    /// children, so `scroll` can bring one into view by its index.
+    pub(super) fn page_list(
+        &self,
+        id: &'static str,
+        max_width: f32,
+        short: bool,
+        scroll: &gpui::ScrollHandle,
+        items: Vec<gpui::AnyElement>,
+    ) -> Div {
+        self.page_frame(
+            Self::page_scroller(id, short)
+                .track_scroll(scroll)
+                .flex()
+                .flex_col()
+                .children(
+                    items
+                        .into_iter()
+                        .map(|item| div().w_full().max_w(px(max_width)).mx_auto().child(item)),
+                ),
+        )
+    }
+
+    fn page_scroller(id: &'static str, short: bool) -> Stateful<Div> {
+        div()
+            .id(id)
+            .size_full()
+            .overflow_y_scroll()
+            .px(px(if short { 16. } else { 24. }))
+            .pt(px(if custom_caption() {
+                PAGE_CAPTION_INSET
+            } else if short {
+                12.
+            } else {
+                24.
+            }))
+            .pb(px(if short { 16. } else { 32. }))
+    }
+
+    fn page_frame(&self, scroller: Stateful<Div>) -> Div {
         let p = self.appearance.palette();
-        let caption = custom_caption();
         div()
             .relative()
             .flex_1()
             .min_w_0()
             .h_full()
             .bg(rgb(p.chat))
-            .child(
-                div()
-                    .id(id)
-                    .size_full()
-                    .overflow_y_scroll()
-                    .px(px(if short { 16. } else { 24. }))
-                    .pt(px(if caption {
-                        PAGE_CAPTION_INSET
-                    } else if short {
-                        12.
-                    } else {
-                        24.
-                    }))
-                    .pb(px(if short { 16. } else { 32. }))
-                    .child(div().w_full().max_w(px(max_width)).mx_auto().child(content)),
-            )
+            .child(scroller)
             .children(page_drag_strip())
     }
 

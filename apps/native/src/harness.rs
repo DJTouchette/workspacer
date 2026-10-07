@@ -565,6 +565,9 @@ impl Fixture {
     }
 
     fn recent(&self) -> Value {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as i64);
         let mut rows = vec![
             json!({
                 "sessionId": "demo-0000",
@@ -573,6 +576,7 @@ impl Fixture {
                 "cwd": "/workspaces/project-0",
                 "mode": "input",
                 "transport": "stream",
+                "updatedAt": now,
             }),
             json!({
                 "sessionId": "past-session",
@@ -581,8 +585,87 @@ impl Fixture {
                 "cwd": "/workspaces/project-1",
                 "mode": "stopped",
                 "transport": "stream",
+                "updatedAt": now - 26 * 3_600_000,
             }),
         ];
+        // Older, ended sessions across projects, subfolders and worktree
+        // checkouts, so Session history has groups to show.
+        let ended = [
+            (
+                "hist-01",
+                "claude",
+                "Sidebar polish pass",
+                "/home/demo/.workspacer/worktrees/project-0/sidebar-polish",
+                0.4,
+            ),
+            (
+                "hist-02",
+                "codex",
+                "Payments API retries",
+                "/workspaces/project-1/api",
+                3.,
+            ),
+            (
+                "hist-03",
+                "claude",
+                "Flaky watcher test",
+                "/workspaces/project-0/.claude/worktrees/flaky-watcher",
+                7.,
+            ),
+            (
+                "hist-04",
+                "claude",
+                "Release notes draft",
+                "/workspaces/notes",
+                20.,
+            ),
+            (
+                "hist-05",
+                "codex",
+                "Migrate config loader",
+                "/workspaces/project-1",
+                30.,
+            ),
+            (
+                "hist-06",
+                "claude",
+                "Profile startup",
+                "/workspaces/project-0",
+                50.,
+            ),
+            (
+                "hist-07",
+                "claude",
+                "Scratch experiment",
+                "/tmp/scratch",
+                96.,
+            ),
+            (
+                "hist-08",
+                "claude",
+                "Theme contrast audit",
+                "/home/demo/.workspacer/worktrees/project-0/theme-audit",
+                120.,
+            ),
+            (
+                "hist-09",
+                "codex",
+                "Changelog for 0.9",
+                "/workspaces/notes",
+                200.,
+            ),
+        ];
+        rows.extend(ended.iter().map(|(id, provider, name, cwd, hours)| {
+            json!({
+                "sessionId": id,
+                "provider": provider,
+                "name": name,
+                "cwd": cwd,
+                "mode": "stopped",
+                "transport": "stream",
+                "updatedAt": now - (hours * 3_600_000.) as i64,
+            })
+        }));
         rows.extend(self.spawned.iter().map(|row| {
             json!({
                 "sessionId": row["sessionId"],
