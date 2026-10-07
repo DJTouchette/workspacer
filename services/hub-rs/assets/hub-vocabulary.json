@@ -171,6 +171,7 @@
     "sessions.transcript",
     "terminals.create",
     "terminals.open",
+    "terminals.shells",
     "ui.asset",
     "ui.fonts",
     "usage.pacingSchedule",

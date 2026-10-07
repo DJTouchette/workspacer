@@ -82,6 +82,188 @@ fn dimension(params: &Value, key: &str, default: Option<u16>) -> Result<u16> {
         }
     }
 }
+/// Which shell policy applies. A value rather than `cfg!` so the Windows rules
+/// are exercised by the tests on every host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HostOs {
+    Windows,
+    Unix,
+}
+impl HostOs {
+    fn current() -> Self {
+        if cfg!(windows) {
+            Self::Windows
+        } else {
+            Self::Unix
+        }
+    }
+    /// Always-allowed shells; the first is the default when `$SHELL` is unset.
+    /// Windows entries are bare names found on PATH; Git Bash, which is not on
+    /// PATH, is admitted only at its install locations (`git_bash_paths`).
+    fn platform_shells(self) -> &'static [&'static str] {
+        match self {
+            Self::Windows => &["powershell.exe", "pwsh.exe", "cmd.exe", "wsl.exe"],
+            Self::Unix => &[
+                "/bin/sh",
+                "/bin/bash",
+                "/bin/zsh",
+                "/usr/bin/bash",
+                "/usr/bin/zsh",
+                "/bin/fish",
+                "/usr/bin/fish",
+            ],
+        }
+    }
+}
+/// Git for Windows' `bin\bash.exe` at the machine-wide and per-user install
+/// locations: exact paths, so allowing them never admits another `bash.exe`.
+fn git_bash_paths(env: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    let mut paths = vec![r"C:\Program Files\Git\bin\bash.exe".to_owned()];
+    for (var, suffix) in [
+        ("ProgramW6432", r"Git\bin\bash.exe"),
+        ("ProgramFiles", r"Git\bin\bash.exe"),
+        ("ProgramFiles(x86)", r"Git\bin\bash.exe"),
+        ("LOCALAPPDATA", r"Programs\Git\bin\bash.exe"),
+    ] {
+        if let Some(root) = env(var).filter(|r| !r.trim().is_empty()) {
+            let path = format!(r"{}\{suffix}", root.trim().trim_end_matches(['\\', '/']));
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+/// What a host trusts as a login shell: platform defaults, `$SHELL`,
+/// `/etc/shells` and (Windows) Git Bash's install paths.
+struct HostShells<'a> {
+    os: HostOs,
+    host_shell: Option<&'a str>,
+    listed: &'a str,
+    git_bash: Vec<String>,
+}
+impl<'a> HostShells<'a> {
+    fn new(os: HostOs, host_shell: Option<&'a str>, listed: &'a str) -> Self {
+        let git_bash = if os == HostOs::Windows {
+            git_bash_paths(|k| std::env::var(k).ok())
+        } else {
+            Vec::new()
+        };
+        Self {
+            os,
+            host_shell,
+            listed,
+            git_bash,
+        }
+    }
+    fn default(&self) -> &'a str {
+        self.host_shell
+            .filter(|s| !s.is_empty())
+            .unwrap_or(self.os.platform_shells()[0])
+    }
+    /// Every allowlist entry, in preference order, trimmed with comments and
+    /// blanks dropped. Caller-supplied argv is never normalized.
+    fn allowed(&self) -> Vec<&str> {
+        let mut allowed: Vec<&str> = Vec::new();
+        for entry in self
+            .os
+            .platform_shells()
+            .iter()
+            .copied()
+            .chain(self.git_bash.iter().map(String::as_str))
+            .chain(self.host_shell)
+            .chain(self.listed.split('\n'))
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        {
+            if !allowed.contains(&entry) {
+                allowed.push(entry);
+            }
+        }
+        allowed
+    }
+    fn permits(&self, requested: &str) -> bool {
+        let allowed = self.allowed();
+        if allowed.contains(&requested) {
+            return true;
+        }
+        if self.os != HostOs::Windows {
+            return false;
+        }
+        // Windows paths are case-insensitive and take either separator. A bare
+        // entry (`pwsh.exe`) is a PATH lookup, so any spelling of that program
+        // matches it; a full entry (Git Bash) matches only that file.
+        let fold = |s: &str| s.replace('/', "\\").to_ascii_lowercase();
+        let requested = fold(requested);
+        let base = requested.rsplit('\\').next().unwrap_or_default();
+        allowed.iter().map(|s| fold(s)).any(|entry| {
+            entry == requested || (!entry.contains('\\') && !base.is_empty() && entry == base)
+        })
+    }
+    fn resolve(&self, requested: &str) -> Result<String> {
+        if requested.trim().is_empty() {
+            return Ok(self.default().into());
+        }
+        if self.permits(requested) {
+            return Ok(requested.into());
+        }
+        bail!("terminals.create: requested executable is not one of this host's login shells")
+    }
+    /// The shells a picker can offer: each catalog shell found on this host,
+    /// at an allowlisted path, after a "Default" row (`path: ""`).
+    fn catalog(&self, found: impl Fn(&str) -> bool) -> Value {
+        let mut shells = vec![json!({
+            "name": "default",
+            "path": "",
+            "label": if self.os == HostOs::Windows { "System default" } else { "Default ($SHELL)" },
+        })];
+        let allowed = self.allowed();
+        let mut offer = |name: &str, label: &str, path: Option<&str>| {
+            if let Some(path) = path {
+                shells.push(json!({"name": name, "path": path, "label": label}));
+            }
+        };
+        match self.os {
+            HostOs::Windows => {
+                for (name, exe, label) in [
+                    ("powershell", "powershell.exe", "PowerShell"),
+                    ("pwsh", "pwsh.exe", "PowerShell 7"),
+                    ("cmd", "cmd.exe", "Command Prompt"),
+                    ("wsl", "wsl.exe", "WSL"),
+                ] {
+                    offer(name, label, Some(exe).filter(|e| found(e)));
+                }
+                let git = self.git_bash.iter().map(String::as_str).find(|p| found(p));
+                offer("gitbash", "Git Bash", git);
+            }
+            HostOs::Unix => {
+                // Desktop's built-in paths first, so both apps save the same
+                // string; then wherever /etc/shells or $SHELL put it.
+                for (name, label, usual) in [
+                    ("bash", "Bash", ["/bin/bash", "/usr/bin/bash"]),
+                    ("zsh", "Zsh", ["/bin/zsh", "/usr/bin/zsh"]),
+                    ("fish", "Fish", ["/usr/bin/fish", "/bin/fish"]),
+                ] {
+                    let path = usual
+                        .into_iter()
+                        .chain(allowed.iter().copied().filter(|entry| {
+                            entry.starts_with('/') && entry.rsplit('/').next() == Some(name)
+                        }))
+                        .find(|entry| allowed.contains(entry) && found(entry));
+                    offer(name, label, path);
+                }
+            }
+        }
+        json!({
+            "platform": if self.os == HostOs::Windows { "windows" } else { "unix" },
+            "default": self.default(),
+            "shells": shells,
+        })
+    }
+}
+fn host_shells<'a>(shell: Option<&'a str>, listed: &'a str) -> HostShells<'a> {
+    HostShells::new(HostOs::current(), shell, listed)
+}
 pub fn resolve_shell(requested: &str) -> Result<String> {
     let shell = std::env::var("SHELL").ok();
     let listed = if requested.trim().is_empty() {
@@ -92,51 +274,24 @@ pub fn resolve_shell(requested: &str) -> Result<String> {
     resolve_shell_from(requested, shell.as_deref(), &listed)
 }
 fn resolve_shell_from(requested: &str, host_shell: Option<&str>, listed: &str) -> Result<String> {
-    #[cfg(windows)]
-    let defaults = ["powershell.exe", "pwsh.exe", "cmd.exe"].as_slice();
-    #[cfg(not(windows))]
-    let defaults = [
-        "/bin/sh",
-        "/bin/bash",
-        "/bin/zsh",
-        "/usr/bin/bash",
-        "/usr/bin/zsh",
-        "/bin/fish",
-        "/usr/bin/fish",
-    ]
-    .as_slice();
-    let default = host_shell.filter(|s| !s.is_empty()).unwrap_or(defaults[0]);
-    if requested.trim().is_empty() {
-        return Ok(default.into());
+    host_shells(host_shell, listed).resolve(requested)
+}
+/// `terminals.shells`: the login shells this host can start, for a default
+/// shell picker. Every `path` is one `terminals.create` accepts here.
+pub fn available_shells() -> Value {
+    let shell = std::env::var("SHELL").ok();
+    let listed = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+    host_shells(shell.as_deref(), &listed).catalog(executable_exists)
+}
+/// A full path names a file; a bare name is looked up on PATH like a spawn.
+fn executable_exists(candidate: &str) -> bool {
+    let path = std::path::Path::new(candidate);
+    if path.components().count() > 1 {
+        return path.is_file();
     }
-    // The default retains its host spelling, but every allowlist entry follows
-    // the same trimming/comment rules. Caller-supplied argv stays exact.
-    let allowed: BTreeSet<String> = defaults
-        .iter()
-        .copied()
-        .chain(host_shell)
-        .chain(listed.split('\n'))
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !s.starts_with('#'))
-        .map(str::to_owned)
-        .collect();
-    if allowed.contains(requested) {
-        return Ok(requested.into());
-    }
-    #[cfg(windows)]
-    {
-        let basename = |s: &str| {
-            std::path::Path::new(s)
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_ascii_lowercase()
-        };
-        if allowed.iter().any(|s| basename(s) == basename(requested)) {
-            return Ok(requested.into());
-        }
-    }
-    bail!("terminals.create: requested executable is not one of this host's login shells")
+    std::env::var_os("PATH")
+        .map(|dirs| std::env::split_paths(&dirs).any(|dir| dir.join(candidate).is_file()))
+        .unwrap_or(false)
 }
 impl Terminals {
     pub fn new(engine: EmbeddedClient, hub: Handle, home: PathBuf) -> Arc<Self> {
@@ -256,6 +411,7 @@ impl Terminals {
                     .await?;
                 Ok(json!({"ok":true}))
             }
+            "terminals.shells" => Ok(available_shells()),
             "terminals.create" => {
                 let shell = resolve_shell(typed(&params, "shell")?)?;
                 let cwd = normalize_cwd(typed(&params, "cwd")?, &self.home);
@@ -473,6 +629,7 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
     for method in [
         "terminals.open",
         "terminals.create",
+        "terminals.shells",
         "sessions.attachTerminal",
         "sessions.detachTerminal",
         "sessions.terminalKeepalive",
@@ -584,6 +741,134 @@ mod tests {
                 resolve_shell_from(r"C:\Host\PWSH.EXE", None, "").unwrap(),
                 r"C:\Host\PWSH.EXE"
             );
+        }
+    }
+    fn windows(host_shell: Option<&'static str>) -> HostShells<'static> {
+        HostShells {
+            os: HostOs::Windows,
+            host_shell,
+            listed: "",
+            git_bash: git_bash_paths(|var| {
+                Some(match var {
+                    "LOCALAPPDATA" => r"C:\Users\me\AppData\Local\".into(),
+                    "ProgramFiles" => r"C:\Program Files".into(),
+                    _ => return None,
+                })
+            }),
+        }
+    }
+    #[test]
+    fn windows_allows_wsl_and_git_bash_but_still_refuses_other_executables() {
+        let host = windows(None);
+        assert_eq!(host.resolve("").unwrap(), "powershell.exe");
+        for shell in [
+            "wsl.exe",
+            r"C:\Windows\System32\wsl.exe",
+            "WSL.EXE",
+            r"C:\Program Files\Git\bin\bash.exe",
+            r"c:/program files/git/bin/BASH.EXE",
+            r"C:\Users\me\AppData\Local\Programs\Git\bin\bash.exe",
+            "powershell.exe",
+            r"C:\Host\PWSH.EXE",
+            "cmd.exe",
+        ] {
+            assert_eq!(host.resolve(shell).unwrap(), shell, "{shell}");
+        }
+        for refused in [
+            "bash.exe",
+            r"C:\Windows\System32\bash.exe",
+            r"C:\Users\me\Downloads\Git\bin\bash.exe",
+            r"C:\Program Files\Git\usr\bin\bash.exe",
+            r"C:\Program Files\Git\bin\bash.exe -c calc",
+            "wsl.exe -e calc",
+            r"C:\tools\evil.exe",
+            "notepad.exe",
+            "wsl",
+        ] {
+            let error = host.resolve(refused).unwrap_err();
+            assert!(error.to_string().contains("login shells"), "{refused}");
+        }
+        // A full $SHELL admits that file, not every program sharing its name.
+        let host = windows(Some(r"D:\msys64\usr\bin\zsh.exe"));
+        assert_eq!(host.resolve("").unwrap(), r"D:\msys64\usr\bin\zsh.exe");
+        assert!(host.resolve(r"d:\MSYS64\usr\bin\zsh.exe").is_ok());
+        assert!(host.resolve(r"C:\elsewhere\zsh.exe").is_err());
+    }
+    #[test]
+    fn shell_catalog_offers_only_installed_allowlisted_shells() {
+        let host = windows(None);
+        let installed = ["powershell.exe", "cmd.exe", "wsl.exe"];
+        let git = r"C:\Users\me\AppData\Local\Programs\Git\bin\bash.exe";
+        let catalog = host.catalog(|p| installed.contains(&p) || p == git);
+        assert_eq!(catalog["platform"], "windows");
+        assert_eq!(catalog["default"], "powershell.exe");
+        let rows: Vec<(&str, &str, &str)> = catalog["shells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["name"].as_str().unwrap(),
+                    r["path"].as_str().unwrap(),
+                    r["label"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("default", "", "System default"),
+                ("powershell", "powershell.exe", "PowerShell"),
+                ("cmd", "cmd.exe", "Command Prompt"),
+                ("wsl", "wsl.exe", "WSL"),
+                ("gitbash", git, "Git Bash"),
+            ]
+        );
+        let unix = HostShells {
+            os: HostOs::Unix,
+            host_shell: Some("/usr/local/bin/zsh"),
+            listed: "# /etc/shells\n/bin/sh\n/usr/bin/bash\n/opt/homebrew/bin/fish\n",
+            git_bash: Vec::new(),
+        };
+        let present = [
+            "/usr/bin/bash",
+            "/usr/local/bin/zsh",
+            "/opt/homebrew/bin/fish",
+        ];
+        let catalog = unix.catalog(|p| present.contains(&p));
+        assert_eq!(catalog["default"], "/usr/local/bin/zsh");
+        let paths: Vec<_> = catalog["shells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["name"].as_str().unwrap(), r["path"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                ("default", ""),
+                ("bash", "/usr/bin/bash"),
+                ("zsh", "/usr/local/bin/zsh"),
+                ("fish", "/opt/homebrew/bin/fish"),
+            ]
+        );
+        // Every offered path is one terminals.create accepts on that host.
+        for (_, path) in paths {
+            assert!(unix.resolve(path).is_ok(), "{path}");
+        }
+        let without_fish = unix.catalog(|p| p != "/opt/homebrew/bin/fish" && present.contains(&p));
+        assert!(
+            !without_fish["shells"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["name"] == "fish")
+        );
+        // The real host's own list resolves too.
+        let live = available_shells();
+        for row in live["shells"].as_array().unwrap() {
+            let path = row["path"].as_str().unwrap();
+            assert!(resolve_shell(path).is_ok(), "{path}");
         }
     }
     #[test]
