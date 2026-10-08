@@ -792,13 +792,19 @@ mod tests {
 
     #[tokio::test]
     async fn exact_parent_discovery_and_confined_child_replay_keep_raw_blocks() {
-        let root = std::env::temp_dir().join(format!("claude-child-{}", uuid::Uuid::new_v4()));
+        // Transcript roots are process-global, and discovery searches every
+        // registered root: a session id and project shared with another test
+        // let this test find that test's transcript. Both are unique here.
+        let unique = uuid::Uuid::new_v4().simple().to_string();
+        let parent = format!("parent{unique}");
+        let cwd = format!("/project{unique}");
+        let root = std::env::temp_dir().join(format!("claude-child-{unique}"));
         let projects = root.join("projects");
-        let project = projects.join("-project");
-        let child_dir = project.join("parent/subagents");
+        let project = projects.join(transcript::project_dir_name(&cwd).unwrap());
+        let child_dir = project.join(&parent).join("subagents");
         std::fs::create_dir_all(&child_dir).unwrap();
         transcript::allow_root(projects);
-        let main = project.join("parent.jsonl");
+        let main = project.join(format!("{parent}.jsonl"));
         std::fs::write(&main, "").unwrap();
         let rows = [
             json!({"type":"user","isSidechain":true,"message":{"content":[{"type":"text","text":"Inspect parser"}]}}),
@@ -814,7 +820,7 @@ mod tests {
                 .join("\n"),
         )
         .unwrap();
-        let mut state = SessionState::new("parent".into(), Some("/project".into()));
+        let mut state = SessionState::new(parent.clone(), Some(cwd.clone()));
         state.mode = super::super::SessionMode::Input;
         state.transcript_path = discover_parent(&state).await;
         assert_eq!(
