@@ -163,6 +163,10 @@ check-hub-rust-assets:
 	node scripts/generate-rust-workflow-artifact-fixtures.cjs --check
 	node scripts/generate-rust-workflow-watcher-fixtures.cjs --check
 	node scripts/generate-rust-brain-capabilities.cjs --check
+	python3 scripts/gen-mobile-tokens.py --check
+	python3 scripts/test-gen-mobile-tokens.py
+	node scripts/check-mobile-next-assets.mjs
+	node scripts/test-mobile-next-fleet.mjs
 
 # Read-only comparison; explicit export is available through hub-reference.py.
 hub-vocabulary:

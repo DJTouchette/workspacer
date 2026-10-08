@@ -183,6 +183,7 @@
     "ui.fonts": "No caller parameters; reads uploaded font labels from the fixed display cache.",
     "remote.sharingInfo": "No caller parameters; reports configured sharing state and caller manageability without changing the listener.",
     "sessionArchive.get": "no params; returns the hub's archived-session document (session ids and archive times). Discloses only ids the agent.snapshot feed already carries",
+    "sessions.kept": "no params; returns the session ids the native client on this host kept open when it closed (read from the user's native-settings.json) and when it first saw each open. Discloses only ids the agent.snapshot feed already carries",
     "terminals.shells": "no params; lists the login shells installed on the hub's host (name, label and the path terminals.create would accept). Every path is drawn from the same allowlist terminals.create enforces ($SHELL, /etc/shells, platform defaults, Git for Windows' install paths), filtered to files that exist, so it names nothing a caller could not already learn by being refused. Operator-only by construction: it appears in neither scoped tier",
     "sessions.taskOutput": "sessionId plus taskId select a background task the daemon already lists on that session; offset/maxBytes are bounded integers. Neither id is joined into a path by the hub: claudemon resolves the CLI-named output file from its own task row and refuses symlinks and non-regular files"
   },

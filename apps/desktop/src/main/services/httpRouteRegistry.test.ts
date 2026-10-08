@@ -279,6 +279,89 @@ function proof(
     );
     return 'public-by-decision';
   }
+  // /m-next: a redirect to its scope root, and closures that only delegate to
+  // `m_next`, which serves a fixed generated include_bytes! table.
+  if (id === 'm-next-redirect') {
+    const b = chain(sources, site, verb, ['m_next_redirect']);
+    requireProof(
+      b.includes('StatusCode::PERMANENT_REDIRECT') &&
+        b.includes('"/m-next/{}"') &&
+        !b.includes('std::fs::') &&
+        !b.includes('token'),
+      'm-next redirect must remain a stateless location response',
+    );
+    return 'public-by-decision';
+  }
+  if (id === 'm-next-static') {
+    requireProof(
+      site.verbs[verb] === 'inline',
+      'm-next static proof cannot certify a named handler',
+    );
+    requireProof(
+      /^,get\(\|[^|]*\|asyncmove\{m_next\((?:&path)?,&headers\)\}\),?$/.test(
+        compact(maskRust(site.expression)),
+      ),
+      'm-next closure must only delegate to m_next',
+    );
+    const b = fn(sources, site.file, 'm_next');
+    requireProof(
+      b.includes('m_next_assets::ASSETS') &&
+        !/\b(?:State|spawn|request|token|settings|manager)\b/.test(maskRust(b)) &&
+        !b.includes('std::fs::'),
+      'm_next must serve only the embedded table',
+    );
+    const allowed = new Set([
+      'position',
+      'iter',
+      'get_or_init',
+      'map',
+      'digest',
+      'collect',
+      'format',
+      'starts_with',
+      'get',
+      'and_then',
+      'to_str',
+      'ok',
+      'is_some_and',
+      'split',
+      'any',
+      'trim',
+      'into_response',
+      'rsplit',
+      'next',
+      'unwrap_or',
+      'mime',
+      'asset',
+      'headers_mut',
+      'insert',
+      'parse',
+      'unwrap',
+      'Some',
+      'new',
+      'return',
+      'as_str',
+    ]);
+    for (const call of maskRust(body(sources.get(site.file)!, 'm_next')).matchAll(
+      /\b([A-Za-z_]\w*)\s*!?\s*\(/g,
+    ))
+      requireProof(allowed.has(call[1]), `m_next acquired call ${call[1]}`);
+    const table = read('services/hub-rs/src/server/m_next_assets.rs');
+    const embedded = [...table.matchAll(/include_bytes!\("([^"]+)"\)/g)].map((m) => m[1]);
+    const root = '../../assets/web/m-next/';
+    requireProof(
+      embedded.length > 0 &&
+        embedded.every(
+          (p) =>
+            p.startsWith(root) &&
+            !p.slice(root.length).includes('..') &&
+            /^[A-Za-z0-9_./-]+$/.test(p),
+        ) &&
+        !/\b(?:fs|std::env|State)\b/.test(maskRust(table)),
+      'm-next asset table escaped its embedded asset root',
+    );
+    return 'public-by-decision';
+  }
   if (id === 'static-web' || id === 'static-sdk') {
     requireProof(
       site.verbs[verb] === 'inline' || site.verbs[verb] === 'public!',

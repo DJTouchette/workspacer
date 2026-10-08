@@ -728,6 +728,45 @@
     },
     {
       "server": "hub",
+      "pattern": "/m-next",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "m_next_redirect"
+      },
+      "proofs": {
+        "GET": "m-next-redirect"
+      },
+      "disposition": "public-by-decision",
+      "reason": "redirects to /m-next/ (keeping the query) so the native-aligned phone client's relative module URLs and service-worker scope root at /m-next/. Carries nothing"
+    },
+    {
+      "server": "hub",
+      "pattern": "/m-next/",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "m-next-static"
+      },
+      "disposition": "public-by-decision",
+      "reason": "the native-aligned phone client's shell (compiled-in index.html). Public for the same reason as /m: an installed PWA launches at start_url with no token, then gates on its own stored token. No host state; served with a strict CSP"
+    },
+    {
+      "server": "hub",
+      "pattern": "/m-next/*path",
+      "file": "services/hub-rs/src/server/web.rs",
+      "verbs": {
+        "GET": "inline"
+      },
+      "proofs": {
+        "GET": "m-next-static"
+      },
+      "disposition": "public-by-decision",
+      "reason": "the native-aligned phone client's compiled-in static modules, styles, fonts, icons and service worker (a fixed generated table; any other path is 404). No host state or credentials"
+    },
+    {
+      "server": "hub",
       "pattern": "/manifest.webmanifest",
       "file": "services/hub-rs/src/server/web.rs",
       "verbs": {

@@ -158,6 +158,7 @@
     "sessions.conversation",
     "sessions.delete",
     "sessions.detachTerminal",
+    "sessions.kept",
     "sessions.list",
     "sessions.load",
     "sessions.recent",
@@ -871,6 +872,7 @@
       "files.upload",
       "sessionArchive.get",
       "sessionArchive.set",
+      "sessions.kept",
       "sessions.taskOutput",
       "sessions.taskStop"
     ],
@@ -899,6 +901,7 @@
       "push.key",
       "agents.reportProgress",
       "sessionArchive.get",
+      "sessions.kept",
       "sessions.taskOutput"
     ]
   },

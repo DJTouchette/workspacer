@@ -170,6 +170,7 @@
     "sessionArchive.get",
     "sessions.conversation",
     "sessions.detachTerminal",
+    "sessions.kept",
     "sessions.list",
     "sessions.recent",
     "sessions.snapshot",

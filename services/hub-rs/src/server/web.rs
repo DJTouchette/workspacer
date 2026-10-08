@@ -8,6 +8,8 @@ use axum::{
     routing::get,
 };
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+#[path = "m_next_assets.rs"]
+mod m_next_assets;
 #[derive(Clone)]
 struct Web {
     auth: super::Credentials,
@@ -166,6 +168,88 @@ async fn serve_app(
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
+/// `/m-next` without its slash: the client's relative module and asset URLs
+/// (and its service worker's scope) are rooted at `/m-next/`.
+async fn m_next_redirect(RawQuery(query): RawQuery) -> Response {
+    let location = format!(
+        "/m-next/{}",
+        query.map(|q| format!("?{q}")).unwrap_or_default()
+    );
+    (
+        StatusCode::PERMANENT_REDIRECT,
+        [(header::LOCATION, location)],
+    )
+        .into_response()
+}
+
+/// The native-aligned phone client (`assets/web/m-next`): ES modules and CSS
+/// with no build step, compiled in like `/m`. Public, like `/m`: the shell
+/// holds no credentials and every byte of data arrives over the
+/// authenticated bus. Fonts are immutable; everything else revalidates by
+/// ETag so a new hub ships a new client on the next load.
+fn m_next(path: &str, headers: &HeaderMap) -> Response {
+    let Some(index) = m_next_assets::ASSETS
+        .iter()
+        .position(|(name, _)| *name == path)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    static ETAGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let etags = ETAGS.get_or_init(|| {
+        use sha2::Digest;
+        m_next_assets::ASSETS
+            .iter()
+            .map(|(_, body)| {
+                let digest = sha2::Sha256::digest(body);
+                let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+                format!("\"{hex}\"")
+            })
+            .collect()
+    });
+    let etag = &etags[index];
+    let cache = if path.starts_with("fonts/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.split(',').any(|tag| tag.trim() == etag))
+    {
+        return (
+            StatusCode::NOT_MODIFIED,
+            [
+                (header::ETAG, etag.as_str()),
+                (header::CACHE_CONTROL, cache),
+            ],
+        )
+            .into_response();
+    }
+    let body = m_next_assets::ASSETS[index].1;
+    let mime = match path.rsplit('.').next().unwrap_or("") {
+        "webmanifest" => "application/manifest+json; charset=utf-8",
+        _ => mime(path),
+    };
+    let mut reply = asset(body, mime, cache);
+    let headers = reply.headers_mut();
+    headers.insert(header::ETAG, etag.parse().unwrap());
+    if path == "index.html" {
+        // Agent-authored HTML (response cards) is sanitized before it is
+        // inserted; this is the second wall. Wake URLs are any https origin.
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ws: wss: https:; \
+             worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; \
+             frame-ancestors 'none'"
+                .parse()
+                .unwrap(),
+        );
+    }
+    reply
+}
+
 pub(crate) fn router(
     auth: super::Credentials,
     directory: Option<PathBuf>,
@@ -178,42 +262,54 @@ pub(crate) fn router(
         root,
         reads: Arc::new(tokio::sync::Semaphore::new(8)),
     };
-    let mut router = Router::new()
-        .route("/remote", get(remote))
-        .route(
-            "/m",
-            get(|| async {
-                asset(
-                    include_bytes!("../../assets/web/mobile.html"),
-                    "text/html; charset=utf-8",
-                    "no-cache",
-                )
-            }),
-        )
-        .route(
-            "/manifest.webmanifest",
-            get(|| async {
-                asset(
-                    include_bytes!("../../assets/web/manifest.webmanifest"),
-                    "application/manifest+json; charset=utf-8",
-                    "no-cache",
-                )
-            }),
-        )
-        .route(
-            "/sw.js",
-            get(|| async {
-                let mut response = asset(
-                    include_bytes!("../../assets/web/sw.js"),
-                    "text/javascript; charset=utf-8",
-                    "no-cache",
-                );
-                response
-                    .headers_mut()
-                    .insert("service-worker-allowed", "/".parse().unwrap());
-                response
-            }),
-        );
+    let mut router =
+        Router::new()
+            .route("/remote", get(remote))
+            .route(
+                "/m",
+                get(|| async {
+                    asset(
+                        include_bytes!("../../assets/web/mobile.html"),
+                        "text/html; charset=utf-8",
+                        "no-cache",
+                    )
+                }),
+            )
+            .route("/m-next", get(m_next_redirect))
+            .route(
+                "/m-next/",
+                get(|headers: HeaderMap| async move { m_next("index.html", &headers) }),
+            )
+            .route(
+                "/m-next/*path",
+                get(|Path(path): Path<String>, headers: HeaderMap| async move {
+                    m_next(&path, &headers)
+                }),
+            )
+            .route(
+                "/manifest.webmanifest",
+                get(|| async {
+                    asset(
+                        include_bytes!("../../assets/web/manifest.webmanifest"),
+                        "application/manifest+json; charset=utf-8",
+                        "no-cache",
+                    )
+                }),
+            )
+            .route(
+                "/sw.js",
+                get(|| async {
+                    let mut response = asset(
+                        include_bytes!("../../assets/web/sw.js"),
+                        "text/javascript; charset=utf-8",
+                        "no-cache",
+                    );
+                    response
+                        .headers_mut()
+                        .insert("service-worker-allowed", "/".parse().unwrap());
+                    response
+                }),
+            );
     macro_rules! public {
         ($route:literal,$file:literal,$mime:literal) => {
             router = router.route(

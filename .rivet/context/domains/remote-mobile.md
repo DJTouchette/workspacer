@@ -5,6 +5,9 @@ related_paths:
   - "services/hub/**"
   - "apps/desktop/src/main/services/remoteServer.ts"
   - "apps/desktop/src/main/index.ts"
+  - "services/hub-rs/assets/web/m-next/**"
+  - "services/hub-rs/src/server/web.rs"
+  - "services/hub-rs/src/services/kept_sessions.rs"
 owner: Damien Touchette
 last_reviewed: 2026-09-26
 ---
@@ -112,3 +115,50 @@ UI/actions, not live provider behavior, real phone OS suspension or Web Push.
 Keep sparse/headless fixtures in scope; rich desktop rows alone cannot validate
 all conversation fallback behavior. Audit execution evidence lives in
 [the review ledger](../../../docs/reviews/workspacer-rivet-audit.md).
+
+## /m-next (native-aligned phone client, phase 2)
+
+`services/hub-rs/assets/web/m-next/` is the rewrite of `/m` that looks and
+talks like the native client. It is served beside `/m` (untouched) at
+`/m-next/` (`/m-next` 308s there so relative module URLs and the service
+worker scope root at `/m-next/`). It is plain ES modules + CSS with no build
+step, compiled into the hub through the generated `src/server/m_next_assets.rs`
+table; `web::m_next` serves it with ETags (fonts immutable) and a strict CSP on
+`index.html` (script-src 'self', so no inline scripts — `js/boot.js` applies the
+theme before paint).
+
+Generated, drift-checked in `make check-hub-rust-assets`:
+- `tokens.css` + `js/themes.js` from `apps/native/src/appearance.rs` (palettes)
+  and `apps/native/src/ui/syntax.rs` (code colours) by
+  `scripts/gen-mobile-tokens.py`; `scripts/test-gen-mobile-tokens.py` proves the
+  check fails when a native colour changes.
+- the asset table and the service worker's precache list/cache name (a content
+  hash) by `scripts/check-mobile-next-assets.mjs`, which also parses every module
+  and checks relative imports. Run it with `--write` after adding a file.
+- `scripts/test-mobile-next-fleet.mjs` runs `js/fleet.js` against
+  `contracts/fleet-message-cases.json`.
+
+The data layer (bus/store/push) is a faithful port of `/m`'s: token in
+`localStorage.hubToken` (shared with `/m`), hello-scope gating, handshake
+watchdogs and wake, machine-stop pause/Wake, federation `hub:<peer>/` routing,
+sparse folds, peer tombstones, archive ordering, conversation polling. Push uses
+its own worker (`/m-next/sw.js`, scope `/m-next/`), so a phone that enables
+notifications in both clients holds two subscriptions. Push prefs are shared
+with `/m` (`pushPrefs`).
+
+Paused sessions come from the host: `sessions.kept` (view/triage, hub-local,
+`services/kept_sessions.rs`) reads the native client's
+`<XDG_CONFIG_HOME|~/.config|%APPDATA%>/workspacer/native-settings.json`
+`kept_open` (all hub scopes merged; ids that are not this hub's never resolve)
+and the client reads aged-out kept rows by id with `sessions.snapshot`. A
+missing file is an empty set. Without the method, stopped sessions show as
+Ended and are still resumable by sending.
+
+Tests: `apps/desktop/tests/e2e/mobileNext.test.ts` with
+`fixtures/mobileNextHub.ts` (real hub + fake provider shaped like the Rust
+hub's sparse rows; native-settings.json planted in the scratch config home).
+`WKS_MNEXT_SHOTS=<dir>` captures the 390×844@2x screenshot set.
+
+Class-name hazard: the CSS is global; generic class names collide (a `.other`
+input rule once resized the island's `.mchip.other`). Prefer specific names.
+

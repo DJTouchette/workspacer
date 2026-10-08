@@ -21,6 +21,7 @@ pub mod host_status;
 pub mod html_card;
 pub mod image_preview;
 pub mod jobs;
+pub mod kept_sessions;
 pub mod launch_instructions;
 pub mod layout;
 pub mod library;
@@ -329,6 +330,14 @@ pub(crate) fn install(
         .handler("sessionArchive.set", move |_, params| {
             let service = archive.clone();
             async move { tokio::task::spawn_blocking(move || service.set(params)).await? }
+        })
+        // What the native client kept open at close (its Paused sessions),
+        // read from the host's native-settings.json. Read-only view state.
+        .handler("sessions.kept", move |_, _| async move {
+            Ok(tokio::task::spawn_blocking(|| {
+                kept_sessions::read(kept_sessions::settings_path().as_deref())
+            })
+            .await?)
         });
     let mut prefs = usage_prefs::UsagePrefs::open(Some(directory.join("usage-pacing.json")));
     if let Some(routing) = options.routing.clone() {
