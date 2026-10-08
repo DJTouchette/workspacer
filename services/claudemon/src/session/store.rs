@@ -2463,6 +2463,21 @@ impl SessionStore {
         Some(state)
     }
 
+    /// Record one API request a live provider frame reported, for the
+    /// session's prompt-cache warmth (see [`super::prompt_cache`]). Quiet: no
+    /// broadcast of its own, because the request belongs to a turn whose
+    /// mode transitions already publish the row.
+    pub fn note_api_request(
+        &self,
+        session_id: &str,
+        request: super::prompt_cache::RequestObservation,
+    ) {
+        if let Some(mut entry) = self.states.get_mut(session_id) {
+            let next = request.after(entry.last_api_request.as_ref());
+            entry.last_api_request = Some(next);
+        }
+    }
+
     /// Record the agent's current plan and surface it to clients.
     ///
     /// Two effects, one call so there's a single emission path: (1) store the

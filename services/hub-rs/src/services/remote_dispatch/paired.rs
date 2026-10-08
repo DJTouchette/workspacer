@@ -622,6 +622,7 @@ pub(crate) async fn project_snapshot(
         "transport",
         "usage",
         "statusLine",
+        "promptCache",
         "pendingApproval",
         "pendingQuestions",
         "lastAssistantMessage",

@@ -44,6 +44,26 @@ pub fn compat(mut snapshot: Value) -> Value {
         }
         snapshot["usage"] = mapped;
     }
+    // When the prompt cache expires (claudemon `session::prompt_cache`).
+    // Clients judge warm/cold against their own clock, so it is copied whole.
+    if let Some(cache) = snapshot["prompt_cache"].as_object() {
+        let mut mapped = json!({});
+        for (from, to) in [
+            ("ttl_seconds", "ttlSeconds"),
+            ("last_request_at", "lastRequestAt"),
+            ("expires_at", "expiresAt"),
+            ("context_tokens", "contextTokens"),
+            ("estimated", "estimated"),
+            ("model", "model"),
+            ("cold_cost_usd", "coldCostUSD"),
+            ("warm_cost_usd", "warmCostUSD"),
+        ] {
+            if let Some(value) = cache.get(from).filter(|v| !v.is_null()) {
+                mapped[to] = value.clone();
+            }
+        }
+        snapshot["promptCache"] = mapped;
+    }
     if let Some(value) = snapshot.get("tool_calls").cloned() {
         snapshot["totalToolCalls"] = value;
     }
@@ -323,6 +343,32 @@ mod confirmed_control_tests {
         fn revoke<'a>(&'a self, _: &'a str, _: &'a str) -> Operation<'a, ()> {
             Box::pin(async { Ok(()) })
         }
+    }
+    #[test]
+    fn prompt_cache_reaches_clients_in_camel_case() {
+        let row = compat(json!({
+            "session_id": "s", "mode": "stopped",
+            "prompt_cache": {"ttl_seconds": 3600, "last_request_at": 1_000,
+                "expires_at": 3_601_000, "context_tokens": 624_000, "estimated": false,
+                "model": "claude-opus-4-8", "cold_cost_usd": 6.24, "warm_cost_usd": 0.312}
+        }));
+        assert_eq!(
+            row["promptCache"],
+            json!({"ttlSeconds": 3600, "lastRequestAt": 1_000, "expiresAt": 3_601_000,
+                "contextTokens": 624_000, "estimated": false, "model": "claude-opus-4-8",
+                "coldCostUSD": 6.24, "warmCostUSD": 0.312})
+        );
+        // Unknown prices stay absent rather than reading as free.
+        let row = compat(
+            json!({"session_id": "s", "prompt_cache": {"ttl_seconds": 600,
+            "last_request_at": 1, "expires_at": 600_001, "context_tokens": 9, "estimated": true}}),
+        );
+        assert!(row["promptCache"].get("coldCostUSD").is_none());
+        assert!(
+            compat(json!({"session_id": "s"}))
+                .get("promptCache")
+                .is_none()
+        );
     }
     #[tokio::test]
     async fn durable_live_controls_survive_lineage_recovery_without_changing_parent_role_or_profile()

@@ -966,6 +966,12 @@ pub struct SessionState {
     /// expire for truthful model divergence, while stale occupancy must not.
     #[serde(skip)]
     pub context_display_confirmation_pending: bool,
+    /// The last API request a live provider frame reported (Claude stream
+    /// `assistant` frames, Codex token usage), for prompt-cache warmth. Not on
+    /// the wire itself: `prompt_cache` is derived from it plus the transcript
+    /// fold (see [`super::prompt_cache`]).
+    #[serde(skip)]
+    pub last_api_request: Option<super::prompt_cache::RequestObservation>,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -1012,6 +1018,7 @@ impl SessionState {
             pending_model_confirmation: None,
             model_confirmation_suppressions_remaining: 0,
             context_display_confirmation_pending: false,
+            last_api_request: None,
         }
     }
 

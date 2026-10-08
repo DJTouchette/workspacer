@@ -14,6 +14,7 @@ mod background_tasks;
 mod bus_requests;
 mod chat;
 mod child_agents;
+mod cold_cache;
 mod composer;
 mod connection;
 mod controls;

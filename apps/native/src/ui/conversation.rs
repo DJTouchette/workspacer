@@ -636,6 +636,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_2()
+            .children(self.render_cold_note(cx))
             .child(composer)
             .child(self.render_activity_line(layout))
     }
