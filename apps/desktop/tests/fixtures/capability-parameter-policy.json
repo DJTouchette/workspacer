@@ -80,6 +80,7 @@
     "claude.signal": "the signal name is deserialized into a three-variant enum by claudemon (protocol.rs Signal) before anything is sent, so the caller chooses among interrupt/stop/kill and cannot compose a value; the sessionId is not ownership-checked on either provider",
     "claude.handoffBrief": "writes a deterministic brief the PROVIDER composes into ~/.workspacer/handoffs/<generated>.md — the caller supplies a session id, never the filename and never the directory — so there is no caller path to confine",
     "claude.handoffAgentBrief": "same as claude.handoffBrief, plus it injects the resulting read-this instruction into a live agent; that half is the agents.sendMessage primitive and is bounded the same way",
+    "claude.handoffSummaryBrief": "same output location and caller surface as claude.handoffBrief (a session id only; the hub names the file under ~/.workspacer/handoffs). The hub also runs one tool-less completion with its own configured title harness and model over the bounded, credential-masked digest and conversation tail; the caller chooses no path, argv, model or provider, and nothing is sent to the source",
     "sessions.attachTerminal": "binds a PTY stream to the caller's connection. No path and no subtree: what it grants is the OUTPUT side of sessions.terminalInput, so holding it is the gate at the same level",
     "layout.set": "The shared workspace document can be adopted by a later UI. Non-trusted writers have boot-agent escalation fields and executable pane metadata scrubbed at this persisted boundary; ordinary explicit agents.spawn provider permission choices retain their separate ambient contract.",
     "push.subscribe": "the endpoint is a URL the hub itself POSTs to, so it is a request the host makes on the caller's behalf rather than a path or an argv. This reason used to stop at what the ENDPOINT learns (the payload is encrypted to the subscription's own keys) and said nothing about what the HOST is made to DO — and the host's network position is Tailscale-reachable, loopback-reachable and cloud-metadata-reachable, for a TRIAGE tier holding no fetch, no exec, no fs and no config capability, on a trigger that same tier can pull at will. Bounded now by validatePushEndpoint (https only, no loopback/private/link-local/unique-local host: the shape a browser PushManager actually produces), plus RPCSubscribeAs recording WHICH credential asked so revoking a phone's token revokes its notifications",
@@ -746,6 +747,12 @@
       }
     },
     "claude.handoffAgentBrief": {
+      "effort": {
+        "kind": "inert",
+        "reason": "The shared live_controls::call dispatcher reads this field in setEffort/setModel validation expressions; this method never forwards it to the daemon or a process."
+      }
+    },
+    "claude.handoffSummaryBrief": {
       "effort": {
         "kind": "inert",
         "reason": "The shared live_controls::call dispatcher reads this field in setEffort/setModel validation expressions; this method never forwards it to the daemon or a process."

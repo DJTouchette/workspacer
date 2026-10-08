@@ -1,9 +1,15 @@
 //! "Continue with…": hand a session's work to a new agent of the other
-//! provider. The owning hub writes a brief (`claude.handoffAgentBrief`, the
-//! source agent's own, with its mechanical fallback; or `claude.handoffBrief`,
+//! provider, or "Start fresh from a summary" with a new agent of the same one.
+//! The owning hub writes a brief (`claude.handoffAgentBrief`, the source
+//! agent's own, with its mechanical fallback; `claude.handoffSummaryBrief`, a
+//! cheap model's summary, with the same fallback; or `claude.handoffBrief`,
 //! the mechanical digest) and the successor starts through the ordinary
 //! `agents.spawn` path in the source's exact folder. The takeover message is
 //! staged in the successor's composer for review, never sent for the user.
+//!
+//! Only the agent tier touches the source (it takes one turn). The summary
+//! tier exists for a session whose prompt cache has gone cold: resuming it
+//! just to describe itself would re-read its whole context at full price.
 //!
 //! A handoff is a new agent reading a file: it does not move the provider
 //! session, its private context or a Fleet Manager's role, and it never stops
@@ -20,6 +26,10 @@ pub enum Brief {
     /// mechanical digest when it cannot or does not within its deadline.
     #[default]
     Agent,
+    /// A cheap model (the hub's title harness, Haiku for Claude) summarizes
+    /// the deterministic digest and the conversation's tail. Nothing is sent
+    /// to the source; the hub falls back to the mechanical digest on failure.
+    Summary,
     /// The hub's deterministic digest of the retained conversation.
     Mechanical,
 }
@@ -28,12 +38,22 @@ impl Brief {
     pub fn method(self) -> &'static str {
         match self {
             Self::Agent => "claude.handoffAgentBrief",
+            Self::Summary => "claude.handoffSummaryBrief",
             Self::Mechanical => "claude.handoffBrief",
+        }
+    }
+
+    /// Who writes it, for a fallback notice.
+    fn author(self) -> &'static str {
+        match self {
+            Self::Agent => "The source agent",
+            Self::Summary => "The summary model",
+            Self::Mechanical => "The hub",
         }
     }
 }
 
-/// The provider a session can continue with, or why it cannot. Native
+/// The other provider a session can continue with, or why it cannot. Native
 /// launches admit Claude and Codex only, so each continues with the other.
 pub fn target(session: &Session) -> Result<&'static str> {
     if session.wake_target {
@@ -52,6 +72,28 @@ pub fn target(session: &Session) -> Result<&'static str> {
         "This session has no project folder to continue in."
     );
     Ok(target)
+}
+
+/// Every provider a session can hand off to: the other one first ("Continue
+/// with…"), then its own ("Start fresh from a summary": a new agent with an
+/// empty context, for a session too long or too cold to resume cheaply).
+pub fn targets(session: &Session) -> Result<[&'static str; 2]> {
+    let other = target(session)?;
+    Ok([other, same(session)])
+}
+
+/// The session's own provider, as a launch target.
+pub fn same(session: &Session) -> &'static str {
+    if session.provider == "codex" {
+        "codex"
+    } else {
+        "claude"
+    }
+}
+
+/// Whether `provider` starts the source's own kind of agent afresh.
+pub fn fresh(session: &Session, provider: &str) -> bool {
+    provider == same(session)
 }
 
 pub fn provider_name(provider: &str) -> &'static str {
@@ -97,13 +139,15 @@ pub fn successor_prompt(path: &str) -> String {
 pub struct Written {
     /// On the hub's machine; the successor runs there too.
     pub path: String,
-    /// Why the source agent's own brief was replaced by the mechanical digest.
+    /// Why the requested brief was replaced by the mechanical digest.
     pub fallback: Option<String>,
+    /// The brief that was asked for.
+    pub kind: Brief,
 }
 
 /// Read a brief reply. Anything short of `ok` with a path is a failure:
 /// a successor is never started without a brief to read.
-pub fn written(reply: &Value) -> Result<Written> {
+pub fn written(reply: &Value, kind: Brief) -> Result<Written> {
     if reply["ok"] == false {
         bail!(
             "{}",
@@ -130,9 +174,10 @@ pub fn written(reply: &Value) -> Result<Written> {
             reply["error"]
                 .as_str()
                 .filter(|e| !e.is_empty())
-                .unwrap_or("The source agent did not write the brief")
-                .to_owned()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("{} did not write the brief", kind.author()))
         }),
+        kind,
     })
 }
 
@@ -149,12 +194,13 @@ impl Request {
     /// The successor must start in the source's exact folder, on the provider
     /// it continues with, and with no message sent on the user's behalf.
     pub fn validate(&self, source: &Session) -> Result<()> {
-        let target = target(source)?;
+        let [other, same] = targets(source)?;
         ensure!(
-            self.successor.provider == target,
-            "{} sessions continue with {}",
-            provider_name(&source.provider),
-            provider_name(target)
+            self.successor.provider == other || self.successor.provider == same,
+            "{} sessions continue with {} or start fresh with {}",
+            provider_name(same),
+            provider_name(other),
+            provider_name(same)
         );
         ensure!(
             self.successor.cwd == source.cwd,
@@ -165,8 +211,8 @@ impl Request {
             "A handoff starts a fresh agent and stages its first message for review"
         );
         ensure!(
-            self.brief == Brief::Mechanical || !source.stopped(),
-            "An ended agent cannot write its own brief; use the quick summary"
+            self.brief != Brief::Agent || !source.stopped(),
+            "An ended agent cannot write its own brief; use a summary"
         );
         self.successor.params().map(|_| ())
     }
@@ -206,11 +252,12 @@ impl Receipt {
         let fallback = self
             .brief
             .as_ref()
-            .and_then(|b| b.fallback.as_ref())
-            .map(|why| {
+            .and_then(|b| Some((b.kind, b.fallback.as_ref()?)))
+            .map(|(kind, why)| {
                 format!(
-                    " The source agent did not write the brief ({}), so the hub's mechanical \
-                     summary of its conversation was used instead.",
+                    " {} did not write the brief ({}), so the hub's mechanical summary of its \
+                     conversation was used instead.",
+                    kind.author(),
                     why.trim_end_matches('.')
                 )
             })
@@ -322,28 +369,41 @@ mod tests {
 
     #[test]
     fn brief_replies_are_success_only_with_an_absolute_path() {
-        let ok = written(&json!({"ok":true,"path":"/h/.workspacer/handoffs/a.md"})).unwrap();
+        let written = |reply: Value| super::written(&reply, Brief::Agent);
+        let ok = written(json!({"ok":true,"path":"/h/.workspacer/handoffs/a.md"})).unwrap();
         assert_eq!(ok.path, "/h/.workspacer/handoffs/a.md");
         assert_eq!(ok.fallback, None);
-        let fell = written(&json!({"ok":true,"path":"/h/b.md","fallback":true,
+        assert_eq!(ok.kind, Brief::Agent);
+        let fell = written(json!({"ok":true,"path":"/h/b.md","fallback":true,
             "error":"Source agent did not write the brief before the deadline"}))
         .unwrap();
         assert!(fell.fallback.unwrap().contains("deadline"));
-        assert!(written(&json!({"ok":false,"error":"mechanical fallback also failed"})).is_err());
-        assert!(written(&json!({"ok":true,"path":null})).is_err());
-        assert!(written(&json!({"ok":true,"path":""})).is_err());
-        assert!(written(&json!({"ok":true,"path":"relative.md"})).is_err());
+        assert!(written(json!({"ok":false,"error":"mechanical fallback also failed"})).is_err());
+        assert!(written(json!({"ok":true,"path":null})).is_err());
+        assert!(written(json!({"ok":true,"path":""})).is_err());
+        assert!(written(json!({"ok":true,"path":"relative.md"})).is_err());
         // Hub fallback that produced no file reports ok:false with a reason.
-        let err =
-            written(&json!({"ok":false,"path":null,"fallback":true,"error":"x"})).unwrap_err();
+        let err = written(json!({"ok":false,"path":null,"fallback":true,"error":"x"})).unwrap_err();
         assert_eq!(err.to_string(), "x");
+        // A reasonless fallback names who did not write it.
+        let summary = super::written(
+            &json!({"ok":true,"path":"/h/c.md","fallback":true}),
+            Brief::Summary,
+        )
+        .unwrap();
+        assert_eq!(
+            summary.fallback.as_deref(),
+            Some("The summary model did not write the brief")
+        );
     }
 
     #[test]
     fn requests_stay_in_the_source_folder_and_send_nothing() {
         let source = session("claude");
         assert!(request(&source, "codex").validate(&source).is_ok());
-        assert!(request(&source, "claude").validate(&source).is_err());
+        // Starting fresh keeps the provider; nothing else is admitted.
+        assert!(request(&source, "claude").validate(&source).is_ok());
+        assert!(request(&source, "opencode").validate(&source).is_err());
         let mut moved = request(&source, "codex");
         moved.successor.cwd = "/work/repo".into();
         assert!(moved.validate(&source).is_err());
@@ -356,6 +416,32 @@ mod tests {
         let mut quick = request(&stopped, "codex");
         quick.brief = Brief::Mechanical;
         assert!(quick.validate(&stopped).is_ok());
+        // An ended agent's summary is written without it, in either direction.
+        for provider in ["codex", "claude"] {
+            let mut summary = request(&stopped, provider);
+            summary.brief = Brief::Summary;
+            assert!(summary.validate(&stopped).is_ok(), "{provider}");
+        }
+        let mut fresh_agent = request(&stopped, "claude");
+        fresh_agent.brief = Brief::Agent;
+        assert!(fresh_agent.validate(&stopped).is_err());
+    }
+
+    #[test]
+    fn summary_brief_has_its_own_method_and_same_provider_targets() {
+        assert_eq!(Brief::Summary.method(), "claude.handoffSummaryBrief");
+        assert_eq!(Brief::Mechanical.method(), "claude.handoffBrief");
+        assert_eq!(Brief::Agent.method(), "claude.handoffAgentBrief");
+        let mut stopped = session("claude");
+        stopped.state = "stopped".into();
+        assert_eq!(targets(&stopped).unwrap(), ["codex", "claude"]);
+        assert_eq!(targets(&session("codex")).unwrap(), ["claude", "codex"]);
+        assert_eq!(targets(&session("")).unwrap(), ["codex", "claude"]);
+        assert!(fresh(&stopped, "claude") && !fresh(&stopped, "codex"));
+        let mut manager = stopped.clone();
+        manager.wake_target = true;
+        assert!(targets(&manager).is_err(), "managers are never handed off");
+        assert!(targets(&session("opencode")).is_err());
     }
 
     #[test]
@@ -365,6 +451,7 @@ mod tests {
         let brief = Written {
             path: "/h/a.md".into(),
             fallback: Some("Source agent could not accept the brief request".into()),
+            kind: Brief::Agent,
         };
         let done = Receipt {
             number: 1,
@@ -376,7 +463,19 @@ mod tests {
         };
         let text = done.summary();
         assert!(text.starts_with("Handoff ready with a fallback brief: Codex started"));
+        assert!(text.contains("The source agent did not write the brief"));
         assert!(text.contains("mechanical summary"));
+        let summarized = Receipt {
+            brief: Some(Written {
+                fallback: Some("The summary model did not answer in time".into()),
+                kind: Brief::Summary,
+                ..brief.clone()
+            }),
+            ..done.clone()
+        }
+        .summary();
+        assert!(summarized.starts_with("Handoff ready with a fallback brief"));
+        assert!(summarized.contains("The summary model did not write the brief"));
         let clean = Receipt {
             brief: Some(Written {
                 fallback: None,

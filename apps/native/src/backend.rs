@@ -232,11 +232,13 @@ impl Backend {
 
     /// Ask the owning hub for a handoff brief. The agent tier waits up to
     /// 150 s for the source's own brief, so this outlives the usual budget
-    /// (the hub's own forwarding budget for it is 180 s). A refusal is an
+    /// (the hub's own forwarding budget for it is 180 s); the summary tier
+    /// gives its model 100 s inside a 150 s hub budget. A refusal is an
     /// `ok:false` reply, read by [`crate::handoff::written`], not an error.
     pub async fn handoff_brief(&self, id: &str, brief: crate::handoff::Brief) -> Result<Value> {
         let wait = match brief {
             crate::handoff::Brief::Agent => 180,
+            crate::handoff::Brief::Summary => 150,
             crate::handoff::Brief::Mechanical => 90,
         };
         self.hub

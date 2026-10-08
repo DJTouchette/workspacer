@@ -45,6 +45,7 @@ const FULL: &[&str] = &[
     "claude.setModel",
     "claude.handoffBrief",
     "claude.handoffAgentBrief",
+    "claude.handoffSummaryBrief",
     "sessions.transcript",
     "sessions.conversation",
     "sessions.subagentConversation",

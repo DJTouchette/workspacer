@@ -50,6 +50,32 @@ pub fn binary(provider: &str, config: &Value) -> Option<PathBuf> {
         .unwrap_or(provider);
     tools::on_path(requested)
 }
+/// How long a one-shot may run and how much of its answer is kept.
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    pub timeout: Duration,
+    /// UTF-16 units kept from the answer.
+    pub chars: usize,
+    /// Bytes captured from a CLI's stdout (JSON event lines included).
+    pub output: usize,
+    /// Claude only: no built-in or MCP tools, no hooks, no persisted session.
+    pub no_tools: bool,
+}
+impl Limits {
+    pub const TITLE: Self = Self {
+        timeout: Duration::from_secs(25),
+        chars: 416,
+        output: 64 * 1024,
+        no_tools: false,
+    };
+    /// A handoff brief: a page of Markdown, written without tools.
+    pub const BRIEF: Self = Self {
+        timeout: Duration::from_secs(90),
+        chars: 24_000,
+        output: 512 * 1024,
+        no_tools: true,
+    };
+}
 pub async fn title(
     provider: &str,
     model: Option<&str>,
@@ -57,6 +83,18 @@ pub async fn title(
     home: &Path,
     engine: Option<&EmbeddedClient>,
     prompt: &str,
+) -> Outcome<String> {
+    oneshot(provider, model, config, home, engine, prompt, Limits::TITLE).await
+}
+/// One disposable turn with the configured harness: the prompt in, text out.
+pub async fn oneshot(
+    provider: &str,
+    model: Option<&str>,
+    config: &Value,
+    home: &Path,
+    engine: Option<&EmbeddedClient>,
+    prompt: &str,
+    limits: Limits,
 ) -> Outcome<String> {
     if !text::TITLE_PROVIDERS.contains(&provider) {
         return Err(Failure::Unsupported);
@@ -67,11 +105,12 @@ pub async fn title(
     if provider == "claude" {
         let engine = engine.ok_or(Failure::Unsupported)?;
         let value = tokio::time::timeout(
-            Duration::from_secs(30),
+            limits.timeout + Duration::from_secs(5),
             engine.request(EngineCommand::Request {
                 method: "POST".into(),
                 path: "/oneshot".into(),
-                payload: Some(json!({"argv":argv,"model":model,"prompt":prompt,"timeout_secs":25})),
+                payload: Some(json!({"argv":argv,"model":model,"prompt":prompt,
+                    "timeout_secs":limits.timeout.as_secs(),"no_tools":limits.no_tools})),
             }),
         )
         .await
@@ -82,7 +121,7 @@ pub async fn title(
         }
         return value["text"]
             .as_str()
-            .map(|text| text::clip(text, 416))
+            .map(|text| text::clip(text, limits.chars))
             .filter(|s| !s.trim().is_empty())
             .ok_or(Failure::Empty);
     }
@@ -141,8 +180,8 @@ pub async fn title(
         _ => return Err(Failure::Unsupported),
     };
     // Launcher never uses cmd.exe: Pi/Copilot positional text has no shell grammar.
-    let raw = run(&mut command, input, 64 * 1024, Duration::from_secs(25)).await?;
-    let result = text::clip(text::extract(provider, &raw).trim(), 416);
+    let raw = run(&mut command, input, limits.output, limits.timeout).await?;
+    let result = text::clip(text::extract(provider, &raw).trim(), limits.chars);
     if result.is_empty() {
         Err(Failure::Empty)
     } else {

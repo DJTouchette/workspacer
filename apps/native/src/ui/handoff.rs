@@ -1,8 +1,9 @@
-//! "Continue with Codex…" / "Continue with Claude…": the successor's launch
-//! settings and who writes the brief, for the open session. The settings reuse
-//! the New Agent pickers (catalog models, effort, access); the folder is the
-//! source's own and is not offered as a choice. The controller writes the
-//! brief, then starts the successor; see `wks_native::handoff`.
+//! "Continue with Codex…" / "Continue with Claude…" and "Start fresh from a
+//! summary": the successor's provider, launch settings and who writes the
+//! brief, for the open session. The settings reuse the New Agent pickers
+//! (catalog models, effort, access); the folder is the source's own and is
+//! not offered as a choice. The controller writes the brief, then starts the
+//! successor; see `wks_native::handoff`.
 use super::*;
 use gpui::AnyElement;
 use wks_native::{
@@ -24,7 +25,84 @@ impl Workspace {
         let Some(source) = self.selected_session().cloned() else {
             return;
         };
-        let Ok(target) = handoff::target(&source) else {
+        self.seed_handoff(&source, false, window, cx);
+    }
+
+    /// "Start fresh from a summary" for `session`: the handoff page with a
+    /// new agent of the same provider and a cheap model's summary as the
+    /// brief, so a session whose prompt cache has gone cold is continued
+    /// without being resumed. The user reviews the settings and starts it.
+    /// A session that is not open yet is selected first; the page follows
+    /// once the selection lands.
+    pub(super) fn start_summary_handoff(
+        &mut self,
+        session: &Session,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.spawn_pending || self.view.creating {
+            return;
+        }
+        if self.view.selected.as_ref() != Some(&session.id) {
+            self.extras.summary_pending = Some(session.id.clone());
+            self.command(Command::Select(session.id.clone()), cx);
+            return;
+        }
+        self.extras.summary_pending = None;
+        self.show_screen(Screen::Handoff, window, cx);
+        if self.screen != Screen::Handoff {
+            return;
+        }
+        self.extras.notice.clear();
+        self.extras.confirm_end = None;
+        self.extras.handoff_seen = self
+            .view
+            .handoff_receipt
+            .as_ref()
+            .map_or(0, |receipt| receipt.number);
+        self.extras.handoff_sent = false;
+        self.seed_handoff(session, true, window, cx);
+        cx.notify();
+    }
+
+    /// Open the page `start_summary_handoff` asked for once its session is
+    /// the selected one; a selection that went elsewhere drops the request.
+    pub(super) fn resume_summary_handoff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.extras.summary_pending.clone() else {
+            return;
+        };
+        if self.view.selected.as_ref() != Some(&id) {
+            if !self.view.sessions.iter().any(|s| s.id == id) {
+                self.extras.summary_pending = None;
+            }
+            return;
+        }
+        if let Some(session) = self.selected_session().cloned() {
+            self.start_summary_handoff(&session, window, cx);
+        }
+    }
+
+    /// The successor `fresh` names for `source`: its own provider afresh, or
+    /// the other one. `None` where the session cannot be handed off.
+    pub(super) fn handoff_target(&self, source: &Session) -> Option<&'static str> {
+        let [other, same] = handoff::targets(source).ok()?;
+        Some(if self.extras.handoff_fresh {
+            same
+        } else {
+            other
+        })
+    }
+
+    /// Point the shared launch pickers at the chosen successor.
+    fn seed_handoff(
+        &mut self,
+        source: &Session,
+        fresh: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.extras.handoff_fresh = fresh;
+        let Some(target) = self.handoff_target(source) else {
             return;
         };
         self.choose_provider(target, window, cx);
@@ -38,8 +116,10 @@ impl Workspace {
         self.reset_model_picker(window, cx);
         self.reconcile_effort(window, cx);
         self.permission = handoff::carry_permission(target, &source.permission_mode);
-        self.extras.handoff_brief = if source.stopped() {
-            Brief::Mechanical
+        // Starting fresh exists to leave the source's context alone, and an
+        // ended agent cannot write its own brief: both default to the summary.
+        self.extras.handoff_brief = if source.stopped() || fresh {
+            Brief::Summary
         } else {
             Brief::Agent
         };
@@ -68,9 +148,10 @@ impl Workspace {
     }
 
     pub(super) fn handoff_title(&self) -> String {
-        match self.selected_session().map(handoff::target) {
-            Some(Ok(target)) => format!("Continue with {}", handoff::provider_name(target)),
-            _ => "Continue with another agent".into(),
+        match self.selected_session().and_then(|s| self.handoff_target(s)) {
+            Some(_) if self.extras.handoff_fresh => "Start fresh from a summary".into(),
+            Some(target) => format!("Continue with {}", handoff::provider_name(target)),
+            None => "Continue with another agent".into(),
         }
     }
 
@@ -81,7 +162,7 @@ impl Workspace {
         let Some(source) = self.selected_session().cloned() else {
             return;
         };
-        let Ok(target) = handoff::target(&source) else {
+        let Some(target) = self.handoff_target(&source) else {
             return;
         };
         let model = if self.model_choice == "__custom" {
@@ -147,12 +228,16 @@ impl Workspace {
     /// The page's primary action, in its header so it stays on screen at any
     /// window height; `None` where the session cannot be continued.
     pub(super) fn handoff_continue(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let target = handoff::target(self.selected_session()?).ok()?;
+        let target = self.handoff_target(self.selected_session()?)?;
         let enabled = !self.handoff_busy()
             && self.view.connected
             && !self.demo
             && self.handoff_detection(target).1 != Some(false);
-        let label = SharedString::from(format!("Continue with {}", handoff::provider_name(target)));
+        let label = SharedString::from(if self.extras.handoff_fresh {
+            "Start fresh".into()
+        } else {
+            format!("Continue with {}", handoff::provider_name(target))
+        });
         Some(
             self.primary_button("handoff-continue", label, enabled)
                 .debug_selector(|| "handoff-continue".into())
@@ -173,8 +258,8 @@ impl Workspace {
                 "handoff-none",
             ));
         };
-        let target = match handoff::target(&source) {
-            Ok(target) => target,
+        let target = match handoff::targets(&source) {
+            Ok(_) => self.handoff_target(&source).unwrap_or("claude"),
             Err(error) => {
                 return div().debug_selector(|| "handoff-unavailable".into()).child(
                     chrome::notice_line(
@@ -188,6 +273,7 @@ impl Workspace {
         };
         let name = handoff::provider_name(target);
         let source_name = handoff::provider_name(&source.provider);
+        let fresh = self.extras.handoff_fresh;
         let busy = self.handoff_busy() || !self.view.connected;
         let (checking, found) = self.handoff_detection(target);
         let missing = found == Some(false);
@@ -240,12 +326,50 @@ impl Workspace {
                 div()
                     .text_size(px(chrome::scale::CAPTION))
                     .text_color(rgb(p.muted))
-                    .child(format!(
-                        "{name} starts in this same folder and reads a written brief. This session \
-                         stays available with its history; {name} does not receive the private \
-                         context held by {source_name}."
-                    )),
+                    .child(if fresh {
+                        format!(
+                            "A new {name} agent starts in this same folder with an empty context \
+                             and reads a written brief, so this session's long context is not \
+                             read again. This session stays available with its history."
+                        )
+                    } else {
+                        format!(
+                            "{name} starts in this same folder and reads a written brief. This \
+                             session stays available with its history; {name} does not receive \
+                             the private context held by {source_name}."
+                        )
+                    }),
             );
+        let other = handoff::target(&source).unwrap_or("codex");
+        let way = |id: &'static str, label: String, value: bool| {
+            self.button(id, label, !busy)
+                .debug_selector(move || id.into())
+                .when(fresh == value, |d| {
+                    d.bg(rgb(p.selected)).text_color(rgb(p.accent))
+                })
+                .when(!busy && fresh != value, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        if let Some(source) = this.selected_session().cloned() {
+                            this.seed_handoff(&source, value, window, cx);
+                        }
+                        cx.notify();
+                    }))
+                })
+        };
+        let ways = div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .child(way(
+                "handoff-way-other",
+                format!("Continue with {}", handoff::provider_name(other)),
+                false,
+            ))
+            .child(way(
+                "handoff-way-fresh",
+                format!("Start a fresh {source_name}"),
+                true,
+            ));
 
         let detection = match (checking, found) {
             (true, _) => chrome::notice_line(
@@ -296,7 +420,11 @@ impl Workspace {
                                 div()
                                     .text_size(px(chrome::scale::HEADING))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(format!("New {name} agent")),
+                                    .child(if fresh {
+                                        format!("Fresh {name} agent")
+                                    } else {
+                                        format!("New {name} agent")
+                                    }),
                             )
                             .child(
                                 div()
@@ -312,6 +440,7 @@ impl Workspace {
                         ))
                     }),
             )
+            .child(ways)
             .child(self.render_launch_options(busy, cx));
 
         let stopped = source.stopped();
@@ -347,6 +476,12 @@ impl Workspace {
                         !busy && !stopped,
                     ))
                     .child(choice(
+                        "handoff-brief-summary",
+                        "Summary by a fast model".into(),
+                        Brief::Summary,
+                        !busy,
+                    ))
+                    .child(choice(
                         "handoff-brief-quick",
                         "Quick summary".into(),
                         Brief::Mechanical,
@@ -362,6 +497,13 @@ impl Workspace {
                             "{source_name} stops its current work and writes the brief, which takes \
                              one turn and up to 2½ minutes. If it cannot, the hub uses a quick \
                              summary instead and says so."
+                        ),
+                        (Brief::Summary, _) => format!(
+                            "A fast, inexpensive model (Haiku for Claude, unless Settings names \
+                             another title model) reads the quick summary and the latest part of \
+                             the conversation and writes the brief, in up to about 1½ minutes. \
+                             {source_name} is not resumed or sent anything. If the model cannot, \
+                             the hub uses the quick summary instead and says so."
                         ),
                         (Brief::Mechanical, true) => "This agent has ended, so the hub summarizes \
                             its retained conversation."
@@ -388,6 +530,7 @@ impl Workspace {
                     Stage::Brief(Brief::Agent) => {
                         format!("Asking {source_name} to write the brief…")
                     }
+                    Stage::Brief(Brief::Summary) => "A fast model is writing the summary…".into(),
                     Stage::Brief(Brief::Mechanical) => "Summarizing the conversation…".into(),
                     Stage::Starting => format!("Starting {name}…"),
                 },
@@ -529,6 +672,7 @@ mod tests {
             brief: Some(Written {
                 path: "/h/b.md".into(),
                 fallback: None,
+                kind: Brief::Agent,
             }),
             error: None,
         };
@@ -621,6 +765,7 @@ mod tests {
                     brief: Some(Written {
                         path: "/h/.workspacer/handoffs/b.md".into(),
                         fallback: None,
+                        kind: Brief::Agent,
                     }),
                     error: None,
                 });
@@ -662,18 +807,19 @@ mod tests {
             assert_eq!(this.handoff_title(), "Continue with Claude");
             // Bypass intent carries across vocabularies; nothing wider exists.
             assert_eq!(this.permission, Permission::FullAccess);
-            // An ended agent cannot take the turn to write its own brief.
-            assert_eq!(this.extras.handoff_brief, Brief::Mechanical);
+            // An ended agent cannot take the turn to write its own brief; a
+            // cheap model summarizes it instead.
+            assert_eq!(this.extras.handoff_brief, Brief::Summary);
         });
         click(&mut visual, "handoff-brief-agent");
         workspace.read_with(&visual, |this, _| {
-            assert_eq!(this.extras.handoff_brief, Brief::Mechanical)
+            assert_eq!(this.extras.handoff_brief, Brief::Summary)
         });
         click(&mut visual, "handoff-continue");
         let Some(Command::Handoff(first)) = next_effect(&mut commands) else {
             panic!("Continue must request a handoff");
         };
-        assert_eq!(first.brief, Brief::Mechanical);
+        assert_eq!(first.brief, Brief::Summary);
         assert_eq!(first.successor.provider, "claude");
         assert_eq!(first.successor.permission, Permission::FullAccess);
 
@@ -688,6 +834,7 @@ mod tests {
                     brief: Some(Written {
                         path: "/h/.workspacer/handoffs/x.md".into(),
                         fallback: None,
+                        kind: Brief::Summary,
                     }),
                     error: Some("profile unavailable".into()),
                 });
@@ -752,5 +899,156 @@ mod tests {
             next_effect(&mut commands).is_none(),
             "missing Codex is not launched"
         );
+    }
+
+    fn stopped(id: &str) -> Session {
+        let mut s = source("claude");
+        s.id = id.into();
+        s.state = "stopped".into();
+        s
+    }
+
+    #[gpui::test]
+    fn start_summary_handoff_starts_a_fresh_same_provider_agent(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(view(vec![stopped("a")])), window, cx);
+                let session = this.selected_session().cloned().unwrap();
+                this.start_summary_handoff(&session, window, cx);
+            })
+        });
+        visual.run_until_parked();
+        let seen: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(seen.iter().any(|c| matches!(c,
+            Command::Request(Request::Setup { provider, check: false }) if provider == "claude")));
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.screen, Screen::Handoff);
+            assert_eq!(this.provider, "claude");
+            assert!(this.extras.handoff_fresh);
+            assert_eq!(this.extras.handoff_brief, Brief::Summary);
+            assert_eq!(this.handoff_title(), "Start fresh from a summary");
+        });
+        // The cross-provider way stays one click away, and back.
+        click(&mut visual, "handoff-way-other");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.provider, "codex");
+            assert!(!this.extras.handoff_fresh);
+            assert_eq!(this.handoff_title(), "Continue with Codex");
+            assert_eq!(this.extras.handoff_brief, Brief::Summary, "an ended agent");
+        });
+        click(&mut visual, "handoff-way-fresh");
+        workspace.read_with(&visual, |this, _| assert_eq!(this.provider, "claude"));
+        click(&mut visual, "handoff-continue");
+        let Some(Command::Handoff(request)) = next_effect(&mut commands) else {
+            panic!("Start fresh must request one handoff");
+        };
+        assert_eq!(request.source, "a");
+        assert_eq!(request.brief, Brief::Summary);
+        assert_eq!(request.successor.provider, "claude");
+        assert_eq!(request.successor.cwd, "/work/repo-wt");
+        assert!(request.successor.message.is_empty());
+        assert!(
+            request.successor.resume_session_id.is_none(),
+            "never a resume"
+        );
+        // The progress line names the cheap model, not the source.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = (*this.view).clone();
+                next.handoff = Some(wks_native::handoff::Progress {
+                    number: 3,
+                    source: "a".into(),
+                    provider: "claude".into(),
+                    stage: Stage::Brief(Brief::Summary),
+                });
+                this.update_view(Arc::new(next), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("handoff-status").is_some());
+        workspace.read_with(&visual, |this, _| assert!(this.handoff_busy()));
+    }
+
+    #[gpui::test]
+    fn start_summary_handoff_selects_the_session_first_and_follows_it(cx: &mut TestAppContext) {
+        let (workspace, mut visual, mut commands) = fixture(cx);
+        let paused = stopped("b");
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(
+                    Arc::new(view(vec![source("claude"), paused.clone()])),
+                    window,
+                    cx,
+                );
+                this.start_summary_handoff(&paused, window, cx);
+            })
+        });
+        visual.run_until_parked();
+        assert!(matches!(
+            next_effect(&mut commands),
+            Some(Command::Select(id)) if id == "b"
+        ));
+        workspace.read_with(&visual, |this, _| {
+            assert_ne!(
+                this.screen,
+                Screen::Handoff,
+                "not before the selection lands"
+            )
+        });
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut next = view(vec![source("claude"), paused.clone()]);
+                next.selected = Some("b".into());
+                this.update_view(Arc::new(next), window, cx);
+            })
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.screen, Screen::Handoff);
+            assert!(this.extras.handoff_fresh && this.extras.summary_pending.is_none());
+            assert_eq!(this.extras.handoff_brief, Brief::Summary);
+        });
+    }
+
+    #[gpui::test]
+    fn session_details_offer_a_fresh_start_and_live_sessions_can_pick_the_summary(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, mut visual, _commands) = fixture(cx);
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                this.update_view(Arc::new(view(vec![source("codex")])), window, cx);
+                this.open_feature(Screen::Session, window, cx);
+            })
+        });
+        click(&mut visual, "fresh-session");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.screen, Screen::Handoff);
+            assert_eq!(this.provider, "codex");
+            assert!(this.extras.handoff_fresh);
+            // Starting fresh leaves even a live source's context alone.
+            assert_eq!(this.extras.handoff_brief, Brief::Summary);
+        });
+        // The ordinary entry keeps its cross-provider, agent-written default,
+        // and the summary is one of its brief choices.
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.open_feature(Screen::Handoff, window, cx)
+            })
+        });
+        visual.run_until_parked();
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.provider, "claude");
+            assert!(!this.extras.handoff_fresh);
+            assert_eq!(this.extras.handoff_brief, Brief::Agent);
+        });
+        click(&mut visual, "handoff-brief-summary");
+        workspace.read_with(&visual, |this, _| {
+            assert_eq!(this.extras.handoff_brief, Brief::Summary)
+        });
     }
 }

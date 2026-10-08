@@ -385,6 +385,23 @@ impl Generate for FakeTitles {
         let answer = self.answer.clone();
         Box::pin(async move { answer })
     }
+    fn brief<'a>(
+        &'a self,
+        provider: &'a str,
+        model: Option<&'a str>,
+        config: &'a Value,
+        prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = completion::Outcome<String>> + Send + 'a>>
+    {
+        let _ = config;
+        self.calls.lock().unwrap().push((
+            provider.into(),
+            model.map(str::to_owned),
+            format!("[brief] {prompt}"),
+        ));
+        let answer = self.answer.clone();
+        Box::pin(async move { answer })
+    }
 }
 fn titled(
     config: Value,
@@ -488,4 +505,39 @@ async fn legacy_title_rpc_honours_the_fixed_harness_and_the_off_switch() {
         Value::Null
     );
     assert_eq!(fake.calls.lock().unwrap().len(), 1);
+}
+#[tokio::test]
+async fn handoff_summaries_use_the_title_target_and_report_failures_by_reason() {
+    // Default: the session's own harness, Haiku for Claude.
+    let (_root, service, fake) = titled(json!({}), Ok("## Goal\nShip it".into()));
+    let outcome = service.summarize_handoff("claude", "the prompt").await;
+    assert_eq!(outcome.text, Ok("## Goal\nShip it".into()));
+    assert_eq!(
+        (outcome.provider.as_str(), outcome.model.as_deref()),
+        ("claude", Some("haiku"))
+    );
+    assert_eq!(fake.calls.lock().unwrap()[0].2, "[brief] the prompt");
+    // An explicit per-harness choice is passed exactly; the titles' off
+    // switch does not apply to a brief the user asked for.
+    let (_root, service, fake) = titled(
+        json!({"agents":{"autoTitle":{"enabled":false,"models":{"codex":"gpt-5.4-mini"}}}}),
+        Err(text::Failure::Authentication),
+    );
+    let outcome = service.summarize_handoff("codex", "p").await;
+    assert_eq!(outcome.text, Err("unauthenticated"));
+    assert_eq!(outcome.model.as_deref(), Some("gpt-5.4-mini"));
+    assert_eq!(fake.calls.lock().unwrap()[0].0, "codex");
+    let (_root, service, _) = titled(json!({}), Ok("   ".into()));
+    assert_eq!(
+        service.summarize_handoff("claude", "p").await.text,
+        Err("empty")
+    );
+}
+#[test]
+fn brief_limits_are_wider_than_titles_but_bounded() {
+    let (title, brief) = (completion::Limits::TITLE, completion::Limits::BRIEF);
+    assert_eq!((title.timeout.as_secs(), title.chars), (25, 416));
+    assert!(!title.no_tools && brief.no_tools);
+    assert!(brief.timeout > title.timeout && brief.timeout.as_secs() <= 120);
+    assert!(brief.chars > 4_000 && brief.output <= 1024 * 1024);
 }

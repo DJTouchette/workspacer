@@ -2707,6 +2707,8 @@ fn assert_no_side_effects(hub: &mut Hub) {
                     | "claude.signal"
                     | "claude.handoffBrief"
                     | "claude.handoffAgentBrief"
+                    | "claude.handoffSummaryBrief"
+                    | "sessions.resume"
             ),
             "unexpected {method}"
         );
@@ -2786,6 +2788,86 @@ async fn handoff_writes_the_brief_then_stages_one_successor_in_the_same_folder()
             .iter()
             .any(|s| s.id == "succ" && s.provider == "codex")
     );
+    assert_no_side_effects(&mut hub);
+}
+
+#[tokio::test]
+async fn summary_handoff_starts_a_fresh_same_provider_agent_without_resuming_the_source() {
+    use wks_native::handoff::{Brief, Stage};
+    let (mut hub, controller) = handoff_hub(handoff_source(json!({"mode":"stopped"}))).await;
+    let mut request = handoff_request(Brief::Summary);
+    request.successor.provider = "claude".into();
+    controller.command(Command::Handoff(request)).unwrap();
+    let brief = hub.frame("call", Some("claude.handoffSummaryBrief")).await;
+    assert_eq!(brief.value["params"], json!({"sessionId":"src"}));
+    let writing = view(&controller, |v| v.handoff.is_some()).await;
+    assert_eq!(
+        writing.handoff.as_ref().unwrap().stage,
+        Stage::Brief(Brief::Summary)
+    );
+    // The model failed: the hub's mechanical brief is used, and said so.
+    let path = "/home/u/.workspacer/handoffs/20261007-120000-src.md";
+    brief
+        .result(json!({"ok":true,"path":path,"fallback":true,
+            "error":"The summary model did not answer in time",
+            "summary":{"provider":"claude","model":"haiku"}}))
+        .await;
+    let spawn = hub.frame("call", Some("agents.spawn")).await;
+    assert_eq!(spawn.value["params"]["provider"], "claude");
+    assert_eq!(spawn.value["params"]["cwd"], "/work/repo-wt");
+    assert!(spawn.value["params"].get("resumeSessionId").is_none());
+    assert!(spawn.value["params"].get("message").is_none());
+    spawn.result(json!({"sessionId":"fresh"})).await;
+    let done = view(&controller, |v| {
+        v.handoff_receipt
+            .as_ref()
+            .is_some_and(|r| r.successor.is_some())
+    })
+    .await;
+    assert_eq!(done.selected.as_deref(), Some("fresh"));
+    assert_eq!(
+        done.spawn_receipt
+            .as_ref()
+            .unwrap()
+            .unsent_message
+            .as_deref(),
+        Some(wks_native::handoff::successor_prompt(path).as_str())
+    );
+    assert!(
+        done.notice
+            .starts_with("Handoff ready with a fallback brief")
+            && done
+                .notice
+                .contains("The summary model did not write the brief"),
+        "{}",
+        done.notice
+    );
+    // The paused source stays listed as it was.
+    let source = done.sessions.iter().find(|s| s.id == "src").unwrap();
+    assert!(source.stopped());
+    assert_no_side_effects(&mut hub);
+
+    // A stopped agent cannot take the turn an agent-written brief needs.
+    let mut agent = handoff_request(Brief::Agent);
+    agent.successor.provider = "claude".into();
+    controller.command(Command::Handoff(agent)).unwrap();
+    let refused = view(&controller, |v| {
+        v.handoff_receipt
+            .as_ref()
+            .is_some_and(|r| r.successor.is_none())
+    })
+    .await;
+    assert!(
+        refused
+            .handoff_receipt
+            .as_ref()
+            .unwrap()
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("ended agent")
+    );
+    tokio::time::sleep(Duration::from_millis(50)).await;
     assert_no_side_effects(&mut hub);
 }
 

@@ -78,6 +78,7 @@
     "claude.gate",
     "claude.handoffAgentBrief",
     "claude.handoffBrief",
+    "claude.handoffSummaryBrief",
     "claude.listModels",
     "claude.profiles.add",
     "claude.profiles.list",

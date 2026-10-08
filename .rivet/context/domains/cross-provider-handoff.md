@@ -14,6 +14,8 @@ related_paths:
   - "apps/desktop/src/renderer/src/components/claude/ConversationEmptyState.tsx"
   - "apps/desktop/src/renderer/src/backend/webBackend.ts"
   - "services/hub-rs/src/services/live_controls/handoff.rs"
+  - "services/hub-rs/src/services/live_controls/summary.rs"
+  - "services/hub-rs/src/services/provider_utilities/completion.rs"
   - "services/hub-rs/src/services/live_controls.rs"
   - "apps/native/src/handoff.rs"
   - "apps/native/src/controller.rs"
@@ -27,7 +29,7 @@ related_paths:
   - "apps/tui/src/app/input/pickers.rs"
   - "apps/tui/src/keys.rs"
 owner: Damien Touchette
-last_reviewed: 2026-10-05
+last_reviewed: 2026-10-07
 ---
 
 # Cross-provider handoff
@@ -95,6 +97,39 @@ back. Neither completion check validates all six sections or proves writing
 has finished. A bus caller's timeout may also expire before the service's
 150-second wait; do not equate that timeout with a cancelled source-agent turn.
 
+## Summary brief (cheap model, for cold sessions)
+
+`claude.handoffSummaryBrief` (`live_controls/summary.rs`, hub-rs only; no
+desktop or TUI caller yet) exists so a paused session whose prompt cache has
+gone cold is never resumed just to describe itself. Params `{sessionId}`. The
+hub fetches the mechanical digest with `no_persist` (failure → `ok:false`, no
+model call), the newest 300 conversation items (optional enrichment), and
+renders a prompt: digest clipped to 16k chars, tail newest-first within 28k
+(latest assistant text 6k, others 3k, tool calls one line, successful tool
+results/command output/usage omitted, only the latest plan), whole prompt
+≤48k chars (~12k tokens), with credential-shaped strings (sk-/ghp_/AKIA/PEM
+keys…) masked. The writer is the title target (`agents.autoTitle`: the
+session's harness unless one is configured, Haiku for Claude) via
+`provider_utilities::Service::summarize_handoff` → `completion::oneshot`
+with `Limits::BRIEF` (90 s, tool-less: Claude goes through claudemon
+`/oneshot` with `no_tools`, whose prompt cap is now 64k chars). The whole
+model step has a 100 s deadline; the method's server budget is 150 s
+(`protocol::provider_timeout`, federation 145 s). The titles' `enabled`
+switch does not apply. Output is unwrapped from a fence, rejected when under
+120 chars or refusal-shaped, top headings demoted, and written create-new
+(0700 dir) as `<ts>-<nonce>-summary.md` with the digest appended. Success:
+`{ok:true,path,summary:{provider,model}}`. Any failure/timeout/refusal/write
+error persists the mechanical brief and returns `{ok,path,fallback:true,
+error:<plain reason>,summary?}` (no `summary` on deadline). Registered in
+`contracts/backend-capabilities.json` (`full` + `currentAdditions`),
+regenerated `brain-capabilities.json`, relay `FULL`, and the desktop
+capability fixtures, like `fs.compareWrite`.
+
+claudemon's `POST /sessions/:id/handoff` now reads the conversation through
+the same `retained_conversation` helper as `GET /conversation`, so a stopped
+Claude session whose live log was released hands off from its transcript
+(previously a 404), and a Codex rollout is replayed.
+
 `claude.handoffBrief` and `claude.handoffAgentBrief` are bus methods; desktop
 preload exposes the corresponding `claudeHandoff*` methods. The headless rich
 tier exists now; older comments describing it as desktop-only are obsolete.
@@ -103,7 +138,15 @@ tier exists now; older comments describing it as desktop-only are obsolete.
 
 The GPUI client's header arrow (`open-handoff`) and Session details offer
 "Continue with Codex…" on Claude sessions and "Continue with Claude…" on Codex
-sessions; native launches admit only those two. `apps/native/src/handoff.rs`
+sessions; native launches admit only those two. Session details also offer
+"Start fresh from a summary…" (`Workspace::start_summary_handoff(&Session)`,
+the entry other UI wires buttons to): the same page with a SAME-provider
+successor (`handoff::targets` = [other, same], `extras.handoff_fresh`) and
+`Brief::Summary` preselected; it selects an unselected session first and
+opens when the selection lands (`extras.summary_pending`). The page toggles
+between the two successors; Summary is the default brief for stopped sources
+and fresh starts, Agent stays the default for live cross-provider handoffs and
+is refused for ended agents. The source is never resumed or archived. `apps/native/src/handoff.rs`
 holds the rules: Fleet Manager rows (`isWakeTarget`/`isFleetManager`, projected
 as `Session.wake_target`) are refused with a pointer to manager replacement;
 access carries the source's `livePermissionMode`/`settings.permissionMode`

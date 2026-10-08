@@ -68,6 +68,17 @@ pub(crate) trait Generate: Send + Sync {
         config: &'a Value,
         prompt: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = completion::Outcome<String>> + Send + 'a>>;
+    /// Writes one handoff brief (see [`completion::Limits::BRIEF`]).
+    fn brief<'a>(
+        &'a self,
+        _provider: &'a str,
+        _model: Option<&'a str>,
+        _config: &'a Value,
+        _prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = completion::Outcome<String>> + Send + 'a>>
+    {
+        Box::pin(async { Err(text::Failure::Unsupported) })
+    }
 }
 struct Cli {
     home: PathBuf,
@@ -91,6 +102,32 @@ impl Generate for Cli {
             prompt,
         ))
     }
+    fn brief<'a>(
+        &'a self,
+        provider: &'a str,
+        model: Option<&'a str>,
+        config: &'a Value,
+        prompt: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = completion::Outcome<String>> + Send + 'a>>
+    {
+        Box::pin(completion::oneshot(
+            provider,
+            model,
+            config,
+            &self.home,
+            self.engine.as_ref(),
+            prompt,
+            completion::Limits::BRIEF,
+        ))
+    }
+}
+/// Who wrote (or was asked to write) a handoff summary, and what came back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BriefOutcome {
+    pub provider: String,
+    pub model: Option<String>,
+    /// The model's text, or why there is none (a [`text::Failure::reason`]).
+    pub text: Result<String, &'static str>,
 }
 /// One title attempt, reported truthfully: a fallback (the first line of the
 /// user's own message) is never presented as a model-written title.
@@ -135,6 +172,7 @@ pub struct Service {
     receiver: Mutex<Option<mpsc::Receiver<Check>>>,
     stop: watch::Sender<bool>,
     titles: tokio::sync::Semaphore,
+    briefs: tokio::sync::Semaphore,
     generator: Arc<dyn Generate>,
 }
 impl Service {
@@ -166,6 +204,7 @@ impl Service {
             receiver: Mutex::new(Some(rx)),
             stop,
             titles: tokio::sync::Semaphore::new(4),
+            briefs: tokio::sync::Semaphore::new(2),
             generator,
         })
     }
@@ -403,6 +442,31 @@ impl Service {
                 None => degraded("empty"),
             },
             Err(failure) => degraded(failure.reason()),
+        }
+    }
+    /// Have the cheap title harness and model write a handoff brief from a
+    /// prepared prompt. Same target as titles (`agents.autoTitle`): the
+    /// session's own harness unless one is configured, Haiku for Claude.
+    /// Waits for one of two slots; the caller owns the overall deadline.
+    pub async fn summarize_handoff(&self, agent_provider: &str, prompt: &str) -> BriefOutcome {
+        let config = self.config.get();
+        let target = text::title_target(&config, agent_provider);
+        let outcome = |text| BriefOutcome {
+            provider: target.provider.clone(),
+            model: target.model.clone(),
+            text,
+        };
+        let Ok(_permit) = self.briefs.acquire().await else {
+            return outcome(Err("busy"));
+        };
+        match self
+            .generator
+            .brief(&target.provider, target.model.as_deref(), &config, prompt)
+            .await
+        {
+            Ok(text) if !text.trim().is_empty() => outcome(Ok(text)),
+            Ok(_) => outcome(Err(text::Failure::Empty.reason())),
+            Err(failure) => outcome(Err(failure.reason())),
         }
     }
     async fn title(&self, request: &Value) -> Result<Value> {

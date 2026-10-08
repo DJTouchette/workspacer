@@ -451,10 +451,12 @@ impl Fixture {
             }
             // A fixture brief path: nothing is written and no provider runs;
             // the successor is the fake spawn above.
-            "claude.handoffBrief" | "claude.handoffAgentBrief" => json!({
-                "ok": true,
-                "path": "/fixture/home/.workspacer/handoffs/20261005-120000-fixture.md",
-            }),
+            "claude.handoffBrief" | "claude.handoffAgentBrief" | "claude.handoffSummaryBrief" => {
+                json!({
+                    "ok": true,
+                    "path": "/fixture/home/.workspacer/handoffs/20261005-120000-fixture.md",
+                })
+            }
             "providers.checkAll" => json!([
                 {"provider": "claude", "found": true},
                 {"provider": "codex", "found": false},
