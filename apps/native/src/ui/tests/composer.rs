@@ -869,3 +869,37 @@ fn deny_with_note_sends_the_note_and_closes_with_its_approval(cx: &mut TestAppCo
     show(&mut visual, None);
     workspace.read_with(&visual, |this, _| assert!(!this.extras.deny_open));
 }
+
+#[gpui::test]
+fn a_finished_plan_reads_as_a_plan_with_approve_and_keep_planning(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(800.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].approval = Some(serde_json::json!({
+                "toolName": "ExitPlanMode",
+                "toolInput": {"plan": "## Plan\n\n1. Add the parser\n2. Wire the CLI"},
+            }));
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    effects(&mut commands);
+    assert!(visual.debug_bounds("plan-card").is_some());
+    assert!(visual.debug_bounds("plan-body").is_some());
+    click(&mut visual, "plan-revise");
+    visual.simulate_input("split step 1 into lexer and parser");
+    click(&mut visual, "deny-note-send");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Act { action: Action::DenyWithNote(note), .. }]
+            if note == "split step 1 into lexer and parser"));
+    click(&mut visual, "plan-approve");
+    assert!(matches!(
+        effects(&mut commands).as_slice(),
+        [Command::Act {
+            action: Action::Approve(true),
+            ..
+        }]
+    ));
+}

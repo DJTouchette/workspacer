@@ -685,6 +685,10 @@ be expanded, and attachment controls share the composer action row.
   silently losing their beginning. The snapshot is independent of live chat.
   Server-trimmed history is labeled; this cannot recover events the server no
   longer retains. History responses use the existing 16 MiB bus frame limit.
+- **A finished plan reads as a plan.** When Claude asks to leave plan mode
+  (`ExitPlanMode`), the approval card renders the plan as Markdown in a
+  scrollable panel, with **Approve plan** and **Keep planning…**; the latter is
+  a deny with your note, so Claude revises the plan from your feedback.
 - **Deny with note…** on a Claude approval card opens a one-line box: Enter
   (or **Deny and tell it**) denies the tool and hands the agent your note
   (`claude.approve` with a `reason`; the stream transport's deny message, the

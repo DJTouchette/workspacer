@@ -251,7 +251,7 @@ impl Workspace {
                 d.child(self.render_pending(window, cx))
             })
             .when_some(selected.and_then(|s| s.approval.as_ref()), |d, approval| {
-                d.child(self.render_approval_card(approval, layout, cx))
+                d.child(self.render_approval_card(approval, layout, window, cx))
             })
             .when_some(selected.filter(|s| s.questions.is_some()), |d, session| {
                 d.child(self.render_questions(session, layout.enabled, compact, window, cx))
@@ -347,11 +347,22 @@ impl Workspace {
         &self,
         approval: &serde_json::Value,
         layout: ChatLayout,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         use serde_json::Value;
         let p = self.appearance.palette();
         let (compact, enabled) = (layout.compact, layout.enabled);
+        if let Some(plan) = approval
+            .get("toolName")
+            .and_then(Value::as_str)
+            .filter(|tool| *tool == "ExitPlanMode")
+            .and(approval.pointer("/toolInput/plan"))
+            .and_then(Value::as_str)
+            .filter(|plan| !plan.trim().is_empty())
+        {
+            return self.render_plan_card(plan, layout, window, cx);
+        }
         let mono = gpui_component::Theme::global(cx).mono_font_family.clone();
         let label = approval
             .get("toolName")
@@ -455,41 +466,7 @@ impl Workspace {
                 )
             })
             .when(self.extras.deny_open, |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .debug_selector(|| "deny-note".into())
-                                .on_key_down(cx.listener(
-                                    |this, event: &gpui::KeyDownEvent, window, cx| {
-                                        let k = &event.keystroke;
-                                        if k.key == "enter" && !k.modifiers.shift {
-                                            cx.stop_propagation();
-                                            this.send_deny_note(window, cx);
-                                        } else if k.key == "escape" {
-                                            cx.stop_propagation();
-                                            this.extras.deny_open = false;
-                                            cx.notify();
-                                        }
-                                    },
-                                ))
-                                .child(Input::new(&self.extras.deny_note)),
-                        )
-                        .child(
-                            self.button("deny-note-send", "Deny and tell it", enabled)
-                                .debug_selector(|| "deny-note-send".into())
-                                .when(enabled, |d| {
-                                    d.on_click(cx.listener(|this, _, window, cx| {
-                                        this.send_deny_note(window, cx)
-                                    }))
-                                }),
-                        ),
-                )
+                d.child(self.render_deny_note(enabled, "Deny and tell it", cx))
             })
             .child(
                 div()
@@ -531,6 +508,125 @@ impl Workspace {
                             )
                         },
                     ),
+            )
+    }
+
+    /// Claude finished planning (`ExitPlanMode` waiting for approval): the
+    /// plan itself, readable, with Approve plan / Keep planning. Keeping on
+    /// planning is a deny with a note, so the feedback reaches the model.
+    fn render_plan_card(
+        &self,
+        plan: &str,
+        layout: ChatLayout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let (compact, enabled) = (layout.compact, layout.enabled);
+        div()
+            .debug_selector(|| "plan-card".into())
+            .occlude()
+            .w_full()
+            .p(px(if compact { 8. } else { 12. }))
+            .rounded(px(p.panel_radius))
+            .shadow(chrome::floating_shadow(p))
+            .bg(rgb(p.surface))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .text_size(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_color(rgb(p.accent))
+                    .child(status_dot(p.accent))
+                    .child("Plan ready · review it before Claude starts"),
+            )
+            .child(
+                div()
+                    .id("plan-body")
+                    .debug_selector(|| "plan-body".into())
+                    .max_h(px(if compact { 140. } else { 320. }))
+                    .overflow_y_scroll()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(p.control_radius))
+                    .bg(rgb(p.chat))
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .child(self.render_markdown("approval-plan", plan, window, cx)),
+            )
+            .when(self.extras.deny_open, |d| {
+                d.child(self.render_deny_note(enabled, "Keep planning", cx))
+            })
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        self.primary_button("approve", "Approve plan", enabled)
+                            .debug_selector(|| "plan-approve".into())
+                            .when(enabled, |d| {
+                                d.on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.act(Action::Approve(true), cx)
+                                    }),
+                                )
+                            }),
+                    )
+                    .when(!self.extras.deny_open, |d| {
+                        d.child(
+                            self.button("plan-revise", "Keep planning…", enabled)
+                                .debug_selector(|| "plan-revise".into())
+                                .when(enabled, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.extras.deny_open = true;
+                                        this.extras
+                                            .deny_note
+                                            .update(cx, |input, cx| input.focus(window, cx));
+                                        cx.notify();
+                                    }))
+                                }),
+                        )
+                    }),
+            )
+    }
+
+    /// The one-line note box under a Deny with note / Keep planning.
+    fn render_deny_note(&self, enabled: bool, send: &'static str, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .debug_selector(|| "deny-note".into())
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        let k = &event.keystroke;
+                        if k.key == "enter" && !k.modifiers.shift {
+                            cx.stop_propagation();
+                            this.send_deny_note(window, cx);
+                        } else if k.key == "escape" {
+                            cx.stop_propagation();
+                            this.extras.deny_open = false;
+                            cx.notify();
+                        }
+                    }))
+                    .child(Input::new(&self.extras.deny_note)),
+            )
+            .child(
+                self.button("deny-note-send", send, enabled)
+                    .debug_selector(|| "deny-note-send".into())
+                    .when(enabled, |d| {
+                        d.on_click(
+                            cx.listener(|this, _, window, cx| this.send_deny_note(window, cx)),
+                        )
+                    }),
             )
     }
 
