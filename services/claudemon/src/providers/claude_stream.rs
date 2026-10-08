@@ -199,6 +199,17 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             }
             if let Some(context_tokens) = context_tokens_from(msg.get("usage")) {
                 totals.context_tokens = Some(context_tokens);
+                // The request this frame answers read or wrote the prompt
+                // cache, which is what keeps it warm.
+                out.push(AgentUpdate::ApiRequest {
+                    at_ms: None,
+                    message_id: msg.get("id").and_then(Value::as_str).map(str::to_owned),
+                    ttl_seconds: msg
+                        .get("usage")
+                        .and_then(crate::session::prompt_cache::ttl_of),
+                    context_tokens,
+                    model: msg.get("model").and_then(Value::as_str).map(str::to_owned),
+                });
                 out.push(AgentUpdate::Usage {
                     model: msg.get("model").and_then(Value::as_str).map(str::to_owned),
                     input_tokens: None,
@@ -2036,23 +2047,36 @@ mod tests {
     #[test]
     fn assistant_usage_is_context_occupancy() {
         let updates = t(json!({ "type": "assistant", "message": {
+            "id": "msg_1",
             "model": "claude-haiku-4-5",
             "content": [],
             "usage": { "input_tokens": 10, "cache_read_input_tokens": 22474,
-                       "cache_creation_input_tokens": 4427, "output_tokens": 41 }
+                       "cache_creation_input_tokens": 4427, "output_tokens": 41,
+                       "cache_creation": { "ephemeral_5m_input_tokens": 0,
+                                           "ephemeral_1h_input_tokens": 4427 } }
         }}));
         assert_eq!(
             updates,
-            vec![AgentUpdate::Usage {
-                model: Some("claude-haiku-4-5".into()),
-                input_tokens: None,
-                output_tokens: None,
-                cached_input_tokens: None,
-                cost_usd: None,
-                // Input side only — output joins the window next turn.
-                context_tokens: Some(10 + 22474 + 4427),
-                context_window: None,
-            }]
+            vec![
+                AgentUpdate::ApiRequest {
+                    at_ms: None,
+                    message_id: Some("msg_1".into()),
+                    // The write landed in the 1-hour bucket.
+                    ttl_seconds: Some(3600),
+                    context_tokens: 10 + 22474 + 4427,
+                    model: Some("claude-haiku-4-5".into()),
+                },
+                AgentUpdate::Usage {
+                    model: Some("claude-haiku-4-5".into()),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cached_input_tokens: None,
+                    cost_usd: None,
+                    // Input side only — output joins the window next turn.
+                    context_tokens: Some(10 + 22474 + 4427),
+                    context_window: None,
+                }
+            ]
         );
     }
 

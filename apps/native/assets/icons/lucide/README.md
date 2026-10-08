@@ -6,3 +6,7 @@ stroke with `currentColor`, so the native client tints them with `text_color`.
 `reply.svg` and `megaphone.svg` (fleet wake cards' Reply action and progress
 icon, as `FleetMessageCard.tsx`) come from the official Lucide repository's
 `icons/` directory.
+
+`snowflake.svg` (a session whose prompt cache has expired, in the sidebar, the
+context gauge and the composer's cold-cache note) comes from the same `icons/`
+directory.

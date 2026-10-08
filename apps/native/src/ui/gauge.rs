@@ -220,9 +220,13 @@ pub(super) fn hairline(gauge: Gauge, fill: f32, p: Palette) -> Div {
         })
 }
 
-/// The exact figures, shown beside the capsule's revealed actions.
-pub(super) fn detail(gauge: Gauge, p: Palette) -> Stateful<Div> {
-    let tooltip = gauge.explanation();
+/// The exact figures, shown beside the capsule's revealed actions, led by
+/// the cold mark when the session's prompt cache has expired.
+pub(super) fn detail(gauge: Gauge, cold: Option<String>, p: Palette) -> Stateful<Div> {
+    let tooltip = match &cold {
+        Some(cold) => format!("{}\n{cold}", gauge.explanation()),
+        None => gauge.explanation(),
+    };
     let text = gauge.detail();
     let (share, rest) = match text.split_once(" · ") {
         Some((share, rest)) if gauge.pct().is_some() => (share.to_owned(), Some(rest.to_owned())),
@@ -238,6 +242,9 @@ pub(super) fn detail(gauge: Gauge, p: Palette) -> Stateful<Div> {
         .px_1()
         .text_size(px(11.))
         .text_color(rgb(p.muted))
+        .when(cold.is_some(), |d| {
+            d.child(cache::marker(p, 11., true).debug_selector(|| "title-context-cold".into()))
+        })
         .child(
             div()
                 .text_color(rgb(gauge_color(gauge.pct(), p)))
@@ -258,7 +265,12 @@ pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Di
         Some(pct) => format!("{}%", pct.round() as u64),
         None => "—".to_owned(),
     };
-    let tooltip = gauge.explanation();
+    let now = cache::now();
+    let cold = cache::cold(session, now).map(|cold| cache::marker_tooltip(cold, now));
+    let tooltip = match &cold {
+        Some(cold) => format!("{}\n{cold}", gauge.explanation()),
+        None => gauge.explanation(),
+    };
     let color = gauge_color(pct, p);
     const TRACK: f32 = 44.;
     Some(
@@ -292,6 +304,9 @@ pub(super) fn context_meter(session: &Session, p: Palette) -> Option<Stateful<Di
                     }),
             )
             .child(div().text_color(rgb(color)).child(label))
+            .when(cold.is_some(), |d| {
+                d.child(cache::marker(p, 11., false).debug_selector(|| "context-meter-cold".into()))
+            })
             .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx)),
     )
 }

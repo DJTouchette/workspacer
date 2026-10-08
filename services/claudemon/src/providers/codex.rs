@@ -183,6 +183,17 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                     context_tokens,
                     context_window,
                 });
+                // One request per token report: what keeps OpenAI's prompt
+                // cache alive. Its lifetime is never on the wire.
+                if let Some(context_tokens) = context_tokens.filter(|t| *t > 0) {
+                    out.push(AgentUpdate::ApiRequest {
+                        at_ms: None,
+                        message_id: None,
+                        ttl_seconds: None,
+                        context_tokens,
+                        model: None,
+                    });
+                }
             }
         }
         // Thread settings changed — by our own `thread/settings/update` (live
@@ -4628,15 +4639,24 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             "modelContextWindow": 258400 } });
         assert_eq!(
             translate("thread/tokenUsage/updated", &p),
-            vec![AgentUpdate::Usage {
-                model: None,
-                input_tokens: Some(4402946),
-                output_tokens: Some(40196),
-                cached_input_tokens: Some(3733376),
-                cost_usd: None,
-                context_tokens: Some(132153),
-                context_window: Some(258400),
-            }]
+            vec![
+                AgentUpdate::Usage {
+                    model: None,
+                    input_tokens: Some(4402946),
+                    output_tokens: Some(40196),
+                    cached_input_tokens: Some(3733376),
+                    cost_usd: None,
+                    context_tokens: Some(132153),
+                    context_window: Some(258400),
+                },
+                AgentUpdate::ApiRequest {
+                    at_ms: None,
+                    message_id: None,
+                    ttl_seconds: None,
+                    context_tokens: 132153,
+                    model: None,
+                }
+            ]
         );
     }
 

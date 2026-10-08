@@ -1,6 +1,7 @@
 mod archive;
 mod attachments;
 mod bus_commands;
+mod cache;
 mod children;
 mod chrome;
 mod conversation;
@@ -142,6 +143,7 @@ bundled_icons!(
     "lucide/user-round.svg",
     "lucide/reply.svg",
     "lucide/megaphone.svg",
+    "lucide/snowflake.svg",
 );
 
 impl gpui::AssetSource for Assets {
@@ -537,6 +539,9 @@ pub struct Workspace {
     island_motion: island::IslandMotion,
     /// How the capsule's context hairline fills and its glow warms.
     gauge_motion: gauge::GaugeMotion,
+    /// Prompt caches going cold: the re-render at the next expiry and the
+    /// cold-cache notes closed.
+    cache: cache::CacheUi,
     header_bounds: gpui::Bounds<gpui::Pixels>,
     tool_expansion: HashMap<String, bool>,
     turn_clocks: HashMap<String, TurnClock>,
@@ -807,6 +812,7 @@ impl Workspace {
             title_reveal: island::TitleReveal::new(cx),
             island_motion: Default::default(),
             gauge_motion: Default::default(),
+            cache: Default::default(),
             header_bounds: Default::default(),
             tool_expansion: HashMap::new(),
             turn_clocks: HashMap::new(),
@@ -896,6 +902,7 @@ impl Workspace {
         self.sync_tasks(&view, cx);
         self.sync_explorer(&view, cx);
         self.sync_kept_open(&view, cx);
+        self.arm_cache_clock(&view, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt
         {

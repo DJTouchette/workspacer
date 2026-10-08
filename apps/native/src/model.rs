@@ -45,6 +45,60 @@ pub struct Session {
     /// What those tasks are, newest work first; Claude stream sessions only
     /// (PTY sessions report the count alone). See [`crate::background_tasks`].
     pub tasks: Vec<crate::background_tasks::Task>,
+    /// When the session's prompt cache expires, as the daemon derives it
+    /// (`session::prompt_cache` in claudemon). `None` until it has seen a
+    /// request, or for a provider whose caching it cannot describe.
+    pub prompt_cache: Option<PromptCache>,
+}
+
+/// When a session's prompt cache expires and what a message costs after it
+/// has. The snapshot says when, never whether: [`PromptCache::cold_at`]
+/// judges against the reader's clock, so a row goes cold without a new one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PromptCache {
+    pub ttl_seconds: u64,
+    /// The last request that read or wrote the cache, Unix ms.
+    pub last_request_at: i64,
+    /// Unix ms; `last_request_at + ttl`.
+    pub expires_at: i64,
+    /// What the next message resends: all of it, at the write price, once cold.
+    pub context_tokens: u64,
+    /// The lifetime is assumed, not reported (Codex always).
+    pub estimated: bool,
+    /// USD for that resend with the cache expired, and with it warm. `None`
+    /// when the model has no price.
+    pub cold_cost_usd: Option<f64>,
+    pub warm_cost_usd: Option<f64>,
+}
+
+impl PromptCache {
+    fn parse(value: &Value) -> Option<Self> {
+        let field = |names: &[&str]| names.iter().find_map(|name| value.get(*name));
+        let int = |names: &[&str]| field(names).and_then(Value::as_i64);
+        let cost = |names: &[&str]| {
+            field(names)
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v >= 0.)
+        };
+        Some(Self {
+            ttl_seconds: field(&["ttlSeconds", "ttl_seconds"])?.as_u64()?,
+            last_request_at: int(&["lastRequestAt", "last_request_at"])?,
+            expires_at: int(&["expiresAt", "expires_at"])?,
+            context_tokens: field(&["contextTokens", "context_tokens"])
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            estimated: field(&["estimated"])
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            cold_cost_usd: cost(&["coldCostUSD", "cold_cost_usd"]),
+            warm_cost_usd: cost(&["warmCostUSD", "warm_cost_usd"]),
+        })
+    }
+
+    /// Whether the cache has expired by `now` (Unix ms).
+    pub fn cold_at(&self, now: i64) -> bool {
+        now >= self.expires_at
+    }
 }
 
 /// Context-window occupancy as the runtime reports it: the status line's
@@ -318,6 +372,14 @@ impl Session {
         }
         if value.get("status").and_then(Value::as_str) == Some("ended") {
             self.state = "stopped".into();
+        }
+        // A row without the key (a state-only reconciliation) keeps what the
+        // last full one said; an explicit null clears it.
+        if let Some(cache) = ["promptCache", "prompt_cache"]
+            .iter()
+            .find_map(|name| value.get(*name))
+        {
+            self.prompt_cache = PromptCache::parse(cache);
         }
         if let Some(manager) = ["isWakeTarget", "isFleetManager"]
             .iter()
@@ -973,6 +1035,31 @@ pub fn model_display_name(id: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The hub's camelCase row (and the daemon's own snake_case one) carry
+    /// when the cache expires; a row without the key keeps it, null clears it.
+    #[test]
+    fn prompt_cache_follows_the_row_and_goes_cold_on_the_clock() {
+        let mut session = Session::default();
+        session.merge(&json!({"sessionId":"s","promptCache":{
+            "ttlSeconds":3600,"lastRequestAt":1_000,"expiresAt":3_601_000,
+            "contextTokens":624_000,"estimated":false,"coldCostUSD":6.24,"warmCostUSD":0.312}}));
+        let cache = session.prompt_cache.clone().unwrap();
+        assert_eq!(cache.context_tokens, 624_000);
+        assert_eq!(cache.cold_cost_usd, Some(6.24));
+        assert!(!cache.cold_at(3_600_999));
+        assert!(cache.cold_at(3_601_000));
+        session.merge(&json!({"sessionId":"s","mode":"stopped"}));
+        assert_eq!(session.prompt_cache.as_ref(), Some(&cache));
+        session.merge(&json!({"session_id":"s","prompt_cache":{
+            "ttl_seconds":600,"last_request_at":5,"expires_at":600_005,
+            "context_tokens":9,"estimated":true}}));
+        let codex = session.prompt_cache.clone().unwrap();
+        assert!(codex.estimated);
+        assert_eq!(codex.cold_cost_usd, None);
+        session.merge(&json!({"sessionId":"s","promptCache":null}));
+        assert_eq!(session.prompt_cache, None);
+    }
 
     /// The task list rides the daemon row: a PTY row has only the count, a
     /// row that drops the list (all tasks aged out) has none, and an update

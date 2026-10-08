@@ -1048,6 +1048,13 @@ impl Workspace {
                                     session.cwd
                                 );
                                 let details = format!("{details}{}", child_limit_note(session));
+                                let now = cache::now();
+                                let cold = cache::cold(session, now)
+                                    .map(|cold| cache::marker_tooltip(cold, now));
+                                let details = match &cold {
+                                    Some(cold) => format!("{details}\n{cold}"),
+                                    None => details,
+                                };
                                 div()
                                     .h(px(64.))
                                     .px_2()
@@ -1197,6 +1204,12 @@ impl Workspace {
                                                 .child(div().flex_1().min_w_0().truncate().child(
                                                     this.project_name(&session.cwd),
                                                 ))
+                                                .when(cold.is_some(), |d| {
+                                                    d.child(
+                                                        cache::marker(p, 11., false)
+                                                            .debug_selector(move || format!("sidebar-cold-{ix}")),
+                                                    )
+                                                })
                                                 .when(!(working && this.view.connected), |d| {
                                                     d.child(
                                                         div()

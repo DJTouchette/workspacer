@@ -578,12 +578,17 @@ impl Workspace {
         self.gauge_motion.sync(gauge, chat, motion, now);
         let open = self.island_motion.open(now);
         // The exact figures sit at the head of the revealed actions.
+        let now_ms = super::cache::now();
+        let cold = self
+            .selected_session()
+            .and_then(|s| super::cache::cold(s, now_ms))
+            .map(|cold| super::cache::marker_tooltip(cold, now_ms));
         let actions = actions.map(|actions| match gauge {
             Some(gauge) => div()
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(gauge::detail(gauge, p))
+                .child(gauge::detail(gauge, cold, p))
                 .child(actions),
             None => actions,
         });

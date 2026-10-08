@@ -63,6 +63,11 @@ pub struct Usage {
     /// window, not a fact about the session anyone downstream reads.
     #[serde(skip)]
     pub peak_context: u64,
+    /// The last main-thread API request the fold saw, for prompt-cache warmth
+    /// (see [`super::prompt_cache`]). Never on the wire as part of `usage`:
+    /// the derived `prompt_cache` object is what clients read.
+    #[serde(skip)]
+    pub last_request: Option<super::prompt_cache::RequestObservation>,
 }
 
 struct Rates {
@@ -226,7 +231,7 @@ fn usage_u64(usage: &Value, key: &str) -> u64 {
 
 /// The per-TTL cache-write tokens a turn reports, or `None` when it carries no
 /// `cache_creation` block for them to come from.
-fn cache_write_ttl_split(usage: &Value) -> Option<(u64, u64)> {
+pub(super) fn cache_write_ttl_split(usage: &Value) -> Option<(u64, u64)> {
     let cc = usage.get("cache_creation")?;
     let m5 = cc.get("ephemeral_5m_input_tokens");
     let m1h = cc.get("ephemeral_1h_input_tokens");
@@ -289,6 +294,23 @@ fn turn_cost_usd(model: Option<&str>, usage: &Value) -> f64 {
         + n("cache_read_input_tokens") * r.cached_input.unwrap_or(r.input * CACHE_READ_MULTIPLIER)
         + n("output_tokens") * r.output;
     dollars / 1_000_000.0
+}
+
+/// USD to send `tokens` of prompt again: `cold` with the cache expired (the
+/// whole prefix re-written at the cache-write rate for `ttl_seconds`), `warm`
+/// with it still alive (read at the cache-read rate). Same rates and
+/// multipliers as [`turn_cost_usd`], so a cold-resume estimate can never
+/// disagree with the cost the turn is later billed at.
+pub fn claude_resend_costs(model: Option<&str>, tokens: u64, ttl_seconds: u64) -> (f64, f64) {
+    let r = rates_for(model);
+    let write = if ttl_seconds >= 3600 {
+        CACHE_WRITE_1H_MULTIPLIER
+    } else {
+        CACHE_WRITE_5M_MULTIPLIER
+    };
+    let read = r.cached_input.unwrap_or(r.input * CACHE_READ_MULTIPLIER);
+    let tokens = tokens as f64 / 1_000_000.0;
+    (tokens * r.input * write, tokens * read)
 }
 
 /// Fold a session's transcript (a raw JSON value shaped like
@@ -437,6 +459,19 @@ fn fold_transcript(
             *peak_context = (*peak_context).max(usage.context_tokens);
             usage.peak_context = *peak_context;
             usage.context_limit = context_limit_for(usage.model.as_deref(), *peak_context);
+            // Each main-thread row is an API request that read or wrote the
+            // session's cached prefix, which is what keeps it warm. Sub-agents
+            // run their own prompts and keep only their own caches alive.
+            if let Some(at_ms) = super::prompt_cache::row_timestamp_ms(&m.raw) {
+                let next = super::prompt_cache::RequestObservation {
+                    at_ms,
+                    message_id: msg.get("id").and_then(Value::as_str).map(str::to_owned),
+                    ttl_seconds: super::prompt_cache::ttl_of(u),
+                    context_tokens: usage.context_tokens,
+                    model: usage.model.clone(),
+                };
+                usage.last_request = Some(next.after(usage.last_request.as_ref()));
+            }
         }
 
         // Cumulative cost — once per distinct message id, at the row's own

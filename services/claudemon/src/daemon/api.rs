@@ -431,6 +431,17 @@ fn published_session_value(state: &SessionState, usage: &usage::Usage) -> Value 
     if let (Some(object), Some(window)) = (value.as_object_mut(), usage.context_limit) {
         object.insert("resolved_context_window".into(), Value::from(window));
     }
+    // When the session's prompt cache expires, from the same fold as `usage`
+    // plus the live feed. Clients judge warm/cold against their own clock.
+    if let (Some(object), Some(cache)) = (
+        value.as_object_mut(),
+        crate::session::prompt_cache::derive(state, usage),
+    ) {
+        object.insert(
+            "prompt_cache".into(),
+            serde_json::to_value(cache).unwrap_or(Value::Null),
+        );
+    }
     value
 }
 
@@ -2307,6 +2318,44 @@ mod tests {
         assert_eq!(value["requested_selection"]["context_window"], 1_000_000);
         assert_eq!(value["resolved_context_window"], 1_000_000);
         assert_eq!(value["usage"]["context_limit"], 1_000_000);
+    }
+
+    #[tokio::test]
+    async fn a_live_request_publishes_when_the_prompt_cache_expires() {
+        let state = test_state();
+        state.store.register_managed("sess-1", "/tmp/proj", "codex");
+        let (_, body) = request(state.clone(), get("/sessions/sess-1")).await;
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert!(value.get("prompt_cache").is_none(), "nothing seen: {value}");
+
+        let conv = ConversationStore::new();
+        let mut mode = crate::session::SessionMode::Input;
+        let mut acc = crate::providers::UsageAcc::default();
+        crate::providers::apply_updates(
+            &state.store,
+            &conv,
+            "sess-1",
+            vec![crate::providers::AgentUpdate::ApiRequest {
+                at_ms: Some(1_000_000),
+                message_id: None,
+                ttl_seconds: None,
+                context_tokens: 120_000,
+                model: Some("gpt-5-codex".into()),
+            }],
+            &mut mode,
+            &mut acc,
+        );
+        let (_, body) = request(state, get("/sessions/sess-1")).await;
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        let cache = &value["prompt_cache"];
+        assert_eq!(cache["last_request_at"], 1_000_000);
+        assert_eq!(cache["expires_at"], 1_600_000);
+        assert_eq!(cache["ttl_seconds"], 600);
+        assert_eq!(cache["context_tokens"], 120_000);
+        assert_eq!(cache["estimated"], true);
+        assert!(
+            cache["cold_cost_usd"].as_f64().unwrap() > cache["warm_cost_usd"].as_f64().unwrap()
+        );
     }
 
     #[tokio::test]

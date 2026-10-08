@@ -276,6 +276,17 @@ pub enum AgentUpdate {
         warning: Option<String>,
         out_of_credits: Option<bool>,
     },
+    /// One API request against the session's prompt cache, for its warmth
+    /// (see `session::prompt_cache`). `at_ms` is when it ran when the source
+    /// records it (a rollout row), else `None` for "now" (a live frame).
+    /// `ttl_seconds` is the cache lifetime it bought, when the wire says.
+    ApiRequest {
+        at_ms: Option<i64>,
+        message_id: Option<String>,
+        ttl_seconds: Option<u64>,
+        context_tokens: u64,
+        model: Option<String>,
+    },
     /// Session capabilities parsed from the stream `init` frame (fast mode,
     /// output style, MCP/skill/plugin/agent/memory counts). Set once per session.
     Capabilities(Capabilities),
@@ -1060,6 +1071,22 @@ fn apply_updates_current(
                 acc.merge_rate_limit_status(warning.clone(), *out_of_credits);
                 usage_changed = true;
             }
+            AgentUpdate::ApiRequest {
+                at_ms,
+                message_id,
+                ttl_seconds,
+                context_tokens,
+                model,
+            } => store.note_api_request(
+                session_id,
+                crate::session::prompt_cache::RequestObservation {
+                    at_ms: at_ms.unwrap_or_else(crate::session::prompt_cache::now_ms),
+                    message_id: message_id.clone(),
+                    ttl_seconds: *ttl_seconds,
+                    context_tokens: *context_tokens,
+                    model: model.clone(),
+                },
+            ),
             AgentUpdate::Capabilities(caps) => {
                 acc.capabilities = Some(caps.clone());
                 usage_changed = true;

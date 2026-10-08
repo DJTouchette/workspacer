@@ -48,7 +48,18 @@ use crate::session::{ConversationStore, SessionStore};
 pub fn translate(value: &Value) -> Vec<AgentUpdate> {
     match value.get("type").and_then(Value::as_str) {
         Some("response_item") => translate_response_item(value.get("payload").unwrap_or(value)),
-        Some("event_msg") => translate_event_msg(value.get("payload").unwrap_or(value)),
+        Some("event_msg") => {
+            let mut out = translate_event_msg(value.get("payload").unwrap_or(value));
+            // A rollout row records when it happened; a request replayed from
+            // it ran then, not when the tailer read it.
+            let at = crate::session::prompt_cache::row_timestamp_ms(value);
+            for update in &mut out {
+                if let AgentUpdate::ApiRequest { at_ms, .. } = update {
+                    *at_ms = at;
+                }
+            }
+            out
+        }
         // `turn_context` is otherwise ignored, but it's the only rollout record
         // naming the model — harvest it so the status line isn't blank.
         Some("turn_context") => {
@@ -317,6 +328,16 @@ fn translate_event_msg(payload: &Value) -> Vec<AgentUpdate> {
                     context_tokens,
                     context_window,
                 });
+                // The request it reports kept the prompt cache alive.
+                if let Some(context_tokens) = context_tokens.filter(|t| *t > 0) {
+                    out.push(AgentUpdate::ApiRequest {
+                        at_ms: None,
+                        message_id: None,
+                        ttl_seconds: None,
+                        context_tokens,
+                        model: None,
+                    });
+                }
             }
             // The same event carries the account's rate-limit windows.
             if let Some(u) = payload.get("rate_limits").and_then(super::rate_limits_from) {
@@ -1132,6 +1153,13 @@ mod tests {
                     context_tokens: Some(132153),
                     context_window: Some(258400),
                 },
+                AgentUpdate::ApiRequest {
+                    at_ms: None,
+                    message_id: None,
+                    ttl_seconds: None,
+                    context_tokens: 132153,
+                    model: None,
+                },
                 AgentUpdate::RateLimits {
                     five_hour_pct: Some(19.0),
                     five_hour_resets_at: Some(1783121345),
@@ -1190,16 +1218,40 @@ mod tests {
         }));
         assert_eq!(
             translate(&e),
-            vec![AgentUpdate::Usage {
-                model: None,
-                input_tokens: Some(1_000_000),
-                output_tokens: Some(0),
-                cached_input_tokens: Some(900_000),
-                cost_usd: None,
-                context_tokens: Some(132153),
-                context_window: Some(258400),
-            }]
+            vec![
+                AgentUpdate::Usage {
+                    model: None,
+                    input_tokens: Some(1_000_000),
+                    output_tokens: Some(0),
+                    cached_input_tokens: Some(900_000),
+                    cost_usd: None,
+                    context_tokens: Some(132153),
+                    context_window: Some(258400),
+                },
+                AgentUpdate::ApiRequest {
+                    at_ms: None,
+                    message_id: None,
+                    ttl_seconds: None,
+                    context_tokens: 132153,
+                    model: None,
+                }
+            ]
         );
+    }
+
+    #[test]
+    fn a_token_count_request_ran_when_its_row_says() {
+        let mut e = ev(json!({
+            "type": "token_count",
+            "info": { "total_token_usage": { "input_tokens": 10, "output_tokens": 1 },
+                      "last_token_usage": { "input_tokens": 9_000 } }
+        }));
+        e["timestamp"] = json!("2026-10-07T10:00:00.000Z");
+        let at = translate(&e).into_iter().find_map(|u| match u {
+            AgentUpdate::ApiRequest { at_ms, .. } => at_ms,
+            _ => None,
+        });
+        assert_eq!(at, Some(1_791_367_200_000));
     }
 
     #[test]
