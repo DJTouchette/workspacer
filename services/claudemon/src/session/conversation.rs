@@ -47,6 +47,47 @@ const STOPPED_DRAIN_SECS: i64 = 30;
 // release the in-memory copy (the durable transcript remains the source).
 const STOPPED_MAX_DRAIN_SECS: i64 = 300;
 
+/// How much of a finished transcript [`replay_transcript`] reads: the tail end,
+/// enough for a long session's recent history without loading a whole
+/// multi-hundred-megabyte log for one view.
+const REPLAY_TAIL_BYTES: u64 = 8 * 1024 * 1024;
+const REPLAY_MAX_ITEMS: usize = 2000;
+
+/// A Claude session's recent timeline, parsed from its own transcript — for a
+/// stopped session whose in-memory log the tailer released (or a daemon
+/// restart never had), and to seed a resumed stream session, whose driver
+/// only narrates new turns. Read-only: nothing is stored or broadcast here.
+pub async fn replay_transcript(path: &str) -> std::io::Result<Vec<ConversationItem>> {
+    if !path_is_allowed(std::path::Path::new(path)) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("transcript path is outside every known transcript root: {path}"),
+        ));
+    }
+    let mut file = tokio::fs::File::open(path).await?;
+    let len = file.metadata().await?.len();
+    let start = len.saturating_sub(REPLAY_TAIL_BYTES);
+    file.seek(SeekFrom::Start(start)).await?;
+    let mut buf = Vec::new();
+    (&mut file).take(len - start).read_to_end(&mut buf).await?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines = text.lines();
+    if start > 0 {
+        // Starting mid-file lands inside a row; drop that fragment.
+        lines.next();
+    }
+    let mut items = Vec::new();
+    for line in lines.filter(|line| !line.trim().is_empty()) {
+        if let Ok(value) = serde_json::from_str::<Value>(line) {
+            items.extend(items_from_row(&value, ApiErrorMarking::Tailer));
+        }
+    }
+    if items.len() > REPLAY_MAX_ITEMS {
+        items.drain(..items.len() - REPLAY_MAX_ITEMS);
+    }
+    Ok(items)
+}
+
 fn stopped_drain_finished(age_secs: i64, backlog: bool) -> bool {
     age_secs > STOPPED_DRAIN_SECS && (!backlog || age_secs > STOPPED_MAX_DRAIN_SECS)
 }
@@ -1338,9 +1379,61 @@ fn parse_created_task_id(text: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A transcript laid out the way Claude Code writes one, under a directory
+    /// `path_is_allowed` accepts by shape (`<…>/.claude/projects/<proj>/`).
+    /// A scratch directory removed when dropped (no per-run debris in /tmp).
+    pub(crate) struct Scratch(pub std::path::PathBuf);
+    impl Scratch {
+        pub(crate) fn new() -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("claudemon-replay-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    pub(crate) fn transcript_fixture(rows: &[Value]) -> (Scratch, String) {
+        let dir = Scratch::new();
+        let project = dir.0.join(".claude/projects/-work");
+        std::fs::create_dir_all(&project).unwrap();
+        let path = project.join("resumable.jsonl");
+        let body: String = rows.iter().map(|row| format!("{row}\n")).collect();
+        std::fs::write(&path, body).unwrap();
+        (dir, path.to_string_lossy().into_owned())
+    }
+
+    pub(crate) fn two_turn_rows() -> Vec<Value> {
+        vec![
+            json!({"type":"user","message":{"role":"user","content":"pick this up later"},"timestamp":"2026-10-07T10:00:00Z"}),
+            json!({"type":"assistant","message":{"id":"m1","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"Noted where we left off."}]},"timestamp":"2026-10-07T10:00:05Z"}),
+        ]
+    }
+
+    #[tokio::test]
+    async fn replay_transcript_rebuilds_the_timeline_and_refuses_foreign_paths() {
+        let (_dir, path) = transcript_fixture(&two_turn_rows());
+        let items = replay_transcript(&path).await.unwrap();
+        let text = serde_json::to_string(&items).unwrap();
+        assert!(text.contains("pick this up later"));
+        assert!(text.contains("Noted where we left off."));
+        let outside = Scratch::new();
+        let foreign = outside.0.join("notes.jsonl");
+        std::fs::write(&foreign, format!("{}\n", two_turn_rows()[0])).unwrap();
+        let refused = replay_transcript(&foreign.to_string_lossy()).await;
+        assert_eq!(
+            refused.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
 
     #[test]
     fn stopped_backlog_drain_has_a_deadline_even_if_its_file_never_recovers() {

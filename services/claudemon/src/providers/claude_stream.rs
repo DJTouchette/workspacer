@@ -1194,6 +1194,9 @@ pub fn spawn_session(store: SessionStore, conv: ConversationStore, cfg: SpawnCon
     let generation = store.claim_generation(&cfg.session_id);
     tokio::spawn(async move {
         let session_id = cfg.session_id.clone();
+        if cfg.resume.is_some() {
+            seed_resumed_history(&store, &conv, &session_id).await;
+        }
         if let Err(err) = run_session(&store, &conv, cfg).await {
             tracing::warn!(?err, session = %session_id, "claude stream session ended with error");
         }
@@ -1207,6 +1210,36 @@ pub fn spawn_session(store: SessionStore, conv: ConversationStore, cfg: SpawnCon
             conv.forget(&session_id);
         }
     });
+}
+
+/// A resumed session's driver only narrates new turns, so seed the pane with
+/// the prior life's history from its transcript (Codex resume does the same
+/// from its rollout). Only into an empty log, so a resume within one daemon
+/// life never duplicates; the tailer skips stream sessions, so nothing else
+/// replays it.
+async fn seed_resumed_history(store: &SessionStore, conv: &ConversationStore, session_id: &str) {
+    if conv.has_conversation(session_id) {
+        return;
+    }
+    let Some(state) = store.get(session_id) else {
+        return;
+    };
+    let path = match state.transcript_path.clone() {
+        Some(path) => Some(path),
+        None => crate::session::claude_subagents::discover_parent(&state).await,
+    };
+    let Some(path) = path else {
+        return;
+    };
+    match crate::session::conversation::replay_transcript(&path).await {
+        Ok(items) if !items.is_empty() && !conv.has_conversation(session_id) => {
+            conv.push(session_id, items)
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::debug!(?err, session = %session_id, "resume history seed skipped")
+        }
+    }
 }
 
 /// The exact headless argv, per the verified contract. `--verbose` is required
@@ -3737,6 +3770,44 @@ kill "$bg" 2>/dev/null
         perms.set_mode(0o755);
         std::fs::set_permissions(&path, perms).expect("chmod the stub CLI");
         path
+    }
+
+    /// A resumed stream session opens with its prior history (its driver only
+    /// narrates new turns), seeded once from the transcript — never on top of a
+    /// log that already exists.
+    #[tokio::test]
+    async fn resume_seeds_prior_history_once_from_the_transcript() {
+        use crate::session::conversation::tests::{transcript_fixture, two_turn_rows};
+        let (_dir, path) = transcript_fixture(&two_turn_rows());
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.hydrate(vec![crate::store::RestoredSession {
+            id: "resumed".into(),
+            cwd: Some("/work".into()),
+            tool_calls: 0,
+            created_at: 1000,
+            last_event_at: 2000,
+            user_prompt_count: 1,
+            model: None,
+            requested_model: None,
+            requested_selection: None,
+            transcript_path: Some(path),
+            config_root: None,
+        }]);
+        seed_resumed_history(&store, &conv, "resumed").await;
+        let (seq, items) = conv.snapshot("resumed").expect("history seeded");
+        let text = serde_json::to_string(&items).unwrap();
+        assert!(text.contains("pick this up later"));
+        assert!(text.contains("Noted where we left off."));
+        seed_resumed_history(&store, &conv, "resumed").await;
+        assert_eq!(
+            conv.snapshot("resumed").unwrap().0,
+            seq,
+            "never seeded twice"
+        );
+        // Unknown sessions and missing transcripts are a quiet no-op.
+        seed_resumed_history(&store, &conv, "never-seen").await;
+        assert!(!conv.has_conversation("never-seen"));
     }
 
     /// Background tasks end to end through the real driver: the list fills

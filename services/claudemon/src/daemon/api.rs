@@ -1399,6 +1399,7 @@ struct ConversationQuery {
 /// With `?since=N`, only items after sequence N are returned (the `seq` field is
 /// still the latest, so the client advances its cursor to it).
 async fn get_conversation(
+    State(store): State<SessionStore>,
     State(conv): State<ConversationStore>,
     Path(id): Path<String>,
     Query(q): Query<ConversationQuery>,
@@ -1422,13 +1423,33 @@ async fn get_conversation(
             conv.push(&id, replayed);
         }
     }
+    // A stopped Claude session's live log is released once its transcript has
+    // drained (and a restarted daemon never had one). Serve its last content
+    // from the transcript instead, read-only: storing it would only be dropped
+    // again by the tailer, and a resume seeds its own copy.
+    let replay = ConversationStore::new();
+    let mut source = &conv;
+    if !conv.has_conversation(&id) {
+        if let Some(path) = store
+            .get(&id)
+            .filter(|s| s.provider == "claude" && s.mode == SessionMode::Stopped)
+            .and_then(|s| s.transcript_path)
+        {
+            if let Ok(items) = crate::session::conversation::replay_transcript(&path).await {
+                if !items.is_empty() {
+                    replay.push(&id, items);
+                    source = &replay;
+                }
+            }
+        }
+    }
     if let Some(version) = q.summary_source {
         if version != 1 {
             return (StatusCode::BAD_REQUEST, "unsupported summary projection").into_response();
         }
-        return Json(conv.summary_source(&id)).into_response();
+        return Json(source.summary_source(&id)).into_response();
     }
-    let Some(window) = conv.snapshot_window(&id, q.since, q.limit.filter(|limit| *limit > 0))
+    let Some(window) = source.snapshot_window(&id, q.since, q.limit.filter(|limit| *limit > 0))
     else {
         return Json(json!({ "session_id": id, "seq": 0, "first_seq": 0, "items": [] }))
             .into_response();
@@ -2638,6 +2659,40 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn stopped_claude_session_serves_its_last_content_from_the_transcript() {
+        let (_dir, path) = crate::session::conversation::tests::transcript_fixture(
+            &crate::session::conversation::tests::two_turn_rows(),
+        );
+        let state = test_state();
+        state.store.hydrate(vec![crate::store::RestoredSession {
+            id: "ended-1".into(),
+            cwd: Some("/work".into()),
+            tool_calls: 0,
+            created_at: 1000,
+            last_event_at: 2000,
+            user_prompt_count: 1,
+            model: None,
+            requested_model: None,
+            requested_selection: None,
+            transcript_path: Some(path),
+            config_root: None,
+        }]);
+        let (status, body) = request(
+            state.clone(),
+            get("/sessions/ended-1/conversation?limit=50"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        let text = v["items"].to_string();
+        assert!(text.contains("pick this up later"), "{v}");
+        assert!(text.contains("Noted where we left off."));
+        // Read-only: the live store was not filled, so the tailer has nothing
+        // to discard and a resume seeds its own copy.
+        assert!(!state.conv.has_conversation("ended-1"));
     }
 
     #[tokio::test]
