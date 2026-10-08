@@ -5,7 +5,7 @@ use serde_json::Value;
 use wks_native::features::{Request, attention_transition};
 
 const HANDOFF_DESCRIPTION: &str = "Start a new agent in this session’s folder with a brief of its work. The handoff message waits in the new agent’s composer for you to review and send.";
-const MODEL_DESCRIPTION: &str = "Choose the model and reasoning effort for this session’s next work. A busy provider may queue the change.";
+const MODEL_DESCRIPTION: &str = "Choose the model, reasoning effort and access for this session’s next work. A busy provider may queue the change.";
 const HISTORY_DESCRIPTION: &str =
     "A snapshot of retained conversation history. Live messages continue in chat.";
 const NAME_DESCRIPTION: &str =
@@ -34,6 +34,13 @@ impl<
 
 pub(super) struct Extras {
     pub name: Entity<InputState>,
+    /// Review's commit message; cleared once the commit lands.
+    pub commit_message: Entity<InputState>,
+    /// Sessions whose OS alert was clicked, sent from the alert's thread.
+    pub alert_clicks: async_channel::Sender<String>,
+    /// A live access switch was sent and its receipt has not come back.
+    pub access_switching: bool,
+    _alert_clicks: Task<()>,
     pub return_launch: bool,
     pub approval_details: bool,
     pub selected_options: Vec<std::collections::BTreeSet<usize>>,
@@ -149,8 +156,29 @@ impl Extras {
         });
         let _title_picker_subscription =
             cx.subscribe_in(&title_picker, window, Workspace::on_title_pick);
+        let (alert_clicks, clicked) = async_channel::unbounded::<String>();
+        let _alert_clicks = cx.spawn_in(window, async move |this, cx| {
+            while let Ok(id) = clicked.recv().await {
+                if this
+                    .update_in(cx, |this, window, cx| {
+                        this.open_alerted_session(id, window, cx)
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         Self {
+            alert_clicks,
+            _alert_clicks,
+            access_switching: false,
             name: cx.new(|cx| InputState::new(window, cx).placeholder("Session name")),
+            commit_message: cx.new(|cx| {
+                InputState::new(window, cx)
+                    .auto_grow(1, 4)
+                    .placeholder("Commit message (Ctrl+Enter to commit)")
+            }),
             return_launch: false,
             approval_details: false,
             selected_options: Vec::new(),
@@ -212,30 +240,73 @@ impl Extras {
         }
     }
 }
+/// An OS alert for one session; clicking it opens that session.
+#[cfg_attr(all(test, feature = "ui-tests"), allow(dead_code))]
+pub(super) struct Alert {
+    pub title: String,
+    pub body: String,
+    pub session: String,
+}
+
 /// OS notifications for sessions that need attention while the window is in
-/// the background. Shown off the UI thread, at most five per update.
+/// the background. Shown off the UI thread, at most five per update. Where
+/// the platform reports clicks (XDG on Linux/BSD, Windows toasts), each alert
+/// waits on its own thread until it is clicked or closed, and a click opens
+/// its session in this window.
 #[cfg(not(all(test, feature = "ui-tests")))]
-fn post_attention_alerts(alerts: Vec<(String, String)>, cx: &mut Context<Workspace>) {
-    cx.background_executor()
-        .spawn(async move {
-            for (title, body) in alerts.into_iter().take(5) {
+fn post_attention_alerts(
+    alerts: Vec<Alert>,
+    clicks: async_channel::Sender<String>,
+    _: &mut Context<Workspace>,
+) {
+    for alert in alerts.into_iter().take(5) {
+        let clicks = clicks.clone();
+        let spawned = std::thread::Builder::new()
+            .name("wks-alert".into())
+            .spawn(move || {
                 let mut notification = notify_rust::Notification::new();
                 notification
-                    .summary(&title)
-                    .body(&body)
+                    .summary(&alert.title)
+                    .body(&alert.body)
                     .appname("Workspacer Native");
+                #[cfg(all(unix, not(target_os = "macos")))]
+                notification.action("default", "Open");
                 #[cfg(target_os = "windows")]
                 notification.app_id(if cfg!(feature = "rust-hub") {
                     "Workspacer.Native.RustPreview"
                 } else {
                     "Workspacer.Native"
                 });
-                if let Err(error) = notification.show() {
-                    eprintln!("Native notification unavailable: {error}");
-                }
-            }
-        })
-        .detach();
+                let handle = match notification.show() {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        eprintln!("Native notification unavailable: {error}");
+                        return;
+                    }
+                };
+                #[cfg(all(unix, not(target_os = "macos")))]
+                handle.wait_for_action(|action| {
+                    if action == "default" {
+                        let _ = clicks.send_blocking(alert.session);
+                    }
+                });
+                #[cfg(target_os = "windows")]
+                let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+                    if matches!(
+                        response,
+                        notify_rust::NotificationResponse::Default
+                            | notify_rust::NotificationResponse::Action(_)
+                    ) {
+                        let _ = clicks.send_blocking(alert.session);
+                    }
+                });
+                #[cfg(target_os = "macos")]
+                let _ = (handle, clicks);
+            });
+        if let Err(error) = spawned {
+            eprintln!("Native notification unavailable: {error}");
+        }
+    }
 }
 
 /// The UI tests record alerts instead of showing them. A real one is
@@ -244,8 +315,19 @@ fn post_attention_alerts(alerts: Vec<(String, String)>, cx: &mut Context<Workspa
 /// serial Windows suite died with an access violation starting the second
 /// test to raise one, on a fresh thread), D-Bus on the developer's desktop.
 #[cfg(all(test, feature = "ui-tests"))]
-fn post_attention_alerts(alerts: Vec<(String, String)>, _: &mut Context<Workspace>) {
-    POSTED_ALERTS.with_borrow_mut(|posted| posted.extend(alerts.into_iter().take(5)));
+fn post_attention_alerts(
+    alerts: Vec<Alert>,
+    _: async_channel::Sender<String>,
+    _: &mut Context<Workspace>,
+) {
+    POSTED_ALERTS.with_borrow_mut(|posted| {
+        posted.extend(
+            alerts
+                .into_iter()
+                .take(5)
+                .map(|Alert { title, body, .. }| (title, body)),
+        )
+    });
 }
 
 #[cfg(all(test, feature = "ui-tests"))]
@@ -465,12 +547,38 @@ impl Workspace {
             .filter_map(|s| {
                 let old = self.view.sessions.iter().find(|old| old.id == s.id)?;
                 let title = attention_transition(old, s)?;
-                Some((title.to_owned(), self.session_title(s)))
+                Some(Alert {
+                    title: title.to_owned(),
+                    body: self.session_title(s),
+                    session: s.id.clone(),
+                })
             })
             .collect();
         if !alerts.is_empty() {
-            post_attention_alerts(alerts, cx);
+            post_attention_alerts(alerts, self.extras.alert_clicks.clone(), cx);
         }
+    }
+
+    /// A clicked alert: bring this window forward on its session. A window
+    /// pinned to another session only comes forward.
+    pub(super) fn open_alerted_session(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.activate_window();
+        if self
+            .requested_session
+            .as_ref()
+            .is_some_and(|pinned| pinned != &id)
+            || !self.view.sessions.iter().any(|s| s.id == id)
+        {
+            return;
+        }
+        self.project_filter = None;
+        self.show_screen(Screen::Conversation, window, cx);
+        self.command(Command::Select(id), cx);
     }
     /// The request's loading or error line, toned; empty when settled.
     pub(super) fn feature_message(&self, key: &str) -> Div {
@@ -513,7 +621,7 @@ impl Workspace {
                 Some("Connect your agents on the machine running this workspace.".into()),
             ),
             Screen::Handoff => (handoff_title.as_str(), Some(HANDOFF_DESCRIPTION.into())),
-            Screen::Model => ("Model and effort", Some(MODEL_DESCRIPTION.into())),
+            Screen::Model => ("Model, effort and access", Some(MODEL_DESCRIPTION.into())),
             _ => ("", None),
         };
         let trailing = match self.screen {
@@ -1287,6 +1395,7 @@ impl Workspace {
                             )),
                     ),
             )
+            .child(self.render_live_access(busy, cx))
             .when(!notice.is_empty(), |d| {
                 d.child(chrome::notice_line(
                     notice.clone(),
@@ -1295,6 +1404,81 @@ impl Workspace {
                     "model-notice",
                 ))
             })
+    }
+
+    /// The running session's access mode, switched live on one click: the
+    /// daemon drives and verifies it, and refuses (with its reason) what can
+    /// only be chosen at launch, such as Claude full access for a session
+    /// started with approvals on.
+    fn render_live_access(&self, busy: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.appearance.palette();
+        let Some(session) = self.selected_session() else {
+            return div();
+        };
+        let provider = session.provider_id().to_owned();
+        let current = Permission::from_wire(&provider, &session.permission_mode);
+        let switching = self.view.busy && self.extras.access_switching;
+        chrome::card(p)
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(projects::section_label("Access", p))
+            .child(
+                div().flex().flex_wrap().gap_2().children(
+                    Permission::choices(&provider)
+                        .iter()
+                        .copied()
+                        .map(|permission| {
+                            let id =
+                                SharedString::from(format!("live-access-{}", permission.label()));
+                            let active = current == Some(permission);
+                            let enabled = !busy && !active;
+                            let provider = provider.clone();
+                            self.button(id.clone(), permission.label(), enabled)
+                                .debug_selector(move || id.to_string())
+                                .when(active, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
+                                .when(enabled, |d| {
+                                    d.on_click(cx.listener(move |this, _, _, cx| {
+                                        let Ok(mode) = permission.wire(&provider) else {
+                                            return;
+                                        };
+                                        this.extras.access_switching = true;
+                                        this.act(
+                                            Action::SetPermission {
+                                                mode: mode.to_owned(),
+                                                label: permission.label().to_owned(),
+                                            },
+                                            cx,
+                                        );
+                                    }))
+                                })
+                        }),
+                ),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(rgb(if current == Some(Permission::FullAccess) {
+                        p.warning
+                    } else {
+                        p.muted
+                    }))
+                    .child(match (switching, current) {
+                        (true, _) => "Switching…".to_owned(),
+                        (false, Some(current)) => format!(
+                            "{} Changes apply at once; nothing restarts.",
+                            current.description()
+                        ),
+                        (false, None) if session.permission_mode.is_empty() => {
+                            "The provider has not reported this session’s mode yet.".to_owned()
+                        }
+                        (false, None) => format!(
+                            "Running in “{}”, which this client does not offer.",
+                            session.permission_mode
+                        ),
+                    }),
+            )
     }
     /// Send exactly what changed on Change model: the model (with its context
     /// window), the effort, or both in that order. An unchanged form sends
@@ -1333,6 +1517,9 @@ impl Workspace {
     /// Move the Change model baseline to what the hub accepted, so a repeated
     /// Apply does not resend it; a refused change leaves it as it was.
     pub(super) fn note_model_receipt(&mut self, receipt: &wks_native::controller::Receipt) {
+        if matches!(receipt.action, Action::SetPermission { .. }) {
+            self.extras.access_switching = false;
+        }
         if self.view.selected.as_ref() != Some(&receipt.session) {
             return;
         }

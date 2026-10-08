@@ -41,6 +41,8 @@ pub struct Settings {
     pub enter_sends: bool,
     pub keep_running: bool,
     pub notifications: bool,
+    /// Review shows its right-hand panel (changed files, tree, commits).
+    pub review_panel: bool,
     /// Chrome changes shape at once instead of on springs (the title
     /// island's reveal and notices); fades stay.
     pub reduce_motion: bool,
@@ -75,6 +77,7 @@ impl Default for Settings {
             enter_sends: false,
             keep_running: false,
             notifications: true,
+            review_panel: true,
             reduce_motion: false,
             names: BTreeMap::new(),
             archived: BTreeMap::new(),

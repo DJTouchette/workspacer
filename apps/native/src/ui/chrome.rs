@@ -283,6 +283,8 @@ pub(super) fn notice_tone(text: &str) -> Tone {
         || lower.starts_with("pinned")
         || lower.starts_with("unpinned")
         || lower.ends_with(" applied")
+        || lower == "committed."
+        || lower == "pushed."
         || lower.contains(" change accepted:")
     {
         Tone::Success
@@ -926,6 +928,12 @@ impl Workspace {
                 let model_enabled = enabled && self.supported_session();
                 let effort = (!session.effort.is_empty())
                     .then(|| wks_native::launch::effort_label(&session.effort));
+                // Only a mode that differs from asking is worth the room.
+                let access = wks_native::launch::Permission::from_wire(
+                    session.provider_id(),
+                    &session.permission_mode,
+                )
+                .filter(|mode| *mode != wks_native::launch::Permission::Ask);
                 d.child(
                     interactive_control(div().id("title-model"), p, model_enabled)
                         .debug_selector(|| "title-model".into())
@@ -950,6 +958,21 @@ impl Workspace {
                                     .child(format!("· {effort}")),
                             )
                         })
+                        .when_some(access, |d, access| {
+                            d.child(
+                                div()
+                                    .debug_selector(|| "title-access".into())
+                                    .flex_shrink_0()
+                                    .text_color(rgb(
+                                        if access == wks_native::launch::Permission::FullAccess {
+                                            p.warning
+                                        } else {
+                                            p.muted
+                                        },
+                                    ))
+                                    .child(format!("· {}", access.label())),
+                            )
+                        })
                         .when(model_enabled, |d| {
                             d.child(
                                 Icon::new(IconName::ChevronDown)
@@ -958,7 +981,7 @@ impl Workspace {
                             )
                             .hover(|s| s.bg(rgb(p.border)))
                             .tooltip(|window, cx| {
-                                Tooltip::new("Change model or effort").build(window, cx)
+                                Tooltip::new("Change model, effort or access").build(window, cx)
                             })
                             .on_click(cx.listener(
                                 |this, _, window, cx| this.open_feature(Screen::Model, window, cx),

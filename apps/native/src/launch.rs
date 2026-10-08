@@ -39,6 +39,15 @@ impl Permission {
         }
     }
 
+    /// The choice a session's reported mode (`livePermissionMode` or its
+    /// launch setting) names, if it is one this client offers.
+    pub fn from_wire(provider: &str, mode: &str) -> Option<Self> {
+        Self::choices(provider)
+            .iter()
+            .copied()
+            .find(|choice| choice.wire(provider).is_ok_and(|wire| wire == mode))
+    }
+
     pub fn wire(self, provider: &str) -> Result<&'static str> {
         ensure!(
             Self::choices(provider).contains(&self),

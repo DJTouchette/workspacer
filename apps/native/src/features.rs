@@ -18,6 +18,28 @@ pub enum JobAction {
     Remove(String),
 }
 
+/// The owner's writes to a repository from Review. Each one runs in the
+/// repository holding `cwd`; `path: None` stages or unstages everything under
+/// it. There is no discard: the hub offers no way to throw changes away.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitAction {
+    Stage { cwd: String, path: Option<String> },
+    Unstage { cwd: String, path: Option<String> },
+    Commit { cwd: String, message: String },
+    Push { cwd: String },
+}
+
+impl GitAction {
+    pub fn cwd(&self) -> &str {
+        match self {
+            Self::Stage { cwd, .. }
+            | Self::Unstage { cwd, .. }
+            | Self::Commit { cwd, .. }
+            | Self::Push { cwd } => cwd,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Request {
     /// Read-only view of a chat-linked file on the session's machine.
@@ -65,6 +87,18 @@ pub enum Request {
         staged: bool,
         untracked: bool,
     },
+    /// The repository's recent commits (`git.log`, newest first).
+    Log {
+        cwd: String,
+    },
+    /// One commit's whole patch (`git.commitDiff`). Shares the `diff` slot,
+    /// so choosing a commit replaces a working-tree diff and vice versa.
+    CommitDiff {
+        cwd: String,
+        hash: String,
+    },
+    /// Stage, unstage, commit or push. Never superseded while in flight.
+    Git(GitAction),
     Setup {
         provider: String,
         check: bool,
@@ -303,7 +337,9 @@ impl Request {
             Self::TurnChanges { .. } => "turn-changes",
             Self::Recent => "recent",
             Self::Changes { .. } => "changes",
-            Self::Diff { .. } => "diff",
+            Self::Diff { .. } | Self::CommitDiff { .. } => "diff",
+            Self::Log { .. } => "git-log",
+            Self::Git(_) => "git-action",
             Self::Setup { .. } => "setup",
             Self::History { .. } => "history",
             Self::SubagentHistory { .. } => "subagent-history",
@@ -552,6 +588,44 @@ impl Request {
                         json!({"cwd":cwd,"path":path,"staged":staged,"untracked":untracked}),
                     )
                     .await
+            }
+            Self::Log { cwd } => {
+                let value = backend
+                    .call("git.log", json!({"cwd":cwd,"limit":50}))
+                    .await?;
+                ensure!(value["commits"].is_array(), "The hub returned no commits.");
+                Ok(value)
+            }
+            Self::CommitDiff { cwd, hash } => {
+                backend
+                    .call("git.commitDiff", json!({"cwd":cwd,"hash":hash}))
+                    .await
+            }
+            Self::Git(action) => {
+                let (method, params) = match action {
+                    GitAction::Stage { cwd, path } => (
+                        "git.stage",
+                        json!({"cwd":cwd,"path":path.as_deref().unwrap_or("")}),
+                    ),
+                    GitAction::Unstage { cwd, path } => (
+                        "git.unstage",
+                        json!({"cwd":cwd,"path":path.as_deref().unwrap_or("")}),
+                    ),
+                    GitAction::Commit { cwd, message } => {
+                        ensure!(!message.trim().is_empty(), "Write a commit message first.");
+                        ("git.commit", json!({"cwd":cwd,"message":message}))
+                    }
+                    GitAction::Push { cwd } => ("git.push", json!({"cwd":cwd})),
+                };
+                let value = backend.call(method, params).await?;
+                ensure!(
+                    value["ok"] != false,
+                    "{}",
+                    value["error"]
+                        .as_str()
+                        .unwrap_or("The hub did not apply the git change.")
+                );
+                Ok(value)
             }
             Self::History { session } => {
                 history_document(backend.conversation(session, None).await?)

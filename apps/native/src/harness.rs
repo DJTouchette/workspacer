@@ -439,6 +439,9 @@ impl Fixture {
             "git.numstat" => json!({"files": [{"path": "src/main.rs", "added": 2, "deleted": 1}]}),
             "git.status" => json!({
                 "branch": "feature/native-basics",
+                "upstream": "origin/feature/native-basics",
+                "ahead": 1,
+                "behind": 0,
                 "root": params["cwd"],
                 "files": [
                     {"path": "src/main.rs", "staged": " ", "unstaged": "M"},
@@ -446,6 +449,19 @@ impl Fixture {
                     {"path": "tests/session.rs", "staged": "?", "unstaged": "?"},
                 ],
             }),
+            "git.stage" | "git.unstage" => json!({"ok": true, "output": ""}),
+            "git.commit" => {
+                json!({"ok": true, "output": "[feature/native-basics 1a2b3c4] fixture commit"})
+            }
+            "git.push" => json!({"ok": true, "output": ""}),
+            "git.log" => json!({"commits": [
+                {"hash": "1a2b3c4", "subject": "Restore the workspace on start", "authoredAt": 1_791_000_000},
+                {"hash": "5d6e7f8", "subject": "Native basics", "authoredAt": 1_790_000_000},
+            ]}),
+            "git.commitDiff" => {
+                json!({"diff": "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"})
+            }
+            "claude.setPermissionMode" => json!({"ok": true, "mode": params["mode"]}),
             "git.diff" => {
                 json!({"diff": "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,4 @@\n fn main() {\n-    start();\n+    restore_workspace();\n+    start();\n }"})
             }

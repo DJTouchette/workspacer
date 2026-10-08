@@ -204,6 +204,16 @@ impl ContextUsage {
 }
 
 impl Session {
+    /// The provider id, with an unreported provider read as Claude (the
+    /// only harness older daemons ran).
+    pub fn provider_id(&self) -> &str {
+        if self.provider.is_empty() {
+            "claude"
+        } else {
+            &self.provider
+        }
+    }
+
     pub fn id_of(value: &Value) -> Option<&str> {
         value
             .get("sessionId")

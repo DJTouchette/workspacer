@@ -47,6 +47,13 @@ pub enum Action {
     /// Live reasoning-effort switch: Claude's `/effort` command or Codex's
     /// thread settings, chosen by the hub per provider.
     SetEffort(String),
+    /// Live access-mode switch (`claude.setPermissionMode`): the provider's
+    /// wire id, verified by the daemon (Claude's shift+tab cycle, Codex's
+    /// approval flag), and the label the notice names.
+    SetPermission {
+        mode: String,
+        label: String,
+    },
 }
 
 impl Action {
@@ -68,6 +75,10 @@ impl Action {
             Self::SetEffort(effort) => {
                 ("claude.setEffort", json!({"sessionId":id,"effort":effort}))
             }
+            Self::SetPermission { mode, .. } => (
+                "claude.setPermissionMode",
+                json!({"sessionId":id,"mode":mode}),
+            ),
             Self::Send(text) => ("agents.sendMessage", json!({"sessionId":id, "text":text})),
             Self::Approve(yes) => (
                 "claude.approve",
@@ -703,7 +714,7 @@ impl Worker {
         // report "superseded" for a change the hub may still apply.
         if matches!(
             key,
-            "upload" | "project-save" | "file-save" | "job-action" | "task-stop"
+            "upload" | "project-save" | "file-save" | "job-action" | "task-stop" | "git-action"
         ) && self.view.requests.get(key).is_some_and(|s| s.loading)
         {
             return;
@@ -817,10 +828,10 @@ impl Worker {
                     .filter_map(|row| Session::id_of(row).map(str::to_owned))
                     .collect();
                 for id in keep.iter().filter(|id| !listed.contains(*id)) {
-                    if let Ok(row) = backend.snapshot(id).await {
-                        if Session::id_of(&row) == Some(id.as_str()) {
-                            rows.push(row);
-                        }
+                    if let Ok(row) = backend.snapshot(id).await
+                        && Session::id_of(&row) == Some(id.as_str())
+                    {
+                        rows.push(row);
                     }
                 }
             }
@@ -1338,6 +1349,9 @@ impl Worker {
                                 && effort.as_deref().is_none_or(crate::launch::valid_effort)
                         }
                         Action::SetEffort(effort) => crate::launch::valid_effort(effort),
+                        Action::SetPermission { mode, .. } => {
+                            Permission::from_wire(s.provider_id(), mode).is_some()
+                        }
                     }
             });
         if !valid {
@@ -1923,6 +1937,9 @@ impl Worker {
                                 "Effort change accepted: {}",
                                 crate::launch::effort_label(effort)
                             ),
+                            Action::SetPermission { label, .. } => {
+                                format!("Access change accepted: {label}")
+                            }
                             _ => String::new(),
                         }
                     }

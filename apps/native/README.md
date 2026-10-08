@@ -597,6 +597,20 @@ be expanded, and attachment controls share the composer action row.
   read. This is working-tree state, including edits outside the selected
   session, not an attribution claim. Diffs show up to 20,000 lines, scroll
   sideways for long lines, and say when they are cut short.
+  Under **Changed**, each row's **+**/**−** stages or unstages that file
+  (`git.stage`/`git.unstage`), **Stage all**/**Unstage all** cover the whole
+  repository, and the commit box below commits what is staged (**Commit N
+  staged** or Ctrl/Cmd+Enter; `git.commit`). **Push ↑N** appears when the
+  branch is ahead of its upstream, or has none yet (`git.push`; the hub's
+  message explains a missing upstream). Being behind upstream is shown, not
+  pulled. Every write re-reads the status, a landed commit clears the box, and
+  there is no discard (the hub offers none). **Commits** lists the last 50
+  commits (`git.log`), marking the ones not pushed yet; choosing one shows its
+  whole patch (`git.commitDiff`) in the diff panel. **Hide files** in the header
+  gives the diff the full width; the choice is kept on this device. The status
+  is parsed once per answer and both lists are virtualized, so a large working
+  tree stays responsive, and a refresh keeps the last list on screen until the
+  new one arrives.
 - **Background tasks.** When the agent runs work beside the conversation
   (a `run_in_background` shell such as a dev server, an async subagent, a
   teammate, a cloud agent or a workflow), a chip with the number still running
@@ -666,7 +680,10 @@ be expanded, and attachment controls share the composer action row.
   preference. Closing can minimize while local agents continue; explicit Quit
   still stops the owned backend. Completion, approval and question transitions
   notify when the window is inactive, without replaying historical alerts on
-  connection. OS settings still govern delivery. The Windows installer registers
+  connection. Clicking an alert brings the window forward on that session
+  (Linux/BSD notification servers and Windows toasts report clicks; macOS
+  alerts do not). A window pinned to another session only comes forward.
+  OS settings still govern delivery. The Windows installer registers
   a dedicated Workspacer Native notification identity.
 - **Attach…** accepts images and PDFs up to 8 MiB. Ordinary Ctrl/Cmd+V in the
   composer accepts clipboard screenshots (there is no separate Paste image
@@ -700,7 +717,12 @@ be expanded, and attachment controls share the composer action row.
   for the effort (the hub routes it to Claude's `/effort` or Codex's thread
   settings). An unchanged form sends nothing. Accepted, queued and refused
   changes are reported, including a model change accepted with its effort
-  refused. Drafts are untouched.
+  refused. Drafts are untouched. The same page's **Access** row switches the
+  running session's mode live, on one click (`claude.setPermissionMode`;
+  Claude's four modes, Codex's Ask to approve / Full access). The daemon
+  drives and verifies it, and its refusal, such as Claude full access for a
+  session launched with approvals on, appears as the notice. A mode other than
+  Ask to approve also shows on the title bar's model chip.
 - **Updates follow the build's channel.** A nightly install (version contains
   `-nightly`) checks the rolling `nightly` prerelease; a stable install checks the
   latest release. The app checks 8 seconds after launch and every 6 hours, shows

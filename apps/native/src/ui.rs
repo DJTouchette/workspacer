@@ -1172,7 +1172,7 @@ impl Workspace {
         self.ensure_project_icons(cx);
         self.resume_explorer(cx);
         self.sync_terminals(window, cx);
-        self.sync_review(cx);
+        self.sync_review(window, cx);
         self.hand_off_update(window, cx);
         self.land_on_latest();
         if self.new_session || matches!(self.screen, Screen::Model | Screen::Handoff) {

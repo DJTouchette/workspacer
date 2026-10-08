@@ -456,6 +456,44 @@ fn background_turn_end_alerts_once_without_posting_a_real_toast(cx: &mut TestApp
     );
 }
 
+// Clicking an alert opens its session, even from another screen; a window
+// pinned to a different session is only brought forward.
+#[gpui::test]
+fn clicked_alert_opens_its_session_unless_the_window_is_pinned(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(state("a")), window, cx);
+            this.show_screen(Screen::Settings, window, cx);
+        })
+    });
+    visual.run_until_parked();
+    effects(&mut commands);
+    let click_alert = |visual: &mut VisualTestContext, id: &str| {
+        let id = id.to_owned();
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| this.open_alerted_session(id, window, cx))
+        });
+        visual.run_until_parked();
+    };
+    click_alert(&mut visual, "b");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Select(id)] if id == "b"));
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.screen, Screen::Conversation)
+    });
+    // An alert for a session this hub no longer lists does nothing.
+    click_alert(&mut visual, "gone");
+    assert!(effects(&mut commands).is_empty());
+    visual
+        .update(|_, cx| workspace.update(cx, |this, _| this.requested_session = Some("a".into())));
+    click_alert(&mut visual, "b");
+    assert!(
+        effects(&mut commands).is_empty(),
+        "a pinned window stays put"
+    );
+}
+
 #[gpui::test]
 fn available_update_shows_a_pill_and_installs_from_about(cx: &mut TestAppContext) {
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);

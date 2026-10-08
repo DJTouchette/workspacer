@@ -1581,6 +1581,176 @@ fn review_shows_git_diffs_beside_a_right_hand_file_explorer(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+fn review_stages_commits_pushes_and_reads_commits(cx: &mut TestAppContext) {
+    use wks_native::features::{GitAction, Request};
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1400.), px(800.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].cwd = "/repo/sub".into();
+            this.update_view(Arc::new(view), window, cx);
+            this.open_feature(Screen::Changes, window, cx);
+        })
+    });
+    visual.run_until_parked();
+    effects(&mut commands);
+    let status = |number: u64,
+                  files: serde_json::Value,
+                  ahead: u64,
+                  workspace: &Entity<Workspace>,
+                  visual: &mut VisualTestContext| {
+        request_state(
+            workspace,
+            visual,
+            Request::Changes {
+                cwd: "/repo/sub".into(),
+            },
+            number,
+            serde_json::json!({"branch": "main", "upstream": "origin/main", "ahead": ahead,
+                "behind": 0, "root": "/repo", "files": files}),
+        );
+    };
+    status(
+        1,
+        serde_json::json!([
+            {"path": "src/lib.rs", "staged": " ", "unstaged": "M"},
+            {"path": "README.md", "staged": "M", "unstaged": " "},
+        ]),
+        0,
+        &workspace,
+        &mut visual,
+    );
+    effects(&mut commands);
+    let git =
+        |commands: &mut tokio::sync::mpsc::Receiver<Command>| match effects(commands).as_slice() {
+            [Command::Request(Request::Git(action))] => action.clone(),
+            other => panic!("expected one git write, got {} commands", other.len()),
+        };
+    // A row's own button stages it, without also opening its diff.
+    click(&mut visual, "review-stage-src/lib.rs");
+    let stage = git(&mut commands);
+    assert_eq!(
+        stage,
+        GitAction::Stage {
+            cwd: "/repo/sub".into(),
+            path: Some("src/lib.rs".into())
+        }
+    );
+    // The fully staged file unstages instead.
+    click(&mut visual, "review-stage-README.md");
+    assert!(
+        matches!(git(&mut commands), GitAction::Unstage { path: Some(p), .. } if p == "README.md")
+    );
+    // A finished write re-reads the status.
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::Git(stage),
+        2,
+        serde_json::json!({"ok": true}),
+    );
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Request(Request::Changes { cwd })] if cwd == "/repo/sub"));
+    status(
+        3,
+        serde_json::json!([
+            {"path": "src/lib.rs", "staged": "M", "unstaged": " "},
+            {"path": "README.md", "staged": "M", "unstaged": " "},
+        ]),
+        0,
+        &workspace,
+        &mut visual,
+    );
+    effects(&mut commands);
+    // No message: nothing is sent and the box asks for one.
+    click(&mut visual, "review-commit");
+    assert!(effects(&mut commands).is_empty());
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.extras.notice, "Write a commit message first.")
+    });
+    visual.simulate_input("Restore the workspace");
+    visual.run_until_parked();
+    click(&mut visual, "review-commit");
+    let commit = git(&mut commands);
+    assert_eq!(
+        commit,
+        GitAction::Commit {
+            cwd: "/repo/sub".into(),
+            message: "Restore the workspace".into()
+        }
+    );
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::Git(commit),
+        4,
+        serde_json::json!({"ok": true, "output": "[main abc1234] Restore the workspace"}),
+    );
+    assert!(matches!(
+        effects(&mut commands).as_slice(),
+        [Command::Request(Request::Changes { .. })]
+    ));
+    workspace.read_with(&visual, |this, cx| {
+        assert_eq!(this.extras.commit_message.read(cx).value().as_ref(), "");
+        assert_eq!(this.extras.notice, "Committed.");
+    });
+    // Push appears once the branch is ahead of its upstream.
+    assert!(visual.debug_bounds("review-push").is_none());
+    status(5, serde_json::json!([]), 1, &workspace, &mut visual);
+    effects(&mut commands);
+    click(&mut visual, "review-push");
+    assert_eq!(
+        git(&mut commands),
+        GitAction::Push {
+            cwd: "/repo/sub".into()
+        }
+    );
+    // Commits: the log, and a commit's patch in the diff panel.
+    click(&mut visual, "review-mode-commits");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Request(Request::Log { cwd })] if cwd == "/repo/sub"));
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::Log {
+            cwd: "/repo/sub".into(),
+        },
+        6,
+        serde_json::json!({"commits": [
+            {"hash": "abc1234", "subject": "Restore the workspace", "authoredAt": 1_700_000_000},
+            {"hash": "def5678", "subject": "Earlier work", "authoredAt": 1_600_000_000},
+        ]}),
+    );
+    assert!(visual.debug_bounds("review-commit-def5678").is_some());
+    click(&mut visual, "review-commit-abc1234");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Request(Request::CommitDiff { hash, .. })] if hash == "abc1234"));
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::CommitDiff {
+            cwd: "/repo/sub".into(),
+            hash: "abc1234".into(),
+        },
+        7,
+        serde_json::json!({"diff": "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n"}),
+    );
+    assert!(visual.debug_bounds("review-commit-title").is_some());
+    assert!(visual.debug_bounds("review-diff").is_some());
+    // The panel hides, giving the diff the width, and the choice is kept.
+    // (debug_bounds keeps old frames' entries, so absence is read from
+    // the diff's width and the setting, not from a missing selector.)
+    let narrow = visual.debug_bounds("review-diff").unwrap().size.width;
+    click(&mut visual, "review-panel");
+    workspace.read_with(&visual, |this, _| assert!(!this.settings.review_panel));
+    let wide = visual.debug_bounds("review-diff").unwrap().size.width;
+    assert!(wide > narrow + px(250.), "{narrow:?} -> {wide:?}");
+    click(&mut visual, "review-panel");
+    workspace.read_with(&visual, |this, _| assert!(this.settings.review_panel));
+}
+
+#[gpui::test]
 fn agent_terminal_takes_keys_and_follows_the_selected_agent(cx: &mut TestAppContext) {
     use wks_native::terminal::{Command as T, Status, Terminal};
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);

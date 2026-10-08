@@ -1094,3 +1094,52 @@ fn context_window_choices_are_one_even_row(cx: &mut TestAppContext) {
         assert_eq!(this.context_window, Some(1_000_000))
     });
 }
+
+#[gpui::test]
+fn model_page_switches_a_running_sessions_access_live(cx: &mut TestAppContext) {
+    use wks_native::controller::Action;
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(900.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.demo = false;
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].provider = "claude".into();
+            Arc::make_mut(&mut view.sessions)[0].permission_mode = "default".into();
+            this.update_view(Arc::new(view), window, cx);
+            this.open_feature(Screen::Model, window, cx);
+        })
+    });
+    visual.run_until_parked();
+    effects(&mut commands);
+    // The current mode is shown chosen and is not sent again.
+    click(&mut visual, "live-access-Ask to approve");
+    assert!(effects(&mut commands).is_empty());
+    click(&mut visual, "live-access-Plan mode");
+    match effects(&mut commands).as_slice() {
+        [
+            Command::Act {
+                session,
+                action: Action::SetPermission { mode, label },
+            },
+        ] => {
+            assert_eq!(session, "a");
+            assert_eq!(mode, "plan");
+            assert_eq!(label, "Plan mode");
+        }
+        other => panic!("expected one access switch, got {} commands", other.len()),
+    }
+    // Codex offers its own two modes, on its own wire ids.
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = (*this.view).clone();
+            Arc::make_mut(&mut view.sessions)[0].provider = "codex".into();
+            Arc::make_mut(&mut view.sessions)[0].permission_mode = "ask".into();
+            this.update_view(Arc::new(view), window, cx);
+        })
+    });
+    visual.run_until_parked();
+    click(&mut visual, "live-access-Full access");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Act { action: Action::SetPermission { mode, .. }, .. }] if mode == "yolo"));
+}
