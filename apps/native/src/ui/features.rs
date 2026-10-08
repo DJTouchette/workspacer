@@ -40,6 +40,9 @@ pub(super) struct Extras {
     pub alert_clicks: async_channel::Sender<String>,
     /// A live access switch was sent and its receipt has not come back.
     pub access_switching: bool,
+    /// The approval card's "Deny with note" box, open while it is shown.
+    pub deny_note: Entity<InputState>,
+    pub deny_open: bool,
     _alert_clicks: Task<()>,
     pub return_launch: bool,
     pub approval_details: bool,
@@ -173,6 +176,10 @@ impl Extras {
             alert_clicks,
             _alert_clicks,
             access_switching: false,
+            deny_note: cx.new(|cx| {
+                InputState::new(window, cx).placeholder("Tell the agent what to do instead")
+            }),
+            deny_open: false,
             name: cx.new(|cx| InputState::new(window, cx).placeholder("Session name")),
             commit_message: cx.new(|cx| {
                 InputState::new(window, cx)
@@ -492,6 +499,16 @@ impl Workspace {
             self.alert_attention(next, cx);
         }
         self.refresh_review_after_turn(next, cx);
+        // The deny note belongs to one approval; a new or resolved one closes it.
+        let approval_of = |view: &View| {
+            view.selected
+                .as_ref()
+                .and_then(|id| view.sessions.iter().find(|s| &s.id == id))
+                .and_then(|s| s.approval.clone())
+        };
+        if approval_of(&self.view) != approval_of(next) {
+            self.extras.deny_open = false;
+        }
         if let Some(state) = next.requests.get("child-access")
             && !state.loading
             && state.number > self.extras.child_access_receipt

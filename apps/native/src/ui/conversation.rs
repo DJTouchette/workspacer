@@ -454,6 +454,43 @@ impl Workspace {
                         .child(details),
                 )
             })
+            .when(self.extras.deny_open, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .debug_selector(|| "deny-note".into())
+                                .on_key_down(cx.listener(
+                                    |this, event: &gpui::KeyDownEvent, window, cx| {
+                                        let k = &event.keystroke;
+                                        if k.key == "enter" && !k.modifiers.shift {
+                                            cx.stop_propagation();
+                                            this.send_deny_note(window, cx);
+                                        } else if k.key == "escape" {
+                                            cx.stop_propagation();
+                                            this.extras.deny_open = false;
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .child(Input::new(&self.extras.deny_note)),
+                        )
+                        .child(
+                            self.button("deny-note-send", "Deny and tell it", enabled)
+                                .debug_selector(|| "deny-note-send".into())
+                                .when(enabled, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.send_deny_note(window, cx)
+                                    }))
+                                }),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -470,8 +507,49 @@ impl Workspace {
                         d.on_click(
                             cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)),
                         )
-                    })),
+                    }))
+                    // Only Claude reads a deny's note (stream: the deny message; PTY: the
+                    // hook's reason); other providers' approval APIs have no field for it.
+                    .when(
+                        !self.extras.deny_open
+                            && self
+                                .selected_session()
+                                .is_some_and(|s| s.provider_id() == "claude"),
+                        |d| {
+                            d.child(
+                                self.button("deny-with-note", "Deny with note…", enabled)
+                                    .debug_selector(|| "deny-with-note".into())
+                                    .when(enabled, |d| {
+                                        d.on_click(cx.listener(|this, _, window, cx| {
+                                            this.extras.deny_open = true;
+                                            this.extras
+                                                .deny_note
+                                                .update(cx, |input, cx| input.focus(window, cx));
+                                            cx.notify();
+                                        }))
+                                    }),
+                            )
+                        },
+                    ),
             )
+    }
+
+    /// Deny with the typed note; an empty note focuses the box instead.
+    pub(super) fn send_deny_note(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let note = self.extras.deny_note.read(cx).value().trim().to_owned();
+        if note.is_empty() {
+            self.extras
+                .deny_note
+                .update(cx, |input, cx| input.focus(window, cx));
+            return;
+        }
+        self.extras
+            .deny_note
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.extras.deny_open = false;
+        self.act(Action::DenyWithNote(note), cx);
+        self.composer
+            .update(cx, |input, cx| input.focus(window, cx));
     }
 
     fn approval_toggle(

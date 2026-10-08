@@ -818,3 +818,54 @@ fn normal_text_paste_still_reaches_the_composer(cx: &mut TestAppContext) {
     });
     assert!(commands.try_recv().is_err());
 }
+
+#[gpui::test]
+fn deny_with_note_sends_the_note_and_closes_with_its_approval(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(800.)));
+    let show = |visual: &mut VisualTestContext, approval: Option<serde_json::Value>| {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = state("a");
+                Arc::make_mut(&mut view.sessions)[0].approval = approval;
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+    };
+    let bash = serde_json::json!({"toolName": "Bash", "toolInput": {"command": "rm -rf build"}});
+    show(&mut visual, Some(bash.clone()));
+    effects(&mut commands);
+    click(&mut visual, "deny-with-note");
+    // An empty note sends nothing.
+    click(&mut visual, "deny-note-send");
+    assert!(effects(&mut commands).is_empty());
+    visual.simulate_input("clean with cargo clean instead");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    match effects(&mut commands).as_slice() {
+        [
+            Command::Act {
+                session,
+                action: Action::DenyWithNote(note),
+            },
+        ] => {
+            assert_eq!(session, "a");
+            assert_eq!(note, "clean with cargo clean instead");
+        }
+        other => panic!("expected one deny with note, got {} commands", other.len()),
+    }
+    workspace.read_with(&visual, |this, cx| {
+        assert!(!this.extras.deny_open);
+        assert_eq!(this.extras.deny_note.read(cx).value().as_ref(), "");
+        assert_eq!(
+            this.composer.read(cx).value().as_ref(),
+            "",
+            "the draft is untouched"
+        );
+    });
+    // Opened for one approval, it closes when that approval is resolved.
+    click(&mut visual, "deny-with-note");
+    show(&mut visual, None);
+    workspace.read_with(&visual, |this, _| assert!(!this.extras.deny_open));
+}

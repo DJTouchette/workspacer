@@ -685,6 +685,12 @@ be expanded, and attachment controls share the composer action row.
   silently losing their beginning. The snapshot is independent of live chat.
   Server-trimmed history is labeled; this cannot recover events the server no
   longer retains. History responses use the existing 16 MiB bus frame limit.
+- **Deny with note…** on a Claude approval card opens a one-line box: Enter
+  (or **Deny and tell it**) denies the tool and hands the agent your note
+  (`claude.approve` with a `reason`; the stream transport's deny message, the
+  PTY hook's block reason), so it can change course. The composer draft is
+  untouched, and the box closes when that approval is resolved. Codex's
+  approval API has no field for a note, so it is not offered there.
 - **Settings → Workspace** includes notifications and a persistent keep-running
   preference. Closing can minimize while local agents continue; explicit Quit
   still stops the owned backend. Completion, approval and question transitions

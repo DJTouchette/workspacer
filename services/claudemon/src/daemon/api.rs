@@ -689,7 +689,7 @@ async fn post_approve(
         Some("yes") | Some("always") => json!({"decision": "approve"}),
         Some("no") => {
             let mut obj = json!({"decision": "block"});
-            if let Some(reason) = payload.reason {
+            if let Some(reason) = payload.reason.as_deref() {
                 obj["reason"] = json!(reason);
             }
             obj
@@ -706,9 +706,21 @@ async fn post_approve(
     // route the decision to the provider adapter, which forwards it to the
     // agent's own approval API.
     let approve = matches!(payload.decision.as_deref(), Some("yes") | Some("always"));
+    // A deny's note rides beside the decision: set before it is sent so the
+    // adapter can take it when it answers, cleared on approve so a stale note
+    // never reaches a later deny.
+    store.set_deny_reason(
+        &id,
+        if approve {
+            ""
+        } else {
+            payload.reason.as_deref().unwrap_or("")
+        },
+    );
     if store.submit_managed_decision(&id, approve) {
         return Json(json!({ "ok": true, "managed": true, "approve": approve })).into_response();
     }
+    store.take_deny_reason(&id);
     if !store.resolve_decision(&id, hook_decision.clone()) {
         return (
             StatusCode::CONFLICT,
@@ -3512,6 +3524,43 @@ mod tests {
         assert_eq!(v["managed"], true);
         assert_eq!(v["approve"], true);
         assert!(rx.try_recv().unwrap());
+    }
+
+    #[tokio::test]
+    async fn managed_deny_carries_its_note_once_and_approve_clears_it() {
+        let state = test_state();
+        let store = state.store.clone();
+        store.register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<bool>();
+        store.register_managed_decision("sess-1", tx);
+        let approval = |store: &SessionStore| {
+            store.set_managed_mode(
+                "sess-1",
+                SessionMode::Approval,
+                PendingWrite::Resolve(PendingOwner::Primary),
+            )
+        };
+        approval(&store);
+        let req = post_json(
+            "/sessions/sess-1/approve",
+            json!({ "decision": "no", "reason": "use the test fixture instead" }),
+        );
+        let (status, _) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!rx.try_recv().unwrap());
+        assert_eq!(
+            store.take_deny_reason("sess-1").as_deref(),
+            Some("use the test fixture instead")
+        );
+        assert_eq!(store.take_deny_reason("sess-1"), None, "taken once");
+        // A note left behind by an unanswered deny never reaches a later one.
+        store.set_deny_reason("sess-1", "stale");
+        approval(&store);
+        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
+        let (status, _) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(rx.try_recv().unwrap());
+        assert_eq!(store.take_deny_reason("sess-1"), None);
     }
 
     // --- /decide ------------------------------------------------------------

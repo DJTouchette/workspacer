@@ -33,6 +33,9 @@ pub const CONVERSATION_PAGE: usize = 200;
 pub enum Action {
     Send(String),
     Approve(bool),
+    /// Deny the pending tool with a note the agent reads, so it can change
+    /// course instead of guessing why.
+    DenyWithNote(String),
     Stop,
     Answer(String),
     Answers(Vec<String>),
@@ -80,6 +83,10 @@ impl Action {
                 json!({"sessionId":id,"mode":mode}),
             ),
             Self::Send(text) => ("agents.sendMessage", json!({"sessionId":id, "text":text})),
+            Self::DenyWithNote(reason) => (
+                "claude.approve",
+                json!({"sessionId":id, "decision":"no", "reason":reason}),
+            ),
             Self::Approve(yes) => (
                 "claude.approve",
                 json!({"sessionId":id, "decision":if *yes {"yes"} else {"no"}}),
@@ -1328,6 +1335,9 @@ impl Worker {
                 !s.stopped()
                     && match &action {
                         Action::Approve(_) => s.approval.is_some(),
+                        Action::DenyWithNote(note) => {
+                            s.approval.is_some() && !note.trim().is_empty() && note.len() <= 4000
+                        }
                         Action::Answer(text) => {
                             s.questions.is_some() && !text.trim().is_empty() && text.len() <= 65536
                         }

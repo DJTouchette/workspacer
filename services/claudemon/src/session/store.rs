@@ -310,6 +310,10 @@ pub struct SessionStore {
     /// driver forwards it to the provider (OpenCode permission reply / Codex
     /// JSON-RPC approval response).
     managed_decisions: Arc<DashMap<String, mpsc::UnboundedSender<bool>>>,
+    /// The user's note with a managed deny, taken by the adapter that answers
+    /// it (Claude stream: the `deny` message the model reads). Beside the bool
+    /// channel so providers without a deny message are unaffected.
+    managed_deny_reasons: Arc<DashMap<String, String>>,
     /// Live in-daemon PTY children, keyed by session_id, so daemon shutdown can
     /// kill them (they have no `kill_on_drop`, unlike the managed providers'
     /// tokio children) and their exit can be reaped. Without this, quitting the
@@ -677,6 +681,7 @@ impl SessionStore {
             paste_modes: Arc::new(DashMap::new()),
             managed_inputs: Arc::new(DashMap::new()),
             managed_decisions: Arc::new(DashMap::new()),
+            managed_deny_reasons: Arc::new(DashMap::new()),
             ptys: Arc::new(DashMap::new()),
             generations: Arc::new(DashMap::new()),
             context_telemetry_epochs: Arc::new(AtomicU64::new(context_epoch_seed())),
@@ -2087,6 +2092,22 @@ impl SessionStore {
         self.native_submit_managed_decision(session_id, approve)
     }
 
+    /// Record the note for the next managed deny on this session.
+    pub fn set_deny_reason(&self, session_id: &str, reason: &str) {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            self.managed_deny_reasons.remove(session_id);
+        } else {
+            self.managed_deny_reasons
+                .insert(session_id.to_string(), reason.chars().take(4000).collect());
+        }
+    }
+
+    /// The note given with the deny being answered now, if any; taken once.
+    pub fn take_deny_reason(&self, session_id: &str) -> Option<String> {
+        self.managed_deny_reasons.remove(session_id).map(|(_, r)| r)
+    }
+
     pub(crate) fn native_submit_managed_decision(&self, session_id: &str, approve: bool) -> bool {
         match self.managed_decisions.get(session_id) {
             Some(tx) => tx.send(approve).is_ok(),
@@ -2118,6 +2139,7 @@ impl SessionStore {
         // clones), so the driver's `rx.recv()` resolves to None and the loop exits.
         let existed = self.managed_inputs.remove(session_id).is_some();
         self.managed_decisions.remove(session_id);
+        self.managed_deny_reasons.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
         self.managed_answers.remove(session_id);
@@ -2176,6 +2198,7 @@ impl SessionStore {
     fn deregister_managed_current(&self, session_id: &str) -> bool {
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
+        self.managed_deny_reasons.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
         self.managed_answers.remove(session_id);

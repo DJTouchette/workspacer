@@ -396,6 +396,15 @@ const AGENT_TASK_TYPES: [&str; 3] = ["local_agent", "in_process_teammate", "remo
 /// a wrong busy is a permanent lie, a wrong idle self-heals on the next frame.
 /// Ambient tasks still ride the wire as `background_tasks` so clients can
 /// badge them without the mode lying.
+/// What the model reads when the user denies a tool: their note when they
+/// gave one, so it can change course instead of guessing why.
+fn deny_message(reason: Option<String>) -> String {
+    match reason {
+        Some(reason) => format!("The user denied this tool use and said: {reason}"),
+        None => "The user denied this tool use.".into(),
+    }
+}
+
 fn background_tasks_changed(value: &Value) -> Option<(bool, u32)> {
     if value.get("type").and_then(Value::as_str) != Some("system")
         || value.get("subtype").and_then(Value::as_str) != Some("background_tasks_changed")
@@ -1473,7 +1482,7 @@ async fn run_session(
                         let response = if approve {
                             json!({ "behavior": "allow", "updatedInput": parked.input })
                         } else {
-                            json!({ "behavior": "deny", "message": "The user denied this tool use.", "interrupt": false })
+                            json!({ "behavior": "deny", "message": deny_message(store.take_deny_reason(&session_id)), "interrupt": false })
                         };
                         let _ = out_tx.send(control_success(&parked.request_id, response));
                         // Another request may have parked behind the one just
@@ -1957,6 +1966,15 @@ fn handle_line(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn deny_message_carries_the_users_note() {
+        assert_eq!(super::deny_message(None), "The user denied this tool use.");
+        assert_eq!(
+            super::deny_message(Some("run the linter first".into())),
+            "The user denied this tool use and said: run the linter first"
+        );
+    }
+
     use super::*;
     use crate::session::state::PlanStatus;
 
