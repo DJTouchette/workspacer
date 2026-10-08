@@ -215,16 +215,26 @@ impl Workspace {
         )
     }
 
-    /// ACTION SLOT for the cold-cache note: buttons offered beside its
-    /// Dismiss, left to right. Empty for now. "Start fresh from a summary"
-    /// (a handoff that seeds a new session with a brief instead of resending
-    /// the whole cold context) is meant to go here.
+    /// Buttons offered beside the cold-cache note's Dismiss: "Start fresh
+    /// from a summary" hands off to a new session seeded with a cheap-model
+    /// brief instead of resending the whole cold context.
     fn cold_note_actions(
         &self,
-        _session: &Session,
-        _cx: &mut Context<Self>,
+        session: &Session,
+        cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
-        Vec::new()
+        if !matches!(session.provider.as_str(), "claude" | "codex" | "") {
+            return Vec::new();
+        }
+        let session = session.clone();
+        vec![
+            self.button("cold-start-fresh", "Start fresh from a summary", true)
+                .debug_selector(|| "cold-start-fresh".into())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.start_summary_handoff(&session, window, cx)
+                }))
+                .into_any_element(),
+        ]
     }
 
     /// The expiry the pending redraw is for.

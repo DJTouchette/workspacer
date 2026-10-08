@@ -212,3 +212,24 @@ fn a_codex_estimate_says_so(cx: &mut TestAppContext) {
         )
     );
 }
+
+#[gpui::test]
+fn the_cold_note_offers_to_start_fresh_from_a_summary(cx: &mut TestAppContext) {
+    let _clock = Clock::at(T0 + 90 * MINUTE);
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    workspace.update(&mut visual, |this, _| this.demo = false);
+    show(&workspace, &mut visual, paused(624_000));
+    let button = bounds_of(&mut visual, "cold-start-fresh");
+    let actions = bounds_of(&mut visual, "cold-cache-actions");
+    assert!(actions.contains(&button.center()));
+    visual.simulate_click(button.center(), gpui::Modifiers::default());
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.screen, Screen::Handoff);
+        assert!(this.extras.handoff_fresh, "a same-provider fresh start");
+        assert_eq!(
+            this.extras.handoff_brief,
+            wks_native::handoff::Brief::Summary
+        );
+    });
+}
