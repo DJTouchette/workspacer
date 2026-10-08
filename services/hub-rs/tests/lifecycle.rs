@@ -222,6 +222,7 @@ fn operation_budgets_match_the_legacy_provider_contract() {
         ("hub:worker/agents.spawn", 360),
         ("desktop.worktreeCreate", 360),
         ("claude.handoffAgentBrief", 180),
+        ("claude.handoffSummaryBrief", 150),
         ("desktop.managerRequestSend", 60),
         ("desktop.worktreeRemove", 60),
         ("sessions.snapshots", 30),

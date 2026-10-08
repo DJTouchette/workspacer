@@ -35,8 +35,9 @@ const DEFAULT_MODEL: &str = "haiku";
 /// Whole-run ceiling: spawn + one small turn + exit.
 const DEFAULT_TIMEOUT_SECS: u64 = 45;
 const MAX_TIMEOUT_SECS: u64 = 120;
-/// Prompts here are summaries of an opening exchange, not documents.
-const MAX_PROMPT_CHARS: usize = 8_000;
+/// Titles send an opening exchange; a handoff summary sends a bounded digest
+/// and conversation tail (the hub caps those at 48k chars, ~12k tokens).
+const MAX_PROMPT_CHARS: usize = 64_000;
 /// A one-shot answers in a sentence; anything past this is a runaway.
 const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 

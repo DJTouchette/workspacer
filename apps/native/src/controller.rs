@@ -1597,19 +1597,20 @@ impl Worker {
                 {
                     return;
                 }
-                let brief = match result.and_then(|reply| crate::handoff::written(&reply)) {
-                    Ok(brief) => brief,
-                    Err(error) => {
-                        self.finish_handoff(
-                            number,
-                            (&request.source, &request.successor.provider),
-                            None,
-                            None,
-                            Some(error.to_string()),
-                        );
-                        return;
-                    }
-                };
+                let brief =
+                    match result.and_then(|reply| crate::handoff::written(&reply, request.brief)) {
+                        Ok(brief) => brief,
+                        Err(error) => {
+                            self.finish_handoff(
+                                number,
+                                (&request.source, &request.successor.provider),
+                                None,
+                                None,
+                                Some(error.to_string()),
+                            );
+                            return;
+                        }
+                    };
                 // Launch checks again: the connection may have dropped while
                 // the source agent was writing.
                 let params = request.successor.params().and_then(|params| {

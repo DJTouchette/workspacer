@@ -37,6 +37,13 @@ extras(
   ['call(method,params,&home)'],
 );
 extras(
+  ['claude.handoffSummaryBrief'],
+  'services/live_controls.rs',
+  true,
+  'Writes a handoff brief under the same authority as claude.handoffBrief through the shared live-controls dispatcher, which validates the session id before any daemon read, model call or file write; the hub chooses the summary harness, model, prompt bounds and file name.',
+  ['service.call(method,params)'],
+);
+extras(
   ['federation.resumePeer'],
   'federation.rs',
   true,

@@ -1,6 +1,7 @@
 //! Live switches and handoff/history adapters over the owned daemon.
 mod confirmation;
 mod handoff;
+mod summary;
 use super::agent_lifecycle::Lifecycle;
 use crate::{Handle, Options, protocol::Event};
 use anyhow::{Result, bail};
@@ -45,6 +46,7 @@ struct Controls {
     hub: Handle,
     home: PathBuf,
     config: PathBuf,
+    utilities: Option<Arc<super::provider_utilities::Service>>,
 }
 impl Controls {
     async fn request(&self, method: &str, path: String, payload: Option<Value>) -> Result<Value> {
@@ -266,6 +268,7 @@ impl Controls {
                 },
             ),
             "claude.handoffAgentBrief" => self.agent_brief(id).await,
+            "claude.handoffSummaryBrief" => self.summary_brief(id).await,
             _ => bail!("unknown live control"),
         }
     }
@@ -282,6 +285,62 @@ impl Controls {
                     })
                     .await
                     .map(|value| value["ok"] != false)
+            },
+            || async move {
+                self.request("POST", format!("/sessions/{id}/handoff"), Some(json!({})))
+                    .await
+            },
+        )
+        .await
+    }
+    /// A cheap model writes the brief from the digest and the conversation's
+    /// tail; nothing is sent to the source, so its cold context stays cold.
+    async fn summary_brief(&self, id: &str) -> Result<Value> {
+        let digest = match self
+            .request(
+                "POST",
+                format!("/sessions/{id}/handoff"),
+                Some(json!({"no_persist":true})),
+            )
+            .await
+        {
+            Ok(reply) => text(&reply, "markdown").to_owned(),
+            Err(error) => return Ok(failed(error)),
+        };
+        // The tail is an enrichment: the digest alone still makes a brief.
+        let items = self
+            .request(
+                "GET",
+                format!("/sessions/{id}/conversation?limit={}", summary::TAIL_ITEMS),
+                None,
+            )
+            .await
+            .ok()
+            .and_then(|reply| reply["items"].as_array().cloned())
+            .unwrap_or_default();
+        let provider = self.provider(id).await;
+        summary::summarized(
+            &self.home,
+            id,
+            &digest,
+            &items,
+            summary::DEADLINE,
+            |prompt| async move {
+                match &self.utilities {
+                    Some(utilities) => {
+                        let outcome = utilities.summarize_handoff(&provider, &prompt).await;
+                        summary::Attempt {
+                            provider: outcome.provider,
+                            model: outcome.model,
+                            text: outcome.text,
+                        }
+                    }
+                    None => summary::Attempt {
+                        provider,
+                        model: None,
+                        text: Err("unsupported"),
+                    },
+                }
             },
             || async move {
                 self.request("POST", format!("/sessions/{id}/handoff"), Some(json!({})))
@@ -447,6 +506,7 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
         hub,
         home: options.home_dir.clone().unwrap_or_default(),
         config: options.config_dir.clone().unwrap_or_default(),
+        utilities: options.provider_utilities.clone(),
     });
     for method in [
         "claude.setModel",
@@ -454,6 +514,7 @@ pub(crate) fn install(mut options: Options, hub: Handle) -> Options {
         "claude.setPermissionMode",
         "claude.handoffBrief",
         "claude.handoffAgentBrief",
+        "claude.handoffSummaryBrief",
         "sessions.recent",
     ] {
         let service = service.clone();
@@ -654,15 +715,23 @@ mod tests {
             hub: hub.handle(),
             home: dir.path().into(),
             config: dir.path().into(),
+            utilities: None,
         };
         for invalid in ["../../outside".to_owned(), String::new(), "a".repeat(129)] {
-            assert!(
-                controls
-                    .call("claude.handoffAgentBrief", json!({"sessionId":invalid}))
-                    .await
-                    .is_err()
-            );
+            for method in ["claude.handoffAgentBrief", "claude.handoffSummaryBrief"] {
+                assert!(
+                    controls
+                        .call(method, json!({"sessionId":invalid.clone()}))
+                        .await
+                        .is_err()
+                );
+            }
         }
+        // No conversation: nothing to summarize, and no model is asked.
+        let unknown = controls
+            .call("claude.handoffSummaryBrief", json!({"sessionId":"unknown"}))
+            .await?;
+        assert_eq!(unknown["ok"], false, "{unknown}");
         assert!(
             !dir.path().join(".workspacer/handoffs").exists(),
             "invalid session identity must be refused before preparing a target"

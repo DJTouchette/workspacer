@@ -123,6 +123,12 @@ pub(super) struct Extras {
     pub archive_migrating: std::collections::BTreeSet<String>,
     /// Who writes the brief on Continue with…
     pub handoff_brief: wks_native::handoff::Brief,
+    /// The successor is a fresh agent of the source's own provider ("Start
+    /// fresh from a summary") rather than the other provider.
+    pub handoff_fresh: bool,
+    /// A summary handoff asked for a session not yet selected; the page opens
+    /// when the selection lands (see `start_summary_handoff`).
+    pub summary_pending: Option<String>,
     /// This window asked for a handoff and awaits a receipt newer than
     /// `handoff_seen` (the latest one when it asked).
     pub handoff_sent: bool,
@@ -198,6 +204,8 @@ impl Extras {
             archive_receipt: 0,
             archive_migrating: Default::default(),
             handoff_brief: Default::default(),
+            handoff_fresh: false,
+            summary_pending: None,
             handoff_sent: false,
             handoff_seen: 0,
             recent: super::recent::RecentUi::new(window, cx),
@@ -816,6 +824,23 @@ impl Workspace {
                                         this.open_feature(Screen::Handoff, window, cx)
                                     }))
                                 }),
+                            )
+                        },
+                    )
+                    // A same-provider successor from a cheap summary: for a
+                    // session too long or too cold to resume cheaply.
+                    .when(
+                        wks_native::handoff::targets(s).is_ok() && self.view.connected,
+                        |d| {
+                            let fresh = s.clone();
+                            d.child(
+                                self.button("fresh-session", "Start fresh from a summary…", !busy)
+                                    .debug_selector(|| "fresh-session".into())
+                                    .when(!busy, |d| {
+                                        d.on_click(cx.listener(move |this, _, window, cx| {
+                                            this.start_summary_handoff(&fresh, window, cx)
+                                        }))
+                                    }),
                             )
                         },
                     )

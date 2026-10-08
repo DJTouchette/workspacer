@@ -547,6 +547,10 @@ mod tests {
             forwarding_budget("claude.handoffAgentBrief"),
             Duration::from_secs(175)
         );
+        assert_eq!(
+            forwarding_budget("claude.handoffSummaryBrief"),
+            Duration::from_secs(145)
+        );
         assert_eq!(forwarding_budget("agents.list"), Duration::from_secs(25));
     }
 

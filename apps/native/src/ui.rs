@@ -1167,6 +1167,7 @@ impl Workspace {
             .unwrap_or_default();
         self.sync_projects(&view);
         self.view = view;
+        self.resume_summary_handoff(window, cx);
         self.lift_child_clears(cx);
         self.ensure_project_icons(cx);
         self.resume_explorer(cx);

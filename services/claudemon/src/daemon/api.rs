@@ -1405,6 +1405,44 @@ struct ConversationQuery {
     limit: Option<usize>,
 }
 
+/// The store holding `id`'s conversation, replaying it when the live log is
+/// gone. A Codex rollout is pushed into `conv` (its tailer never refills it).
+/// A stopped Claude session's live log is released once its transcript has
+/// drained (and a restarted daemon never had one), so its last content is
+/// served from the transcript instead, read-only: storing it would only be
+/// dropped again by the tailer, and a resume seeds its own copy.
+async fn retained_conversation(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    id: &str,
+) -> ConversationStore {
+    if !conv.has_conversation(id) {
+        if let Some(replayed) = crate::providers::codex_rollout::thread_for(id)
+            .and_then(|tid| crate::providers::codex_rollout::rollout_for_thread(&tid))
+            .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
+            .filter(|replayed| !replayed.is_empty())
+        {
+            conv.push(id, replayed);
+        }
+    }
+    if !conv.has_conversation(id) {
+        if let Some(path) = store
+            .get(id)
+            .filter(|s| s.provider == "claude" && s.mode == SessionMode::Stopped)
+            .and_then(|s| s.transcript_path)
+        {
+            if let Ok(items) = crate::session::conversation::replay_transcript(&path).await {
+                if !items.is_empty() {
+                    let replay = ConversationStore::new();
+                    replay.push(id, items);
+                    return replay;
+                }
+            }
+        }
+    }
+    conv.clone()
+}
+
 /// Parsed conversation snapshot for one session: item history + the sequence
 /// number of the last item, so a client can join the delta stream without gaps.
 /// With `?since=N`, only items after sequence N are returned (the `seq` field is
@@ -1425,35 +1463,8 @@ async fn get_conversation(
         return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
     }
     // Replay before either projection, without first cloning the full log.
-    if !conv.has_conversation(&id) {
-        if let Some(replayed) = crate::providers::codex_rollout::thread_for(&id)
-            .and_then(|tid| crate::providers::codex_rollout::rollout_for_thread(&tid))
-            .map(|path| crate::providers::codex_rollout::replay_conversation(&path))
-            .filter(|replayed| !replayed.is_empty())
-        {
-            conv.push(&id, replayed);
-        }
-    }
-    // A stopped Claude session's live log is released once its transcript has
-    // drained (and a restarted daemon never had one). Serve its last content
-    // from the transcript instead, read-only: storing it would only be dropped
-    // again by the tailer, and a resume seeds its own copy.
-    let replay = ConversationStore::new();
-    let mut source = &conv;
-    if !conv.has_conversation(&id) {
-        if let Some(path) = store
-            .get(&id)
-            .filter(|s| s.provider == "claude" && s.mode == SessionMode::Stopped)
-            .and_then(|s| s.transcript_path)
-        {
-            if let Ok(items) = crate::session::conversation::replay_transcript(&path).await {
-                if !items.is_empty() {
-                    replay.push(&id, items);
-                    source = &replay;
-                }
-            }
-        }
-    }
+    let source = retained_conversation(&store, &conv, &id).await;
+    let source = &source;
     if let Some(version) = q.summary_source {
         if version != 1 {
             return (StatusCode::BAD_REQUEST, "unsupported summary projection").into_response();
@@ -1702,7 +1713,9 @@ async fn post_handoff(
     if !valid_session_id(&id) {
         return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
     }
-    let (_, items) = conv.snapshot(&id).unwrap_or((0, Vec::new()));
+    // A paused/stopped session hands off from what its transcript retains.
+    let source = retained_conversation(&store, &conv, &id).await;
+    let (_, items) = source.snapshot(&id).unwrap_or((0, Vec::new()));
     if items.is_empty() {
         return (
             StatusCode::NOT_FOUND,
@@ -2741,6 +2754,20 @@ mod tests {
         assert!(text.contains("Noted where we left off."));
         // Read-only: the live store was not filled, so the tailer has nothing
         // to discard and a resume seeds its own copy.
+        assert!(!state.conv.has_conversation("ended-1"));
+        // The handoff brief reads the same retained content: a paused session
+        // can be continued without resuming it.
+        let (status, body) = request(
+            state.clone(),
+            post_json("/sessions/ended-1/handoff", json!({ "no_persist": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let v = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(v["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("Noted where we left off."));
         assert!(!state.conv.has_conversation("ended-1"));
     }
 

@@ -75,6 +75,7 @@
     "claude.gate",
     "claude.handoffAgentBrief",
     "claude.handoffBrief",
+    "claude.handoffSummaryBrief",
     "claude.listModels",
     "claude.profiles.add",
     "claude.profiles.list",
@@ -217,6 +218,10 @@
     "fs.compareWrite": {
       "authority": "fs.write",
       "reason": "Rust host conditional file write: the same authenticated ambient host-path authority as fs.write. Canonical absolute path selects the file; contents and expected are inert text, force only bypasses the content comparison. None grants provider, process, permission or caller-identity authority."
+    },
+    "claude.handoffSummaryBrief": {
+      "authority": "claude.handoffBrief",
+      "reason": "Rust live-controls handoff tier between the mechanical and agent briefs: the caller supplies only a validated session id. The hub builds the same deterministic digest plus a bounded, credential-masked conversation tail, asks its configured title harness (Haiku for Claude) for one tool-less completion, and writes a hub-named file under ~/.workspacer/handoffs, falling back to the mechanical brief. No caller path, argv, model, provider or permission reaches the process, and nothing is sent to the source session."
     }
   }
 }
