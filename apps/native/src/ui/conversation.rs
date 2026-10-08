@@ -253,6 +253,7 @@ impl Workspace {
             .when_some(selected.and_then(|s| s.approval.as_ref()), |d, approval| {
                 d.child(self.render_approval_card(approval, layout, window, cx))
             })
+            .children(selected.and_then(|session| self.render_limit_card(session, compact, cx)))
             .when_some(selected.filter(|s| s.questions.is_some()), |d, session| {
                 d.child(self.render_questions(session, layout.enabled, compact, window, cx))
             })
@@ -593,6 +594,110 @@ impl Workspace {
                         )
                     }),
             )
+    }
+
+    /// The account behind this session is out of a usage window: say which,
+    /// when it comes back, and offer to carry on with the other provider (the
+    /// existing handoff). Short of that, the provider's own warning as a line.
+    fn render_limit_card(
+        &self,
+        session: &Session,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let p = self.appearance.palette();
+        let limits = &session.limits;
+        let card = || {
+            div()
+                .debug_selector(|| "limit-card".into())
+                .occlude()
+                .w_full()
+                .p(px(if compact { 8. } else { 12. }))
+                .rounded(px(p.panel_radius))
+                .shadow(chrome::floating_shadow(p))
+                .bg(rgb(p.surface))
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .text_size(px(12.))
+        };
+        let Some((window, resets_at)) = limits.exhausted() else {
+            let warning = limits.warning.clone()?;
+            return Some(
+                card().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_color(rgb(p.warning))
+                        .child(status_dot(p.warning))
+                        .child(warning),
+                ),
+            );
+        };
+        if session.working()
+            || self.extras.limit_dismissed.as_ref()
+                == Some(&(session.id.clone(), window, resets_at))
+        {
+            return None;
+        }
+        let provider = match session.provider_id() {
+            "codex" => "Codex",
+            _ => "Claude",
+        };
+        let when = resets_at
+            .map(|at| {
+                let now = wks_native::timing::now_ms() / 1000;
+                format!(" · resets in {}", wks_native::usage::resets_in(at, now))
+            })
+            .unwrap_or_default();
+        let other = if provider == "Codex" {
+            "Continue with Claude…"
+        } else {
+            "Continue with Codex…"
+        };
+        let can_hand_off = self.supported_session() && self.view.connected && !self.demo;
+        let key = (session.id.clone(), window, resets_at);
+        Some(
+            card()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_color(rgb(p.warning))
+                        .child(status_dot(p.warning))
+                        .child(format!("{provider}'s {window} usage limit is reached{when}")),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(p.muted))
+                        .child("Messages wait until it resets. A handoff carries this work to the other agent now."),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            self.primary_button("limit-handoff", other, can_hand_off)
+                                .debug_selector(|| "limit-handoff".into())
+                                .when(can_hand_off, |d| {
+                                    d.on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_feature(Screen::Handoff, window, cx)
+                                    }))
+                                }),
+                        )
+                        .child(
+                            self.button("limit-dismiss", "Wait for the reset", true)
+                                .debug_selector(|| "limit-dismiss".into())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.extras.limit_dismissed = Some(key.clone());
+                                    cx.notify();
+                                })),
+                        ),
+                ),
+        )
     }
 
     /// The one-line note box under a Deny with note / Keep planning.

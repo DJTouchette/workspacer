@@ -903,3 +903,47 @@ fn a_finished_plan_reads_as_a_plan_with_approve_and_keep_planning(cx: &mut TestA
         }]
     ));
 }
+
+#[gpui::test]
+fn a_spent_usage_window_offers_the_other_agent_or_waiting(cx: &mut TestAppContext) {
+    let (workspace, mut visual, _commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1200.), px(800.)));
+    let show = |visual: &mut VisualTestContext, status: serde_json::Value| {
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                this.demo = false;
+                let mut view = state("a");
+                let session = &mut Arc::make_mut(&mut view.sessions)[0];
+                session.provider = "claude".into();
+                session.merge(&serde_json::json!({"statusLine": status}));
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+    };
+    let reset = wks_native::timing::now_ms() / 1000 + 2 * 3600 + 600;
+    show(
+        &mut visual,
+        serde_json::json!({"fiveHourPct": 100.0, "fiveHourResetsAt": reset}),
+    );
+    assert!(visual.debug_bounds("limit-card").is_some());
+    click(&mut visual, "limit-handoff");
+    workspace.read_with(&visual, |this, _| assert_eq!(this.screen, Screen::Handoff));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.show_screen(Screen::Conversation, window, cx)
+        })
+    });
+    visual.run_until_parked();
+    click(&mut visual, "limit-dismiss");
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(
+            this.extras.limit_dismissed,
+            Some(("a".into(), "5-hour", Some(reset)))
+        );
+        assert!(
+            this.view.sessions[0].limits.exhausted().is_some(),
+            "dismissing hides the card, not the limit"
+        );
+    });
+}

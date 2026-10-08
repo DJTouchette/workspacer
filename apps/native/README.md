@@ -685,6 +685,13 @@ be expanded, and attachment controls share the composer action row.
   silently losing their beginning. The snapshot is independent of live chat.
   Server-trimmed history is labeled; this cannot recover events the server no
   longer retains. History responses use the existing 16 MiB bus frame limit.
+- **Usage limits.** When the session's account spends its 5-hour or weekly
+  window (status-line `fiveHourPct`/`sevenDayPct` at 99.5% or more), a card
+  says which and when it resets, with **Continue with Codex…** (or Claude…),
+  the existing handoff, and **Wait for the reset**, which hides it until that
+  window or reset changes. Short of the limit, the provider's own warning
+  (`rateLimitWarning`) shows as one line. `native-harness serve
+  --plan-and-limit` stages this card and a finished plan for captures.
 - **A finished plan reads as a plan.** When Claude asks to leave plan mode
   (`ExitPlanMode`), the approval card renders the plan as Markdown in a
   scrollable panel, with **Approve plan** and **Keep planning…**; the latter is

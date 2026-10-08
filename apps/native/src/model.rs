@@ -49,6 +49,56 @@ pub struct Session {
     /// (`session::prompt_cache` in claudemon). `None` until it has seen a
     /// request, or for a provider whose caching it cannot describe.
     pub prompt_cache: Option<PromptCache>,
+    /// The account's usage windows as the session's status line reports them.
+    pub limits: Limits,
+}
+
+/// One account's usage windows from a session's status line: what decides
+/// whether the session can go on, and when it can again.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Limits {
+    pub five_hour_pct: Option<f64>,
+    /// Unix seconds.
+    pub five_hour_resets_at: Option<i64>,
+    pub seven_day_pct: Option<f64>,
+    pub seven_day_resets_at: Option<i64>,
+    /// The provider's own "you are close" message, cleared when comfortable.
+    pub warning: Option<String>,
+}
+
+impl Limits {
+    /// The window that stops work, if one is spent: 5-hour before weekly,
+    /// with its reset. 99.5 rather than 100: the endpoint rounds, and a capped
+    /// account can report either (TWIN: desktop `windowExhausted`).
+    pub fn exhausted(&self) -> Option<(&'static str, Option<i64>)> {
+        let spent = |pct: Option<f64>| pct.is_some_and(|p| p >= 99.5);
+        if spent(self.five_hour_pct) {
+            Some(("5-hour", self.five_hour_resets_at))
+        } else if spent(self.seven_day_pct) {
+            Some(("weekly", self.seven_day_resets_at))
+        } else {
+            None
+        }
+    }
+
+    fn merge(&mut self, status: &Value) {
+        let field = |names: &[&str]| names.iter().find_map(|name| status.get(*name));
+        let pct = |names: &[&str]| {
+            field(names)
+                .and_then(Value::as_f64)
+                .filter(|p| p.is_finite())
+        };
+        let at = |names: &[&str]| field(names).and_then(Value::as_i64).filter(|t| *t > 0);
+        self.five_hour_pct = pct(&["fiveHourPct", "five_hour_pct"]);
+        self.five_hour_resets_at = at(&["fiveHourResetsAt", "five_hour_resets_at"]);
+        self.seven_day_pct = pct(&["sevenDayPct", "seven_day_pct"]);
+        self.seven_day_resets_at = at(&["sevenDayResetsAt", "seven_day_resets_at"]);
+        self.warning = field(&["rateLimitWarning", "rate_limit_warning"])
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|w| !w.is_empty())
+            .map(|w| crate::transcript::head(w, 240));
+    }
 }
 
 /// When a session's prompt cache expires and what a message costs after it
@@ -397,6 +447,13 @@ impl Session {
             .reduce(|a, b| a || b)
         {
             self.wake_target = manager;
+        }
+        if let Some(status) = ["statusLine", "status_line"]
+            .iter()
+            .find_map(|name| value.get(*name))
+            .filter(|status| status.is_object())
+        {
+            self.limits.merge(status);
         }
         if let Some(mode) = ["/livePermissionMode", "/settings/permissionMode"]
             .iter()
@@ -1043,6 +1100,22 @@ pub fn model_display_name(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_line_limits_say_which_window_stops_work() {
+        let mut s = Session::default();
+        s.merge(&json!({"statusLine":{"fiveHourPct":42.0,"sevenDayPct":10.0}}));
+        assert_eq!(s.limits.exhausted(), None);
+        s.merge(
+            &json!({"statusLine":{"fiveHourPct":99.6,"fiveHourResetsAt":1_800_000_000,
+            "sevenDayPct":100.0,"rateLimitWarning":"Approaching your limit"}}),
+        );
+        assert_eq!(s.limits.exhausted(), Some(("5-hour", Some(1_800_000_000))));
+        assert_eq!(s.limits.warning.as_deref(), Some("Approaching your limit"));
+        s.merge(&json!({"statusLine":{"five_hour_pct":3.0,"seven_day_pct":99.5}}));
+        assert_eq!(s.limits.exhausted(), Some(("weekly", None)));
+        assert_eq!(s.limits.warning, None, "a cleared warning clears");
+    }
+
     use super::*;
     use serde_json::json;
 

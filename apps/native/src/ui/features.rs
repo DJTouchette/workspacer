@@ -43,6 +43,9 @@ pub(super) struct Extras {
     /// The approval card's "Deny with note" box, open while it is shown.
     pub deny_note: Entity<InputState>,
     pub deny_open: bool,
+    /// The limit card the user closed: (session, window, reset). A different
+    /// window or reset shows it again.
+    pub limit_dismissed: Option<(String, &'static str, Option<i64>)>,
     _alert_clicks: Task<()>,
     pub return_launch: bool,
     pub approval_details: bool,
@@ -180,6 +183,7 @@ impl Extras {
                 InputState::new(window, cx).placeholder("Tell the agent what to do instead")
             }),
             deny_open: false,
+            limit_dismissed: None,
             name: cx.new(|cx| InputState::new(window, cx).placeholder("Session name")),
             commit_message: cx.new(|cx| {
                 InputState::new(window, cx)

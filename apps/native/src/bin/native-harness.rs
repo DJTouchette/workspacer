@@ -65,6 +65,10 @@ enum Command {
         /// and its turn ends after ~4s; that snapshot then replays every 1.5s.
         #[arg(long)]
         child_lifecycle: bool,
+        /// The first session waits on a finished plan and its 5-hour usage
+        /// window is spent (plan card and limit card captures).
+        #[arg(long)]
+        plan_and_limit: bool,
     },
     /// Measure the real turn-footer summary path, excluding GPUI layout/GPU work.
     BenchTurnSummary {
@@ -172,17 +176,21 @@ async fn main() -> Result<()> {
             missing_session_request,
             pending_questions,
             child_lifecycle,
+            plan_and_limit,
         } => {
             let listener = tokio::net::TcpListener::bind(&bind).await?;
             println!("Fixture hub: ws://{}/bus", listener.local_addr()?);
             wks_native::harness::serve_feedback_fixture(
                 listener,
-                sessions.min(10000),
-                turns.min(5000),
-                rich_transcript,
-                missing_session_request,
-                pending_questions,
-                child_lifecycle,
+                wks_native::harness::Options {
+                    sessions: sessions.min(10000),
+                    turns: turns.min(5000),
+                    rich: rich_transcript,
+                    missing_session_request,
+                    pending_questions,
+                    child_lifecycle,
+                    plan_and_limit,
+                },
             )
             .await?;
         }

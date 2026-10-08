@@ -30,7 +30,16 @@ pub async fn serve_with_transcript(
     turns: usize,
     rich: bool,
 ) -> Result<()> {
-    serve_feedback_fixture(listener, sessions, turns, rich, false, false, false).await
+    serve_feedback_fixture(
+        listener,
+        Options {
+            sessions,
+            turns,
+            rich,
+            ..Options::default()
+        },
+    )
+    .await
 }
 
 /// Visual acceptance fixture. The optional request exercises the native
@@ -41,22 +50,10 @@ pub async fn serve_with_transcript(
 /// `child_lifecycle` (rich only) finishes the first session's native
 /// children and ends its turn a few seconds after connecting, then replays
 /// that identical snapshot every 1.5s, for child-row stability captures.
-pub async fn serve_feedback_fixture(
-    listener: TcpListener,
-    sessions: usize,
-    turns: usize,
-    rich: bool,
-    missing_session_request: bool,
-    pending_questions: bool,
-    child_lifecycle: bool,
-) -> Result<()> {
+pub async fn serve_feedback_fixture(listener: TcpListener, options: Options) -> Result<()> {
     let options = Options {
-        sessions,
-        turns,
-        rich,
-        missing_session_request,
-        pending_questions,
-        child_lifecycle: child_lifecycle && rich,
+        child_lifecycle: options.child_lifecycle && options.rich,
+        ..options
     };
     loop {
         let (stream, _) = listener.accept().await?;
@@ -69,14 +66,19 @@ pub async fn serve_feedback_fixture(
     }
 }
 
-#[derive(Clone, Copy)]
-struct Options {
-    sessions: usize,
-    turns: usize,
-    rich: bool,
-    missing_session_request: bool,
-    pending_questions: bool,
-    child_lifecycle: bool,
+/// What the feedback fixture serves.
+#[derive(Clone, Copy, Default)]
+pub struct Options {
+    pub sessions: usize,
+    pub turns: usize,
+    pub rich: bool,
+    pub missing_session_request: bool,
+    pub pending_questions: bool,
+    /// Children finish and the turn ends after ~4s (rich only).
+    pub child_lifecycle: bool,
+    /// The first session's approval is a finished plan (`ExitPlanMode`) and
+    /// its account's 5-hour window is spent, for dock-card captures.
+    pub plan_and_limit: bool,
 }
 
 /// One connection's fixture hub: what it serves and remembers between frames.
@@ -721,7 +723,10 @@ impl Fixture {
                 } else {
                     "input"
                 },
-                "pendingApproval": if i == 0 && self.pending {
+                "pendingApproval": if i == 0 && self.pending && self.options.plan_and_limit {
+                    json!({"toolName": "ExitPlanMode", "toolInput": {"plan":
+                        "## Plan: native review actions\n\n1. **Stage and commit** from the change list\n2. Add a `Commits` tab with each commit's patch\n3. Let the file panel hide\n\nTests: one UI test per action, then the full suite."}})
+                } else if i == 0 && self.pending {
                     json!({"toolName": "Bash", "toolInput": {"command": "cargo test"}})
                 } else {
                     Value::Null
@@ -732,6 +737,19 @@ impl Fixture {
             } else {
                 snapshot
             };
+            if i == 0 && self.options.plan_and_limit {
+                let reset = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64)
+                    + 2 * 3600
+                    + 14 * 60;
+                if !snapshot["statusLine"].is_object() {
+                    snapshot["statusLine"] = json!({});
+                }
+                snapshot["statusLine"]["fiveHourPct"] = json!(100.0);
+                snapshot["statusLine"]["fiveHourResetsAt"] = json!(reset);
+                snapshot["statusLine"]["sevenDayPct"] = json!(61.0);
+            }
             if i == 0
                 && let Some(row) = &self.finished_parent
             {
