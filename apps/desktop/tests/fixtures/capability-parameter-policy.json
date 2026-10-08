@@ -65,6 +65,8 @@
     "git.unstage": "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
     "git.commit": "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
     "git.push": "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+    "git.pull": "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
+    "git.discard": "guardGitCwd canonicalizes cwd before git opens it; authenticated agent/plugin path access is ambient",
     "sessions.load": "filename is a bare basename resolved and confined to <configDir>/sessions by both providers (paths::selected_path / resolveWithinSessionsDir); pinned by the corpus's sessionFilenames block",
     "sessions.save": "same as sessions.load: the filename is derived from the session name by the provider's slug and re-checked by the same resolver",
     "sessions.delete": "same as sessions.load",
@@ -524,6 +526,26 @@
       "path": {
         "kind": "inert",
         "reason": "The common Rust git dispatcher reads this optional field, but this method does not consult the value or pass it to git. Its repository remains selected only by canonical cwd."
+      }
+    },
+    "git.pull": {
+      "cwd": {
+        "kind": "path",
+        "reason": "guardGitCwd canonicalizes cwd before git runs; authenticated agent/plugin path access is ambient"
+      },
+      "path": {
+        "kind": "inert",
+        "reason": "The common Rust git dispatcher reads this optional field, but this method does not consult the value or pass it to git. Its repository remains selected only by canonical cwd."
+      }
+    },
+    "git.discard": {
+      "cwd": {
+        "kind": "path",
+        "reason": "guardGitCwd canonicalizes cwd before git runs; authenticated agent/plugin path access is ambient"
+      },
+      "path": {
+        "kind": "path",
+        "reason": "required; anchored and contained to the work-tree root like git.stage, refused when it names a folder, and never path-less, so one call discards at most one file"
       }
     },
     "sessions.load": {
@@ -1112,6 +1134,12 @@
       "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
     },
     "git.push": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.pull": {
+      "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
+    },
+    "git.discard": {
       "$": "services::git::call inspects object keys only to reject noncanonical spellings of method-specific consumed fields before Git runs. This review permits key validation, not serialization, storage, or forwarding of the whole payload; cwd/path/hash and other named reads retain their individual decisions."
     }
   }

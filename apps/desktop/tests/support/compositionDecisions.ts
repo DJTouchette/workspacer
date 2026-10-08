@@ -827,6 +827,30 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'git.pull': {
+    reason:
+      "Fast-forwards the repository selected by guardGitCwd('git.pull', ...) to its upstream (`pull --ff-only`: no merge commit, no editor). It writes no Workspacer policy or grant; the remote URL and Git hooks/configuration execute under the authenticated user's existing ambient repository authority, with owned process limits.",
+    witnesses: [
+      {
+        kind: 'guard',
+        guard: 'guardGitCwd',
+      },
+    ],
+  },
+  'git.discard': {
+    reason:
+      "Throws away one file's unstaged changes in a repo guardGitCwd('git.discard', \u2026) confines by its `cwd`: the `path` is anchored and contained like git.stage's, a folder or path-less call is refused, a tracked file returns to its index content and an untracked file is deleted. Work-tree content is not Workspacer policy, and nothing reads it as a grant.",
+    witnesses: [
+      {
+        kind: 'guard',
+        guard: 'guardGitCwd',
+      },
+      {
+        kind: 'params',
+        params: ['cwd', 'path'],
+      },
+    ],
+  },
   'git.diff': {
     reason:
       'guardGitCwd selects the repository named by `cwd`; untracked operands are anchored inside that selected work tree so a derived path cannot switch semantic objects',
@@ -1566,6 +1590,18 @@ export const parameterDecisions: Record<
         'guardGitCwd canonicalizes cwd before git runs; authenticated agent/plugin path access is ambient',
     },
   },
+  'git.discard': {
+    cwd: {
+      kind: 'path',
+      reason:
+        'guardGitCwd canonicalizes cwd before git runs; authenticated agent/plugin path access is ambient',
+    },
+    path: {
+      kind: 'path',
+      reason:
+        'required; anchored and contained to the work-tree root like git.stage, refused when it names a folder, never path-less, so one call discards at most one file',
+    },
+  },
 };
 export const actors: string[] = [
   'agents.dispatchPrepare',
@@ -1642,9 +1678,11 @@ export const actors: string[] = [
   'git.commitDiff',
   'git.commitNumstat',
   'git.diff',
+  'git.discard',
   'git.log',
   'git.numstat',
   'git.push',
+  'git.pull',
   'git.stage',
   'git.status',
   'git.unstage',

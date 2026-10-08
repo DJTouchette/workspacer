@@ -453,7 +453,7 @@ impl Fixture {
             "git.commit" => {
                 json!({"ok": true, "output": "[feature/native-basics 1a2b3c4] fixture commit"})
             }
-            "git.push" => json!({"ok": true, "output": ""}),
+            "git.push" | "git.pull" | "git.discard" => json!({"ok": true, "output": ""}),
             "git.log" => json!({"commits": [
                 {"hash": "1a2b3c4", "subject": "Restore the workspace on start", "authoredAt": 1_791_000_000},
                 {"hash": "5d6e7f8", "subject": "Native basics", "authoredAt": 1_790_000_000},

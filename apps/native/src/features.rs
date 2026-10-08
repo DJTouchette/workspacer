@@ -23,10 +23,31 @@ pub enum JobAction {
 /// it. There is no discard: the hub offers no way to throw changes away.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitAction {
-    Stage { cwd: String, path: Option<String> },
-    Unstage { cwd: String, path: Option<String> },
-    Commit { cwd: String, message: String },
-    Push { cwd: String },
+    Stage {
+        cwd: String,
+        path: Option<String>,
+    },
+    Unstage {
+        cwd: String,
+        path: Option<String>,
+    },
+    Commit {
+        cwd: String,
+        message: String,
+    },
+    Push {
+        cwd: String,
+    },
+    /// Fast-forward only (`git.pull`): never a merge commit.
+    Pull {
+        cwd: String,
+    },
+    /// Throw away one file's unstaged changes (`git.discard`); an untracked
+    /// file is deleted. Destructive, so Review asks twice.
+    Discard {
+        cwd: String,
+        path: String,
+    },
 }
 
 impl GitAction {
@@ -35,7 +56,9 @@ impl GitAction {
             Self::Stage { cwd, .. }
             | Self::Unstage { cwd, .. }
             | Self::Commit { cwd, .. }
-            | Self::Push { cwd } => cwd,
+            | Self::Push { cwd }
+            | Self::Pull { cwd }
+            | Self::Discard { cwd, .. } => cwd,
         }
     }
 }
@@ -616,6 +639,11 @@ impl Request {
                         ("git.commit", json!({"cwd":cwd,"message":message}))
                     }
                     GitAction::Push { cwd } => ("git.push", json!({"cwd":cwd})),
+                    GitAction::Pull { cwd } => ("git.pull", json!({"cwd":cwd})),
+                    GitAction::Discard { cwd, path } => {
+                        ensure!(!path.is_empty(), "Choose a file to discard.");
+                        ("git.discard", json!({"cwd":cwd,"path":path}))
+                    }
                 };
                 let value = backend.call(method, params).await?;
                 ensure!(

@@ -53,7 +53,8 @@ describe('capability parameter bindings', () => {
         method,
       ).toBe(true);
     // Exact count is deliberately pinned after reviewing actual AST discoveries.
-    expect(result.count).toBe(79);
+    // 82: git.pull cwd, git.discard cwd + path (2026-10-08).
+    expect(result.count).toBe(82);
   });
   it('pins vocabulary, stems and closed exceptions independently of the implementation', () => {
     expect(policy.dangerousNames).toEqual(golden.params);
@@ -208,7 +209,7 @@ describe('capability parameter bindings', () => {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     const windows = scan(new Map([[file, source.replace(/\r?\n/g, '\r\n')]]));
     expect(windows.errors).toEqual([]);
-    expect(windows.count).toBe(79);
+    expect(windows.count).toBe(82);
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'capspec-reader-'));
     try {
       expect(() => desktopRegistrations(temporary)).toThrow();

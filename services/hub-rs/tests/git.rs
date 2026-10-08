@@ -582,3 +582,128 @@ fn file_listing_uses_the_fixed_execution_prefix_on_its_actual_git_child() {
             .success()
     );
 }
+
+#[tokio::test]
+async fn pull_fast_forwards_and_discard_reverts_one_file_only() {
+    if isolated("pull_fast_forwards_and_discard_reverts_one_file_only") {
+        return;
+    }
+    // A bare remote with one commit, our clone (`root`), and a second clone
+    // that moves the remote ahead.
+    let directory = setup();
+    let root = directory.path();
+    std::fs::write(root.join("tracked.txt"), "one\n").unwrap();
+    std::fs::write(root.join("staged.txt"), "base\n").unwrap();
+    fixture_git(root, &["add", "-A"]);
+    fixture_git(root, &["commit", "--quiet", "-m", "base"]);
+    let remote = tempfile::tempdir().unwrap();
+    let template = tempfile::tempdir().unwrap();
+    fixture_git(
+        root,
+        &[
+            "init",
+            "--bare",
+            "--quiet",
+            "--template",
+            template.path().to_str().unwrap(),
+            remote.path().to_str().unwrap(),
+        ],
+    );
+    fixture_git(
+        root,
+        &["remote", "add", "origin", remote.path().to_str().unwrap()],
+    );
+    let cwd = root.to_str().unwrap();
+    call("git.push", json!({"cwd":cwd})).await.unwrap();
+    let branch = fixture_git(root, &["branch", "--show-current"]);
+    let other = tempfile::tempdir().unwrap();
+    let other_repo = other.path().join("clone");
+    fixture_git(
+        other.path(),
+        &[
+            "clone",
+            "--quiet",
+            "--template",
+            template.path().to_str().unwrap(),
+            remote.path().to_str().unwrap(),
+            other_repo.to_str().unwrap(),
+        ],
+    );
+    for args in [
+        vec!["config", "user.name", "Fixture"],
+        vec!["config", "user.email", "fixture@example.invalid"],
+        vec!["config", "commit.gpgsign", "false"],
+    ] {
+        fixture_git(&other_repo, &args);
+    }
+    std::fs::write(other_repo.join("upstream.txt"), "from upstream\n").unwrap();
+    fixture_git(&other_repo, &["add", "-A"]);
+    fixture_git(&other_repo, &["commit", "--quiet", "-m", "upstream"]);
+    fixture_git(&other_repo, &["push", "--quiet", "origin", &branch]);
+    let upstream = fixture_git(&other_repo, &["rev-parse", "HEAD"]);
+
+    // Pull fast-forwards to what the other clone pushed.
+    call("git.pull", json!({"cwd":cwd})).await.unwrap();
+    assert_eq!(fixture_git(root, &["rev-parse", "HEAD"]), upstream);
+    assert!(root.join("upstream.txt").exists());
+
+    // Diverged: a local commit and a new upstream commit refuse to
+    // fast-forward, with the hint, and leave HEAD alone.
+    std::fs::write(root.join("local.txt"), "local\n").unwrap();
+    fixture_git(root, &["add", "-A"]);
+    fixture_git(root, &["commit", "--quiet", "-m", "local"]);
+    let local = fixture_git(root, &["rev-parse", "HEAD"]);
+    std::fs::write(other_repo.join("upstream.txt"), "moved again\n").unwrap();
+    fixture_git(&other_repo, &["commit", "--quiet", "-am", "again"]);
+    fixture_git(&other_repo, &["push", "--quiet", "origin", &branch]);
+    let error = call("git.pull", json!({"cwd":cwd}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("cannot be fast-forwarded"), "{error}");
+    assert_eq!(fixture_git(root, &["rev-parse", "HEAD"]), local);
+
+    // Discard: the unstaged edit goes back to the index; a staged edit on
+    // another file is kept; an untracked file is deleted.
+    std::fs::write(root.join("tracked.txt"), "edited\n").unwrap();
+    std::fs::write(root.join("staged.txt"), "staged edit\n").unwrap();
+    fixture_git(root, &["add", "staged.txt"]);
+    std::fs::write(root.join("scratch.txt"), "scratch\n").unwrap();
+    call("git.discard", json!({"cwd":cwd,"path":"tracked.txt"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("tracked.txt")).unwrap(),
+        "one\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("staged.txt")).unwrap(),
+        "staged edit\n"
+    );
+    call("git.discard", json!({"cwd":cwd,"path":"scratch.txt"}))
+        .await
+        .unwrap();
+    assert!(!root.join("scratch.txt").exists());
+
+    // Refusals: no path, a folder, a clean file, and a path outside the
+    // repository never reach a destructive git command.
+    std::fs::create_dir(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir/keep.txt"), "keep\n").unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("x.txt"), "x\n").unwrap();
+    for path in [
+        "".to_owned(),
+        "dir".to_owned(),
+        "tracked.txt".to_owned(),
+        outside.path().join("x.txt").to_str().unwrap().to_owned(),
+    ] {
+        assert!(
+            call("git.discard", json!({"cwd":cwd,"path":path}))
+                .await
+                .is_err(),
+            "discard {path:?} must be refused"
+        );
+    }
+    assert!(root.join("dir/keep.txt").exists());
+    assert!(outside.path().join("x.txt").exists());
+}

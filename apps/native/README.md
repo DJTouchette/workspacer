@@ -603,9 +603,15 @@ be expanded, and attachment controls share the composer action row.
   staged** or Ctrl/Cmd+Enter; `git.commit`). **Push ↑N** appears when the
   branch is ahead of its upstream; a branch with none yet (an agent's fresh
   worktree branch) offers **Publish branch**, which pushes and tracks it
-  (`git.push` runs with `push.autoSetupRemote` on both hubs). Being behind
-  upstream is shown, not pulled. Every write re-reads the status, a landed
-  commit clears the box, and there is no discard (the hub offers none). When
+  (`git.push` runs with `push.autoSetupRemote` on both hubs). **Pull ↓N**
+  appears when the branch is behind; it only fast-forwards (`git.pull`,
+  `--ff-only`), so a branch that moved both ways is told to rebase or merge in
+  a terminal. **Discard…** in a diff's header throws away that one file's
+  unstaged changes (`git.discard`: a tracked file returns to its staged
+  content, an untracked one is deleted, reading **Delete…**); it arms on the
+  first click and acts only on **Discard changes**/**Delete file**. Folders
+  and path-less discards are refused by both hubs. Every write re-reads the
+  status and a landed commit clears the box. When
   the reviewed agent finishes a turn, the status (and an open commit list) is
   read again, so the page never shows what was true before it worked. **Commits** lists the last 50
   commits (`git.log`), marking the ones not pushed yet; choosing one shows its

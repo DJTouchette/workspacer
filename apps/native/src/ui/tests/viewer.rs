@@ -1801,6 +1801,87 @@ fn review_rereads_changes_when_the_reviewed_agent_finishes_a_turn(cx: &mut TestA
 }
 
 #[gpui::test]
+fn review_pulls_when_behind_and_discards_only_after_a_second_click(cx: &mut TestAppContext) {
+    use wks_native::features::{GitAction, Request};
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    visual.simulate_resize(size(px(1400.), px(800.)));
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].cwd = "/repo".into();
+            this.update_view(Arc::new(view), window, cx);
+            this.open_feature(Screen::Changes, window, cx);
+        })
+    });
+    visual.run_until_parked();
+    effects(&mut commands);
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::Changes {
+            cwd: "/repo".into(),
+        },
+        1,
+        serde_json::json!({"branch": "main", "upstream": "origin/main", "ahead": 0,
+        "behind": 2, "root": "/repo", "files": [
+            {"path": "src/lib.rs", "staged": " ", "unstaged": "M"},
+            {"path": "scratch.txt", "staged": "?", "unstaged": "?"},
+        ]}),
+    );
+    effects(&mut commands);
+    let git =
+        |commands: &mut tokio::sync::mpsc::Receiver<Command>| match effects(commands).as_slice() {
+            [Command::Request(Request::Git(action))] => action.clone(),
+            other => panic!("expected one git write, got {} commands", other.len()),
+        };
+    click(&mut visual, "review-pull");
+    assert_eq!(
+        git(&mut commands),
+        GitAction::Pull {
+            cwd: "/repo".into()
+        }
+    );
+    // The first click only arms Discard; nothing is sent.
+    click(&mut visual, "review-discard");
+    assert!(effects(&mut commands).is_empty());
+    click(&mut visual, "review-discard-cancel");
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.review.confirm_discard.is_none())
+    });
+    click(&mut visual, "review-discard");
+    click(&mut visual, "review-discard-confirm");
+    let discard = git(&mut commands);
+    assert_eq!(
+        discard,
+        GitAction::Discard {
+            cwd: "/repo".into(),
+            path: "src/lib.rs".into()
+        }
+    );
+    request_state(
+        &workspace,
+        &mut visual,
+        Request::Git(discard),
+        2,
+        serde_json::json!({"ok": true}),
+    );
+    assert!(matches!(
+        effects(&mut commands).as_slice(),
+        [Command::Request(Request::Changes { .. })]
+    ));
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.extras.notice, "Discarded changes to src/lib.rs.")
+    });
+    // Arming one file does not carry over to another.
+    click(&mut visual, "review-discard");
+    click(&mut visual, "review-change-scratch.txt");
+    effects(&mut commands);
+    workspace.read_with(&visual, |this, _| {
+        assert!(this.review.confirm_discard.is_none())
+    });
+}
+
+#[gpui::test]
 fn agent_terminal_takes_keys_and_follows_the_selected_agent(cx: &mut TestAppContext) {
     use wks_native::terminal::{Command as T, Status, Terminal};
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);

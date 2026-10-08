@@ -285,6 +285,8 @@ pub(super) fn notice_tone(text: &str) -> Tone {
         || lower.ends_with(" applied")
         || lower == "committed."
         || lower == "pushed."
+        || lower == "pulled."
+        || lower.starts_with("discarded changes to ")
         || lower.contains(" change accepted:")
     {
         Tone::Success

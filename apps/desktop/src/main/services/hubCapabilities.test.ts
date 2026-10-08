@@ -209,6 +209,8 @@ vi.mock('./gitService', () => ({
   unstage: vi.fn(async () => ''),
   commit: vi.fn(async () => 'committed'),
   push: vi.fn(async () => 'pushed'),
+  pull: vi.fn(async () => 'pulled'),
+  discard: vi.fn(async () => 'discarded'),
   // log / commitDiff / commitNumstat were not even mocked, which is the tell:
   // no test in this file had ever invoked those three handlers at all.
   log: vi.fn(async () => []),
@@ -2310,6 +2312,8 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
     { method: 'git.unstage', params: { path: 'a.txt' }, fn: () => gitMock.unstage as never },
     { method: 'git.commit', params: { message: 'wip' }, fn: () => gitMock.commit as never },
     { method: 'git.push', params: {}, fn: () => gitMock.push as never },
+    { method: 'git.pull', params: {}, fn: () => gitMock.pull as never },
+    { method: 'git.discard', params: { path: 'a.txt' }, fn: () => gitMock.discard as never },
   ];
 
   /** Some handlers are async (git.diff), so a refusal surfaces as a rejection
@@ -2375,6 +2379,19 @@ describe('git.* accepts caller-chosen repositories and contains pathspecs within
       call('git.diff', { cwd: agentCwd, path: '../../../etc/passwd', untracked: true }),
     ).rejects.toThrow(/outside the (?:allowed|selected)/);
     expect(gitMock.diff).not.toHaveBeenCalled();
+  });
+
+  it('git.discard needs one contained path and refuses any outside the repo', async () => {
+    await expect(call('git.discard', { cwd: agentCwd })).rejects.toThrow(
+      /requires \{ cwd, path \}/,
+    );
+    await expect(
+      call('git.discard', { cwd: agentCwd, path: '../../../etc/passwd' }),
+    ).rejects.toThrow(/outside the (?:allowed|selected)/);
+    await expect(
+      call('git.discard', { cwd: agentCwd, path: path.join(callerCwd, 'shadow') }),
+    ).rejects.toThrow(/outside the (?:allowed|selected)/);
+    expect(gitMock.discard).not.toHaveBeenCalled();
   });
 
   it('git.diff still allows a repo-relative path inside the agent cwd', async () => {

@@ -19,6 +19,8 @@ pub(crate) fn install(mut options: Options) -> Options {
         "git.unstage",
         "git.commit",
         "git.push",
+        "git.pull",
+        "git.discard",
     ] {
         options = options.handler(method, move |_, params| async move {
             call(method, params).await
@@ -223,7 +225,7 @@ pub async fn call(method: &str, params: Value) -> Result<Value> {
     // Decode consumed fields as the legacy typed request did. In particular,
     // an invalid path must never turn a single-file stage into stage-all.
     let strings: &[&str] = match method {
-        "git.diff" | "git.stage" | "git.unstage" => &["cwd", "path"],
+        "git.diff" | "git.stage" | "git.unstage" | "git.discard" => &["cwd", "path"],
         "git.commitDiff" => &["cwd", "hash", "path"],
         "git.commitNumstat" => &["cwd", "hash"],
         "git.commit" => &["cwd", "message"],
@@ -400,7 +402,50 @@ pub async fn call(method: &str, params: Value) -> Result<Value> {
                 Ok(json!({"files":numstat(&result.stdout)}))
             }
         }
-        "git.stage" | "git.unstage" | "git.commit" | "git.push" => {
+        "git.discard" => {
+            // One file's unstaged changes, never a folder or the whole tree:
+            // a tracked file returns to what the index holds (staged work is
+            // kept), and an untracked file is deleted. Nothing else is touched.
+            if path.is_empty() {
+                bail!("discard requires a file path");
+            }
+            let target = operand(&root, path)?;
+            if root.join(&target).is_dir() {
+                bail!("discard takes one file, not a folder");
+            }
+            let status = run(
+                &root,
+                &args(&[
+                    "status",
+                    "--porcelain",
+                    "-z",
+                    "--untracked-files=all",
+                    "--",
+                    &target,
+                ]),
+            )
+            .await?;
+            if !status.ok {
+                return Err(read_error(&status, "git status failed"));
+            }
+            let argv = match status.stdout.split('\0').next().unwrap_or("") {
+                "" => bail!("nothing to discard in {target}"),
+                entry if entry.starts_with("??") => args(&["clean", "-f", "-q", "--", &target]),
+                _ => args(&["restore", "--worktree", "--", &target]),
+            };
+            let result = run(&root, &argv).await?;
+            if !result.ok {
+                bail!(
+                    "{}",
+                    format_action_error(
+                        &format!("{}\n{}", result.stderr, result.stdout),
+                        "git discard failed"
+                    )
+                );
+            }
+            Ok(json!({"ok":true,"output":result.stdout}))
+        }
+        "git.stage" | "git.unstage" | "git.commit" | "git.push" | "git.pull" => {
             let argv = match method {
                 "git.stage" | "git.unstage" => {
                     let target = if path.is_empty() {
@@ -430,6 +475,8 @@ pub async fn call(method: &str, params: Value) -> Result<Value> {
                     }
                     args(&["commit", "-m", message])
                 }
+                // Fast-forward only: never a merge commit, never an editor.
+                "git.pull" => args(&["pull", "--ff-only"]),
                 // A branch with no upstream yet (an agent's new worktree
                 // branch) is published and tracked on its first push, as
                 // `push -u <remote> <branch>`, instead of failing.
@@ -475,6 +522,10 @@ pub fn format_action_error(raw: &str, fallback: &str) -> String {
         (
             &["no upstream branch"][..],
             "No upstream branch is configured. Set an upstream with git push --set-upstream, then retry.",
+        ),
+        (
+            &["not possible to fast-forward", "diverging branches"][..],
+            "This branch and its upstream have both moved, so it cannot be fast-forwarded. Rebase or merge in a terminal, then retry.",
         ),
         (
             &[

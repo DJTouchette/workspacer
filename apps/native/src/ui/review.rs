@@ -38,6 +38,8 @@ pub(super) struct ReviewUi {
     pub selected: Option<String>,
     /// Hash of the commit whose patch is shown under Commits.
     pub commit: Option<String>,
+    /// The file whose Discard was clicked once; the second click discards.
+    pub confirm_discard: Option<String>,
     /// The `changes` state already used to pick a first file.
     seen: u64,
     /// The last `git-action` answer acted on.
@@ -181,6 +183,9 @@ impl Workspace {
             return;
         };
         let staged = staged.unwrap_or(!change.has_unstaged());
+        if self.review.selected.as_ref() != Some(&change.path) {
+            self.review.confirm_discard = None;
+        }
         self.review.selected = Some(change.path.clone());
         self.review
             .scroll
@@ -280,7 +285,10 @@ impl Workspace {
         let ok = state.error.is_none();
         let cwd = action.cwd().to_owned();
         if ok
-            && matches!(action, GitAction::Commit { .. } | GitAction::Push { .. })
+            && matches!(
+                action,
+                GitAction::Commit { .. } | GitAction::Push { .. } | GitAction::Pull { .. }
+            )
             && self.review.mode == Mode::Commits
         {
             self.request(Request::Log { cwd: cwd.clone() }, cx);
@@ -299,6 +307,10 @@ impl Workspace {
                 self.extras.notice = "Committed.".into();
             }
             GitAction::Push { .. } => self.extras.notice = "Pushed.".into(),
+            GitAction::Pull { .. } => self.extras.notice = "Pulled.".into(),
+            GitAction::Discard { path, .. } => {
+                self.extras.notice = format!("Discarded changes to {path}.")
+            }
             _ => {}
         }
     }
@@ -799,6 +811,69 @@ impl Workspace {
         } else if change.as_ref().is_some_and(Change::has_staged) {
             header = header.child(side("review-side-staged", "Staged", true, true));
         }
+        // Discard asks twice: the first click arms it for this file only.
+        if let Some(change) = change.clone().filter(Change::has_unstaged) {
+            let busy = self.git_busy() || !self.view.connected;
+            let cwd = self.review_paths().map(|(cwd, _)| cwd).unwrap_or_default();
+            if self.review.confirm_discard.as_ref() == Some(&change.path) {
+                let path = change.path.clone();
+                header = header
+                    .child(
+                        self.danger_button(
+                            "review-discard-confirm",
+                            if change.untracked() {
+                                "Delete file"
+                            } else {
+                                "Discard changes"
+                            },
+                            !busy,
+                        )
+                        .py_1()
+                        .debug_selector(|| "review-discard-confirm".into())
+                        .when(!busy, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.review.confirm_discard = None;
+                                this.git_action(
+                                    GitAction::Discard {
+                                        cwd: cwd.clone(),
+                                        path: path.clone(),
+                                    },
+                                    cx,
+                                )
+                            }))
+                        }),
+                    )
+                    .child(
+                        self.quiet_button("review-discard-cancel", "Cancel", IconName::Close, true)
+                            .debug_selector(|| "review-discard-cancel".into())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.review.confirm_discard = None;
+                                cx.notify();
+                            })),
+                    );
+            } else {
+                let path = change.path.clone();
+                header = header.child(
+                    self.quiet_button(
+                        "review-discard",
+                        if change.untracked() {
+                            "Delete…"
+                        } else {
+                            "Discard…"
+                        },
+                        IconName::Undo,
+                        !busy,
+                    )
+                    .debug_selector(|| "review-discard".into())
+                    .when(!busy, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.review.confirm_discard = Some(path.clone());
+                            cx.notify();
+                        }))
+                    }),
+                );
+            }
+        }
         header = header.child(
             self.quiet_button(
                 "review-open-file",
@@ -1236,6 +1311,24 @@ impl Workspace {
                             )
                         }),
                     )
+                    .when(behind > 0, |d| {
+                        let pull_cwd = cwd.clone();
+                        let can_pull = !busy;
+                        d.child(
+                            self.button("review-pull", format!("Pull ↓{behind}"), can_pull)
+                                .debug_selector(|| "review-pull".into())
+                                .when(can_pull, |d| {
+                                    d.on_click(cx.listener(move |this, _, _, cx| {
+                                        this.git_action(
+                                            GitAction::Pull {
+                                                cwd: pull_cwd.clone(),
+                                            },
+                                            cx,
+                                        )
+                                    }))
+                                }),
+                        )
+                    })
                     .when(ahead > 0 || unpublished, |d| {
                         d.child(
                             self.button("review-push", push_label, can_push)
@@ -1261,15 +1354,14 @@ impl Workspace {
                         .child("Stage files to commit them."),
                 )
             })
-            .when(behind > 0, |d| {
+            // Pull only fast-forwards; a branch that has moved both ways needs
+            // a rebase or merge, which Review does not attempt.
+            .when(behind > 0 && ahead > 0, |d| {
                 d.child(
                     div()
                         .text_size(px(chrome::scale::CAPTION))
                         .text_color(rgb(p.warning))
-                        .child(format!(
-                            "{behind} commit{} behind upstream; pull in a terminal first.",
-                            if behind == 1 { "" } else { "s" }
-                        )),
+                        .child("This branch and its upstream have both moved; rebase or merge in a terminal."),
                 )
             });
         let _ = window;

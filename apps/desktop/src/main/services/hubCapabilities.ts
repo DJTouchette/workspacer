@@ -2730,6 +2730,21 @@ export function registerHubCapabilities(): void {
     if (!cwd) throw new Error('git.push requires { cwd }');
     return git.push(guardGitCwd('git.push', cwd)).then((output) => ({ ok: true, output }));
   });
+  registerCapability('git.pull', (params: unknown) => {
+    const { cwd } = (params ?? {}) as { cwd?: string };
+    if (!cwd) throw new Error('git.pull requires { cwd }');
+    return git.pull(guardGitCwd('git.pull', cwd)).then((output) => ({ ok: true, output }));
+  });
+  // Destructive, so narrower than git.stage: one anchored, contained file and
+  // never a path-less form (there is no "discard everything").
+  registerCapability('git.discard', async (params: unknown) => {
+    const { cwd, path: filePath } = (params ?? {}) as { cwd?: string; path?: string };
+    if (!cwd || !filePath) throw new Error('git.discard requires { cwd, path }');
+    const canonicalCwd = guardGitCwd('git.discard', cwd);
+    const operand = await anchorGitPathspec('git.discard', canonicalCwd, filePath);
+    const output = await git.discard(canonicalCwd, operand);
+    return { ok: true, output };
+  });
   // New browser transports retain native service ownership when this desktop
   // supplies the hub. Lazy import avoids the session-store startup cycle.
   for (const method of [

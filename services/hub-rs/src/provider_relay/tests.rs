@@ -658,7 +658,7 @@ fn declared_scope_partition_and_adopted_overlap_match_portable_contracts() {
     let rows = overlaps["overlaps"].as_array().unwrap();
     assert_eq!(
         rows.len(),
-        55,
+        57,
         "review the declared overlap contract, do not silently shrink it"
     );
     let allowed: BTreeSet<String> = rows

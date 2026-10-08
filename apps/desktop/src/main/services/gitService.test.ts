@@ -185,3 +185,68 @@ describe('push', () => {
     }
   });
 });
+
+describe('pull and discard', () => {
+  it('fast-forwards, and discards one file without touching staged work', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { pull, discard, push } = await import('./gitService');
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-git-pull-'));
+    try {
+      const git = (cwd: string, ...args: string[]) =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+      const ident = (cwd: string) => {
+        git(cwd, 'config', 'user.email', 'test@example.com');
+        git(cwd, 'config', 'user.name', 'Test');
+      };
+      const repo = path.join(base, 'repo');
+      const other = path.join(base, 'other');
+      const remote = path.join(base, 'remote.git');
+      fs.mkdirSync(repo);
+      git(base, 'init', '--bare', '--quiet', '-b', 'main', remote);
+      git(repo, 'init', '--quiet', '-b', 'main');
+      ident(repo);
+      fs.writeFileSync(path.join(repo, 'tracked.txt'), 'one\n');
+      fs.writeFileSync(path.join(repo, 'staged.txt'), 'base\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '--quiet', '-m', 'base');
+      git(repo, 'remote', 'add', 'origin', remote);
+      await push(repo);
+      git(base, 'clone', '--quiet', remote, other);
+      ident(other);
+      fs.writeFileSync(path.join(other, 'upstream.txt'), 'up\n');
+      git(other, 'add', '-A');
+      git(other, 'commit', '--quiet', '-m', 'upstream');
+      git(other, 'push', '--quiet', 'origin', 'main');
+
+      await pull(repo);
+      expect(git(repo, 'rev-parse', 'HEAD')).toBe(git(other, 'rev-parse', 'HEAD'));
+
+      fs.writeFileSync(path.join(repo, 'tracked.txt'), 'edited\n');
+      fs.writeFileSync(path.join(repo, 'staged.txt'), 'staged edit\n');
+      git(repo, 'add', 'staged.txt');
+      fs.writeFileSync(path.join(repo, 'scratch.txt'), 'scratch\n');
+      await discard(repo, 'tracked.txt');
+      expect(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8')).toBe('one\n');
+      expect(fs.readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('staged edit\n');
+      await discard(repo, 'scratch.txt');
+      expect(fs.existsSync(path.join(repo, 'scratch.txt'))).toBe(false);
+
+      fs.mkdirSync(path.join(repo, 'dir'));
+      fs.writeFileSync(path.join(repo, 'dir', 'keep.txt'), 'keep\n');
+      await expect(discard(repo, 'dir')).rejects.toThrow('not a folder');
+      await expect(discard(repo, 'tracked.txt')).rejects.toThrow('nothing to discard');
+      await expect(discard(repo, '')).rejects.toThrow('requires a file path');
+      expect(fs.existsSync(path.join(repo, 'dir', 'keep.txt'))).toBe(true);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('explains a diverged fast-forward pull', () => {
+    const msg = formatGitActionError('fatal: Not possible to fast-forward, aborting.');
+    expect(msg).toContain('cannot be fast-forwarded');
+  });
+});

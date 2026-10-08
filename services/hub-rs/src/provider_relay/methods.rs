@@ -91,6 +91,8 @@ const FULL: &[&str] = &[
     "git.unstage",
     "git.commit",
     "git.push",
+    "git.pull",
+    "git.discard",
     "notifications.post",
     "analytics.summary",
     "analytics.recent",

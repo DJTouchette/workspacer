@@ -20,6 +20,7 @@ import { readHtmlCardFile } from './htmlCardPaths';
 import { canonicalRoot, isWithin } from '../lib/pathConfinement';
 import type { HtmlCardDiffResult } from '../shared/htmlCardDiff';
 import { execFile } from 'child_process';
+import { statSync } from 'fs';
 import { gitArgs } from '../lib/gitExec';
 
 /** One changed file as reported by `git status --porcelain`. `staged` and
@@ -241,6 +242,11 @@ export function formatGitActionError(raw: string, fallback = 'git command failed
       'No upstream branch is configured. Set an upstream with git push --set-upstream, then retry.',
     );
   }
+  if (lower.includes('not possible to fast-forward') || lower.includes('diverging branches')) {
+    return withDetail(
+      'This branch and its upstream have both moved, so it cannot be fast-forwarded. Rebase or merge in a terminal, then retry.',
+    );
+  }
   if (
     lower.includes('non-fast-forward') ||
     lower.includes('fetch first') ||
@@ -428,6 +434,47 @@ export function unstage(cwd: string, path?: string): Promise<string> {
 export function commit(cwd: string, message: string): Promise<string> {
   if (!message.trim()) throw new Error('empty commit message');
   return action(cwd, ['commit', '-m', message]);
+}
+
+/** Fast-forward the current branch to its upstream: never a merge commit,
+ *  never an editor. Diverged branches fail with a hint instead. */
+export function pull(cwd: string): Promise<string> {
+  return action(cwd, ['pull', '--ff-only']);
+}
+
+/** Throw away one file's unstaged changes. A tracked file returns to what the
+ *  index holds (staged work is kept); an untracked file is deleted. A folder,
+ *  or a path with nothing to discard, is refused. `path` is a pathspec the
+ *  caller has already anchored inside the work tree (`file`). */
+export async function discard(cwd: string, file: string): Promise<string> {
+  if (!file) throw new Error('discard requires a file path');
+  const root = await rootOrThrow(cwd);
+  // A deleted file has nothing on disk to stat; that is a file, not a folder.
+  const folder = (() => {
+    try {
+      return statSync(path.resolve(root, file)).isDirectory();
+    } catch {
+      return false;
+    }
+  })();
+  if (folder) throw new Error('discard takes one file, not a folder');
+  const res = await runGit(root, [
+    'status',
+    '--porcelain',
+    '-z',
+    '--untracked-files=all',
+    '--',
+    file,
+  ]);
+  if (!res.ok) throw new Error(res.stderr.trim() || 'git status failed');
+  const entry = res.stdout.split('\0')[0] ?? '';
+  if (!entry) throw new Error(`nothing to discard in ${file}`);
+  return action(
+    root,
+    entry.startsWith('??')
+      ? ['clean', '-f', '-q', '--', file]
+      : ['restore', '--worktree', '--', file],
+  );
 }
 
 /** Push the current branch. A branch with no upstream yet (an agent's new
