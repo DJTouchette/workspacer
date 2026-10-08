@@ -303,6 +303,34 @@ impl Workspace {
         }
     }
 
+    /// Review open on a session whose turn just ended: the agent may have
+    /// changed files, so the status (and an open commit list) is re-read
+    /// instead of showing what was true before it worked.
+    pub(super) fn refresh_review_after_turn(&mut self, next: &View, cx: &mut Context<Self>) {
+        if self.screen != Screen::Changes {
+            return;
+        }
+        let Some(id) = next
+            .selected
+            .as_ref()
+            .filter(|id| self.view.selected.as_ref() == Some(*id))
+        else {
+            return;
+        };
+        let was = self.view.sessions.iter().find(|s| &s.id == id);
+        let now = next.sessions.iter().find(|s| &s.id == id);
+        if !was.is_some_and(|s| s.working()) || now.is_none_or(|s| s.working()) {
+            return;
+        }
+        let Some((cwd, _)) = self.review_paths() else {
+            return;
+        };
+        if self.review.mode == Mode::Commits {
+            self.request(Request::Log { cwd: cwd.clone() }, cx);
+        }
+        self.request(Request::Changes { cwd }, cx);
+    }
+
     /// When the change list arrives, show the first change's diff (or keep
     /// the one being read if it is still changed).
     pub(super) fn sync_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1152,10 +1180,11 @@ impl Workspace {
             );
         let can_commit = !busy && staged > 0;
         let can_push = !busy && (ahead > 0 || unpublished);
-        let push_label: SharedString = if ahead > 0 {
-            format!("Push ↑{ahead}").into()
+        // The first push of an untracked branch publishes and tracks it.
+        let push_label: SharedString = if unpublished {
+            "Publish branch".into()
         } else {
-            "Push".into()
+            format!("Push ↑{ahead}").into()
         };
         let push_cwd = cwd.clone();
         let committing = self.view.requests.get("git-action").is_some_and(|s| {

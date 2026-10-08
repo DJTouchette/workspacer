@@ -152,3 +152,36 @@ describe('formatGitActionError', () => {
     );
   });
 });
+
+describe('push', () => {
+  it('publishes and tracks a branch that has no upstream yet', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { push } = await import('./gitService');
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wks-git-push-'));
+    try {
+      const repo = path.join(base, 'repo');
+      const remote = path.join(base, 'remote.git');
+      const git = (cwd: string, ...args: string[]) =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+      fs.mkdirSync(repo);
+      git(base, 'init', '--bare', '--quiet', remote);
+      git(repo, 'init', '--quiet', '-b', 'agent-branch');
+      git(repo, 'config', 'user.email', 'test@example.com');
+      git(repo, 'config', 'user.name', 'Test');
+      fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+      git(repo, 'add', 'a.txt');
+      git(repo, 'commit', '--quiet', '-m', 'first');
+      git(repo, 'remote', 'add', 'origin', remote);
+      await push(repo);
+      expect(git(remote, 'rev-parse', 'refs/heads/agent-branch')).toBe(
+        git(repo, 'rev-parse', 'HEAD'),
+      );
+      expect(git(repo, 'config', 'branch.agent-branch.remote')).toBe('origin');
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+});

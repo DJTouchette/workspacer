@@ -491,6 +491,7 @@ impl Workspace {
         {
             self.alert_attention(next, cx);
         }
+        self.refresh_review_after_turn(next, cx);
         if let Some(state) = next.requests.get("child-access")
             && !state.loading
             && state.number > self.extras.child_access_receipt

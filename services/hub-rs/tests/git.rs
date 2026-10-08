@@ -434,19 +434,13 @@ async fn stage_delete_unstage_commit_and_local_push_preserve_selected_cwd() {
         &["remote", "add", "origin", remote.path().to_str().unwrap()],
     );
     let branch = fixture_git(root, &["branch", "--show-current"]);
-    fixture_git(
-        root,
-        &["config", &format!("branch.{branch}.remote"), "origin"],
-    );
-    fixture_git(
-        root,
-        &[
-            "config",
-            &format!("branch.{branch}.merge"),
-            &format!("refs/heads/{branch}"),
-        ],
-    );
+    // No upstream is configured: the first push publishes the branch and
+    // tracks it, as an agent's fresh worktree branch needs.
     call("git.push", json!({"cwd":front})).await.unwrap();
+    assert_eq!(
+        fixture_git(root, &["config", &format!("branch.{branch}.remote")]),
+        "origin"
+    );
     assert_eq!(
         fixture_git(
             remote.path(),

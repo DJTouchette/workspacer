@@ -400,7 +400,8 @@ async function action(cwd: string, args: string[]): Promise<string> {
       .map((s) => s.trim())
       .filter(Boolean)
       .join('\n');
-    throw new Error(formatGitActionError(raw, `git ${args[0] ?? 'command'} failed`));
+    const verb = args[0] === '-c' ? args[2] : args[0];
+    throw new Error(formatGitActionError(raw, `git ${verb ?? 'command'} failed`));
   }
   return res.stdout;
 }
@@ -429,8 +430,11 @@ export function commit(cwd: string, message: string): Promise<string> {
   return action(cwd, ['commit', '-m', message]);
 }
 
+/** Push the current branch. A branch with no upstream yet (an agent's new
+ *  worktree branch) is published and tracked on its first push, as
+ *  `push -u <remote> <branch>`, instead of failing. */
 export function push(cwd: string): Promise<string> {
-  return action(cwd, ['push']);
+  return action(cwd, ['-c', 'push.autoSetupRemote=true', 'push']);
 }
 
 function cardGit(cwd: string, args: string[]): Promise<string> {

@@ -430,7 +430,10 @@ pub async fn call(method: &str, params: Value) -> Result<Value> {
                     }
                     args(&["commit", "-m", message])
                 }
-                _ => args(&["push"]),
+                // A branch with no upstream yet (an agent's new worktree
+                // branch) is published and tracked on its first push, as
+                // `push -u <remote> <branch>`, instead of failing.
+                _ => args(&["-c", "push.autoSetupRemote=true", "push"]),
             };
             let result = run(&root, &argv).await?;
             if !result.ok {
@@ -438,7 +441,7 @@ pub async fn call(method: &str, params: Value) -> Result<Value> {
                     "{}",
                     format_action_error(
                         &format!("{}\n{}", result.stderr, result.stdout),
-                        &format!("git {} failed", argv[0])
+                        &format!("git {} failed", argv[if argv[0] == "-c" { 2 } else { 0 }])
                     )
                 );
             }

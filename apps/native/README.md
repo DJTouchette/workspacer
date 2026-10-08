@@ -601,10 +601,13 @@ be expanded, and attachment controls share the composer action row.
   (`git.stage`/`git.unstage`), **Stage all**/**Unstage all** cover the whole
   repository, and the commit box below commits what is staged (**Commit N
   staged** or Ctrl/Cmd+Enter; `git.commit`). **Push ↑N** appears when the
-  branch is ahead of its upstream, or has none yet (`git.push`; the hub's
-  message explains a missing upstream). Being behind upstream is shown, not
-  pulled. Every write re-reads the status, a landed commit clears the box, and
-  there is no discard (the hub offers none). **Commits** lists the last 50
+  branch is ahead of its upstream; a branch with none yet (an agent's fresh
+  worktree branch) offers **Publish branch**, which pushes and tracks it
+  (`git.push` runs with `push.autoSetupRemote` on both hubs). Being behind
+  upstream is shown, not pulled. Every write re-reads the status, a landed
+  commit clears the box, and there is no discard (the hub offers none). When
+  the reviewed agent finishes a turn, the status (and an open commit list) is
+  read again, so the page never shows what was true before it worked. **Commits** lists the last 50
   commits (`git.log`), marking the ones not pushed yet; choosing one shows its
   whole patch (`git.commitDiff`) in the diff panel. **Hide files** in the header
   gives the diff the full width; the choice is kept on this device. The status

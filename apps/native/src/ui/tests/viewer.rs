@@ -1751,6 +1751,56 @@ fn review_stages_commits_pushes_and_reads_commits(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn review_rereads_changes_when_the_reviewed_agent_finishes_a_turn(cx: &mut TestAppContext) {
+    use wks_native::features::Request;
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let set_state = |visual: &mut VisualTestContext, id: &str, value: &str| {
+        let (id, value) = (id.to_owned(), value.to_owned());
+        visual.update(|window, cx| {
+            workspace.update(cx, |this, cx| {
+                let mut view = (*this.view).clone();
+                let sessions = Arc::make_mut(&mut view.sessions);
+                sessions.iter_mut().find(|s| s.id == id).unwrap().state = value;
+                this.update_view(Arc::new(view), window, cx);
+            })
+        });
+        visual.run_until_parked();
+    };
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            let mut view = state("a");
+            Arc::make_mut(&mut view.sessions)[0].cwd = "/repo".into();
+            Arc::make_mut(&mut view.sessions)[0].state = "responding".into();
+            this.update_view(Arc::new(view), window, cx);
+            this.open_feature(Screen::Changes, window, cx);
+        })
+    });
+    visual.run_until_parked();
+    effects(&mut commands);
+    // Another session finishing is not this review's business.
+    set_state(&mut visual, "b", "responding");
+    set_state(&mut visual, "b", "input");
+    assert!(effects(&mut commands).is_empty());
+    set_state(&mut visual, "a", "input");
+    assert!(matches!(effects(&mut commands).as_slice(),
+        [Command::Request(Request::Changes { cwd })] if cwd == "/repo"));
+    // Off the Review screen, a finished turn reads nothing.
+    set_state(&mut visual, "a", "responding");
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.show_screen(Screen::Conversation, window, cx)
+        })
+    });
+    effects(&mut commands);
+    set_state(&mut visual, "a", "input");
+    assert!(
+        !effects(&mut commands)
+            .iter()
+            .any(|c| matches!(c, Command::Request(Request::Changes { .. })))
+    );
+}
+
+#[gpui::test]
 fn agent_terminal_takes_keys_and_follows_the_selected_agent(cx: &mut TestAppContext) {
     use wks_native::terminal::{Command as T, Status, Terminal};
     let (workspace, mut visual, mut commands, _updates) = fixture(cx);
