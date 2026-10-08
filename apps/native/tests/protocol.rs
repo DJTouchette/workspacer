@@ -3034,3 +3034,38 @@ async fn background_task_logs_and_stops_name_ids_never_paths() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn kept_sessions_missing_from_the_fleet_list_are_read_by_id_and_listed() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let first = hub.frame("call", Some("sessions.snapshots")).await;
+    // Kept ids arrive while the first fleet read is still in flight.
+    controller
+        .command(Command::KeepSessions(vec!["paused".into(), "a".into()]))
+        .unwrap();
+    first.result(json!([session("a")])).await;
+    // A second read follows at once instead of waiting for the next refresh.
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    fleet.result(json!([session("a")])).await;
+    let read = hub.frame("call", Some("sessions.snapshot")).await;
+    assert_eq!(read.value["params"]["sessionId"], "paused");
+    read.result(
+        json!({"sessionId":"paused","mode":"stopped","status":"ended",
+        "transport":"stream","cwd":"/test","provider":"claude"}),
+    )
+    .await;
+    let listed = view(&controller, |v| {
+        v.sessions.iter().any(|s| s.id == "paused") && !v.sessions_loading
+    })
+    .await;
+    assert!(listed.sessions.iter().any(|s| s.id == "a"));
+    assert!(
+        listed
+            .sessions
+            .iter()
+            .find(|s| s.id == "paused")
+            .unwrap()
+            .stopped()
+    );
+}

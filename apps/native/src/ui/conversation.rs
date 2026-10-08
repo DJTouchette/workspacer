@@ -30,7 +30,9 @@ impl Workspace {
                 .as_ref()
                 .is_none_or(|id| Some(id) == self.view.selected.as_ref())
             && !self.view.busy
-            && selected.as_ref().is_some_and(|s| !s.stopped());
+            && selected
+                .as_ref()
+                .is_some_and(|s| !s.stopped() || self.paused(s) && self.resuming.is_none());
         let working = self.view.connected && selected.as_ref().is_some_and(Session::working);
         let layout = ChatLayout {
             narrow,

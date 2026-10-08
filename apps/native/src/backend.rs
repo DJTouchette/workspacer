@@ -199,6 +199,13 @@ impl Backend {
         self.hub.call("sessions.snapshots", json!({})).await
     }
 
+    /// One session's row by id, including one the fleet list no longer shows.
+    pub async fn snapshot(&self, id: &str) -> Result<Value> {
+        self.hub
+            .call("sessions.snapshot", json!({"sessionId": id}))
+            .await
+    }
+
     /// The newest `limit` items, or everything retained when `None`.
     pub async fn conversation(&self, id: &str, limit: Option<usize>) -> Result<Value> {
         let mut params = json!({"sessionId":id});

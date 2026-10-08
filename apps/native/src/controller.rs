@@ -22,6 +22,8 @@ use crate::{
 };
 
 const MAX_SESSIONS: usize = 10_000;
+/// Bound on sessions read one by one per fleet refresh to keep them listed.
+pub const MAX_KEPT_SESSIONS: usize = 64;
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 /// Conversation items per page: opening a session reads only the newest page,
 /// and each "earlier messages" step widens the window by one more.
@@ -186,6 +188,9 @@ pub enum Command {
     },
     /// An agent's interactive shell; see [`crate::terminal`].
     Terminal(crate::terminal::Command),
+    /// Sessions this device keeps listed even where the hub's fleet list has
+    /// aged them out: ones that were open when the app last closed.
+    KeepSessions(Vec<String>),
 }
 
 /// A provider-native subagent of a session (Claude's Task/Agent children).
@@ -422,6 +427,10 @@ struct Worker {
     selection: u64,
     fleet_pending: bool,
     fleet_overlay: BTreeMap<String, Value>,
+    /// See [`Command::KeepSessions`].
+    keep: Vec<String>,
+    /// Kept ids arrived while a fleet read was in flight; read again after it.
+    refetch_fleet: bool,
     conversation_pending: bool,
     /// Items requested for the selected conversation (newest first).
     conversation_limit: usize,
@@ -466,6 +475,8 @@ impl Worker {
             selection: 0,
             fleet_pending: false,
             fleet_overlay: BTreeMap::new(),
+            keep: Vec::new(),
+            refetch_fleet: false,
             conversation_pending: false,
             conversation_limit: CONVERSATION_PAGE,
             buffered: Vec::new(),
@@ -561,6 +572,17 @@ impl Worker {
             }
             Command::RefreshUsage => self.fetch_usage(),
             Command::Terminal(command) => self.terminal(command).await,
+            Command::KeepSessions(ids) => {
+                let ids: Vec<String> = ids.into_iter().take(MAX_KEPT_SESSIONS).collect();
+                if ids != self.keep {
+                    let added = ids.iter().any(|id| !self.sessions.contains_key(id));
+                    self.keep = ids;
+                    if added {
+                        self.refetch_fleet = self.fleet_pending;
+                        self.fetch_fleet();
+                    }
+                }
+            }
             Command::ViewChild(target) => self.view_child(target).await,
             Command::LoadOlder => {
                 if self.view.transcript.has_older && !self.conversation_pending {
@@ -784,8 +806,25 @@ impl Worker {
         self.last_fleet = Instant::now();
         let backend = self.backend.clone();
         let epoch = self.epoch;
+        let keep = self.keep.clone();
         self.jobs.push(Box::pin(async move {
-            Completion::Fleet(epoch, backend.snapshots().await)
+            let mut result = backend.snapshots().await;
+            // The fleet list ages stopped sessions out after a day; a kept one
+            // is read by id so it stays listed with the rest, in one answer.
+            if let Ok(Value::Array(rows)) = &mut result {
+                let listed: BTreeSet<String> = rows
+                    .iter()
+                    .filter_map(|row| Session::id_of(row).map(str::to_owned))
+                    .collect();
+                for id in keep.iter().filter(|id| !listed.contains(*id)) {
+                    if let Ok(row) = backend.snapshot(id).await {
+                        if Session::id_of(&row) == Some(id.as_str()) {
+                            rows.push(row);
+                        }
+                    }
+                }
+            }
+            Completion::Fleet(epoch, result)
         }));
     }
 
@@ -1727,6 +1766,12 @@ impl Worker {
             }
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;
+                if std::mem::take(&mut self.refetch_fleet) {
+                    self.fleet_dirty = true;
+                    if let Some(due) = Instant::now().checked_sub(Duration::from_secs(30)) {
+                        self.last_fleet = due;
+                    }
+                }
                 self.view.sessions_loading = false;
                 match result {
                     Ok(Value::Array(rows)) => {

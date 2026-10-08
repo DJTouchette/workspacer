@@ -865,7 +865,7 @@ impl Workspace {
             .shadow(floating_shadow(p))
             .when_some(session, |d, session| {
                 let (label, color) = if self.view.connected {
-                    session_status(session, p)
+                    self.status_of(session, p)
                 } else {
                     ("Offline", p.muted)
                 };

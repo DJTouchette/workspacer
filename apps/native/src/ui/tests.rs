@@ -19,6 +19,7 @@ mod connection;
 mod controls;
 mod history_screen;
 mod job_list;
+mod kept_sessions;
 mod new_agent;
 mod preferences;
 mod project_registry;

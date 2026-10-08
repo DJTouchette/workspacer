@@ -727,7 +727,7 @@ impl Workspace {
                     ),
             );
         let (status, status_color) = if self.view.connected {
-            session_status(s, p)
+            self.status_of(s, p)
         } else {
             ("Offline", p.muted)
         };

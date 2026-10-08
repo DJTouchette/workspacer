@@ -13,6 +13,7 @@ mod gauge;
 mod handoff;
 mod island;
 mod jobs;
+mod kept;
 mod launch;
 mod markdown;
 mod motion;
@@ -579,6 +580,12 @@ pub struct Workspace {
     drafts: HashMap<String, String>,
     last_receipt: u64,
     local_notice: String,
+    /// Sessions seen open in this run (see `kept.rs`).
+    seen_open: std::collections::BTreeSet<String>,
+    /// The kept ids last handed to the controller.
+    kept_sent: Vec<String>,
+    /// A paused session resumed from its composer, awaiting its receipt.
+    resuming: Option<String>,
     follow: bool,
     demo: bool,
     requested_session: Option<String>,
@@ -835,6 +842,9 @@ impl Workspace {
             drafts: HashMap::new(),
             last_receipt: 0,
             local_notice: String::new(),
+            seen_open: Default::default(),
+            kept_sent: Vec::new(),
+            resuming: None,
             follow: true,
             demo,
             requested_session: None,
@@ -885,10 +895,28 @@ impl Workspace {
         self.sync_features(&view, window, cx);
         self.sync_tasks(&view, cx);
         self.sync_explorer(&view, cx);
+        self.sync_kept_open(&view, cx);
         if let Some(receipt) = &view.spawn_receipt
             && receipt.number > self.last_spawn_receipt
         {
             self.last_spawn_receipt = receipt.number;
+            // A composer resume reports here, on the conversation it resumes,
+            // not in the New Agent form; the draft is only cleared once it took.
+            if let Some(resumed) = self.resuming.take() {
+                match &receipt.error {
+                    Some(error) => self.extras.notice = format!("{}{error}", kept::RESUME_FAILED),
+                    None => {
+                        if self.extras.notice.starts_with(kept::RESUME_FAILED) {
+                            self.extras.notice.clear();
+                        }
+                        self.drafts.remove(&resumed);
+                        if self.view.selected.as_ref() == Some(&resumed) {
+                            self.composer
+                                .update(cx, |input, cx| input.set_value("", window, cx));
+                        }
+                    }
+                }
+            }
             // Receipts reach every window on the connection. Only the window
             // whose own launch is pending records recency, and any receipt
             // retires its launched folder so a failed launch's path can never
@@ -1233,6 +1261,15 @@ impl Workspace {
         };
         let text = self.attachment_text(&id, &draft);
         if text.trim().is_empty() || self.view.busy || !self.view.connected || self.uploading() {
+            return;
+        }
+        // A session the app's closing paused picks back up from here: the
+        // message resumes it rather than being refused as sent to an ended one.
+        if let Some(session) = self.selected_session().filter(|s| self.paused(s)).cloned() {
+            if self.resuming.is_none() && !self.view.creating {
+                self.drafts.insert(id, draft);
+                self.resume_with(&session, text, cx);
+            }
             return;
         }
         let attachments = self

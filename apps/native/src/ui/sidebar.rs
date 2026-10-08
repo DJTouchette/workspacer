@@ -639,7 +639,7 @@ impl Workspace {
                                     .flat_map(char::to_uppercase)
                                     .collect::<String>();
                                 let status = if this.view.connected {
-                                    session_status(session, p).0
+                                    this.status_of(session, p).0
                                 } else {
                                     "Offline"
                                 };
@@ -1015,7 +1015,7 @@ impl Workspace {
                                     && (this.navigation_selected.is_some() || this.view.child.is_none());
                                 let title = this.session_title(session);
                                 let (status, color) = if this.view.connected {
-                                    session_status(session, p)
+                                    this.status_of(session, p)
                                 } else {
                                     ("Offline", p.muted)
                                 };

@@ -50,6 +50,11 @@ pub struct Settings {
     /// Finished children cleared from the sidebar, by hub identity. Separate
     /// from the shared archive: this device's child view only.
     pub cleared_children: BTreeMap<String, BTreeMap<String, crate::child_agents::ClearMark>>,
+    /// Sessions that were open, by hub identity, with when this device first
+    /// saw each open. One still listed here after the app restarts was open
+    /// when it closed, so it stays in the sidebar to pick back up until it is
+    /// resumed, archived, or ends while the app is running.
+    pub kept_open: BTreeMap<String, BTreeMap<String, i64>>,
     pub default_provider: Provider,
     pub default_claude_access: crate::launch::Permission,
     pub default_codex_access: crate::launch::Permission,
@@ -74,6 +79,7 @@ impl Default for Settings {
             names: BTreeMap::new(),
             archived: BTreeMap::new(),
             cleared_children: BTreeMap::new(),
+            kept_open: BTreeMap::new(),
             default_provider: Provider::Claude,
             default_claude_access: crate::launch::Permission::Ask,
             default_codex_access: crate::launch::Permission::Ask,
