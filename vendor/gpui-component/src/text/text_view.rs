@@ -200,6 +200,9 @@ struct UpdateFuture {
     current_style: TextViewStyle,
     current_text: SharedString,
     timer: Timer,
+    /// A reparse is scheduled. Further updates ride along instead of pushing
+    /// it back, so text streamed faster than `delay` still repaints.
+    armed: bool,
     rx: Pin<Box<smol::channel::Receiver<Update>>>,
     tx_result: smol::channel::Sender<Result<ParsedContent, SharedString>>,
     delay: Duration,
@@ -224,6 +227,7 @@ impl UpdateFuture {
             current_style: style,
             current_text: text,
             timer: Timer::never(),
+            armed: false,
             rx: Box::pin(rx),
             tx_result,
             delay,
@@ -253,9 +257,12 @@ impl Future for UpdateFuture {
                         }
                         _ => false,
                     };
-                    if changed {
+                    // Throttle, not debounce: re-arming on every update starved
+                    // a streaming reply until the provider paused.
+                    if changed && !self.armed {
                         let delay = self.delay;
                         self.timer.set_after(delay);
+                        self.armed = true;
                     }
                     continue;
                 }
@@ -265,6 +272,7 @@ impl Future for UpdateFuture {
 
             match self.timer.poll_next(cx) {
                 Poll::Ready(Some(_)) => {
+                    self.armed = false;
                     let res = parse_content(
                         self.type_,
                         &self.current_text,
@@ -711,7 +719,7 @@ impl Element for TextView {
                 highlight_theme,
                 rx,
                 tx_result,
-                Duration::from_millis(200),
+                Duration::from_millis(50),
                 code_block_actions,
             ))
             .detach();
@@ -900,6 +908,38 @@ fn selection_points(
 mod tests {
     use super::*;
     use gpui::{Bounds, point, px, size};
+
+    #[test]
+    fn streamed_text_reparses_before_the_stream_pauses() {
+        let (tx, rx) = smol::channel::unbounded();
+        let (tx_result, rx_result) = smol::channel::unbounded();
+        let worker = std::thread::spawn(move || {
+            smol::block_on(UpdateFuture::new(
+                TextViewType::Html,
+                TextViewStyle::default(),
+                SharedString::default(),
+                crate::highlighter::HighlightTheme::default_dark(),
+                rx,
+                tx_result,
+                Duration::from_millis(50),
+                None,
+            ))
+        });
+        // A token every 10ms for 400ms: well inside the reparse delay.
+        let mut text = String::new();
+        for _ in 0..40 {
+            text.push_str("token ");
+            tx.try_send(Update::Text(text.clone().into())).unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let during = rx_result.len();
+        drop(tx);
+        worker.join().unwrap();
+        assert!(
+            during >= 3,
+            "only {during} reparses while text streamed for 400ms"
+        );
+    }
 
     #[test]
     fn test_text_view_state_selection_points() {
