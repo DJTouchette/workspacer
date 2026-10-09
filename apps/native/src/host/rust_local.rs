@@ -41,6 +41,7 @@ pub(super) async fn run(
     status: watch::Sender<Status>,
     mut stopping: oneshot::Receiver<()>,
 ) -> Result<()> {
+    let started = std::time::Instant::now();
     views.send_replace(Arc::new(View {
         notice: "Starting Rust backend…".into(),
         ..Default::default()
@@ -95,6 +96,7 @@ pub(super) async fn run(
             owned_listeners.extend(address);owned_listeners.extend(mcp_address);
         }
         else{anyhow::bail!("Owned hub stopped before native readiness");}
+        tracing::info!(stage="native",elapsed_ms=started.elapsed().as_millis() as u64,"backend startup");
         status.send_replace(Status::Ready(Ready {bus_url:"in-process".into(),engine_api:Some(format!("http://{}",engine.api_addr)),engine_hook:Some(format!("http://{}",engine.hook_addr)),owned_listeners}));
         let mut hub_status=handle.status();
         tokio::select! {

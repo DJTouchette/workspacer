@@ -48,7 +48,16 @@ pub trait LaunchEngine: Send + Sync + 'static {
 }
 impl LaunchEngine for EmbeddedClient {
     fn sessions(&self) -> Operation<'_, Value> {
-        Box::pin(async move { self.request(Command::Sessions).await })
+        // Reconciliation reads only identity and mode, so skip the
+        // transcript-derived usage the full list folds for every session.
+        Box::pin(async move {
+            self.request(Command::Request {
+                method: "GET".into(),
+                path: "/sessions?state_only=true".into(),
+                payload: None,
+            })
+            .await
+        })
     }
     fn spawn<'a>(&'a self, plan: &'a Plan) -> Operation<'a, Value> {
         Box::pin(async move {
@@ -648,42 +657,71 @@ impl Lifecycle {
                 active.insert(id.to_owned());
             }
         }
-        let mut failures = Vec::new();
-        for (session, row) in self.records() {
-            if self.closing.load(std::sync::atomic::Ordering::Acquire) {
-                bail!("launch service closing during reconciliation");
-            }
-            if active.contains(&session) {
-                if row.phase == Phase::Preparing {
-                    self.update(|rows| {
-                        rows.get_mut(&session).unwrap().phase = Phase::Running;
-                        Ok(())
-                    })?;
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            bail!("launch service closing during reconciliation");
+        }
+        // One journal write for every phase change, and one for every settled
+        // revocation, rather than an fsync'd rewrite per record: a restart
+        // reconciles every launch the last run left behind.
+        let records = self.records();
+        let phases: Vec<(String, Phase)> = records
+            .iter()
+            .filter_map(|(session, row)| {
+                let next = if active.contains(session) {
+                    (row.phase == Phase::Preparing).then_some(Phase::Running)
+                } else {
+                    (row.phase != Phase::Stopped).then_some(Phase::Stopped)
+                };
+                next.map(|phase| (session.clone(), phase))
+            })
+            .collect();
+        if !phases.is_empty() {
+            self.update(|rows| {
+                for (session, phase) in &phases {
+                    if let Some(row) = rows.get_mut(session) {
+                        row.phase = phase.clone();
+                    }
                 }
+                Ok(())
+            })?;
+        }
+        let mut failures = Vec::new();
+        let mut revoked = Vec::new();
+        for (session, row) in records {
+            if active.contains(&session) || !row.revocation_pending {
                 continue;
             }
-            if row.phase != Phase::Stopped {
-                self.update(|rows| {
-                    rows.get_mut(&session).unwrap().phase = Phase::Stopped;
-                    Ok(())
-                })?;
+            if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+                break;
             }
-            if row.revocation_pending {
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    self.preparation.revoke(&session, &row.generation),
-                )
-                .await
-                .map_err(|_| anyhow!("credential reconciliation timed out"))
-                .and_then(|r| r)
-                {
-                    Ok(()) => self.update(|rows| {
-                        rows.get_mut(&session).unwrap().revocation_pending = false;
-                        Ok(())
-                    })?,
-                    Err(error) => failures.push(format!("{session}: {error}")),
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                self.preparation.revoke(&session, &row.generation),
+            )
+            .await
+            .map_err(|_| anyhow!("credential reconciliation timed out"))
+            .and_then(|r| r)
+            {
+                Ok(()) => revoked.push((session, row.generation)),
+                Err(error) => failures.push(format!("{session}: {error}")),
+            }
+        }
+        if !revoked.is_empty() {
+            // A relaunch during the revokes gets a new generation; leave its
+            // pending revocation alone.
+            self.update(|rows| {
+                for (session, generation) in &revoked {
+                    if let Some(row) = rows.get_mut(session)
+                        && row.generation == *generation
+                    {
+                        row.revocation_pending = false;
+                    }
                 }
-            }
+                Ok(())
+            })?;
+        }
+        if self.closing.load(std::sync::atomic::Ordering::Acquire) {
+            bail!("launch service closing during reconciliation");
         }
         if let Err(error) = tokio::time::timeout(
             std::time::Duration::from_secs(5),

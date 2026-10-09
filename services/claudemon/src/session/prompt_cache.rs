@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::state::SessionState;
@@ -43,7 +43,7 @@ pub const CLAUDE_1H_TTL_SECS: u64 = 3600;
 pub const CODEX_ESTIMATED_TTL_SECS: u64 = 600;
 
 /// One API request against the session's cached prefix.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestObservation {
     /// When the request was made, Unix ms.
     pub at_ms: i64,

@@ -246,6 +246,15 @@ fn rates_for_in(
 /// [`super::windows::resolve_window`]) — above the `[1m]` marker, because a
 /// person who writes `context_limit` into ~/.workspacer/model-rates.json means
 /// it, and below only the window the provider itself reported for the session.
+/// Identity of every rate that can price a turn: the built-ins and the user's
+/// overrides. A cost folded under one fingerprint and persisted (see
+/// `usage::usage_for_path`) is stale under any other, so it is refolded.
+pub fn fingerprint() -> u64 {
+    let mut user: Vec<(String, ModelRates)> = overrides().into_iter().collect();
+    user.sort_by(|a, b| a.0.cmp(&b.0));
+    super::usage::fnv1a(format!("{BUILTIN:?}{user:?}").as_bytes())
+}
+
 pub fn override_window_for(model: &str) -> Option<u64> {
     rates_for(model).and_then(|r| r.context_limit)
 }

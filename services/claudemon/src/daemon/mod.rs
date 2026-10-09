@@ -134,6 +134,9 @@ async fn run_controlled(
     let db = Db::open(&cfg.db_path)
         .with_context(|| format!("opening db at {}", cfg.db_path.display()))?;
     tracing::info!(db = %cfg.db_path.display(), "sqlite store ready");
+    // Usage folds beside the database, so a restart reads only what each
+    // transcript gained instead of every transcript from its first line.
+    crate::session::usage::persist_usage_under(cfg.db_path.with_file_name("usage-cache"));
 
     // Repopulate the in-memory list from the DB so sessions survive a daemon
     // restart: prior agents reappear (as stopped — no process is attached, so

@@ -501,32 +501,260 @@ fn fold_transcript(
     any
 }
 
-/// Compute usage for a session given its `transcript_path`. Returns a zeroed
-/// default if the path is `None`, the file doesn't exist, or contains no
-/// assistant usage blocks.
-///
-/// Sub-agent transcripts (`<transcript-stem>/subagents/*.jsonl` — where
-/// current Claude Code writes Task/teammate agents) fold in as cost/spend
-/// only: their rows are `isSidechain`, so [`from_transcript`] keeps them off
-/// the context gauge automatically.
 /// Identity of one file folded into a usage figure: (path, len, mtime as ns).
-/// Comparing these is a `stat` apiece, versus re-reading and re-parsing the
-/// file — and a transcript that hasn't changed can't have changed its usage.
+/// Comparing these is a `stat` apiece, versus reading the file at all — and a
+/// transcript that hasn't changed can't have changed its usage.
 type FileStamp = (String, u64, i128);
+
+/// How far one file has been folded. `offset` is the end of the last complete
+/// line read; `tail` is the bytes just before it, so a file rewritten in place
+/// (rather than appended to) is noticed and refolded from scratch.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct FileCursor {
+    path: String,
+    offset: u64,
+    len: u64,
+    mtime: i128,
+    tail: Vec<u8>,
+}
+
+/// One session's usage fold, resumable: the running totals plus everything the
+/// next appended line needs (the shared dedup set, the context high-water
+/// mark, the last main-thread request) and where each file was left.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Fold {
+    version: u32,
+    /// Rates the cost was folded under; see [`super::pricing::fingerprint`].
+    pricing: u64,
+    key: String,
+    files: Vec<FileCursor>,
+    usage: Usage,
+    peak_context: u64,
+    last_request: Option<super::prompt_cache::RequestObservation>,
+    seen: HashSet<String>,
+}
+
+/// Bump when the fold's meaning changes, so persisted folds are rebuilt.
+const FOLD_VERSION: u32 = 1;
+const TAIL_BYTES: u64 = 64;
+
+impl Fold {
+    fn new(key: &str, pricing: u64) -> Self {
+        Self {
+            version: FOLD_VERSION,
+            pricing,
+            key: key.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn valid(&self, pricing: u64) -> bool {
+        self.version == FOLD_VERSION && self.pricing == pricing
+    }
+
+    fn current(&self, inputs: &[FileStamp]) -> bool {
+        self.files.len() == inputs.len()
+            && self
+                .files
+                .iter()
+                .zip(inputs)
+                .all(|(f, (p, len, mtime))| f.path == *p && f.len == *len && f.mtime == *mtime)
+    }
+
+    /// Whether appending what is new to each file gives the same answer as
+    /// folding everything again: same main transcript, every file folded so
+    /// far still present and only grown, and the bytes before each cursor
+    /// unchanged. New sub-agent files are fine; they fold from their start.
+    fn extends_to(&self, inputs: &[FileStamp], pricing: u64) -> bool {
+        if !self.valid(pricing) {
+            return false;
+        }
+        if let (Some(first), Some((main, _, _))) = (self.files.first(), inputs.first()) {
+            if first.path != *main {
+                return false;
+            }
+        }
+        self.files.iter().all(|f| {
+            inputs
+                .iter()
+                .any(|(p, len, _)| *p == f.path && *len >= f.offset)
+                && read_range(&f.path, f.offset.saturating_sub(TAIL_BYTES), f.offset)
+                    .is_some_and(|tail| tail == f.tail)
+        })
+    }
+
+    /// Fold every file's unread complete lines, main transcript first.
+    fn advance(&mut self, inputs: &[FileStamp]) {
+        self.usage.peak_context = self.peak_context;
+        self.usage.last_request = self.last_request.take();
+        for (ix, (path, len, mtime)) in inputs.iter().enumerate() {
+            let cursor = match self.files.iter().position(|f| f.path == *path) {
+                Some(at) => at,
+                None => {
+                    self.files.push(FileCursor {
+                        path: path.clone(),
+                        ..Default::default()
+                    });
+                    self.files.len() - 1
+                }
+            };
+            let offset = self.files[cursor].offset;
+            if *len > offset {
+                if let Some(bytes) = read_range(path, offset, *len) {
+                    // Only complete lines: a row still being written is read
+                    // whole on the next pass.
+                    let complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |at| at + 1);
+                    let text = String::from_utf8_lossy(&bytes[..complete]);
+                    // A row can only bill or move the gauge through its
+                    // `usage` block, so rows without one (tool output, which
+                    // is most of a transcript's bytes) are never parsed.
+                    let rows: Vec<&str> =
+                        text.lines().filter(|l| l.contains("\"usage\"")).collect();
+                    let tx = Transcript {
+                        messages: super::transcript::parse_jsonl(&rows.join("\n")),
+                        ..Default::default()
+                    };
+                    fold_transcript(
+                        &tx,
+                        &mut self.usage,
+                        &mut self.seen,
+                        &mut self.peak_context,
+                        ix > 0,
+                    );
+                    let end = offset + complete as u64;
+                    let from = (complete as u64).saturating_sub(TAIL_BYTES) as usize;
+                    let f = &mut self.files[cursor];
+                    if complete > 0 {
+                        f.tail = bytes[from..complete].to_vec();
+                    }
+                    f.offset = end;
+                }
+            }
+            let f = &mut self.files[cursor];
+            f.len = *len;
+            f.mtime = *mtime;
+        }
+        // Inputs are sorted, and a file that vanished forced a rebuild, so
+        // keep the cursor order the same as the inputs'.
+        self.files
+            .sort_by_key(|f| inputs.iter().position(|(p, _, _)| *p == f.path));
+        self.peak_context = self.peak_context.max(self.usage.peak_context);
+        self.last_request = self.usage.last_request.clone();
+    }
+
+    fn usage(&self) -> Usage {
+        let mut usage = self.usage.clone();
+        usage.peak_context = self.peak_context;
+        usage.last_request = self.last_request.clone();
+        // The window table can change between builds; re-resolve rather than
+        // trust the one persisted with the fold.
+        if usage.model.is_some() || self.peak_context > 0 {
+            usage.context_limit = context_limit_for(usage.model.as_deref(), self.peak_context);
+        }
+        usage
+    }
+}
+
+fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    file.seek(SeekFrom::Start(from)).ok()?;
+    let mut bytes = Vec::with_capacity((to - from) as usize);
+    file.take(to - from).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 == to - from).then_some(bytes)
+}
+
+/// FNV-1a: a stable hash for cache file names and fingerprints (std's hasher
+/// is not guaranteed stable across builds).
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325u64, |h, b| {
+        (h ^ *b as u64).wrapping_mul(0x100000001b3)
+    })
+}
 
 /// Memo for [`usage_for_path`], keyed on the main transcript path.
 ///
-/// Every `GET /sessions` re-derives usage for every session, and the desktop
-/// polls that list on a 60s timer plus a four-fetch burst after each terminate.
-/// Without this, a daemon with ~10 hook-bound sessions re-read and fully
-/// re-parsed tens of megabytes of transcript per poll — allocating hundreds of
-/// MB of `serde_json::Value` for data that had not changed.
+/// Every `GET /sessions` re-derives usage for every session, and the hub asks
+/// again on every session update. Without this, each ask re-read and fully
+/// re-parsed tens of megabytes of transcript; with it, an unchanged session is
+/// a `stat` per file and a growing one reads only its new lines.
 ///
 /// Bounded because the key space is sessions, not requests; the cap is a
 /// backstop against a long-lived daemon accumulating dead sessions' entries.
-type UsageCache = HashMap<String, (Vec<FileStamp>, Usage)>;
-static USAGE_CACHE: Lazy<Mutex<UsageCache>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static USAGE_CACHE: Lazy<Mutex<HashMap<String, Fold>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 const MAX_USAGE_CACHE: usize = 256;
+
+/// Where folds survive a restart (beside the daemon's database). Unset in
+/// tests and one-shot commands, which keep them in memory only.
+static USAGE_DIR: once_cell::sync::OnceCell<std::path::PathBuf> = once_cell::sync::OnceCell::new();
+/// When each fold was last written, so a busy session is not rewritten on
+/// every event. A fold persisted a little behind is still self-consistent:
+/// the next start resumes from its cursor and reads the difference.
+static PERSISTED: Lazy<Mutex<HashMap<String, std::time::Instant>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+const PERSIST_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+/// Folds for transcripts untouched this long are dropped from disk.
+const PERSIST_RETENTION: std::time::Duration = std::time::Duration::from_secs(60 * 60 * 24 * 30);
+
+/// Persist usage folds under `dir`, so a restart does not re-read every
+/// transcript from its first line. Call once, at daemon start.
+pub fn persist_usage_under(dir: std::path::PathBuf) {
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > PERSIST_RETENTION);
+            if stale {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let _ = USAGE_DIR.set(dir);
+}
+
+fn fold_file(key: &str) -> Option<std::path::PathBuf> {
+    Some(USAGE_DIR.get()?.join(format!("{:016x}.json", fnv1a(key.as_bytes()))))
+}
+
+fn load_fold(key: &str) -> Option<Fold> {
+    let fold: Fold = serde_json::from_slice(&std::fs::read(fold_file(key)?).ok()?).ok()?;
+    (fold.key == key).then_some(fold)
+}
+
+fn store_fold(fold: &Fold, force: bool) {
+    let Some(path) = fold_file(&fold.key) else {
+        return;
+    };
+    {
+        let Ok(mut persisted) = PERSISTED.lock() else {
+            return;
+        };
+        if !force
+            && persisted
+                .get(&fold.key)
+                .is_some_and(|at| at.elapsed() < PERSIST_EVERY)
+        {
+            return;
+        }
+        if persisted.len() >= MAX_USAGE_CACHE {
+            persisted.clear();
+        }
+        persisted.insert(fold.key.clone(), std::time::Instant::now());
+    }
+    let Ok(bytes) = serde_json::to_vec(fold) else {
+        return;
+    };
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, &path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
 
 /// The main transcript plus each `subagents/*.jsonl`, with their current
 /// (len, mtime). Any change to any of them invalidates the memo — including a
@@ -564,59 +792,68 @@ fn usage_inputs(path: &str) -> Vec<FileStamp> {
     stamps
 }
 
+/// Compute usage for a session given its `transcript_path`. Returns a zeroed
+/// default if the path is `None`, the file doesn't exist, or contains no
+/// assistant usage blocks.
+///
+/// Sub-agent transcripts (`<transcript-stem>/subagents/*.jsonl` — where
+/// current Claude Code writes Task/teammate agents) fold in as cost/spend
+/// only: their rows are `isSidechain`, so [`from_transcript`] keeps them off
+/// the context gauge automatically.
+///
+/// ONE shared dedup set (and peak-context high-water mark) across the main
+/// transcript and every `subagents/*.jsonl` file: a sub-agent turn that
+/// appears both inline (isSidechain) in the main file and in its own sidechain
+/// file must be billed once, not twice — parity with the desktop
+/// analyticsBackfill.recomputeSession which threads a single Set. Every
+/// `subagents/*.jsonl` row is forced sidechain so its turns count toward cost
+/// but never move the session's context gauge or reported model (parity with
+/// TS `recomputeSession`, which folds these with `forceSidechain=true`).
+///
+/// The fold is incremental: appended lines are folded onto the saved state,
+/// and only a rewritten, shrunk or vanished file, or a pricing change, folds
+/// everything again.
 pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
     let Some(path) = transcript_path else {
         return Usage::default();
     };
 
-    let inputs = usage_inputs(path);
-    if let Ok(cache) = USAGE_CACHE.lock() {
-        if let Some((stamps, usage)) = cache.get(path) {
-            if *stamps == inputs {
-                return usage.clone();
-            }
-        }
-    }
-
-    // A confinement refusal is otherwise invisible here: `read_at`'s Err is
-    // swallowed below and the session just reports zero cost and zero tokens
-    // forever. Name the path, so someone staring at a session that bills nothing
-    // has a thread to pull. Past the cache lookup, so it can't loop.
+    // A confinement refusal is otherwise invisible here: the session just
+    // reports zero cost and zero tokens forever. Name the path, so someone
+    // staring at a session that bills nothing has a thread to pull.
     if !super::transcript::path_is_allowed(std::path::Path::new(path)) {
         tracing::warn!(
             transcript = %path,
             "transcript is outside every known transcript root — this session's usage will read as zero"
         );
+        return Usage::default();
     }
 
-    // ONE shared dedup set (and peak-context high-water mark) across the main
-    // transcript and every `subagents/*.jsonl` file: a sub-agent turn that
-    // appears both inline (isSidechain) in the main file and in its own
-    // sidechain file must be billed once, not twice — parity with the desktop
-    // analyticsBackfill.recomputeSession which threads a single Set. That
-    // shared state is why this memoizes the whole fold rather than per file.
-    let mut usage = Usage::default();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut peak_context: u64 = 0;
-    if let Ok(tx) = super::transcript::read_at(path) {
-        fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context, false);
+    let inputs = usage_inputs(path);
+    if inputs.is_empty() {
+        return Usage::default();
     }
-    // Every `subagents/*.jsonl` file is a sub-agent's own transcript — force
-    // sidechain so its turns count toward cost but never move the session's
-    // context gauge or reported model, even when the file's rows carry no
-    // `isSidechain` key (parity with TS `recomputeSession`, which folds these
-    // with `forceSidechain=true`).
-    for (p, _, _) in inputs.iter().skip(1) {
-        if let Ok(tx) = super::transcript::read_at(p) {
-            fold_transcript(&tx, &mut usage, &mut seen, &mut peak_context, true);
+    let pricing = super::pricing::fingerprint();
+    // Taken out of the memo while folding, so other sessions' reads are not
+    // serialized behind this one's file I/O.
+    let cached = USAGE_CACHE.lock().ok().and_then(|mut cache| cache.remove(path));
+    let from_disk = cached.is_none();
+    let mut fold = cached.or_else(|| load_fold(path)).unwrap_or_default();
+    let usage = if fold.valid(pricing) && fold.current(&inputs) {
+        fold.usage()
+    } else {
+        if !fold.extends_to(&inputs, pricing) {
+            fold = Fold::new(path, pricing);
         }
-    }
-
+        fold.advance(&inputs);
+        store_fold(&fold, from_disk);
+        fold.usage()
+    };
     if let Ok(mut cache) = USAGE_CACHE.lock() {
         if cache.len() >= MAX_USAGE_CACHE && !cache.contains_key(path) {
             cache.clear();
         }
-        cache.insert(path.to_string(), (inputs, usage.clone()));
+        cache.insert(path.to_string(), fold);
     }
     usage
 }
@@ -1705,6 +1942,104 @@ mod tests {
             "shrink invalidates the memo"
         );
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The whole fold, from scratch, with no memo or saved state involved.
+    fn folded_from_scratch(path: &std::path::Path) -> Usage {
+        let key = path.to_str().unwrap();
+        let mut fold = Fold::new(key, super::super::pricing::fingerprint());
+        fold.advance(&usage_inputs(key));
+        fold.usage()
+    }
+
+    fn forget(path: &std::path::Path) {
+        USAGE_CACHE.lock().unwrap().remove(path.to_str().unwrap());
+    }
+
+    #[test]
+    fn appended_lines_fold_onto_the_saved_state_exactly() {
+        let path = temp_transcript("incremental");
+        let sub_dir = path.with_extension("").join("subagents");
+        let _ = std::fs::remove_dir_all(&sub_dir);
+        let p = path.to_str().unwrap();
+        std::fs::write(&path, format!("{}\n", jsonl_row("m1", 500))).unwrap();
+        usage_for_path(Some(p));
+
+        // A row still being written (no newline yet) waits for its end.
+        let half = jsonl_row("m2", 700);
+        let (head, rest) = half.split_at(half.len() / 2);
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        write!(file, "{head}").unwrap();
+        let partial = usage_for_path(Some(p));
+        assert_eq!(partial.cost_usd, folded_from_scratch(&path).cost_usd);
+        writeln!(file, "{rest}").unwrap();
+        // A replayed block of an already-billed message must stay deduped.
+        writeln!(file, "{}", jsonl_row("m1", 500)).unwrap();
+        // A sub-agent file appearing later folds from its start.
+        std::fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::write(sub_dir.join("a.jsonl"), format!("{}\n", jsonl_row("s1", 300))).unwrap();
+
+        let incremental = usage_for_path(Some(p));
+        let scratch = folded_from_scratch(&path);
+        assert!(incremental.cost_usd > partial.cost_usd);
+        assert!((incremental.cost_usd - scratch.cost_usd).abs() < 1e-12);
+        assert_eq!(incremental.context_tokens, scratch.context_tokens);
+        assert_eq!(incremental.model, scratch.model);
+        assert_eq!(incremental.context_limit, scratch.context_limit);
+        assert_eq!(incremental.peak_context, scratch.peak_context);
+        assert_eq!(incremental.last_request, scratch.last_request);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_transcript_rewritten_in_place_refolds_from_scratch() {
+        let path = temp_transcript("rewritten");
+        let p = path.to_str().unwrap();
+        std::fs::write(&path, format!("{}\n", jsonl_row("m1", 500))).unwrap();
+        usage_for_path(Some(p));
+        // Longer than before, so a length check alone would read only the
+        // "new" bytes past the old cursor and keep m1's stale cost.
+        std::fs::write(
+            &path,
+            format!("{}\n{}\n", jsonl_row("m1", 999), jsonl_row("m2", 1)),
+        )
+        .unwrap();
+        let after = usage_for_path(Some(p));
+        assert!((after.cost_usd - folded_from_scratch(&path).cost_usd).abs() < 1e-12);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_saved_fold_resumes_after_a_restart() {
+        let path = temp_transcript("persisted");
+        let p = path.to_str().unwrap();
+        persist_usage_under(std::env::temp_dir().join("claudemon-usage-test-folds"));
+        let saved = fold_file(p).unwrap();
+        let _ = std::fs::remove_file(&saved);
+        std::fs::write(&path, format!("{}\n", jsonl_row("m1", 500))).unwrap();
+        let first = usage_for_path(Some(p));
+        assert!(saved.exists(), "the first fold of a session is saved");
+
+        // A restart: nothing in memory, a line appended while it was down.
+        forget(&path);
+        PERSISTED.lock().unwrap().clear();
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        use std::io::Write;
+        writeln!(file, "{}", jsonl_row("m2", 500)).unwrap();
+        let resumed = usage_for_path(Some(p));
+        assert!(resumed.cost_usd > first.cost_usd);
+        assert!((resumed.cost_usd - folded_from_scratch(&path).cost_usd).abs() < 1e-12);
+
+        // A saved fold under other rates is not trusted.
+        let mut stale: Fold = serde_json::from_slice(&std::fs::read(&saved).unwrap()).unwrap();
+        stale.pricing ^= 1;
+        stale.usage.cost_usd = 12345.0;
+        std::fs::write(&saved, serde_json::to_vec(&stale).unwrap()).unwrap();
+        forget(&path);
+        assert!((usage_for_path(Some(p)).cost_usd - resumed.cost_usd).abs() < 1e-12);
+        let _ = std::fs::remove_file(&saved);
         let _ = std::fs::remove_file(&path);
     }
 

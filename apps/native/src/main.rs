@@ -99,8 +99,36 @@ fn stop_backend_on_quit(owner: Rc<RefCell<BackendLifetime>>, cx: &gpui::App) {
     .detach();
 }
 
+/// The backend's own logs (startup timings, provider spawns, failures) in
+/// `logs/wks-native.log` under the native data directory, replaced each launch
+/// with the previous run kept as `wks-native.log.1`. `RUST_LOG` overrides the
+/// default filter.
+fn log_to_file() {
+    use tracing_subscriber::EnvFilter;
+    let Ok(directory) = wks_native::host::RustOptions::default_directory() else {
+        return;
+    };
+    let directory = directory.join("logs");
+    if std::fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let path = directory.join("wks-native.log");
+    let _ = std::fs::rename(&path, directory.join("wks-native.log.1"));
+    let Ok(file) = std::fs::File::create(&path) else {
+        return;
+    };
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("warn,claudemon=info,workspacer_hub=info,wks_native=info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(file))
+        .try_init();
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    log_to_file();
     let args = Args::parse();
     if args.font_licenses {
         println!(

@@ -39,6 +39,7 @@ subtle = "2"
 tempfile = "3"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros", "signal", "process", "io-util"] }
+tracing = "0.1"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }

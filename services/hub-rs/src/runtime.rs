@@ -2086,6 +2086,7 @@ async fn run(
     mut stop: oneshot::Receiver<()>,
     status: &watch::Sender<Status>,
 ) -> Result<()> {
+    let startup = Instant::now();
     if options.plugins_dir.is_some() && options.listen.is_none() {
         bail!("external plugins require a configured bus listener");
     }
@@ -2198,8 +2199,14 @@ async fn run(
     if options.engine.is_some() {
         options = crate::services::workflow_artifacts::prepare(options, handle.clone());
     }
+    let sessions_started = Instant::now();
     let (configured, mut session_task) =
         crate::services::sessions::install(options, handle.clone()).await?;
+    tracing::info!(
+        stage = "sessions",
+        elapsed_ms = sessions_started.elapsed().as_millis() as u64,
+        "hub startup"
+    );
     if let Some(service) = &configured.workflow_artifacts {
         service.start();
     }
@@ -2429,6 +2436,11 @@ async fn run(
         jobs: tokio::task::JoinSet::new(),
         last_revalidation: Instant::now(),
     };
+    tracing::info!(
+        stage = "ready",
+        elapsed_ms = startup.elapsed().as_millis() as u64,
+        "hub startup"
+    );
     status.send_replace(Status::Ready {
         address,
         mcp_address,

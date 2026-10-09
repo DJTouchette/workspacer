@@ -140,8 +140,17 @@ impl Backend {
     }
     pub async fn initialize(&mut self, mut options: Options) -> Result<()> {
         anyhow::ensure!(self.hub.is_none(), "backend is already initialized");
+        let started = std::time::Instant::now();
+        let stage = |name: &str| {
+            tracing::info!(
+                stage = name,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "backend startup"
+            )
+        };
         let engine = self.engine.as_mut().expect("engine owner present");
         let endpoints = engine.ready().await?;
+        stage("engine");
         if let Some(path) = options.claude_hook_settings.clone() {
             if let Err(error) =
                 claudemon::daemon::init::run_at_with_port_quiet(path, endpoints.hook_addr.port())
@@ -150,10 +159,12 @@ impl Backend {
                 eprintln!("hook initialization failed: {error:#}; continuing");
             }
         }
+        stage("hooks");
         options.engine = Some(engine.client());
         let wait_for_facade = options.mcp_listen.is_some();
         self.hub = Some(Hub::start(options)?);
         self.hub.as_ref().unwrap().ready().await?;
+        stage("hub");
         if wait_for_facade {
             let handle = self.hub.as_ref().unwrap().handle();
             tokio::time::timeout(std::time::Duration::from_secs(60), async {
@@ -166,6 +177,7 @@ impl Backend {
             })
             .await
             .map_err(|_| anyhow::anyhow!("owned MCP facade catalog readiness timed out"))??;
+            stage("facade");
         }
         Ok(())
     }

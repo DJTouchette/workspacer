@@ -4666,6 +4666,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
  "url",
  "uuid",
  "web-push-native",
