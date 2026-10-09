@@ -127,12 +127,19 @@ async fn task_log_and_stop_ride_the_bus_with_tiered_access() {
             .is_ok()
     })
     .await;
+    // The pid is proven by a separate process scan, so it can land in a later
+    // snapshot than the output flag; wait for both.
     until("the task list reaches the hub snapshot", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":SID}))
             .await
             .ok()
-            .and_then(|row| task(&row).map(|t| t["hasOutput"] == true))
+            .and_then(|row| {
+                task(&row).map(|t| {
+                    t["hasOutput"] == true
+                        && (cfg!(not(target_os = "linux")) || t["pid"].as_u64().is_some())
+                })
+            })
             .unwrap_or(false)
     })
     .await;
