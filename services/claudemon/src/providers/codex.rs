@@ -2289,13 +2289,16 @@ fn spawn_codex_tui(
 /// Poll the app-server's HTTP `/readyz` until it answers (or give up after ~10s).
 async fn wait_ready(http_base: &str) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
-    for _ in 0..50 {
+    // The server is usually up in ~100 ms. A 200 ms poll noticed it at 400 or
+    // 600 ms, on every spawn; poll finely for the same ten-second budget.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
         if let Ok(resp) = client.get(format!("{http_base}/readyz")).send().await {
             if resp.status().is_success() {
                 return Ok(());
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
     }
     anyhow::bail!("codex app-server did not become ready in time")
 }

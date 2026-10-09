@@ -438,11 +438,19 @@ impl Lifecycle {
         notified.await;
     }
     async fn phase<T>(&self, name: &str, future: impl Future<Output = Result<T>>) -> Result<T> {
-        tokio::select! {
+        let started = std::time::Instant::now();
+        let result = tokio::select! {
             biased;
             _=self.cancelled()=>bail!("launch service is closing during {name}"),
             result=tokio::time::timeout(std::time::Duration::from_secs(30),future)=>result.map_err(|_|anyhow!("launch {name} timed out"))?,
-        }
+        };
+        tracing::info!(
+            phase = name,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            ok = result.is_ok(),
+            "agent launch"
+        );
+        result
     }
     pub async fn close(&self) {
         self.request_close();
@@ -517,11 +525,9 @@ impl Lifecycle {
                 bail!("preparation changed launch identity or destination");
             }
             self.update(|rows| {
-                rows.get_mut(&session).unwrap().metadata = plan.metadata.clone();
-                Ok(())
-            })?;
-            self.update(|rows| {
-                rows.get_mut(&session).unwrap().engine_attempted = true;
+                let row = rows.get_mut(&session).unwrap();
+                row.metadata = plan.metadata.clone();
+                row.engine_attempted = true;
                 Ok(())
             })?;
             engine_attempted = true;
