@@ -455,6 +455,9 @@ struct Worker {
     buffered: Vec<Delta>,
     buffered_bytes: usize,
     resync_after_read: bool,
+    /// A reset arrived during the read: its snapshot may be the old
+    /// generation, so live deltas wait for the re-read.
+    reset_pending: bool,
     push_ready: bool,
     dirty: bool,
     fleet_dirty: bool,
@@ -500,6 +503,7 @@ impl Worker {
             buffered: Vec::new(),
             buffered_bytes: 0,
             resync_after_read: false,
+            reset_pending: false,
             push_ready: false,
             dirty: false,
             fleet_dirty: false,
@@ -1012,6 +1016,7 @@ impl Worker {
         self.buffered.clear();
         self.buffered_bytes = 0;
         self.resync_after_read = false;
+        self.reset_pending = false;
         self.last_conversation = Instant::now();
         let backend = self.backend.clone();
         let epoch = self.epoch;
@@ -1025,6 +1030,10 @@ impl Worker {
     }
 
     async fn select(&mut self, id: Option<String>) {
+        // Re-selecting the shown conversation (a reconnect, or an event-stream
+        // lag reconciliation) re-reads it behind the rows already on screen
+        // instead of blanking a reply mid-stream.
+        let keep = id.is_some() && self.view.selected == id && self.view.child.is_none();
         self.selection += 1;
         self.view.selected = id;
         self.view.child = None;
@@ -1042,10 +1051,12 @@ impl Worker {
                 abort.abort();
             }
         }
-        self.view.transcript = Transcript::default();
-        self.view.loading = self.view.selected.is_some();
+        if !keep {
+            self.view.transcript = Transcript::default();
+            self.conversation_limit = CONVERSATION_PAGE;
+        }
+        self.view.loading = self.view.selected.is_some() && self.view.transcript.rows.is_empty();
         self.view.loading_older = false;
-        self.conversation_limit = CONVERSATION_PAGE;
         self.conversation_pending = false;
         self.push_ready = false;
         self.buffered.clear();
@@ -1289,15 +1300,30 @@ impl Worker {
                     self.fetch_conversation();
                 }
             } else if self.conversation_pending {
-                if delta.reset
-                    || self.buffered.len() >= 64
-                    || self.buffered_bytes + size > 2 * 1024 * 1024
-                {
+                if delta.reset {
                     self.buffered.clear();
                     self.resync_after_read = true;
-                } else if !self.resync_after_read {
-                    self.buffered_bytes += size;
-                    self.buffered.push(delta);
+                    self.reset_pending = true;
+                } else if !self.reset_pending {
+                    // Keep a streaming reply moving while the read is in
+                    // flight. The read's snapshot replaces this, then the
+                    // held deltas are folded onto it again.
+                    if !self.view.loading {
+                        let streaming = self.streaming();
+                        self.view.transcript.delta(delta.clone(), streaming);
+                    }
+                    if !self.resync_after_read {
+                        self.buffered_bytes += size;
+                        // Contiguous token chunks fold into one held delta,
+                        // so only a 2 MiB backlog or a run of unrelated
+                        // deltas forces a re-read.
+                        if crate::model::buffer_delta(&mut self.buffered, delta) > 64
+                            || self.buffered_bytes > 2 * 1024 * 1024
+                        {
+                            self.buffered.clear();
+                            self.resync_after_read = true;
+                        }
+                    }
                 }
             } else {
                 self.push_ready = true;
@@ -1870,7 +1896,9 @@ impl Worker {
                         // after observing the reset rather than overwrite newer
                         // state with the reset's earlier retained window.
                         if self.resync_after_read {
-                            self.view.loading = true;
+                            // Only a reset hides the live transcript; an
+                            // overflowed buffer re-reads behind the stream.
+                            self.view.loading |= self.reset_pending;
                             self.fetch_conversation();
                             self.dirty = true;
                             return;

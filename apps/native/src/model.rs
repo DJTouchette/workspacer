@@ -756,6 +756,27 @@ pub enum Fold {
     Gap,
 }
 
+/// Hold a delta that arrived while a conversation read is in flight, folding
+/// it into the previous held delta when the two are contiguous. Stream
+/// transports send one delta per token chunk, so counting them would overflow
+/// any small buffer within a single read and force a resync that the next
+/// burst overflows again. Returns how many deltas are held.
+pub fn buffer_delta(buffer: &mut Vec<Delta>, delta: Delta) -> usize {
+    if let Some(last) = buffer.last_mut()
+        && !last.reset
+        && !last.ready
+        && !delta.reset
+        && !delta.ready
+        && delta.seq.checked_sub(delta.items.len() as u64) == Some(last.seq)
+    {
+        last.seq = delta.seq;
+        last.items.extend(delta.items);
+    } else {
+        buffer.push(delta);
+    }
+    buffer.len()
+}
+
 /// Sequence numbers count raw events, not coalesced rows. Only a full snapshot
 /// or a contiguous delta may advance the cursor. This type has no UI/runtime.
 #[derive(Clone, Debug, Default)]
@@ -866,10 +887,15 @@ impl Transcript {
         if delta.seq <= seq {
             return Fold::Unchanged;
         }
-        if delta.seq.checked_sub(delta.items.len() as u64) != Some(seq) {
+        // Each item carries one sequence number, so a delta that straddles the
+        // cursor (a snapshot read mid-batch) applies only its unseen tail.
+        let Some(first) = delta.seq.checked_sub(delta.items.len() as u64) else {
+            return Fold::Gap;
+        };
+        if first > seq {
             return Fold::Gap;
         }
-        for item in delta.items {
+        for item in delta.items.into_iter().skip((seq - first) as usize) {
             self.push(item, streaming);
         }
         self.seq = Some(delta.seq);
@@ -1302,6 +1328,55 @@ mod tests {
             items: vec![assistant(text)],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn token_deltas_held_during_a_read_fold_into_one() {
+        let mut held = Vec::new();
+        for seq in 1..=500 {
+            assert_eq!(buffer_delta(&mut held, delta(seq, "x")), 1);
+        }
+        assert_eq!(held[0].seq, 500);
+        assert_eq!(held[0].items.len(), 500);
+        // A gap or a reset starts a new held delta rather than corrupting the run.
+        assert_eq!(buffer_delta(&mut held, delta(502, "y")), 2);
+        let reset = Delta {
+            reset: true,
+            ..delta(1, "z")
+        };
+        assert_eq!(buffer_delta(&mut held, reset), 3);
+        assert_eq!(buffer_delta(&mut held, delta(2, "w")), 4);
+    }
+
+    #[test]
+    fn held_deltas_straddling_a_snapshot_apply_only_their_unseen_tail() {
+        let mut held = Vec::new();
+        for (seq, text) in [(3, "c"), (4, "d"), (5, "e")] {
+            buffer_delta(&mut held, delta(seq, text));
+        }
+        let mut t = Transcript::default();
+        // The read landed after seq 4 was produced but before seq 5.
+        t.snapshot_for_transport(
+            ConversationSnapshot {
+                seq: 4,
+                first_seq: 1,
+                items: vec![
+                    assistant("a"),
+                    assistant("b"),
+                    assistant("c"),
+                    assistant("d"),
+                ],
+            },
+            true,
+        );
+        let key = t.rows[0].key;
+        assert_eq!(t.delta(held.remove(0), true), Fold::Changed);
+        assert_eq!(t.rows.len(), 1);
+        assert_eq!(t.rows[0].text, "abcde");
+        assert_eq!(t.rows[0].key, key);
+        assert_eq!(t.seq, Some(5));
+        // A delta starting past the cursor is still a gap.
+        assert_eq!(t.delta(delta(7, "g"), true), Fold::Gap);
     }
 
     #[test]
