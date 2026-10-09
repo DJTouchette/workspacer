@@ -38,11 +38,9 @@ pub fn spawn(cmd: &mut tokio::process::Command) -> io::Result<(tokio::process::C
     }
     #[cfg(windows)]
     {
-        let (child, job) = crate::child_job::Job::spawn_tokio(
-            cmd,
-            crate::background_process::CREATION_FLAGS,
-        )
-        .map_err(io::Error::other)?;
+        let (child, job) =
+            crate::child_job::Job::spawn_tokio(cmd, crate::background_process::CREATION_FLAGS)
+                .map_err(io::Error::other)?;
         Ok((child, Tie { job }))
     }
     #[cfg(not(any(target_os = "linux", windows)))]

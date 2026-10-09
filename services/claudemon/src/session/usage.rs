@@ -603,7 +603,10 @@ impl Fold {
                 if let Some(bytes) = read_range(path, offset, *len) {
                     // Only complete lines: a row still being written is read
                     // whole on the next pass.
-                    let complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |at| at + 1);
+                    let complete = bytes
+                        .iter()
+                        .rposition(|b| *b == b'\n')
+                        .map_or(0, |at| at + 1);
                     let text = String::from_utf8_lossy(&bytes[..complete]);
                     // A row can only bill or move the gauge through its
                     // `usage` block, so rows without one (tool output, which
@@ -719,7 +722,11 @@ pub fn persist_usage_under(dir: std::path::PathBuf) {
 }
 
 fn fold_file(key: &str) -> Option<std::path::PathBuf> {
-    Some(USAGE_DIR.get()?.join(format!("{:016x}.json", fnv1a(key.as_bytes()))))
+    Some(
+        USAGE_DIR
+            .get()?
+            .join(format!("{:016x}.json", fnv1a(key.as_bytes()))),
+    )
 }
 
 fn load_fold(key: &str) -> Option<Fold> {
@@ -836,7 +843,10 @@ pub fn usage_for_path(transcript_path: Option<&str>) -> Usage {
     let pricing = super::pricing::fingerprint();
     // Taken out of the memo while folding, so other sessions' reads are not
     // serialized behind this one's file I/O.
-    let cached = USAGE_CACHE.lock().ok().and_then(|mut cache| cache.remove(path));
+    let cached = USAGE_CACHE
+        .lock()
+        .ok()
+        .and_then(|mut cache| cache.remove(path));
     let from_disk = cached.is_none();
     let mut fold = cached.or_else(|| load_fold(path)).unwrap_or_default();
     let usage = if fold.valid(pricing) && fold.current(&inputs) {
@@ -1969,7 +1979,10 @@ mod tests {
         // A row still being written (no newline yet) waits for its end.
         let half = jsonl_row("m2", 700);
         let (head, rest) = half.split_at(half.len() / 2);
-        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         use std::io::Write;
         write!(file, "{head}").unwrap();
         let partial = usage_for_path(Some(p));
@@ -1979,7 +1992,11 @@ mod tests {
         writeln!(file, "{}", jsonl_row("m1", 500)).unwrap();
         // A sub-agent file appearing later folds from its start.
         std::fs::create_dir_all(&sub_dir).unwrap();
-        std::fs::write(sub_dir.join("a.jsonl"), format!("{}\n", jsonl_row("s1", 300))).unwrap();
+        std::fs::write(
+            sub_dir.join("a.jsonl"),
+            format!("{}\n", jsonl_row("s1", 300)),
+        )
+        .unwrap();
 
         let incremental = usage_for_path(Some(p));
         let scratch = folded_from_scratch(&path);
@@ -2025,7 +2042,10 @@ mod tests {
         // A restart: nothing in memory, a line appended while it was down.
         forget(&path);
         PERSISTED.lock().unwrap().clear();
-        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         use std::io::Write;
         writeln!(file, "{}", jsonl_row("m2", 500)).unwrap();
         let resumed = usage_for_path(Some(p));

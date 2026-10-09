@@ -61,7 +61,7 @@ use crate::wrapper::pty;
 /// what lets the composer's "Default" row name the level it resolves to instead
 /// of leaving it a blank. Populated by each provider's `list_models`
 /// (live-queried from the CLI/server at pick time).
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
     pub id: String,
@@ -91,12 +91,52 @@ pub struct ModelInfo {
 // empty picker. Keyed by "<provider>:<bin>" so different binaries don't collide.
 
 struct ModelCacheEntry {
-    at: std::time::Instant,
+    /// When it was listed; `None` for a list read back from disk, which is
+    /// served as stale until this run lists again.
+    at: Option<std::time::Instant>,
     models: Vec<ModelInfo>,
 }
 static MODEL_CACHE: once_cell::sync::Lazy<
     std::sync::Mutex<std::collections::HashMap<String, ModelCacheEntry>>,
-> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+> = once_cell::sync::Lazy::new(|| {
+    let saved = MODEL_CACHE_FILE
+        .get()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<HashMap<String, Vec<ModelInfo>>>(&bytes).ok())
+        .unwrap_or_default();
+    std::sync::Mutex::new(
+        saved
+            .into_iter()
+            .map(|(key, models)| (key, ModelCacheEntry { at: None, models }))
+            .collect(),
+    )
+});
+/// Where listed models survive a restart, so the first picker-open after one
+/// shows the last list at once instead of waiting on a provider boot.
+static MODEL_CACHE_FILE: once_cell::sync::OnceCell<std::path::PathBuf> =
+    once_cell::sync::OnceCell::new();
+
+/// Persist model lists in `path`. Call once at daemon start, before any list.
+pub fn persist_models_at(path: std::path::PathBuf) {
+    let _ = MODEL_CACHE_FILE.set(path);
+}
+
+fn save_model_cache(cache: &HashMap<String, ModelCacheEntry>) {
+    let Some(path) = MODEL_CACHE_FILE.get() else {
+        return;
+    };
+    let lists: HashMap<&String, &Vec<ModelInfo>> = cache
+        .iter()
+        .map(|(key, entry)| (key, &entry.models))
+        .collect();
+    let Ok(bytes) = serde_json::to_vec(&lists) else {
+        return;
+    };
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    if std::fs::write(&tmp, bytes).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
 const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 type ModelFetchResult = Result<Vec<ModelInfo>, String>;
 type ModelFetch = tokio::sync::Mutex<Option<ModelFetchResult>>;
@@ -124,21 +164,50 @@ fn model_fetch(key: &str) -> Arc<ModelFetch> {
 fn model_cache_get(key: &str, max_age: Option<std::time::Duration>) -> Option<Vec<ModelInfo>> {
     let cache = MODEL_CACHE.lock().ok()?;
     let entry = cache.get(key)?;
-    match max_age {
-        Some(ttl) if entry.at.elapsed() > ttl => None,
+    match (max_age, entry.at) {
+        (Some(_), None) => None,
+        (Some(ttl), Some(at)) if at.elapsed() > ttl => None,
         _ => Some(entry.models.clone()),
     }
 }
 
 fn model_cache_put(key: &str, models: &[ModelInfo]) {
     if let Ok(mut cache) = MODEL_CACHE.lock() {
+        let changed = cache.get(key).is_none_or(|entry| entry.models != models);
         cache.insert(
             key.to_string(),
             ModelCacheEntry {
-                at: std::time::Instant::now(),
+                at: Some(std::time::Instant::now()),
                 models: models.to_vec(),
             },
         );
+        if changed {
+            save_model_cache(&cache);
+        }
+    }
+}
+
+/// [`cached_or_fetch`], except that a stale list is served at once while one
+/// refresh runs in the background. Only a key never listed (in this run or a
+/// saved one) waits on the provider.
+pub(crate) async fn cached_or_refresh(
+    key: String,
+    fetch: impl std::future::Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + 'static,
+) -> anyhow::Result<Vec<ModelInfo>> {
+    let stale = model_cache_get(&key, Some(MODEL_CACHE_TTL))
+        .is_none()
+        .then(|| model_cache_get(&key, None))
+        .flatten();
+    match (stale, tokio::runtime::Handle::try_current()) {
+        (Some(stale), Ok(runtime)) => {
+            runtime.spawn(async move {
+                if let Err(err) = cached_or_fetch(key.clone(), fetch).await {
+                    tracing::debug!(?err, key, "background model list refresh failed");
+                }
+            });
+            Ok(stale)
+        }
+        _ => cached_or_fetch(key, fetch).await,
     }
 }
 
@@ -1352,10 +1421,13 @@ mod tests {
         // An entry older than the TTL is NOT a fresh hit, but IS still available
         // as the stale fallback (what we serve when a live query fails).
         if let Some(old) = std::time::Instant::now().checked_sub(MODEL_CACHE_TTL * 2) {
-            MODEL_CACHE
-                .lock()
-                .unwrap()
-                .insert(key.into(), ModelCacheEntry { at: old, models });
+            MODEL_CACHE.lock().unwrap().insert(
+                key.into(),
+                ModelCacheEntry {
+                    at: Some(old),
+                    models,
+                },
+            );
             assert!(
                 model_cache_get(key, Some(MODEL_CACHE_TTL)).is_none(),
                 "stale is not a fresh hit"
@@ -1368,6 +1440,51 @@ mod tests {
 
         // Unknown key → nothing cached.
         assert!(model_cache_get("test-provider:never-seen", None).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_stale_model_list_is_served_at_once_and_refreshed_behind() {
+        let key = "test-provider:stale-while-refresh";
+        let model = |id: &str| ModelInfo {
+            id: id.into(),
+            label: id.into(),
+            default: false,
+            effort_levels: Vec::new(),
+            default_effort: None,
+            default_context_window: None,
+            max_context_window: None,
+            effective_context_window_percent: None,
+        };
+        // A list read back from disk: known, but never fresh.
+        MODEL_CACHE.lock().unwrap().insert(
+            key.into(),
+            ModelCacheEntry {
+                at: None,
+                models: vec![model("old")],
+            },
+        );
+        let (release, gate) = tokio::sync::oneshot::channel::<()>();
+        let (done, finished) = tokio::sync::oneshot::channel::<()>();
+        let served = cached_or_refresh(key.into(), async move {
+            let _ = gate.await;
+            let _ = done.send(());
+            Ok(vec![model("new")])
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            served[0].id, "old",
+            "the picker never waits on a known list"
+        );
+        release.send(()).unwrap();
+        finished.await.unwrap();
+        for _ in 0..100 {
+            if model_cache_get(key, Some(MODEL_CACHE_TTL)).is_some_and(|m| m[0].id == "new") {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the background refresh never landed");
     }
 
     #[tokio::test]

@@ -38,7 +38,11 @@ use crate::wrapper::pty;
 
 /// List the models OpenCode can launch with (cached; see [`super::cached_or_fetch`]).
 pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
-    super::cached_or_fetch(format!("opencode:{bin}"), fetch_models(bin, cwd)).await
+    let (owned_bin, owned_cwd) = (bin.to_owned(), cwd.to_owned());
+    super::cached_or_refresh(format!("opencode:{bin}"), async move {
+        fetch_models(&owned_bin, &owned_cwd).await
+    })
+    .await
 }
 
 /// Live query: shell out to `opencode models`, which prints one `provider/model`

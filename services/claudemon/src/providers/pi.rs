@@ -43,7 +43,11 @@ use crate::session::{ConversationStore, ModelSwitch, SessionStore};
 
 /// List the models Pi can launch with (cached; see [`super::cached_or_fetch`]).
 pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
-    super::cached_or_fetch(format!("pi:{bin}"), fetch_models(bin, cwd)).await
+    let (owned_bin, owned_cwd) = (bin.to_owned(), cwd.to_owned());
+    super::cached_or_refresh(format!("pi:{bin}"), async move {
+        fetch_models(&owned_bin, &owned_cwd).await
+    })
+    .await
 }
 
 /// Live query via Pi's RPC `get_available_models`: boot a throwaway
@@ -891,8 +895,7 @@ async fn run_session(
         cmd.arg("-e").arg(ext);
     }
     let (mut child, _tie) = crate::tied_child::spawn(
-        cmd
-            .current_dir(cwd)
+        cmd.current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

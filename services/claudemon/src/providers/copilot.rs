@@ -147,7 +147,11 @@ pub const EFFORT_LEVELS: &[&str] = &["none", "minimal", "low", "medium", "high",
 /// The live part that remains is a liveness gate: `bin --version` must run, so
 /// a missing/broken CLI errors instead of returning a plausible-looking list.
 pub async fn list_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {
-    super::cached_or_fetch(format!("copilot:{bin}"), fetch_models(bin, cwd)).await
+    let (owned_bin, owned_cwd) = (bin.to_owned(), cwd.to_owned());
+    super::cached_or_refresh(format!("copilot:{bin}"), async move {
+        fetch_models(&owned_bin, &owned_cwd).await
+    })
+    .await
 }
 
 async fn fetch_models(bin: &str, cwd: &str) -> anyhow::Result<Vec<ModelInfo>> {

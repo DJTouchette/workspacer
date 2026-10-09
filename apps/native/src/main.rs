@@ -189,8 +189,9 @@ fn log_to_file() {
     let Ok(file) = std::fs::File::create(&path) else {
         return;
     };
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("warn,claudemon=info,workspacer_hub=info,wks_native=info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,claudemon=info,workspacer_hub=info,wks_native=info")
+    });
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_ansi(false)
