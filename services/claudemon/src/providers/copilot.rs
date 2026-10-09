@@ -1289,22 +1289,23 @@ async fn run_turn(
     effort: &mut Option<String>,
 ) -> anyhow::Result<(TurnReport, Vec<String>)> {
     let session_id = config.session_id.as_str();
-    let mut child = Command::new(&config.bin)
-        .args(argv)
-        // Every TURN is its own process for this provider, so the profile's
-        // COPILOT_HOME / token must be re-applied here rather than once at
-        // session start — a session-scoped env would be right for a long-lived
-        // child and silently wrong for this one. Merged, never replacing.
-        .envs(&config.extras.env)
-        .current_dir(&config.cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .scrub_host_authority()
-        .no_console_window()
-        .spawn()
-        .with_context(|| format!("spawning `{} -p`", config.bin))?;
+    let (mut child, _tie) = crate::tied_child::spawn(
+        Command::new(&config.bin)
+            .args(argv)
+            // Every TURN is its own process for this provider, so the profile's
+            // COPILOT_HOME / token must be re-applied here rather than once at
+            // session start — a session-scoped env would be right for a long-lived
+            // child and silently wrong for this one. Merged, never replacing.
+            .envs(&config.extras.env)
+            .current_dir(&config.cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .scrub_host_authority()
+            .no_console_window(),
+    )
+    .with_context(|| format!("spawning `{} -p`", config.bin))?;
 
     let mut stdout = BufReader::new(child.stdout.take().context("copilot stdout")?).lines();
     let mut stderr = BufReader::new(child.stderr.take().context("copilot stderr")?).lines();

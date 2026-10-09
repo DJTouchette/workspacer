@@ -890,16 +890,17 @@ async fn run_session(
     if let Some(ext) = ask_ext {
         cmd.arg("-e").arg(ext);
     }
-    let mut child = cmd
-        .current_dir(cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .scrub_host_authority()
-        .no_console_window()
-        .spawn()
-        .with_context(|| format!("spawning `{bin} --mode rpc`"))?;
+    let (mut child, _tie) = crate::tied_child::spawn(
+        cmd
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .scrub_host_authority()
+            .no_console_window(),
+    )
+    .with_context(|| format!("spawning `{bin} --mode rpc`"))?;
 
     let mut stdin = child.stdin.take().context("pi rpc: no stdin")?;
     let stdout = child.stdout.take().context("pi rpc: no stdout")?;

@@ -1058,8 +1058,8 @@ enum CleanupOutcome {
     SignalFailed,
     ReapFailed,
     ReapTimedOut,
-    // Windows retains daemon-level job confinement; a per-driver job is not
-    // established here. Never describe a direct-child reap as tree success.
+    // The job could not be terminated, so only the direct child was killed.
+    // Never describe a direct-child reap as tree success.
     #[cfg(not(unix))]
     DirectChildOnly,
 }
@@ -1085,17 +1085,23 @@ struct OwnedAppServer {
     signal_pending: bool,
     cleanup: Option<CleanupOutcome>,
     exit_status: Option<std::process::ExitStatus>,
+    /// Kills the server with the app if the app dies without cleaning up; on
+    /// Windows, also how cleanup reaches the server's own children.
+    #[cfg_attr(unix, allow(dead_code))]
+    tie: crate::tied_child::Tie,
+    #[cfg(not(unix))]
+    tree_signaled: bool,
 }
 
 impl OwnedAppServer {
     fn spawn(cmd: &mut Command, evidence: &DriverEvidence) -> std::io::Result<Self> {
         #[cfg(unix)]
         cmd.process_group(0);
-        let child = cmd
-            .kill_on_drop(true)
-            .scrub_host_authority()
-            .no_console_window()
-            .spawn()?;
+        let (child, tie) = crate::tied_child::spawn(
+            cmd.kill_on_drop(true)
+                .scrub_host_authority()
+                .no_console_window(),
+        )?;
         let pid = child.id().expect("newly spawned app-server has a PID");
         Ok(Self {
             child,
@@ -1105,6 +1111,9 @@ impl OwnedAppServer {
             signal_pending: true,
             cleanup: None,
             exit_status: None,
+            tie,
+            #[cfg(not(unix))]
+            tree_signaled: false,
         })
     }
 
@@ -1165,7 +1174,13 @@ impl OwnedAppServer {
         }
         #[cfg(not(unix))]
         {
-            self.child.start_kill()
+            match self.tie.terminate() {
+                Ok(()) => {
+                    self.tree_signaled = true;
+                    Ok(())
+                }
+                Err(_) => self.child.start_kill(),
+            }
         }
     }
 
@@ -1210,7 +1225,11 @@ impl OwnedAppServer {
                 }
                 #[cfg(not(unix))]
                 {
-                    CleanupOutcome::DirectChildOnly
+                    if self.tree_signaled {
+                        CleanupOutcome::GroupGone
+                    } else {
+                        CleanupOutcome::DirectChildOnly
+                    }
                 }
             }
         };

@@ -99,6 +99,78 @@ fn stop_backend_on_quit(owner: Rc<RefCell<BackendLifetime>>, cx: &gpui::App) {
     .detach();
 }
 
+/// Ctrl-C, a closed terminal or a plain `kill` quits like the Quit command, so
+/// the quit hook stops the agents the backend owns. Without this the process
+/// died without it, and every provider that does not notice its parent dying
+/// (Codex's app-server) was left running with nothing connected. A second
+/// signal while shutting down exits at once.
+fn quit_on_termination_signals(cx: &mut gpui::App) {
+    let (tx, rx) = async_channel::bounded::<()>(1);
+    let watcher = std::thread::Builder::new()
+        .name("wks-signals".into())
+        .spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            if let Err(error) = runtime.block_on(termination_signals(tx)) {
+                eprintln!("Could not watch for termination signals: {error}");
+            }
+        });
+    if watcher.is_err() {
+        return;
+    }
+    cx.spawn(async move |cx| {
+        if rx.recv().await.is_ok() {
+            let _ = cx.update(|cx| cx.quit());
+        }
+    })
+    .detach();
+}
+
+/// Forwards the first termination signal; the receiver takes only one, so a
+/// later one finds the channel full or closed and exits.
+async fn termination_signals(tx: async_channel::Sender<()>) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupt = signal(SignalKind::interrupt())?;
+        let mut terminate = signal(SignalKind::terminate())?;
+        let mut hangup = signal(SignalKind::hangup())?;
+        loop {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = terminate.recv() => {}
+                _ = hangup.recv() => {}
+            }
+            if tx.try_send(()).is_err() {
+                std::process::exit(130);
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        let mut ctrl_c = tokio::signal::windows::ctrl_c()?;
+        let mut ctrl_break = tokio::signal::windows::ctrl_break()?;
+        loop {
+            tokio::select! {
+                _ = ctrl_c.recv() => {}
+                _ = ctrl_break.recv() => {}
+            }
+            if tx.try_send(()).is_err() {
+                std::process::exit(130);
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = tx;
+        Ok(())
+    }
+}
+
 /// The backend's own logs (startup timings, provider spawns, failures) in
 /// `logs/wks-native.log` under the native data directory, replaced each launch
 /// with the previous run kept as `wks-native.log.1`. `RUST_LOG` overrides the
@@ -246,6 +318,7 @@ fn main() -> Result<()> {
     let quitting_backend = backend.clone();
     Application::new().with_assets(ui::Assets).run(move |cx| {
         stop_backend_on_quit(quitting_backend, cx);
+        quit_on_termination_signals(cx);
         gpui_component::init(cx);
         ui::configure_theme(appearance, None, cx);
         ui::bind_keys(cx);

@@ -721,20 +721,21 @@ async fn run_session(
         listener.local_addr()?.port()
     };
 
-    let mut child = Command::new(bin)
-        .arg("serve")
-        .arg("--hostname")
-        .arg("127.0.0.1")
-        .arg("--port")
-        .arg(port.to_string())
-        .current_dir(cwd)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .scrub_host_authority()
-        .no_console_window()
-        .spawn()
-        .with_context(|| format!("spawning `{bin} serve`"))?;
+    let (mut child, _tie) = crate::tied_child::spawn(
+        Command::new(bin)
+            .arg("serve")
+            .arg("--hostname")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(port.to_string())
+            .current_dir(cwd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .scrub_host_authority()
+            .no_console_window(),
+    )
+    .with_context(|| format!("spawning `{bin} serve`"))?;
 
     let base = format!("http://127.0.0.1:{port}");
     let client = reqwest::Client::new();

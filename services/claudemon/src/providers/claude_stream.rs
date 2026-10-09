@@ -1316,18 +1316,20 @@ async fn run_session(
     let session_id = cfg.session_id.clone();
     let startup_started = std::time::Instant::now();
     let argv = build_argv(&cfg);
-    let mut child = Command::new(&cfg.bin)
-        .args(&argv)
-        .envs(&cfg.env)
-        .current_dir(&cfg.cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .scrub_host_authority()
-        .no_console_window()
-        .spawn()
-        .with_context(|| format!("spawning `{} {}`", cfg.bin, argv.join(" ")))?;
+    // `_tie` lives as long as the session: the CLI cannot outlive the app.
+    let (mut child, _tie) = crate::tied_child::spawn(
+        Command::new(&cfg.bin)
+            .args(&argv)
+            .envs(&cfg.env)
+            .current_dir(&cfg.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .scrub_host_authority()
+            .no_console_window(),
+    )
+    .with_context(|| format!("spawning `{} {}`", cfg.bin, argv.join(" ")))?;
 
     let mut stdin = child.stdin.take().context("claude stream: no stdin")?;
     let stdout = child.stdout.take().context("claude stream: no stdout")?;
