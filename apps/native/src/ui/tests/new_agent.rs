@@ -973,6 +973,27 @@ fn fresh_forms_drop_resumed_context_and_stale_folder_checks(cx: &mut TestAppCont
                 this.inspection(),
                 Some(Ok(Inspection::Missing("gone".into())))
             );
+            // Re-checking the same folder keeps the last answer up rather
+            // than blanking it to "Checking folder…" on every open.
+            let mut view = (*this.view).clone();
+            view.requests.insert(
+                "project-inspect",
+                RequestState {
+                    number: 52,
+                    request: Request::InspectProject {
+                        path: "/work/alpha".into(),
+                    },
+                    loading: true,
+                    value: Arc::new(serde_json::json!({"exists":false,"error":"gone"})),
+                    error: None,
+                },
+            );
+            this.update_view(Arc::new(view), window, cx);
+            assert!(!this.inspecting());
+            assert_eq!(
+                this.inspection(),
+                Some(Ok(Inspection::Missing("gone".into())))
+            );
         })
     });
     visual.run_until_parked();

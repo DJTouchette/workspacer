@@ -464,6 +464,11 @@ struct Worker {
     action_number: u64,
     catalog_number: u64,
     catalog_abort: Option<AbortHandle>,
+    /// The last loaded catalog per provider. The view shows one at a time, and
+    /// switching provider (or a Codex project) used to discard it and wait on
+    /// a fresh list. The engine's list does not depend on the project, so one
+    /// per provider is reused for any.
+    catalogs: BTreeMap<String, Catalog>,
     request_aborts: BTreeMap<&'static str, AbortHandle>,
     created_row: Option<Value>,
     last_fleet: Instant,
@@ -510,6 +515,7 @@ impl Worker {
             action_number: 0,
             catalog_number: 0,
             catalog_abort: None,
+            catalogs: BTreeMap::new(),
             request_aborts: BTreeMap::new(),
             created_row: None,
             last_fleet: Instant::now(),
@@ -743,13 +749,27 @@ impl Worker {
         if !queued {
             self.request_aborts.insert(key, abort);
         }
+        // Re-checking the same folder keeps the last answer up (the New Agent
+        // form asks on every open) instead of blanking it to a spinner.
+        let previous = match (&request, self.view.requests.get(key)) {
+            (
+                crate::features::Request::InspectProject { path },
+                Some(crate::features::RequestState {
+                    request: crate::features::Request::InspectProject { path: before },
+                    value,
+                    error: None,
+                    ..
+                }),
+            ) if path == before => value.clone(),
+            _ => Arc::new(Value::Null),
+        };
         self.view.requests.insert(
             key,
             crate::features::RequestState {
                 number,
                 request: request.clone(),
                 loading: true,
-                value: Arc::new(Value::Null),
+                value: previous,
                 error: None,
             },
         );
@@ -768,23 +788,34 @@ impl Worker {
         if !matches!(key.provider.as_str(), "claude" | "codex") {
             return;
         }
-        if self.view.catalog.key == key
-            && (self.view.catalog.loading
-                || (!refresh
-                    && self.view.catalog.error.is_none()
-                    && !self.view.catalog.models.is_empty()))
+        if self.view.catalog.key != key {
+            if let Some(abort) = self.catalog_abort.take() {
+                abort.abort();
+            }
+            self.catalog_number += 1;
+            self.view.catalog = match self.catalogs.get(&key.provider) {
+                Some(known) => Catalog {
+                    key: key.clone(),
+                    loading: false,
+                    ..known.clone()
+                },
+                None => Catalog {
+                    key: key.clone(),
+                    ..Default::default()
+                },
+            };
+            self.dirty = true;
+        }
+        if self.view.catalog.loading
+            || (!refresh
+                && self.view.catalog.error.is_none()
+                && !self.view.catalog.models.is_empty())
         {
             return;
         }
         self.catalog_number += 1;
         if let Some(abort) = self.catalog_abort.take() {
             abort.abort();
-        }
-        if self.view.catalog.key != key {
-            self.view.catalog = Catalog {
-                key: key.clone(),
-                ..Default::default()
-            };
         }
         self.view.catalog.error = None;
         self.dirty = true;
@@ -1633,6 +1664,10 @@ impl Worker {
                     Ok(models) if !models.is_empty() => {
                         self.view.catalog.models = models;
                         self.view.catalog.error = None;
+                        self.catalogs.insert(
+                            self.view.catalog.key.provider.clone(),
+                            self.view.catalog.clone(),
+                        );
                     }
                     Ok(_) => self.view.catalog.error = Some("No models returned. Use the provider default, enter a custom model, or retry.".into()),
                     Err(error) => self.view.catalog.error = Some(format!("Could not load models: {error}")),

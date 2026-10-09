@@ -217,7 +217,8 @@ impl Workspace {
         let Request::InspectProject { path } = &state.request else {
             return None;
         };
-        if path != &self.projects.cwd || state.loading {
+        // A re-check of the same folder carries the previous answer.
+        if path != &self.projects.cwd || (state.loading && state.value.is_null()) {
             return None;
         }
         if let Some(error) = &state.error {
@@ -226,9 +227,10 @@ impl Workspace {
         projects::parse_inspection(&state.value).map(Ok)
     }
 
-    fn inspecting(&self) -> bool {
+    pub(super) fn inspecting(&self) -> bool {
         self.view.requests.get("project-inspect").is_some_and(|s| {
             s.loading
+                && s.value.is_null()
                 && matches!(&s.request, Request::InspectProject { path } if path == &self.projects.cwd)
         })
     }
