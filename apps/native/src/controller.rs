@@ -825,6 +825,15 @@ impl Worker {
             };
             self.dirty = true;
         }
+        // A reused list must not hide an unusable folder: the form still has
+        // to say it is wrong instead of offering models for it.
+        if key.provider != "claude" && !key.cwd.is_empty() && !absolute_directory(&key.cwd) {
+            self.view.catalog.error =
+                Some("Enter an absolute project directory to load models.".into());
+            self.view.catalog.loading = false;
+            self.dirty = true;
+            return;
+        }
         if self.view.catalog.loading
             || (!refresh
                 && self.view.catalog.error.is_none()
