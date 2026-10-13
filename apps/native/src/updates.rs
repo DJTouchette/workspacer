@@ -232,6 +232,30 @@ const PLAN_FILE: &str = "last-update-plan.json";
 const LOG_FILE: &str = "last-update.log";
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 const OUTPUT_FILE: &str = "last-update-output.log";
+/// Deletes all but the newest `keep` helper output captures in `dir`. Each
+/// handoff makes one and nothing removed them; a capture a running helper
+/// still holds open fails to delete and is left for the next handoff.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn prune_outputs(dir: &std::path::Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut outputs: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(&format!("-{OUTPUT_FILE}")))
+        })
+        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .collect();
+    outputs.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, path) in outputs.into_iter().skip(keep) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// The helper script. Constant text: paths and arguments travel in the plan.
 pub const HELPER_SCRIPT: &str = include_str!("update_helper.ps1");
 
@@ -526,6 +550,7 @@ fn start_helper(handoff: &Handoff) -> Result<ReadyHelper> {
             handoff.exe.display()
         )?;
         drop(log);
+        prune_outputs(&handoff.state_dir, 1);
         let output_path = handoff.state_dir.join(format!("{nonce}-{OUTPUT_FILE}"));
         let output = std::fs::File::create(&output_path)?;
         let spawn = |flags: u32| -> std::io::Result<std::process::Child> {
@@ -664,6 +689,32 @@ pub fn take_outcome(state_dir: &std::path::Path) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_handoff_keeps_only_the_newest_helper_captures() {
+        let dir = std::env::temp_dir().join(format!(
+            "wks-update-outputs-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        for (index, name) in ["1-1", "2-2", "3-3"].iter().enumerate() {
+            let path = dir.join(format!("{name}-{OUTPUT_FILE}"));
+            std::fs::write(&path, "x").unwrap();
+            let file = std::fs::File::options().write(true).open(&path).unwrap();
+            file.set_modified(old + std::time::Duration::from_secs(index as u64))
+                .unwrap();
+        }
+        std::fs::write(dir.join(LOG_FILE), "kept").unwrap();
+        prune_outputs(&dir, 1);
+        let mut left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, [format!("3-3-{OUTPUT_FILE}"), LOG_FILE.to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn versions_order_like_semver_including_nightly_stamps() {

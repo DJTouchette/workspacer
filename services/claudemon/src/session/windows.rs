@@ -550,6 +550,9 @@ pub(crate) fn resolve_window_for_selection_with_requested_spelling(
     let claims = window_claims(model, requested, reported, override_window);
     for claim in claims {
         if peak_context > claim.saturating_mul(DRIFT_TOLERANCE_NUM) / DRIFT_TOLERANCE_DEN {
+            if !first_drift(model, requested_spelling, claim) {
+                continue;
+            }
             tracing::warn!(
                 model = model.unwrap_or("<none>"),
                 requested = requested_spelling.unwrap_or("<none>"),
@@ -565,6 +568,25 @@ pub(crate) fn resolve_window_for_selection_with_requested_spelling(
         return Some(claim);
     }
     None
+}
+
+/// Whether this (model, requested, claim) drift is new to this process. Every
+/// usage read of a drifting session resolves its window again (snapshots,
+/// usage reports, prompt caches, folds), so warning on each one wrote the same
+/// line hundreds of times a second: 9.9 GB of log over a day on one machine.
+/// The alarm is about the contract table, so once per claim is the signal.
+fn first_drift(model: Option<&str>, requested: Option<&str>, claim: u64) -> bool {
+    static SEEN: std::sync::Mutex<Option<std::collections::HashSet<(String, String, u64)>>> =
+        std::sync::Mutex::new(None);
+    let key = (
+        model.unwrap_or_default().to_owned(),
+        requested.unwrap_or_default().to_owned(),
+        claim,
+    );
+    SEEN.lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get_or_insert_with(Default::default)
+        .insert(key)
 }
 
 /// The hierarchy, in order, as a LIST rather than a single answer — so the
@@ -941,5 +963,22 @@ mod tests {
         assert_eq!(at(200_000), Some(200_000), "exactly full is not over-full");
         assert_eq!(at(204_000), Some(200_000), "1.02× exactly is the boundary");
         assert_eq!(at(204_001), None, "past it, the window is not believable");
+    }
+
+    /// Re-resolving a drifting session (every snapshot does) disqualifies the
+    /// claim each time but warns only the first time that claim is disproved.
+    #[test]
+    fn a_drifting_claim_warns_once_per_process() {
+        let model = Some("first-drift-fixture-model");
+        assert!(first_drift(model, None, 200_000));
+        assert!(!first_drift(model, None, 200_000), "the same claim again");
+        assert!(
+            first_drift(model, Some("opus[1m]"), 200_000),
+            "another request"
+        );
+        assert!(first_drift(model, None, 400_000), "another claim");
+        let at = |peak| resolve_window(Some("claude-opus-5"), None, None, None, peak);
+        assert_eq!(at(300_000), None, "a repeat is still disqualified");
+        assert_eq!(at(300_000), None);
     }
 }

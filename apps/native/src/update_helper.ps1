@@ -48,7 +48,10 @@ function Start-App {
         $start.FileName = $plan.exe
         $start.Arguments = $plan.arguments
         $start.WorkingDirectory = $plan.cwd
-        $start.UseShellExecute = $false
+        # Shell execute, so the app does not inherit this helper's redirected
+        # output: it wrote its own stderr into the update capture for as long
+        # as it ran (gigabytes over a day of warnings).
+        $start.UseShellExecute = $true
         $app = [Diagnostics.Process]::Start($start)
         Write-Log ('relaunched ' + $plan.exe + ' as ' + $app.Id)
     } catch {
