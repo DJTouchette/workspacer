@@ -311,8 +311,9 @@ fn post_attention_alerts(
                         let _ = clicks.send_blocking(alert.session);
                     }
                 });
+                // macOS reports no clicks, so nothing opens the session.
                 #[cfg(target_os = "macos")]
-                let _ = (handle, clicks);
+                let _ = (handle, clicks, alert.session);
             });
         if let Err(error) = spawned {
             eprintln!("Native notification unavailable: {error}");

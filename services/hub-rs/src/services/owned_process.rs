@@ -559,7 +559,9 @@ mod tests {
             "-c",
             "trap '' HUP; sh -c 'trap \"\" HUP; sleep 30' & printf complete; exit 0",
         ]);
-        let result = capture(&mut command, 1024, Duration::from_secs(2))
+        // Well under the descendant's 30 s: without the close this waits for
+        // it, while a loaded macOS runner has missed a 2 s budget.
+        let result = capture(&mut command, 1024, Duration::from_secs(10))
             .await
             .unwrap();
         assert!(result.status.success());
