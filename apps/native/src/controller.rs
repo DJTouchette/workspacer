@@ -483,6 +483,10 @@ struct Worker {
     /// Shell ids replaced or ended in this run; their rows stay hidden.
     retired_shells: BTreeSet<String>,
     shell_generation: u64,
+    /// When this connection came up, and which first replies since then have
+    /// been logged, so the native log shows how long the window waited.
+    connected_at: Instant,
+    first_replies: BTreeSet<&'static str>,
 }
 
 impl Worker {
@@ -529,6 +533,21 @@ impl Worker {
             shells: BTreeMap::new(),
             retired_shells: BTreeSet::new(),
             shell_generation: 0,
+            connected_at: Instant::now(),
+            first_replies: BTreeSet::new(),
+        }
+    }
+
+    /// Logs the first `what` reply after a connect: its round trip and how
+    /// long after the connect it landed.
+    fn log_first_reply(&mut self, what: &'static str, requested: Instant) {
+        if self.first_replies.insert(what) {
+            tracing::info!(
+                reply = what,
+                round_trip_ms = requested.elapsed().as_millis() as u64,
+                since_connect_ms = self.connected_at.elapsed().as_millis() as u64,
+                "first reply after connect"
+            );
         }
     }
 
@@ -1170,6 +1189,8 @@ impl Worker {
         match event {
             Event::Connected => {
                 self.epoch += 1;
+                self.connected_at = Instant::now();
+                self.first_replies.clear();
                 self.archive_resync = true;
                 self.view.connected = true;
                 self.view.power_paused = false;
@@ -1836,6 +1857,7 @@ impl Worker {
             }
             Completion::Usage(epoch, result) if epoch == self.epoch => {
                 self.usage_pending = false;
+                self.log_first_reply("usage", self.last_usage);
                 // Older hubs lack usage.report; a failed refresh keeps the last
                 // reading, whose rolled-over windows drop out on their own.
                 match result {
@@ -1852,6 +1874,7 @@ impl Worker {
             }
             Completion::Fleet(epoch, result) if epoch == self.epoch => {
                 self.fleet_pending = false;
+                self.log_first_reply("fleet", self.last_fleet);
                 if std::mem::take(&mut self.refetch_fleet) {
                     self.fleet_dirty = true;
                     if let Some(due) = Instant::now().checked_sub(Duration::from_secs(30)) {
@@ -1915,6 +1938,7 @@ impl Worker {
                 if epoch == self.epoch && selection == self.selection =>
             {
                 self.conversation_pending = false;
+                self.log_first_reply("conversation", self.last_conversation);
                 self.view.loading = false;
                 self.view.loading_older = false;
                 let window_first_seq = result

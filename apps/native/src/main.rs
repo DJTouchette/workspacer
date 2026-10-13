@@ -32,6 +32,11 @@ struct Args {
     #[cfg(feature = "rust-hub")]
     #[arg(long, conflicts_with_all = ["bus", "demo", "token_file", "services_dir", "database"])]
     rust_local_dir: Option<PathBuf>,
+    /// Leave the home's Claude hook settings alone, e.g. for a second instance
+    /// beside a live one whose hooks must keep reaching it.
+    #[cfg(feature = "rust-hub")]
+    #[arg(long)]
+    no_claude_hooks: bool,
     /// Retired service-bundle override; local ownership uses Rust in process.
     #[arg(long, requires = "local")]
     services_dir: Option<PathBuf>,
@@ -172,12 +177,15 @@ async fn termination_signals(tx: async_channel::Sender<()>) -> std::io::Result<(
 }
 
 /// The backend's own logs (startup timings, provider spawns, failures) in
-/// `logs/wks-native.log` under the native data directory, replaced each launch
-/// with the previous run kept as `wks-native.log.1`. `RUST_LOG` overrides the
-/// default filter.
-fn log_to_file() {
+/// `logs/wks-native.log` under the native data directory (or the
+/// `--rust-local-dir` override, so two instances never rotate one log),
+/// replaced each launch with the previous run kept as `wks-native.log.1`.
+/// `RUST_LOG` overrides the default filter.
+fn log_to_file(data_dir: Option<PathBuf>) {
     use tracing_subscriber::EnvFilter;
-    let Ok(directory) = wks_native::host::RustOptions::default_directory() else {
+    let Some(directory) =
+        data_dir.or_else(|| wks_native::host::RustOptions::default_directory().ok())
+    else {
         return;
     };
     let directory = directory.join("logs");
@@ -201,8 +209,11 @@ fn log_to_file() {
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-    log_to_file();
     let args = Args::parse();
+    #[cfg(feature = "rust-hub")]
+    log_to_file(args.rust_local_dir.clone());
+    #[cfg(not(feature = "rust-hub"))]
+    log_to_file(None);
     if args.font_licenses {
         println!(
             "Inter\n{}\nJetBrains Mono\n{}",
@@ -232,9 +243,9 @@ fn main() -> Result<()> {
             Some(directory) => directory.clone(),
             None => wks_native::host::RustOptions::default_directory()?,
         };
-        Some(Mode::Rust(wks_native::host::RustOptions::isolated(
-            directory,
-        )?))
+        let mut options = wks_native::host::RustOptions::isolated(directory)?;
+        options.claude_hooks = !args.no_claude_hooks;
+        Some(Mode::Rust(options))
     } else {
         None
     };

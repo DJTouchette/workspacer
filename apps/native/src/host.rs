@@ -293,6 +293,7 @@ mod tests {
             data_dir: path.with_extension("hub"),
             home_dir: path.with_extension("home"),
             usage_poll_on_boot: Some(false),
+            claude_hooks: true,
         }))
         .unwrap();
         let status = host.status();

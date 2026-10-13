@@ -11,6 +11,9 @@ pub struct RustOptions {
     pub home_dir: PathBuf,
     /// An explicit host override; None follows the shared config/environment.
     pub usage_poll_on_boot: Option<bool>,
+    /// Point the home's Claude hook settings at this engine. Off for a second
+    /// instance beside a live one, which would otherwise take its hooks.
+    pub claude_hooks: bool,
 }
 
 impl RustOptions {
@@ -30,6 +33,7 @@ impl RustOptions {
                 .home_dir()
                 .into(),
             usage_poll_on_boot: None,
+            claude_hooks: true,
         })
     }
 }
@@ -65,7 +69,9 @@ pub(super) async fn run(
         .map(|directory| directory.join("jobs.json"));
     // Like the previous native launcher, the desktop owner opts into the
     // user's manual/PTY Claude hook integration. Backend stores stay isolated.
-    hub_options.claude_hook_settings = Some(options.home_dir.join(".claude/settings.json"));
+    hub_options.claude_hook_settings = options
+        .claude_hooks
+        .then(|| options.home_dir.join(".claude/settings.json"));
     hub_options.home_dir = Some(options.home_dir);
     workspacer_hub::backend::configure_local_integrations(&mut hub_options)?;
     let usage_poll_on_boot = options.usage_poll_on_boot.or_else(|| {
