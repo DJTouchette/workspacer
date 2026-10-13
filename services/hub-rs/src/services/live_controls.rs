@@ -61,7 +61,7 @@ impl Controls {
     fn generation(&self, id: &str) -> String {
         self.lifecycle
             .as_ref()
-            .and_then(|l| l.records().get(id).map(|r| r.generation.clone()))
+            .and_then(|l| l.generation(id))
             .unwrap_or_default()
     }
     async fn note(
@@ -76,7 +76,7 @@ impl Controls {
                 if !lifecycle.note_live_control(id, generation, &patch).await? {
                     return Ok(());
                 }
-            } else if lifecycle.records().contains_key(id) {
+            } else if lifecycle.contains(id) {
                 return Ok(());
             }
         }

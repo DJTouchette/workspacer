@@ -176,8 +176,10 @@ fn save_unlocked(path: &Path, records: &[Record]) -> Result<()> {
         tmp.as_file()
             .set_permissions(fs::Permissions::from_mode(0o600))?;
     }
-    serde_json::to_writer_pretty(&mut tmp, records)?;
-    tmp.write_all(b"\n")?;
+    // One write, not one per serialized token (see `services::atomic_json`).
+    let mut bytes = serde_json::to_vec_pretty(records)?;
+    bytes.push(b'\n');
+    tmp.write_all(&bytes)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
     Ok(())

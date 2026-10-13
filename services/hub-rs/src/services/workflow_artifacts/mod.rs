@@ -77,10 +77,7 @@ pub fn merge(mut row: Value, update: &Value) -> Value {
 impl Service {
     pub fn identity(&self, row: &Value) -> Value {
         let id = text(row, "sessionId");
-        let generation = self
-            .lifecycle
-            .as_ref()
-            .and_then(|l| l.records().get(id).map(|r| r.generation.clone()));
+        let generation = self.lifecycle.as_ref().and_then(|l| l.generation(id));
         json!([
             id,
             row["provider"],

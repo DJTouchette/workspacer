@@ -162,8 +162,7 @@ impl SpawnCoordinator {
         self.validate_replacement(&claim)?;
         if self
             .lifecycle
-            .records()
-            .get(successor)
+            .record(successor)
             .is_some_and(|record| record.engine_attempted)
         {
             bail!(
@@ -319,12 +318,10 @@ impl SpawnCoordinator {
         if id.trim().is_empty() {
             return false;
         }
-        let row = self.workflow.owner_snapshot(id).or_else(|| {
-            self.lifecycle
-                .records()
-                .get(id)
-                .map(|record| record.metadata.clone())
-        });
+        let row = self
+            .workflow
+            .owner_snapshot(id)
+            .or_else(|| self.lifecycle.record(id).map(|record| record.metadata));
         let row = row.or_else(|| {
             self.replacements
                 .lock()
@@ -516,11 +513,7 @@ impl SpawnCoordinator {
         // Internal claims originate only from this operation, never wire JSON.
         map.remove("workflowReservationToken");
         map.remove("projectCwd");
-        let previous = self
-            .lifecycle
-            .records()
-            .get(text(&params, "resumeSessionId"))
-            .cloned();
+        let previous = self.lifecycle.record(text(&params, "resumeSessionId"));
         if let Some(previous) = &previous {
             let prior_integration = text(&previous.metadata["settings"], "launchIntegrationId");
             if !prior_integration.is_empty() && text(&params, "launchIntegrationId").is_empty() {
@@ -833,8 +826,7 @@ impl SpawnCoordinator {
             if let Some(admission) = &admission {
                 let attempted = self
                     .lifecycle
-                    .records()
-                    .get(&id)
+                    .record(&id)
                     .is_some_and(|r| r.engine_attempted && !r.definitive_rejection);
                 if !attempted {
                     if let Some(state) = &replacements {

@@ -377,8 +377,12 @@ pub(crate) fn atomic_json(
     }
     #[cfg(not(unix))]
     let _ = private;
-    serde_json::to_writer(&mut file, value)?;
-    file.write_all(b"\n")?;
+    // Serialized in memory and written once: serde writes token by token, and
+    // straight to an unbuffered file that is a syscall each, which took about
+    // a second per save of a 2 MB launch journal on Windows.
+    let mut bytes = serde_json::to_vec(value)?;
+    bytes.push(b'\n');
+    file.write_all(&bytes)?;
     file.as_file().sync_all()?;
     atomic_persist::persist(file, path)?;
     Ok(())

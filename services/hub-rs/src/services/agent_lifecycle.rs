@@ -153,8 +153,28 @@ impl Lifecycle {
     pub(crate) async fn mutation_guard(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.operations.lock().await
     }
+    /// Every record, deep-copied. The journal holds hundreds of records with
+    /// their launch metadata (megabytes), so one-session lookups use
+    /// [`Self::record`] or [`Self::generation`] instead: cloning it all per
+    /// row cost seconds of every startup seed.
     pub fn records(&self) -> BTreeMap<String, LaunchRecord> {
         self.rows.lock().unwrap().clone()
+    }
+    pub fn record(&self, session: &str) -> Option<LaunchRecord> {
+        self.rows.lock().unwrap().get(session).cloned()
+    }
+    pub fn generation(&self, session: &str) -> Option<String> {
+        self.rows
+            .lock()
+            .unwrap()
+            .get(session)
+            .map(|record| record.generation.clone())
+    }
+    pub fn contains(&self, session: &str) -> bool {
+        self.rows.lock().unwrap().contains_key(session)
+    }
+    pub fn session_ids(&self) -> Vec<String> {
+        self.rows.lock().unwrap().keys().cloned().collect()
     }
     fn update(
         &self,
@@ -748,7 +768,7 @@ impl Lifecycle {
     /// late stopped update after resume. Duplicate observations retry revocation.
     pub async fn stopped(&self, session: &str, generation: &str) -> Result<bool> {
         let _operation = self.operations.lock().await;
-        let Some(row) = self.records().get(session).cloned() else {
+        let Some(row) = self.record(session) else {
             return Ok(false);
         };
         if row.generation != generation {

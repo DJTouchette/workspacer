@@ -713,8 +713,10 @@ pub(super) fn handle(
         // Rename preserves this protected DACL on the installed sidecar.
         drop(super::windows_audit::open(staged.path())?);
     }
-    serde_json::to_writer(&mut staged, &raw)?;
-    staged.write_all(b"\n")?;
+    // One write, not one per serialized token (see `services::atomic_json`).
+    let mut bytes = serde_json::to_vec(&raw)?;
+    bytes.push(b'\n');
+    staged.write_all(&bytes)?;
     staged.as_file().sync_all()?;
     // Stage first, then recheck both inputs immediately before rename. A slow
     // fsync must not widen the stale-source acceptance window.

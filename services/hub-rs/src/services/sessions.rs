@@ -85,10 +85,21 @@ pub(crate) async fn install(
             .as_ref()
             .map(|workflow| workflow.tasks.clone()),
     });
+    let started = std::time::Instant::now();
     if let Some(lifecycle) = &service.lifecycle {
         lifecycle.reconcile().await?;
     }
+    tracing::info!(
+        step = "reconcile",
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "sessions install"
+    );
     service.seed(false).await?;
+    tracing::info!(
+        step = "seed",
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "sessions install"
+    );
     if let Some(artifacts) = &service.workflow_artifacts {
         let weak = Arc::downgrade(&service);
         artifacts.set_sink(Arc::new(move |id, identity, update, events| {
@@ -173,7 +184,7 @@ impl Sessions {
     fn generation(&self, id: &str) -> String {
         self.lifecycle
             .as_ref()
-            .and_then(|l| l.records().get(id).map(|r| r.generation.clone()))
+            .and_then(|l| l.generation(id))
             .unwrap_or_default()
     }
     fn layout(&self) -> Value {
@@ -183,7 +194,17 @@ impl Sessions {
         self.layout.as_ref().map(|l| l.get()).unwrap_or(Value::Null)
     }
     async fn seed(&self, publish: bool) -> Result<()> {
+        let started = std::time::Instant::now();
+        let step = |name: &str| {
+            tracing::debug!(
+                step = name,
+                publish,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "sessions seed"
+            )
+        };
         let _mutation = self.mutations.lock().await;
+        step("locked");
         let raw = if publish {
             self.request(
                 "GET",
@@ -194,12 +215,13 @@ impl Sessions {
         } else {
             self.engine.request(Command::Sessions).await?
         };
+        step("inventory");
         let mut known: std::collections::BTreeSet<String> =
             self.rows.read().unwrap().keys().cloned().collect();
         if let Some(lifecycle) = &self.lifecycle {
             // A host-owned launch can finish while both its start and end
             // notifications are lost, before its first projected row exists.
-            known.extend(lifecycle.records().into_keys());
+            known.extend(lifecycle.session_ids());
         }
         let array = raw
             .as_array()
@@ -231,6 +253,7 @@ impl Sessions {
                 }
             }
         }
+        step("rows");
         self.dismissals.retain_inventory(&retained);
         self.confirmed.retain(&rows.keys().cloned().collect());
         let old = std::mem::replace(&mut *self.rows.write().unwrap(), rows.clone());
@@ -243,7 +266,9 @@ impl Sessions {
                 observations.push(row);
             }
         }
+        step("projected");
         self.record_history(observations).await;
+        step("history");
         if !publish {
             if let Some(wakes) = &self.wakes {
                 wakes.prime(
@@ -255,6 +280,7 @@ impl Sessions {
                 );
             }
         }
+        step("primed");
         if publish {
             for (id, mut row) in old {
                 if !rows.contains_key(&id) {
@@ -439,7 +465,7 @@ impl Sessions {
         let removed = known.is_some();
         if known.is_none()
             && self.lifecycle.as_ref().is_some_and(|l| {
-                l.records().get(id).is_some_and(|r| {
+                l.record(id).is_some_and(|r| {
                     matches!(
                         r.phase,
                         super::agent_lifecycle::Phase::Preparing
