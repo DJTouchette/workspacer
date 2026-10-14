@@ -157,6 +157,7 @@ impl DeliveryResult {
 }
 /// The common manager-bound transport. Normal sends may be held durably; only
 /// the handoff coordinator uses outbox=true to drain those journaled messages.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_engine(
     engine: &claudemon::daemon::embedded::EmbeddedClient,
     tracker: &Arc<MessageTracker>,
@@ -166,6 +167,39 @@ pub async fn send_engine(
     source_request: Option<Value>,
     outbox: bool,
     inbox: Option<&crate::services::manager_requests::ManagerRequests>,
+) -> Result<DeliveryResult> {
+    send_engine_with(
+        engine,
+        tracker,
+        target,
+        message,
+        signatures,
+        source_request,
+        outbox,
+        inbox,
+        claudemon::session::Delivery::Steer,
+        claudemon::session::MessageSender::Agent,
+    )
+    .await
+}
+/// [`send_engine`] with an explicit [`claudemon::session::Delivery`] and
+/// [`claudemon::session::MessageSender`]. The delivery applies only to an
+/// immediate send: a message the tracker HOLDS durably is replayed later as a
+/// plain steer, because by then the turn it was meant to cut into is gone.
+/// (`send_engine` itself names the sender `Agent`: its callers are fleet
+/// wakes, progress and workflow deliveries — never a person typing.)
+#[allow(clippy::too_many_arguments)]
+pub async fn send_engine_with(
+    engine: &claudemon::daemon::embedded::EmbeddedClient,
+    tracker: &Arc<MessageTracker>,
+    target: &str,
+    message: &str,
+    signatures: &[(String, String)],
+    source_request: Option<Value>,
+    outbox: bool,
+    inbox: Option<&crate::services::manager_requests::ManagerRequests>,
+    delivery: claudemon::session::Delivery,
+    sender: claudemon::session::MessageSender,
 ) -> Result<DeliveryResult> {
     use anyhow::{Context, bail};
     use claudemon::daemon::embedded::{Command, CommandRejected};
@@ -232,6 +266,8 @@ pub async fn send_engine(
         engine.request(Command::Message {
             id: target.into(),
             text: content,
+            delivery,
+            sender,
         }),
     )
     .await

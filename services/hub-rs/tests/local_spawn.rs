@@ -10,6 +10,21 @@ use std::{
     time::Duration,
 };
 use workspacer_hub::{Options, backend::Backend, client::Client, services::config::Config};
+/// Whether the stream fixture received the live effort switch as the CLI's
+/// structural `apply_flag_settings` control — never as a `/effort` chat line.
+fn effort_switched(root: &Path, id: &str, level: &str) -> bool {
+    let rows = rows(root, id);
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["message"] == format!("/effort {level}")),
+        "a stream effort switch must not be sent as a chat message"
+    );
+    rows.iter().any(|row| {
+        row["control"]["subtype"] == "apply_flag_settings"
+            && row["control"]["settings"]["effortLevel"] == level
+    })
+}
 fn rows(root: &Path, id: &str) -> Vec<Value> {
     std::fs::read_to_string(root.join(format!("received-{id}.jsonl")))
         .unwrap_or_default()
@@ -187,6 +202,17 @@ async fn run(root: PathBuf) {
         )
         .await
         .unwrap();
+    // The fixture's init names CLI 2.1.299, so every frame carries a uuid and
+    // a default send is an explicit `priority: "next"` steer.
+    until("parent-steer-frame", async || {
+        rows(&root, &parent_id).iter().any(|row| {
+            row["message"] == "ask-numeric-fixture"
+                && row["uuid"].is_string()
+                && row["priority"] == "next"
+                && row["origin"].is_null()
+        })
+    })
+    .await;
     until("parent-numeric-question", async || {
         client
             .call("sessions.snapshot", json!({"sessionId":parent_id}))
@@ -327,6 +353,47 @@ async fn run(root: PathBuf) {
             .is_ok_and(|r| r["ambientState"] == "idle")
     })
     .await;
+    // `delivery` reaches the stream driver through the hub's tracked send:
+    // a person's `now` claims the human origin, an agent's does not.
+    for (text, from) in [
+        ("now-human-fixture", None),
+        ("now-agent-fixture", Some(&parent_id)),
+    ] {
+        let mut params = json!({"sessionId":successor_id,"text":text,"delivery":"now"});
+        if let Some(from) = from {
+            params["fromSessionId"] = json!(from);
+        }
+        client.call("agents.sendMessage", params).await.unwrap();
+    }
+    until("successor-now-frames", async || {
+        let rows = rows(&root, &successor_id);
+        let frame = |needle: &str| {
+            rows.iter()
+                .find(|row| row["message"].as_str().is_some_and(|m| m.contains(needle)))
+                .cloned()
+        };
+        match (frame("now-human-fixture"), frame("now-agent-fixture")) {
+            (Some(human), Some(agent)) => {
+                assert_eq!(human["priority"], "now");
+                assert_eq!(human["origin"], json!({"kind":"human"}));
+                assert_eq!(agent["priority"], "now");
+                assert!(agent["origin"].is_null(), "{agent}");
+                true
+            }
+            _ => false,
+        }
+    })
+    .await;
+    assert!(
+        client
+            .call(
+                "agents.sendMessage",
+                json!({"sessionId":successor_id,"text":"x","delivery":"later"}),
+            )
+            .await
+            .is_err(),
+        "an unknown delivery is refused"
+    );
     let mode = client
         .call(
             "claude.setPermissionMode",
@@ -354,9 +421,7 @@ async fn run(root: PathBuf) {
         .unwrap();
     assert_eq!(effort, json!({"ok":true,"effort":"high"}));
     until("successor-effort-high-receipt", async || {
-        rows(&root, &successor_id)
-            .iter()
-            .any(|row| row["message"] == "/effort high")
+        effort_switched(&root, &successor_id, "high")
     })
     .await;
     let controlled = client
@@ -385,11 +450,7 @@ async fn run(root: PathBuf) {
     assert!(accepted["warning"].as_str().is_some());
     until(
         "successor-effort-low-after-bookkeeping-failure",
-        async || {
-            rows(&root, &successor_id)
-                .iter()
-                .any(|row| row["message"] == "/effort low")
-        },
+        async || effort_switched(&root, &successor_id, "low"),
     )
     .await;
     assert_eq!(

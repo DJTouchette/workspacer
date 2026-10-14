@@ -9,14 +9,19 @@
  * moment a provider's mechanism changes.
  *
  * The two mechanisms:
- *  - claude, both transports: the `/effort <level>` slash command through the
- *    normal message path — the same shape as the `/model` switch. Verified on the
- *    wire: the CLI answers "Set effort level to high (this session only)" rather
- *    than treating it as a prompt, and there is no `set_effort` in the stream
- *    control protocol (only set_model / set_permission_mode), so the message path
- *    is the mechanism on stream too.
- *  - managed (codex): the daemon's `/sessions/:id/model` with effort only, which
- *    applies `thread/settings/update` to the running thread.
+ *  - claude PTY: the `/effort <level>` slash command through the normal message
+ *    path — the same shape as the `/model` switch; the TUI answers "Set effort
+ *    level to high (this session only)".
+ *  - managed (claude stream, codex): the daemon's `/sessions/:id/model` with
+ *    effort only. Claude stream turns it into the CLI's `apply_flag_settings
+ *    {effortLevel}` control request, applied from the next turn (verified on CLI
+ *    2.1.299: spawned `--effort high`, switched to `low`, and the next assistant
+ *    row recorded `effort: "low"`). The daemon answers only after the CLI's
+ *    control_response (10s bound), so a refused level comes back as `!ok` and
+ *    is never noted. A `/effort` chat message also works
+ *    headlessly, but it queues behind a running turn and its only confirmation
+ *    is a synthetic reply the stream view drops. Codex applies
+ *    `thread/settings/update` to the running thread.
  *
  * Either way the level is noted in the snapshot store immediately. For claude
  * that note is the pill's only truth — its effective effort appears in no hook,
@@ -41,9 +46,10 @@ export async function applyLiveEffort(
   const level = effort.trim();
   if (!sessionId || !level) return { ok: false, error: 'requires a session and an effort level' };
 
-  const provider = claudeSessionStore.getSnapshot(sessionId)?.provider ?? 'claude';
+  const snapshot = claudeSessionStore.getSnapshot(sessionId);
+  const provider = snapshot?.provider ?? 'claude';
   try {
-    if (provider === 'claude') {
+    if (provider === 'claude' && snapshot?.transport !== 'stream') {
       const res = await claudemonSessionClient.message(sessionId, `/effort ${level}`);
       // A 409 carries the live mode: the session has ended and can't take input.
       if (!res.ok) {

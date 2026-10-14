@@ -751,6 +751,21 @@ impl Sessions {
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow!("agents.sendMessage requires {{ sessionId, text }}"))?;
                 let mut text = text.to_owned();
+                // Validated in `params`; absent (or null) is a plain steer.
+                let delivery = params["delivery"]
+                    .as_str()
+                    .and_then(claudemon::session::Delivery::from_wire)
+                    .unwrap_or_default();
+                // A message that names its sending session is agent-to-agent;
+                // only a person's `now` may claim `origin: {kind: "human"}`.
+                let sender = if params["fromSessionId"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty())
+                {
+                    claudemon::session::MessageSender::Agent
+                } else {
+                    claudemon::session::MessageSender::Human
+                };
                 if let Some(from) = params["fromSessionId"].as_str().filter(|s| !s.is_empty()) {
                     let label = self.sender_label(from);
                     text = format!(
@@ -763,7 +778,7 @@ impl Sessions {
                         Some(state) => state.wake_target(id)?,
                         None => id.into(),
                     };
-                    let delivery = super::manager_replacements::messages::send_engine(
+                    let delivery = super::manager_replacements::messages::send_engine_with(
                         &self.engine,
                         tracker,
                         &target,
@@ -772,6 +787,8 @@ impl Sessions {
                         None,
                         false,
                         self.requests.as_deref(),
+                        delivery,
+                        sender,
                     )
                     .await?;
                     return match delivery.outcome {
@@ -789,7 +806,7 @@ impl Sessions {
                 self.request(
                     "POST",
                     format!("{root}/message"),
-                    Some(json!({"text":text})),
+                    Some(json!({"text":text,"delivery":delivery,"sender":sender})),
                 )
                 .await?;
                 Ok(json!({"ok":true}))

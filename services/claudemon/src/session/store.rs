@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use dashmap::{DashMap, DashSet};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
@@ -304,7 +305,7 @@ pub struct SessionStore {
     /// Managed (adapter-driven) sessions route user prompts here instead of to a
     /// PTY: the provider adapter's driver task owns the receiver and forwards
     /// each prompt to the agent's own API (e.g. OpenCode's POST message).
-    managed_inputs: Arc<DashMap<String, mpsc::UnboundedSender<String>>>,
+    managed_inputs: Arc<DashMap<String, ManagedInput>>,
     /// Managed approval decisions (true = approve, false = deny). `/approve`
     /// routes the user's decision here for managed sessions; the adapter's
     /// driver forwards it to the provider (OpenCode permission reply / Codex
@@ -350,6 +351,9 @@ pub struct SessionStore {
     /// (opencode/pi, codex rollout fallback) can't switch live — the caller
     /// falls back to the restart path.
     managed_model: Arc<DashMap<String, mpsc::UnboundedSender<ModelSwitch>>>,
+    /// Drivers that confirm a model/effort switch before `/model` answers (see
+    /// [`ConfirmedModelSwitch`]); preferred over `managed_model` when present.
+    managed_confirmed_model: Arc<DashMap<String, mpsc::UnboundedSender<ConfirmedModelSwitch>>>,
     /// Structural AskUserQuestion answers for managed sessions whose driver can
     /// resolve a parked question over its own protocol (the claude stream
     /// driver's `can_use_tool` allow-with-answers). `/answer` routes here when
@@ -402,6 +406,103 @@ pub struct SessionStore {
 pub struct ModelSwitch {
     pub model: Option<String>,
     pub effort: Option<String>,
+}
+
+/// How a chat message sent to a RUNNING managed session should land.
+///
+/// The wire spelling (`"steer"` / `"now"`) is shared by the hub's
+/// `agents.sendMessage {delivery}`, `POST /sessions/:id/message {delivery}`
+/// and the embedded `Command::Message`; absent means [`Delivery::Steer`].
+/// A provider without a native distinction treats both as a normal send.
+///
+/// * `Steer` — read in the same turn once the running tool calls finish
+///   (Claude: `priority: "next"`); starts the next turn if the turn ends first.
+/// * `Now` — reach the agent immediately: Claude moves background-capable work
+///   to the background (or interrupts) and reads the message in this turn.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Delivery {
+    #[default]
+    Steer,
+    Now,
+}
+
+impl Delivery {
+    /// Parse the wire spelling; `None` for anything outside the vocabulary so
+    /// callers reject rather than silently downgrade an unknown mode.
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "steer" => Some(Self::Steer),
+            "now" => Some(Self::Now),
+            _ => None,
+        }
+    }
+
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            Self::Steer => "steer",
+            Self::Now => "now",
+        }
+    }
+}
+
+/// Who wrote a chat message: a person at a client, or another agent (a
+/// manager's `send_message`, a fleet wake). Wire spelling `"human"` /
+/// `"agent"`, absent is `"human"`. Claude stream stamps
+/// `origin: {kind: "human"}` only on a human's `now` — an agent's `now` keeps
+/// the priority but must not claim to be the user.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageSender {
+    #[default]
+    Human,
+    Agent,
+}
+
+/// One prompt bound for a delivery-aware managed driver (see
+/// [`SessionStore::register_managed_prompt`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedPrompt {
+    pub text: String,
+    pub delivery: Delivery,
+    pub sender: MessageSender,
+}
+
+/// A live model/effort switch whose driver answers only once the provider
+/// confirmed (or refused) it — the Claude stream driver resolves `reply` from
+/// the CLI's `control_response`s, so `POST /sessions/:id/model` reports what
+/// actually happened instead of "sent".
+#[derive(Debug)]
+pub struct ConfirmedModelSwitch {
+    pub switch: ModelSwitch,
+    pub reply: oneshot::Sender<Result<(), String>>,
+}
+
+/// How long `POST /sessions/:id/model` waits for a confirming driver.
+pub const MODEL_SWITCH_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A managed session's prompt channel. Most drivers take bare text; a driver
+/// that can honour [`Delivery`] registers the richer channel instead, so the
+/// field reaches it without every adapter changing its receiver type.
+#[derive(Clone)]
+enum ManagedInput {
+    Text(mpsc::UnboundedSender<String>),
+    Prompt(mpsc::UnboundedSender<ManagedPrompt>),
+}
+
+impl ManagedInput {
+    fn send(&self, text: String, delivery: Delivery, sender: MessageSender) -> bool {
+        match self {
+            Self::Text(tx) => tx.send(text).is_ok(),
+            Self::Prompt(tx) => tx
+                .send(ManagedPrompt {
+                    text,
+                    delivery,
+                    sender,
+                })
+                .is_ok(),
+        }
+    }
 }
 
 /// A structural answer to a managed session's pending `AskUserQuestion` —
@@ -688,6 +789,7 @@ impl SessionStore {
             term_sizes: Arc::new(DashMap::new()),
             managed_yolo: Arc::new(DashMap::new()),
             managed_model: Arc::new(DashMap::new()),
+            managed_confirmed_model: Arc::new(DashMap::new()),
             managed_answers: Arc::new(DashMap::new()),
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
@@ -1864,6 +1966,20 @@ impl SessionStore {
     /// `submit_message` are forwarded here (the adapter's driver task owns the
     /// receiver).
     pub fn register_managed_input(&self, session_id: &str, tx: mpsc::UnboundedSender<String>) {
+        self.register_managed_channel(session_id, ManagedInput::Text(tx));
+    }
+
+    /// [`Self::register_managed_input`] for a driver that honours
+    /// [`Delivery`]: each prompt arrives with the delivery its sender asked for.
+    pub fn register_managed_prompt(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<ManagedPrompt>,
+    ) {
+        self.register_managed_channel(session_id, ManagedInput::Prompt(tx));
+    }
+
+    fn register_managed_channel(&self, session_id: &str, tx: ManagedInput) {
         self.managed_inputs
             .insert(session_id.to_string(), tx.clone());
         // Drain anything queued BEFORE this channel existed — in practice the
@@ -1883,7 +1999,7 @@ impl SessionStore {
         // this drain runs the instant the driver's channel is live. There is no
         // window in between for the caller to have to guess at.
         for text in self.take_pending_messages(session_id) {
-            if tx.send(text).is_err() {
+            if !tx.send(text, Delivery::Steer, MessageSender::Human) {
                 tracing::warn!(session_id, "managed prompt channel closed before the queued first message could be delivered");
                 break;
             }
@@ -2065,6 +2181,46 @@ impl SessionStore {
         self.managed_model.insert(session_id.to_string(), tx);
     }
 
+    /// Register a driver that confirms model/effort switches (see
+    /// [`ConfirmedModelSwitch`]). Also register the plain channel: other
+    /// callers only check that one for "can switch live".
+    pub fn register_managed_confirmed_model_switch(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<ConfirmedModelSwitch>,
+    ) {
+        self.managed_confirmed_model
+            .insert(session_id.to_string(), tx);
+    }
+
+    /// Switch through a confirming driver and wait (bounded) for its verdict.
+    /// `None` when this session has no confirming driver, so the caller uses
+    /// [`Self::set_managed_model`]; `Some(Err)` when the provider refused, the
+    /// driver went away, or no answer came within `timeout`.
+    pub async fn set_managed_model_confirmed(
+        &self,
+        session_id: &str,
+        switch: ModelSwitch,
+        timeout: std::time::Duration,
+    ) -> Option<Result<(), String>> {
+        let tx = self
+            .managed_confirmed_model
+            .get(session_id)
+            .map(|tx| tx.clone())?;
+        let (reply, answer) = oneshot::channel();
+        if tx.send(ConfirmedModelSwitch { switch, reply }).is_err() {
+            return Some(Err("the session's driver is gone".into()));
+        }
+        Some(match tokio::time::timeout(timeout, answer).await {
+            Ok(Ok(verdict)) => verdict,
+            Ok(Err(_)) => Err("the session's driver dropped the switch unanswered".into()),
+            Err(_) => Err(format!(
+                "the provider did not confirm the switch within {}s",
+                timeout.as_secs()
+            )),
+        })
+    }
+
     /// Live-switch a managed session's model/effort without a restart. Err when
     /// the session has no switch channel (provider can't do it live — opencode/
     /// pi, or codex running on the rollout fallback) so the caller can offer
@@ -2141,6 +2297,7 @@ impl SessionStore {
         self.managed_decisions.remove(session_id);
         self.managed_deny_reasons.remove(session_id);
         self.managed_model.remove(session_id);
+        self.managed_confirmed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
         self.managed_answers.remove(session_id);
         self.managed_permission_modes.remove(session_id);
@@ -2200,6 +2357,7 @@ impl SessionStore {
         self.managed_decisions.remove(session_id);
         self.managed_deny_reasons.remove(session_id);
         self.managed_model.remove(session_id);
+        self.managed_confirmed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
         self.managed_answers.remove(session_id);
         self.managed_permission_modes.remove(session_id);
@@ -2455,7 +2613,7 @@ impl SessionStore {
         stopped
     }
 
-    fn managed_input(&self, session_id: &str) -> Option<mpsc::UnboundedSender<String>> {
+    fn managed_input(&self, session_id: &str) -> Option<ManagedInput> {
         self.managed_inputs.get(session_id).map(|e| e.clone())
     }
 
@@ -2836,17 +2994,59 @@ impl SessionStore {
     /// callers into exactly that raw-PTY fallback. Only a `Stopped` session
     /// rejects. See [`MessageOutcome`].
     pub fn submit_message(&self, session_id: &str, text: String) -> MessageOutcome {
+        self.submit_message_with(session_id, text, Delivery::Steer)
+    }
+
+    /// [`Self::submit_message_with`] naming who wrote the message.
+    pub fn submit_message_from(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+    ) -> MessageOutcome {
         if let Some(engine) = self.engines.bound(session_id) {
-            return engine.send(self, session_id, text);
+            return engine.send_with(self, session_id, text, delivery, sender);
         }
-        self.native_submit_message(session_id, text)
+        self.native_submit_message_from(session_id, text, delivery, sender)
+    }
+
+    /// [`Self::submit_message`] with an explicit [`Delivery`]. Only managed
+    /// drivers that registered [`Self::register_managed_prompt`] see the
+    /// delivery; PTY sessions and text-only drivers deliver normally.
+    pub fn submit_message_with(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+    ) -> MessageOutcome {
+        self.submit_message_from(session_id, text, delivery, MessageSender::Human)
     }
 
     pub(crate) fn native_submit_message(&self, session_id: &str, text: String) -> MessageOutcome {
+        self.native_submit_message_with(session_id, text, Delivery::Steer)
+    }
+
+    pub(crate) fn native_submit_message_with(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+    ) -> MessageOutcome {
+        self.native_submit_message_from(session_id, text, delivery, MessageSender::Human)
+    }
+
+    pub(crate) fn native_submit_message_from(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+    ) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
         if let Some(tx) = self.managed_input(session_id) {
-            return if tx.send(text).is_ok() {
+            return if tx.send(text, delivery, sender) {
                 MessageOutcome::Sent
             } else {
                 MessageOutcome::WrapperGone

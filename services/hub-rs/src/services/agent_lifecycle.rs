@@ -74,6 +74,8 @@ impl LaunchEngine for EmbeddedClient {
             self.request(Command::Message {
                 id: session.into(),
                 text: content.into(),
+                delivery: Default::default(),
+                sender: Default::default(),
             })
             .await?;
             Ok(())

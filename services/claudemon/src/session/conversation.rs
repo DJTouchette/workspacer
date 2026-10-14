@@ -88,6 +88,48 @@ pub async fn replay_transcript(path: &str) -> std::io::Result<Vec<ConversationIt
     Ok(items)
 }
 
+/// Rebuild a transcript's task-tool state and its current plan, for a resumed
+/// stream session whose live [`TaskFold`] must CONTINUE the prior life's list
+/// (later `TaskUpdate`s name ids created then; a fresh fold would drop them,
+/// and the first new `TaskCreate` would replace the row's plan with one task).
+///
+/// Unlike [`replay_transcript`] this walks the WHOLE file: a task created in
+/// the first minute of a long session is still on the list. Rows are
+/// streamed, and only rows that can touch a plan are parsed. The plan is
+/// last-write-wins across task tools and `TodoWrite`, as the tailer does.
+pub async fn replay_transcript_plan(path: &str) -> std::io::Result<(TaskFold, Option<Plan>)> {
+    use tokio::io::AsyncBufReadExt;
+    if !path_is_allowed(std::path::Path::new(path)) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("transcript path is outside every known transcript root: {path}"),
+        ));
+    }
+    let file = tokio::fs::File::open(path).await?;
+    let mut lines = tokio::io::BufReader::new(file).lines();
+    let mut fold = TaskFold::default();
+    let mut plan = None;
+    while let Some(line) = lines.next_line().await? {
+        if !(line.contains("Task") || line.contains("\"task") || line.contains("TodoWrite")) {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if fold.fold_row(&value) {
+            let ts = value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            plan = Some(fold.to_plan(ts));
+        }
+        if let Some(todo) = plan_from_row(&value) {
+            plan = Some(todo);
+        }
+    }
+    Ok((fold, plan))
+}
+
 fn stopped_drain_finished(age_secs: i64, backlog: bool) -> bool {
     age_secs > STOPPED_DRAIN_SECS && (!backlog || age_secs > STOPPED_MAX_DRAIN_SECS)
 }
@@ -1191,16 +1233,26 @@ fn plan_from_todos(input: &Value, updated_at: Option<String>) -> Plan {
 /// their result lands (an `is_error` result drops them). `TaskUpdate` mutates
 /// by `taskId`: `status` (with `"deleted"` removing the task), `subject`, and
 /// `activeForm`; ownership/dependency edits don't change the visible list and
-/// are ignored. Skips meta/sidechain rows like [`plan_from_row`].
+/// are ignored. A `TaskList` result is the CLI's own snapshot and replaces the
+/// list (keeping each surviving task's `activeForm`, which it omits). Skips
+/// meta/sidechain rows like [`plan_from_row`].
+///
+/// The same fold serves both shapes Claude Code writes: transcript rows (the
+/// structured result rides as `toolUseResult`) and stream-json frames
+/// (`tool_use_result`), so the headless driver reuses it per frame. A stream
+/// caller must drop subagent frames (`parent_tool_use_id` set) itself — they
+/// carry no `isSidechain` marker.
 #[derive(Debug, Clone, Default)]
 pub struct TaskFold {
     /// Confirmed tasks, in creation order.
     tasks: Vec<TaskEntry>,
     /// `TaskCreate`s awaiting their tool_result, keyed by tool_use id.
     pending: std::collections::HashMap<String, TaskEntry>,
+    /// `TaskList` calls awaiting their tool_result, by tool_use id.
+    listing: std::collections::HashSet<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct TaskEntry {
     id: String,
     subject: String,
@@ -1247,7 +1299,13 @@ impl TaskFold {
         };
         match value.get("type").and_then(Value::as_str) {
             Some("assistant") => self.fold_tool_uses(content),
-            Some("user") => self.fold_tool_results(content),
+            Some("user") => {
+                let structured = value
+                    .get("toolUseResult")
+                    .or_else(|| value.get("tool_use_result"))
+                    .filter(|v| v.is_object());
+                self.fold_tool_results(content, structured)
+            }
             _ => false,
         }
     }
@@ -1292,11 +1350,14 @@ impl TaskFold {
                         },
                     );
                 }
+                Some("TaskList") => {
+                    if let Some(tool_id) = b.get("id").and_then(Value::as_str) {
+                        self.listing.insert(tool_id.to_owned());
+                    }
+                }
                 Some("TaskUpdate") => {
-                    let id = match input.get("taskId") {
-                        Some(Value::String(s)) => s.clone(),
-                        Some(Value::Number(n)) => n.to_string(),
-                        _ => continue,
+                    let Some(id) = task_id_of(input) else {
+                        continue;
                     };
                     let Some(pos) = self.tasks.iter().position(|t| t.id == id) else {
                         continue;
@@ -1334,8 +1395,16 @@ impl TaskFold {
         changed
     }
 
-    fn fold_tool_results(&mut self, content: &[Value]) -> bool {
+    fn fold_tool_results(&mut self, content: &[Value], structured: Option<&Value>) -> bool {
         let mut changed = false;
+        // The row-level structured result belongs to the row's tool_result;
+        // with several results in one row it can't be attributed, so it is
+        // only trusted when there is exactly one.
+        let results = content
+            .iter()
+            .filter(|b| b.get("type").and_then(Value::as_str) == Some("tool_result"))
+            .count();
+        let structured = structured.filter(|_| results == 1);
         for b in content {
             if b.get("type").and_then(Value::as_str) != Some("tool_result") {
                 continue;
@@ -1343,20 +1412,33 @@ impl TaskFold {
             let Some(tid) = b.get("tool_use_id").and_then(Value::as_str) else {
                 continue;
             };
+            let is_error = b.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+            if self.listing.remove(tid) {
+                if !is_error {
+                    if let Some(listed) = structured.and_then(|v| v.get("tasks")) {
+                        changed |= self.replace_from_list(listed);
+                    }
+                }
+                continue;
+            }
             let Some(mut entry) = self.pending.remove(tid) else {
                 continue;
             };
-            if b.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
+            if is_error {
                 continue; // rejected/failed create — never became a task
             }
             let text = b
                 .get("content")
                 .map(flatten_tool_result)
                 .unwrap_or_default();
-            // Fall back to the tool_use id when the result text doesn't carry
-            // the assigned id — the task still shows, later TaskUpdates by
-            // numeric id just won't match it.
-            entry.id = parse_created_task_id(&text).unwrap_or_else(|| tid.to_owned());
+            // The structured `{task:{id}}` is authoritative; then the result
+            // text; then the tool_use id, so the task still shows — later
+            // TaskUpdates by numeric id just won't match it.
+            entry.id = structured
+                .and_then(|v| v.get("task"))
+                .and_then(task_id_of)
+                .or_else(|| parse_created_task_id(&text))
+                .unwrap_or_else(|| tid.to_owned());
             if self.tasks.iter().any(|t| t.id == entry.id) {
                 continue; // replayed result — don't duplicate
             }
@@ -1365,6 +1447,56 @@ impl TaskFold {
         }
         changed
     }
+}
+
+impl TaskFold {
+    /// Replace the list with a `TaskList` snapshot (`[{id, subject, status}]`,
+    /// deleted tasks already absent). The snapshot carries no `activeForm`, so
+    /// a surviving task keeps the one we had. Returns whether anything changed.
+    fn replace_from_list(&mut self, listed: &Value) -> bool {
+        let Some(listed) = listed.as_array() else {
+            return false;
+        };
+        let next: Vec<TaskEntry> = listed
+            .iter()
+            .filter_map(|t| {
+                let id = task_id_of(t)?;
+                let subject = t.get("subject").and_then(Value::as_str)?.to_owned();
+                let status = t
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(PlanStatus::from_wire)
+                    .unwrap_or(PlanStatus::Pending);
+                let active_form = self
+                    .tasks
+                    .iter()
+                    .find(|known| known.id == id)
+                    .and_then(|known| known.active_form.clone());
+                Some(TaskEntry {
+                    id,
+                    subject,
+                    active_form,
+                    status,
+                })
+            })
+            .collect();
+        if next == self.tasks {
+            return false;
+        }
+        self.tasks = next;
+        true
+    }
+}
+
+/// A task id read defensively: `taskId` / `task_id` / `id`, as text or number.
+fn task_id_of(v: &Value) -> Option<String> {
+    ["taskId", "task_id", "id"]
+        .iter()
+        .find_map(|k| match v.get(*k) {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        })
 }
 
 /// Pull the assigned id out of a `TaskCreate` result
@@ -2361,6 +2493,41 @@ pub(crate) mod tests {
             false
         )));
         assert!(fold.to_plan(None).steps.is_empty());
+    }
+
+    #[test]
+    fn stream_frames_take_the_structured_task_id_and_task_list_snapshot() {
+        let mut fold = TaskFold::default();
+        fold.fold_row(&create_row("t1", "One"));
+        // Stream shape: the structured result rides as `tool_use_result`, and
+        // the text names no id at all.
+        let mut result = create_result_row("t1", "created", false);
+        result["tool_use_result"] = json!({"task":{"id":"7","subject":"One"}});
+        assert!(fold.fold_row(&result));
+        assert!(fold.fold_row(&update_row("7", json!({"status":"in_progress"}))));
+        // A snake_case numeric id on a TaskUpdate input is read too.
+        let mut renamed = update_row("7", json!({"subject":"One!"}));
+        let input = &mut renamed["message"]["content"][0]["input"];
+        input.as_object_mut().unwrap().remove("taskId");
+        input["task_id"] = json!(7);
+        assert!(fold.fold_row(&renamed));
+        // TaskList replaces the list, keeping a survivor's activeForm.
+        let list = json!({"type":"assistant","message":{"content":[
+            {"type":"tool_use","id":"l1","name":"TaskList","input":{}}]}});
+        assert!(!fold.fold_row(&list));
+        let mut listed = create_result_row("l1", "2 tasks", false);
+        listed["toolUseResult"] = json!({"tasks":[
+            {"id":"7","subject":"One!","status":"completed","blockedBy":[]},
+            {"id":"8","subject":"Made elsewhere","status":"pending","blockedBy":[]}]});
+        assert!(fold.fold_row(&listed));
+        let plan = fold.to_plan(None);
+        assert_eq!(plan.steps.len(), 2);
+        assert_eq!(plan.steps[0].status, PlanStatus::Completed);
+        assert_eq!(plan.steps[0].active_form.as_deref(), Some("Working"));
+        assert_eq!(plan.steps[1].content, "Made elsewhere");
+        // An identical snapshot is not a change.
+        fold.fold_row(&list);
+        assert!(!fold.fold_row(&listed));
     }
 
     #[test]

@@ -1,12 +1,12 @@
 /**
  * The shared live-effort body, which both the `claude:setEffort` IPC handler and
  * the `claude.setEffort` hub capability call. What matters here is the *provider
- * branch*: claude takes the `/effort` slash command through the message path
- * (there is no structural control for it — the stream protocol has only
- * set_model / set_permission_mode), while managed providers take the daemon's
- * model endpoint with effort only. Getting the branch backwards would silently
- * post "/effort high" as a literal prompt to codex, or drop the level entirely
- * for claude.
+ * branch*: a claude PTY session takes the `/effort` slash command through the
+ * message path, while managed sessions (claude stream, codex) take the daemon's
+ * model endpoint with effort only — claude stream's driver turns that into the
+ * CLI's `apply_flag_settings {effortLevel}` control request. Getting the branch
+ * backwards would silently post "/effort high" as a literal prompt to codex, or
+ * drop the level entirely for claude.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -20,7 +20,9 @@ vi.mock('./claudemonSessionClient', () => ({
 }));
 
 const noteEffort = vi.fn();
-const getSnapshot = vi.fn(() => ({ provider: 'claude' }) as { provider?: string } | null);
+const getSnapshot = vi.fn(
+  () => ({ provider: 'claude' }) as { provider?: string; transport?: string } | null,
+);
 vi.mock('./claudeSessionStore', () => ({
   claudeSessionStore: {
     noteEffort: (...a: unknown[]) => noteEffort(...(a as [string, string])),
@@ -57,6 +59,16 @@ describe('applyLiveEffort', () => {
     expect(setModel).toHaveBeenCalledWith('s1', undefined, 'xhigh');
     expect(message).not.toHaveBeenCalled();
     expect(res.ok).toBe(true);
+  });
+
+  it('a claude stream session goes structural too (apply_flag_settings in the daemon)', async () => {
+    getSnapshot.mockReturnValue({ provider: 'claude', transport: 'stream' });
+
+    const res = await applyLiveEffort('s1', 'low');
+
+    expect(setModel).toHaveBeenCalledWith('s1', undefined, 'low');
+    expect(message).not.toHaveBeenCalled();
+    expect(res).toEqual({ ok: true, effort: 'low' });
   });
 
   it('an unknown session defaults to the claude mechanism', async () => {

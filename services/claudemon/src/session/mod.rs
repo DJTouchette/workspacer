@@ -23,5 +23,6 @@ pub use state::{
     Transport,
 };
 pub use store::{
-    ManagedAnswer, ManagedPermissionSwitch, MessageOutcome, ModelSwitch, SessionStore,
+    ConfirmedModelSwitch, Delivery, ManagedAnswer, ManagedPermissionSwitch, ManagedPrompt,
+    MessageOutcome, MessageSender, ModelSwitch, SessionStore, MODEL_SWITCH_CONFIRM_TIMEOUT,
 };

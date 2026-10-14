@@ -51,7 +51,23 @@ async fn lifecycle_commands_failure_cleanup_and_restart() {
         assert!(client
             .request(Command::Message {
                 id: "unknown".into(),
-                text: "hello".into()
+                text: "hello".into(),
+                delivery: Default::default(),
+                sender: Default::default(),
+            })
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("404"));
+        // `now` crosses the embedded wire as its lowercase spelling: the
+        // daemon parses it (a bad spelling would be a 422) and only then finds
+        // no such session.
+        assert!(client
+            .request(Command::Message {
+                id: "unknown".into(),
+                text: "hello".into(),
+                delivery: claudemon::session::Delivery::Now,
+                sender: claudemon::session::MessageSender::Agent,
             })
             .await
             .unwrap_err()
