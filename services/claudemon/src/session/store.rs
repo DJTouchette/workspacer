@@ -394,6 +394,9 @@ pub struct SessionStore {
     /// [`super::provider_status::StatusControl`].
     managed_status_controls:
         Arc<DashMap<String, mpsc::UnboundedSender<super::provider_status::StatusControl>>>,
+    /// Sessions with a provider-status publish scheduled (see
+    /// [`Self::update_provider_status`]).
+    status_publishes: Arc<DashSet<String>>,
     /// Latest account-level rate-limit reading from the OAuth usage endpoint
     /// (see `session::account_usage`), keyed by Claude config root (`""` = the
     /// daemon's default). One entry per logged-in account: a profile spawn
@@ -505,6 +508,9 @@ pub struct ConfirmedModelSwitch {
     pub switch: ModelSwitch,
     pub reply: oneshot::Sender<Result<(), String>>,
 }
+
+/// How long provider-status changes are gathered into one row publish.
+pub const STATUS_PUBLISH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// How long `POST /sessions/:id/model` waits for a confirming driver.
 pub const MODEL_SWITCH_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -831,6 +837,7 @@ impl SessionStore {
             managed_interrupts: Arc::new(DashMap::new()),
             managed_task_controls: Arc::new(DashMap::new()),
             managed_status_controls: Arc::new(DashMap::new()),
+            status_publishes: Arc::new(DashSet::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             account_usage_errors: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -2210,11 +2217,32 @@ impl SessionStore {
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
         };
-        let _ = self.update_tx.send(SessionUpdate {
-            session_id: session_id.to_string(),
-            event: "Managed".to_string(),
-            state,
-        });
+        // A message's queued/started/completed and a hook's start/response
+        // land milliseconds apart: the row is current at once (any read sees
+        // it), but the full-row publish is coalesced per session.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            let _ = self.update_tx.send(SessionUpdate {
+                session_id: session_id.to_string(),
+                event: "Managed".to_string(),
+                state,
+            });
+            return true;
+        };
+        if self.status_publishes.insert(session_id.to_string()) {
+            let store = self.clone();
+            let session_id = session_id.to_string();
+            runtime.spawn(async move {
+                tokio::time::sleep(STATUS_PUBLISH_DEBOUNCE).await;
+                store.status_publishes.remove(&session_id);
+                if let Some(state) = store.states.get(&session_id).map(|s| s.clone()) {
+                    let _ = store.update_tx.send(SessionUpdate {
+                        session_id,
+                        event: "Managed".to_string(),
+                        state,
+                    });
+                }
+            });
+        }
         true
     }
 
@@ -3692,6 +3720,31 @@ impl Default for SessionStore {
 mod tests {
     use super::*;
     use crate::session::state::ContextHealth;
+
+    /// A burst of provider-status changes is read at once but published as
+    /// one row carrying all of them.
+    #[tokio::test]
+    async fn provider_status_bursts_publish_one_row() {
+        let store = SessionStore::new();
+        store.register_managed("burst", "/tmp", "claude");
+        let mut updates = store.subscribe();
+        for state in ["queued", "started", "completed"] {
+            assert!(store.update_provider_status("burst", |s| s.record_receipt("u1", state, 1)));
+        }
+        assert_eq!(
+            store.get("burst").unwrap().provider_status.message_receipts[0].state,
+            "completed",
+            "reads see the change at once"
+        );
+        assert!(updates.try_recv().is_err(), "nothing published yet");
+        let update = tokio::time::timeout(std::time::Duration::from_secs(2), updates.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(update.state.provider_status.message_receipts[0].state, "completed");
+        tokio::time::sleep(STATUS_PUBLISH_DEBOUNCE * 2).await;
+        assert!(updates.try_recv().is_err(), "one publish for the burst");
+    }
 
     /// A message held before the managed driver registered keeps the uuid
     /// its sender was told: the drain hands that uuid to the driver.

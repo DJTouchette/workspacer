@@ -324,13 +324,13 @@ pub struct Queues {
     kicks: tokio::sync::mpsc::UnboundedSender<String>,
     receiver: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<String>>>,
     /// Per session, the message uuids its latest row reports as read by the
-    /// agent (`message_receipts` in state `started`/`completed`) → that state.
+    /// agent (`messageReceipts` in state `started`/`completed`) → that state.
     delivered: Mutex<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
-/// The uuids a row's `message_receipts` report as read by the agent.
+/// The uuids a row's `messageReceipts` report as read by the agent.
 fn delivered_uuids(row: &Value) -> BTreeMap<String, String> {
-    row["message_receipts"]
+    row["messageReceipts"]
         .as_array()
         .into_iter()
         .flatten()
@@ -1568,7 +1568,7 @@ mod tests {
         }
     }
     fn with_receipts(mut row: Value, receipts: Value) -> Value {
-        row["message_receipts"] = receipts;
+        row["messageReceipts"] = receipts;
         row
     }
 
@@ -1648,7 +1648,7 @@ mod tests {
                 let uuid = entry.message_uuid.clone().unwrap();
                 seen.observe(
                     &json!({"sessionId":"s1","session_id":"s1","mode":"responding","pending":null,
-                    "message_receipts":[{"uuid":uuid,"state":"completed","at":1}]}),
+                    "messageReceipts":[{"uuid":uuid,"state":"completed","at":1}]}),
                 );
                 std::future::ready(Delivery::Uncertain("ack lost".into()))
             })

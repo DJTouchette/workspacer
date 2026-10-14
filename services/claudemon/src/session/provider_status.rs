@@ -16,6 +16,11 @@ use tokio::sync::oneshot;
 /// Receipts kept per session, newest last. The hub matches one uuid against
 /// them seconds after it sent the message, so a short window is enough.
 pub const RECEIPTS_KEPT: usize = 32;
+/// Settled (`completed` / `cancelled`) receipts kept, newest.
+pub const SETTLED_RECEIPTS_KEPT: usize = 10;
+/// Receipts older than this are dropped (the hub settles an uncertain send
+/// within seconds).
+pub const RECEIPT_MAX_AGE_MS: i64 = 10 * 60 * 1000;
 /// Running hooks kept per session (a runaway emitter cannot grow the row).
 pub const ACTIVE_HOOKS_KEPT: usize = 32;
 /// MCP servers kept per session.
@@ -115,11 +120,35 @@ impl ProviderStatus {
             state: clip(state),
             at,
         });
+        self.prune_receipts(at);
+        true
+    }
+
+    /// Keep receipts useful, not historic: none older than
+    /// [`RECEIPT_MAX_AGE_MS`], at most [`SETTLED_RECEIPTS_KEPT`] settled ones
+    /// (`completed` / `cancelled`; a message still `queued`/`started` is kept),
+    /// and never more than [`RECEIPTS_KEPT`].
+    fn prune_receipts(&mut self, now: i64) {
+        self.message_receipts
+            .retain(|r| now.saturating_sub(r.at) <= RECEIPT_MAX_AGE_MS);
+        let settled = |r: &MessageReceipt| matches!(r.state.as_str(), "completed" | "cancelled");
+        let mut excess = self
+            .message_receipts
+            .iter()
+            .filter(|r| settled(r))
+            .count()
+            .saturating_sub(SETTLED_RECEIPTS_KEPT);
+        self.message_receipts.retain(|r| {
+            if excess > 0 && settled(r) {
+                excess -= 1;
+                return false;
+            }
+            true
+        });
         if self.message_receipts.len() > RECEIPTS_KEPT {
             let excess = self.message_receipts.len() - RECEIPTS_KEPT;
             self.message_receipts.drain(..excess);
         }
-        true
     }
 
     /// Replace the whole server list (a full report).
@@ -247,10 +276,24 @@ mod tests {
         assert!(s.message_receipts[1].delivered());
         assert!(!s.message_receipts[0].delivered());
         for i in 0..100 {
-            s.record_receipt(&format!("u{i}"), "completed", i);
+            s.record_receipt(&format!("q{i}"), "queued", 10);
         }
         assert_eq!(s.message_receipts.len(), RECEIPTS_KEPT);
-        assert_eq!(s.message_receipts.last().unwrap().uuid, "u99");
+        assert_eq!(s.message_receipts.last().unwrap().uuid, "q99");
+        // Settled receipts: only the newest ten stay.
+        let mut s = ProviderStatus::default();
+        s.record_receipt("live", "started", 0);
+        for i in 0..20 {
+            s.record_receipt(&format!("u{i}"), "completed", i);
+        }
+        let settled: Vec<_> = s.message_receipts.iter().filter(|r| r.state == "completed").collect();
+        assert_eq!(settled.len(), SETTLED_RECEIPTS_KEPT);
+        assert_eq!(settled[0].uuid, "u10");
+        assert!(s.message_receipts.iter().any(|r| r.uuid == "live"), "unsettled survive");
+        // …and nothing older than ten minutes.
+        s.record_receipt("late", "queued", RECEIPT_MAX_AGE_MS + 100);
+        assert_eq!(s.message_receipts.len(), 1);
+        assert_eq!(s.message_receipts[0].uuid, "late");
         assert!(!s.record_receipt("", "queued", 0));
     }
 

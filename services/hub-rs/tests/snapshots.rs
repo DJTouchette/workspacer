@@ -514,6 +514,15 @@ fn live_provider_status_projects_to_camel_case_and_stays_absent_when_unreported(
     );
     assert_eq!(row["fastMode"], "cooldown");
     assert_eq!(row["fastModeDisabledReason"], "free");
+    for moved in [
+        "message_receipts",
+        "mcp_servers",
+        "active_hooks",
+        "fast_mode",
+        "fast_mode_disabled_reason",
+    ] {
+        assert!(row.get(moved).is_none(), "{moved} is not duplicated");
+    }
     let bare = compat(json!({"session_id":"s1"}));
     for key in [
         "messageReceipts",
