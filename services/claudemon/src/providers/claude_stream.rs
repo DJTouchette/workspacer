@@ -2643,8 +2643,21 @@ fn handle_line(
             // requests so a later `/approve` or `/answer` can't answer a canceled
             // one. A mid-subagent dispatch `result` is NOT the end — keep the
             // parked cards.
+            //
+            // AskUserQuestion and approvals are dropped silently, as before the
+            // queues merged: the CLI has already abandoned them. A parked MCP
+            // elicitation is answered `cancel` — the CLI's own "nobody
+            // answered" (what it returns itself on abort or closed input) — so
+            // the MCP server is never left waiting on a dialog that is gone.
             if is_result && !suppress_idle {
-                parked.clear();
+                for dead in parked.drain(..) {
+                    if matches!(dead.kind, ParkedKind::Elicitation(_)) {
+                        let _ = out_tx.send(control_success(
+                            &dead.request_id,
+                            json!({ "action": "cancel" }),
+                        ));
+                    }
+                }
             }
             let mut updates = translate(value, totals);
             if owed_interrupt {
@@ -4378,6 +4391,36 @@ mod tests {
         assert!(l.answer(option(1)));
         assert_eq!(l.sent()[0]["response"]["request_id"], "cli-q");
         assert!(l.pending().is_none());
+    }
+
+    #[test]
+    fn a_turn_end_cancels_a_parked_elicitation_and_drops_the_rest() {
+        let mut l = Line::new(false);
+        l.feed(url_elicitation("cli-e1"));
+        l.feed(json!({ "type": "control_request", "request_id": "cli-q", "request": {
+            "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+            "input": { "questions": [ { "question": "Ok?", "options": [ { "label": "Yes" } ] } ] } } }));
+        l.feed(approval_request("cli-a1"));
+        assert_eq!(l.parked.len(), 3);
+        assert!(l.sent().is_empty());
+        l.feed(
+            json!({ "type": "result", "subtype": "success", "is_error": false,
+                       "result": "done", "usage": { "input_tokens": 1, "output_tokens": 1 } }),
+        );
+        // The elicitation's MCP server is told nobody answered (`cancel`, the
+        // CLI's own value for an abandoned dialog). AskUserQuestion and the
+        // approval are dropped silently, as before the queues merged — the
+        // CLI has already abandoned them.
+        let sent = l.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0]["response"]["request_id"], "cli-e1");
+        assert_eq!(
+            sent[0]["response"]["response"],
+            json!({ "action": "cancel" })
+        );
+        assert!(l.parked.is_empty());
+        assert!(l.pending().is_none(), "the card is cleared");
+        assert_eq!(l.cur_mode, SessionMode::Input);
     }
 
     #[test]

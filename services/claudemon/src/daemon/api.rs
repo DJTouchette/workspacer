@@ -742,6 +742,15 @@ async fn post_approve(
             )
                 .into_response();
         }
+        // The explicit grant is new: every client that sends it can send the
+        // card it was offered on, so it must.
+        if payload.request_id.as_deref().is_none_or(str::is_empty) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "`alwaysOption` requires the card's `requestId`",
+            )
+                .into_response();
+        }
         let offered = match state.pending() {
             Some(crate::session::Pending::Approval { raw, .. }) => raw
                 .get("always_options")
@@ -3868,10 +3877,11 @@ mod tests {
         // A newer card is up now: the old card's id and option are refused.
         park_card(&store, "req-2");
         for body in [
-            json!({ "decision": "yes", "alwaysOption": "req-1:0" }),
+            json!({ "decision": "yes", "alwaysOption": "req-1:0", "requestId": "req-2" }),
+            json!({ "decision": "yes", "alwaysOption": "req-1:0", "requestId": "req-1" }),
             json!({ "decision": "yes", "requestId": "req-1" }),
             json!({ "decision": "no", "requestId": "req-1" }),
-            json!({ "decision": "yes", "alwaysOption": "req-2:9" }),
+            json!({ "decision": "yes", "alwaysOption": "req-2:9", "requestId": "req-2" }),
         ] {
             let (status, _) = request(
                 state.clone(),
@@ -3880,9 +3890,17 @@ mod tests {
             .await;
             assert_eq!(status, StatusCode::CONFLICT, "{body}");
         }
-        // An option only goes with a plain yes.
+        // An option only goes with a plain yes, and always names its card.
+        let body = json!({ "decision": "yes", "alwaysOption": "req-2:0" });
+        let (status, _) = request(state.clone(), post_json("/sessions/sess-1/approve", body)).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "an option without requestId"
+        );
         for decision in ["no", "always"] {
-            let body = json!({ "decision": decision, "alwaysOption": "req-2:0" });
+            let body =
+                json!({ "decision": decision, "alwaysOption": "req-2:0", "requestId": "req-2" });
             let (status, _) = request(
                 state.clone(),
                 post_json("/sessions/sess-1/approve", body.clone()),

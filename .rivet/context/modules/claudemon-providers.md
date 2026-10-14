@@ -136,8 +136,8 @@ shown anything that would be granted.
 
 The user grants exactly ONE option with `claude.approve {sessionId,
 decision:"yes", alwaysOption:<id>, requestId:<pending_id>}`.
-- The hub rejects `alwaysOption` with any decision other than `"yes"`. claudemon
-  also answers 400 for that.
+- `alwaysOption` requires `decision:"yes"` AND `requestId`. The hub rejects it
+  otherwise, and claudemon answers 400.
 - claudemon answers 409 unless the shown card offers that `id`.
 - The driver drops the decision if the option is not on its head card.
 
@@ -197,7 +197,10 @@ Any queued approval stays the card.
 - Answering the head surfaces the next request of any kind, or releases the card
   to `Responding`.
 - Nothing is cancelled or denied as "superseded".
-- A turn-closing `result` drops the queue.
+- A turn-closing `result` drops the queue. A parked elicitation is answered
+  `{action:"cancel"}` first, the CLI's own value for an abandoned dialog. The
+  approvals and AskUserQuestion it drops get no reply, as before the queues
+  merged.
 
 ### MCP elicitations on the question card (Claude stream + Codex)
 

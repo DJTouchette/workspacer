@@ -18,6 +18,24 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
             bail!("{key} must be text");
         }
     }
+    // An explicit always grant names the card it was offered on: the option
+    // goes only with a plain "yes", and always with that card's `requestId`.
+    if method == "claude.approve"
+        && params
+            .get("alwaysOption")
+            .is_some_and(|value| value.as_str().is_some_and(|v| !v.is_empty()))
+    {
+        if params.get("decision").and_then(Value::as_str) != Some("yes") {
+            bail!("alwaysOption requires decision \"yes\"");
+        }
+        if !params
+            .get("requestId")
+            .and_then(Value::as_str)
+            .is_some_and(|v| !v.is_empty())
+        {
+            bail!("alwaysOption requires the card's requestId");
+        }
+    }
     if method == "agents.sendMessage"
         && let Some(delivery) = params.get("delivery").filter(|value| !value.is_null())
         && !delivery
@@ -141,7 +159,43 @@ mod tests {
                 let error = validate(method, &mut json!({ key: bad })).unwrap_err();
                 assert!(error.to_string().contains("must be text"), "{method} {key}");
             }
-            assert!(validate(method, &mut json!({ key: "req-1:0" })).is_ok());
+            let mut ok = json!({ key: "req-1:0" });
+            if key == "alwaysOption" {
+                ok["decision"] = json!("yes");
+                ok["requestId"] = json!("req-1");
+            }
+            assert!(validate(method, &mut ok).is_ok(), "{method} {key}");
+        }
+    }
+
+    #[test]
+    fn an_always_option_needs_a_yes_and_the_card_id() {
+        let error = |params: serde_json::Value| {
+            validate("claude.approve", &mut params.clone())
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(error(json!({"decision":"yes","alwaysOption":"r:0"})).contains("requestId"));
+        assert!(
+            error(json!({"decision":"yes","alwaysOption":"r:0","requestId":""}))
+                .contains("requestId")
+        );
+        for decision in ["always", "no"] {
+            assert!(
+                error(json!({"decision":decision,"alwaysOption":"r:0","requestId":"r"}))
+                    .contains("decision")
+            );
+        }
+        assert!(
+            validate(
+                "claude.approve",
+                &mut json!({"decision":"yes","alwaysOption":"r:0","requestId":"r"})
+            )
+            .is_ok()
+        );
+        // Without an option nothing changes: the legacy shapes still pass.
+        for decision in ["yes", "no", "always"] {
+            assert!(validate("claude.approve", &mut json!({ "decision": decision })).is_ok());
         }
     }
 }
