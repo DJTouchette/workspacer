@@ -1128,7 +1128,7 @@ async fn run_session(
     // Route user prompts + approval decisions + interrupts + model switches.
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     store.register_managed_input(session_id, tx);
-    let (dtx, mut drx) = mpsc::unbounded_channel::<bool>();
+    let (dtx, mut drx) = mpsc::unbounded_channel::<crate::session::ManagedDecision>();
     store.register_managed_decision(session_id, dtx);
     let (itx, mut irx) = mpsc::unbounded_channel::<()>();
     store.register_managed_interrupt(session_id, itx);
@@ -1174,7 +1174,7 @@ async fn run_session(
                     None => break, // managed input dropped → session terminated
                 },
                 decision = drx.recv() => match decision {
-                    Some(approve) => { announce_decision(store, conv, session_id, approve, &mut cur_mode, &mut acc); continue }
+                    Some(crate::session::ManagedDecision { approve, .. }) => { announce_decision(store, conv, session_id, approve, &mut cur_mode, &mut acc); continue }
                     None => break,
                 },
                 // Nothing is running between turns; an interrupt is a no-op rather
@@ -1287,7 +1287,7 @@ async fn run_turn(
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
     rx: &mut mpsc::UnboundedReceiver<String>,
-    drx: &mut mpsc::UnboundedReceiver<bool>,
+    drx: &mut mpsc::UnboundedReceiver<crate::session::ManagedDecision>,
     irx: &mut mpsc::UnboundedReceiver<()>,
     mrx: &mut mpsc::UnboundedReceiver<ModelSwitch>,
     model: &mut Option<String>,
@@ -1375,7 +1375,7 @@ async fn run_turn(
                 }
             },
             decision = drx.recv() => {
-                if let Some(approve) = decision {
+                if let Some(approve) = decision.map(|d| d.approve) {
                     announce_decision(store, conv, session_id, approve, cur_mode, acc);
                     if !approve {
                         // "No" is the only decision with anything to act on: stop

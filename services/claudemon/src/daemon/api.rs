@@ -670,12 +670,46 @@ async fn post_message(
 #[derive(Debug, Deserialize)]
 struct ApprovePayload {
     /// `"yes"` → `{decision:"approve"}`, `"no"` → `{decision:"block"}`.
-    /// `"always"` is treated as `"yes"` for hook purposes — hooks don't
-    /// have a "remember this" channel; persistence is a TUI-only concept.
+    /// `"always"` is the legacy "Allow all" button shipped clients send for
+    /// every approval: it is exactly `"yes"` (hooks have no "remember this"
+    /// channel, and a managed session gets a plain approve). It never grants
+    /// anything beyond the one request — see `alwaysOption`.
     decision: Option<String>,
     /// Optional reason returned to Claude with a block (shows up in the
     /// assistant's context as "the tool was blocked because ...").
     reason: Option<String>,
+    /// With `decision:"yes"`: the `id` of the `raw.always_options` entry the
+    /// user picked ("Always allow …"). The driver grants exactly that option
+    /// for the session. Refused (409) unless the card on screen offers it.
+    #[serde(default, rename = "alwaysOption")]
+    always_option: Option<String>,
+    /// The `raw.pending_id` of the card the user decided. Refused (409) when
+    /// another card is on screen now; omitted by older clients.
+    #[serde(default, rename = "requestId")]
+    request_id: Option<String>,
+}
+
+/// The `raw.pending_id` of a pending card (see the drivers' `pending_id`).
+fn pending_id_of(pending: Option<&crate::session::Pending>) -> Option<&str> {
+    match pending? {
+        crate::session::Pending::Approval { raw, .. }
+        | crate::session::Pending::Question { raw, .. } => {
+            raw.get("pending_id").and_then(Value::as_str)
+        }
+    }
+}
+
+/// A 409 for a decision or answer aimed at a card that is no longer shown.
+fn stale_card(expected: Option<&str>, got: &str) -> axum::response::Response {
+    (
+        StatusCode::CONFLICT,
+        Json(json!({
+            "error": "that card is no longer the one awaiting the user",
+            "requestId": got,
+            "current": expected,
+        })),
+    )
+        .into_response()
 }
 
 async fn post_approve(
@@ -696,6 +730,51 @@ async fn post_approve(
             })),
         )
             .into_response();
+    }
+    let shown = pending_id_of(state.pending());
+    if let Some(got) = payload.request_id.as_deref() {
+        if shown != Some(got) {
+            return stale_card(shown, got);
+        }
+    }
+    if let Some(option) = payload.always_option.as_deref() {
+        if payload.decision.as_deref() != Some("yes") {
+            return (
+                StatusCode::BAD_REQUEST,
+                "`alwaysOption` goes with `decision: \"yes\"`",
+            )
+                .into_response();
+        }
+        // The explicit grant is new: every client that sends it can send the
+        // card it was offered on, so it must.
+        if payload.request_id.as_deref().is_none_or(str::is_empty) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "`alwaysOption` requires the card's `requestId`",
+            )
+                .into_response();
+        }
+        let offered = match state.pending() {
+            Some(crate::session::Pending::Approval { raw, .. }) => raw
+                .get("always_options")
+                .and_then(Value::as_array)
+                .is_some_and(|o| {
+                    o.iter()
+                        .any(|o| o.get("id").and_then(Value::as_str) == Some(option))
+                }),
+            _ => false,
+        };
+        if !offered {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": "the card on screen does not offer that always option",
+                    "alwaysOption": option,
+                    "current": shown,
+                })),
+            )
+                .into_response();
+        }
     }
     let hook_decision = match payload.decision.as_deref() {
         Some("yes") | Some("always") => json!({"decision": "approve"}),
@@ -718,21 +797,26 @@ async fn post_approve(
     // route the decision to the provider adapter, which forwards it to the
     // agent's own approval API.
     let approve = matches!(payload.decision.as_deref(), Some("yes") | Some("always"));
-    // A deny's note rides beside the decision: set before it is sent so the
-    // adapter can take it when it answers, cleared on approve so a stale note
-    // never reaches a later deny.
-    store.set_deny_reason(
-        &id,
-        if approve {
-            ""
-        } else {
-            payload.reason.as_deref().unwrap_or("")
-        },
-    );
-    if store.submit_managed_decision(&id, approve) {
+    // Everything the driver needs rides in the one decision message, bound
+    // to the card it answers — no per-session side channel another client's
+    // decision could consume.
+    let decision = crate::session::ManagedDecision {
+        approve,
+        always_option: payload.always_option.clone().filter(|_| approve),
+        note: payload
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !approve && !r.is_empty())
+            .map(|r| r.chars().take(4000).collect()),
+        request_id: payload
+            .request_id
+            .clone()
+            .or_else(|| shown.map(str::to_owned)),
+    };
+    if store.submit_managed_decision(&id, decision) {
         return Json(json!({ "ok": true, "managed": true, "approve": approve })).into_response();
     }
-    store.take_deny_reason(&id);
     if !store.resolve_decision(&id, hook_decision.clone()) {
         return (
             StatusCode::CONFLICT,
@@ -813,6 +897,10 @@ struct AnswerPayload {
     /// numeric-guess fallback in `answered_input`.
     #[serde(default, rename = "answerKinds")]
     answer_kinds: Option<Vec<String>>,
+    /// The `raw.pending_id` of the question card being answered. Refused
+    /// (409) when another card is on screen now; omitted by older clients.
+    #[serde(default, rename = "requestId")]
+    request_id: Option<String>,
 }
 
 async fn post_answer(
@@ -841,6 +929,12 @@ async fn post_answer(
         )
             .into_response();
     }
+    let shown = pending_id_of(state.pending());
+    if let Some(got) = payload.request_id.as_deref() {
+        if shown != Some(got) {
+            return stale_card(shown, got);
+        }
+    }
     // Managed stream sessions resolve the parked AskUserQuestion structurally
     // (the driver answers the CLI's `can_use_tool` with the chosen options) —
     // there are no picker keystrokes to type.
@@ -851,6 +945,10 @@ async fn post_answer(
             text: payload.text.clone(),
             answers: payload.answers.clone(),
             answer_kinds: payload.answer_kinds.clone(),
+            request_id: payload
+                .request_id
+                .clone()
+                .or_else(|| shown.map(str::to_owned)),
         },
     ) {
         return Json(json!({ "ok": true, "managed": true })).into_response();
@@ -3955,7 +4053,7 @@ mod tests {
             SessionMode::Approval,
             PendingWrite::Resolve(PendingOwner::Primary),
         );
-        let (tx, mut rx) = mpsc::unbounded_channel::<bool>();
+        let (tx, mut rx) = mpsc::unbounded_channel::<crate::session::ManagedDecision>();
         state.store.register_managed_decision("sess-1", tx);
         let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
         let (status, body) = request(state, req).await;
@@ -3963,44 +4061,168 @@ mod tests {
         let v = serde_json::from_slice::<Value>(&body).unwrap();
         assert_eq!(v["managed"], true);
         assert_eq!(v["approve"], true);
-        assert!(rx.try_recv().unwrap());
+        assert_eq!(rx.try_recv().unwrap(), true.into());
     }
 
-    #[tokio::test]
-    async fn managed_deny_carries_its_note_once_and_approve_clears_it() {
+    /// Park a driver approval card carrying a card id and always options.
+    fn park_card(store: &SessionStore, id: &str) {
+        store.set_managed_mode(
+            "sess-1",
+            SessionMode::Approval,
+            PendingWrite::Park(
+                PendingOwner::Primary,
+                crate::session::Pending::Approval {
+                    tool: Some("Bash".into()),
+                    summary: None,
+                    raw: json!({
+                        "pending_id": id,
+                        "always_options": [
+                            { "id": format!("{id}:0"), "label": "Always allow Bash(ls) this session",
+                              "scope": "session", "kind": "addRules" }
+                        ]
+                    }),
+                },
+            ),
+        );
+    }
+
+    fn managed_session() -> (
+        ApiState,
+        SessionStore,
+        mpsc::UnboundedReceiver<crate::session::ManagedDecision>,
+    ) {
         let state = test_state();
         let store = state.store.clone();
         store.register_managed("sess-1", "/tmp/proj", "claude");
-        let (tx, mut rx) = mpsc::unbounded_channel::<bool>();
+        let (tx, rx) = mpsc::unbounded_channel();
         store.register_managed_decision("sess-1", tx);
-        let approval = |store: &SessionStore| {
-            store.set_managed_mode(
-                "sess-1",
-                SessionMode::Approval,
-                PendingWrite::Resolve(PendingOwner::Primary),
-            )
-        };
-        approval(&store);
+        (state, store, rx)
+    }
+
+    #[tokio::test]
+    async fn a_deny_note_rides_in_the_decision_bound_to_the_shown_card() {
+        let (state, store, mut rx) = managed_session();
+        park_card(&store, "req-1");
         let req = post_json(
             "/sessions/sess-1/approve",
-            json!({ "decision": "no", "reason": "use the test fixture instead" }),
+            json!({ "decision": "no", "reason": "  use the test fixture instead " }),
         );
         let (status, _) = request(state.clone(), req).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(!rx.try_recv().unwrap());
         assert_eq!(
-            store.take_deny_reason("sess-1").as_deref(),
-            Some("use the test fixture instead")
+            rx.try_recv().unwrap(),
+            crate::session::ManagedDecision {
+                approve: false,
+                always_option: None,
+                note: Some("use the test fixture instead".into()),
+                // An older client sends no requestId: the decision is bound to
+                // the card that was on screen when it arrived.
+                request_id: Some("req-1".into()),
+            }
         );
-        assert_eq!(store.take_deny_reason("sess-1"), None, "taken once");
-        // A note left behind by an unanswered deny never reaches a later one.
-        store.set_deny_reason("sess-1", "stale");
-        approval(&store);
-        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
+        // An approve never carries a note.
+        let req = post_json(
+            "/sessions/sess-1/approve",
+            json!({ "decision": "yes", "reason": "ignored" }),
+        );
         let (status, _) = request(state, req).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(rx.try_recv().unwrap());
-        assert_eq!(store.take_deny_reason("sess-1"), None);
+        assert_eq!(rx.try_recv().unwrap().note, None);
+    }
+
+    #[tokio::test]
+    async fn legacy_always_is_a_plain_approve() {
+        let (state, store, mut rx) = managed_session();
+        park_card(&store, "req-1");
+        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "always" }));
+        let (status, _) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let decision = rx.try_recv().unwrap();
+        assert!(decision.approve);
+        assert_eq!(decision.always_option, None, "never a session grant");
+    }
+
+    #[tokio::test]
+    async fn an_always_option_must_be_offered_by_the_card_on_screen() {
+        let (state, store, mut rx) = managed_session();
+        park_card(&store, "req-1");
+        // The option on screen: forwarded with the card it belongs to.
+        let req = post_json(
+            "/sessions/sess-1/approve",
+            json!({ "decision": "yes", "alwaysOption": "req-1:0", "requestId": "req-1" }),
+        );
+        let (status, _) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        let decision = rx.try_recv().unwrap();
+        assert_eq!(decision.always_option.as_deref(), Some("req-1:0"));
+        assert_eq!(decision.request_id.as_deref(), Some("req-1"));
+
+        // A newer card is up now: the old card's id and option are refused.
+        park_card(&store, "req-2");
+        for body in [
+            json!({ "decision": "yes", "alwaysOption": "req-1:0", "requestId": "req-2" }),
+            json!({ "decision": "yes", "alwaysOption": "req-1:0", "requestId": "req-1" }),
+            json!({ "decision": "yes", "requestId": "req-1" }),
+            json!({ "decision": "no", "requestId": "req-1" }),
+            json!({ "decision": "yes", "alwaysOption": "req-2:9", "requestId": "req-2" }),
+        ] {
+            let (status, _) = request(
+                state.clone(),
+                post_json("/sessions/sess-1/approve", body.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        }
+        // An option only goes with a plain yes, and always names its card.
+        let body = json!({ "decision": "yes", "alwaysOption": "req-2:0" });
+        let (status, _) = request(state.clone(), post_json("/sessions/sess-1/approve", body)).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "an option without requestId"
+        );
+        for decision in ["no", "always"] {
+            let body =
+                json!({ "decision": decision, "alwaysOption": "req-2:0", "requestId": "req-2" });
+            let (status, _) = request(
+                state.clone(),
+                post_json("/sessions/sess-1/approve", body.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        }
+        assert!(rx.try_recv().is_err(), "nothing refused reached the driver");
+    }
+
+    #[tokio::test]
+    async fn an_answer_naming_another_card_is_refused() {
+        let state = test_state();
+        let store = state.store.clone();
+        store.register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        store.register_managed_answer("sess-1", tx);
+        store.set_managed_mode(
+            "sess-1",
+            SessionMode::Question,
+            PendingWrite::Park(
+                PendingOwner::Primary,
+                crate::session::Pending::Question {
+                    questions: vec![],
+                    raw: json!({ "pending_id": "q-2" }),
+                },
+            ),
+        );
+        let req = post_json(
+            "/sessions/sess-1/answer",
+            json!({ "option": 1, "requestId": "q-1" }),
+        );
+        let (status, _) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let req = post_json("/sessions/sess-1/answer", json!({ "option": 1 }));
+        let (status, _) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        let answer: crate::session::ManagedAnswer = rx.try_recv().unwrap();
+        assert_eq!(answer.request_id.as_deref(), Some("q-2"));
     }
 
     // --- /decide ------------------------------------------------------------

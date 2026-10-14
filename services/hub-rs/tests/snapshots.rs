@@ -268,6 +268,35 @@ fn approval_projection_unwraps_current_legacy_and_unknown_payloads() {
 }
 
 #[test]
+fn approval_projection_carries_card_id_and_always_options_only_when_offered() {
+    let option = json!({"id":"cli-1:0","label":"Always allow Bash(npm test:*) this session","scope":"session","kind":"addRules"});
+    let row = compat(json!({"session_id":"s1","permission_mode":"acceptEdits",
+        "pending":{"kind":"approval","tool":"Bash","raw":{"tool_input":{"command":"npm test"},
+        "pending_id":"cli-1","always_options":[option.clone()]}}}));
+    assert_eq!(
+        row["pendingApproval"],
+        json!({"toolName":"Bash","toolInput":{"command":"npm test"},"alwaysOptions":[option],"requestId":"cli-1"})
+    );
+    assert_eq!(row["pendingRequestId"], "cli-1");
+    assert_eq!(row["observedPermissionMode"], "acceptEdits");
+    let row = compat(
+        json!({"session_id":"s1","pending":{"kind":"approval","tool":"Bash",
+        "raw":{"tool_input":{"command":"ls"},"always_options":[]}}}),
+    );
+    assert_eq!(
+        row["pendingApproval"],
+        json!({"toolName":"Bash","toolInput":{"command":"ls"}})
+    );
+    assert!(row.get("pendingRequestId").is_none());
+    assert!(row.get("observedPermissionMode").is_none());
+    // A question card carries its id too.
+    let row = compat(json!({"session_id":"s1","pending":{"kind":"question",
+        "questions":[{"question":"Ok?"}],"raw":{"pending_id":"cli-q"}}}));
+    assert_eq!(row["pendingRequestId"], "cli-q");
+    assert_eq!(row["pendingQuestions"][0]["question"], "Ok?");
+}
+
+#[test]
 fn owner_selection_remains_sparse_and_preserves_contradictory_provider_evidence() {
     let old = compat(
         json!({"session_id":"old","mode":"input","usage":{"model":"opus","context_tokens":10}}),

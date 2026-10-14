@@ -818,6 +818,26 @@ impl Sessions {
                 {
                     payload["reason"] = reason.into();
                 }
+                // `alwaysOption`: the `pendingApproval.alwaysOptions[].id` the
+                // user picked — only with `decision:"yes"`, so the legacy
+                // `"always"` can never be widened into a session grant.
+                // `requestId`: the card the user saw (`pendingRequestId`).
+                // claudemon refuses either when the card on screen differs.
+                if let Some(option) = params["alwaysOption"]
+                    .as_str()
+                    .filter(|option| !option.is_empty())
+                {
+                    if decision != "yes" {
+                        bail!("claude.approve alwaysOption requires decision 'yes'");
+                    }
+                    payload["alwaysOption"] = option.into();
+                }
+                if let Some(request) = params["requestId"]
+                    .as_str()
+                    .filter(|request| !request.is_empty())
+                {
+                    payload["requestId"] = request.into();
+                }
                 self.request("POST", format!("{root}/approve"), Some(payload))
                     .await?;
                 Ok(json!({"ok":true}))

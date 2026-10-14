@@ -19,6 +19,7 @@ pub mod codex_rollout;
 pub mod codex_usage;
 pub mod copilot;
 pub mod copilot_usage;
+pub(crate) mod elicitation;
 pub mod opencode;
 pub mod pi;
 

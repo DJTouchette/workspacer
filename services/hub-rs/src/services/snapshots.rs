@@ -141,9 +141,40 @@ pub fn compat(mut snapshot: Value) -> Value {
                 .or_else(|| raw.get("input"))
                 .unwrap_or(raw);
             snapshot["pendingApproval"] = json!({"toolName":pending["tool"],"toolInput":input});
+            // The card's "Always allow" choices: claudemon's
+            // `raw.always_options`, each `{id, label, scope:"session", kind}`.
+            // Present only when non-empty. A client grants ONE by sending
+            // `claude.approve {decision:"yes", alwaysOption:<id>}`; the legacy
+            // `decision:"always"` stays a plain allow.
+            if let Some(options) = raw
+                .get("always_options")
+                .and_then(Value::as_array)
+                .filter(|options| !options.is_empty())
+            {
+                snapshot["pendingApproval"]["alwaysOptions"] = Value::Array(options.clone());
+            }
+            if let Some(id) = raw.get("pending_id").filter(|id| id.is_string()) {
+                snapshot["pendingApproval"]["requestId"] = id.clone();
+            }
         }
         Some("question") => snapshot["pendingQuestions"] = pending["questions"].clone(),
         _ => (),
+    }
+    // The shown card's id, echoed as `requestId` on `claude.approve` /
+    // `claude.answer` so an answer can never land on a newer card. Absent
+    // when unknown (hook approvals, older daemons, OpenCode/Pi).
+    match pending["raw"].get("pending_id").filter(|id| id.is_string()) {
+        Some(id) => snapshot["pendingRequestId"] = id.clone(),
+        None => {
+            if let Some(obj) = snapshot.as_object_mut() {
+                obj.remove("pendingRequestId");
+            }
+        }
+    }
+    // The permission mode the provider itself reports (claudemon
+    // `permission_mode`), e.g. after an "Allow all edits this session" grant.
+    if let Some(mode) = snapshot.get("permission_mode").filter(|m| m.is_string()) {
+        snapshot["observedPermissionMode"] = mode.clone();
     }
     snapshot
 }
