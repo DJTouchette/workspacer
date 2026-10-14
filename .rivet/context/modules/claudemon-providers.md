@@ -277,3 +277,101 @@ boot acknowledgement and generation cleanup. Some real-CLI/platform fixtures are
 explicitly ignored. A passing mock driver does not certify the installed external
 CLI, real account permissions, or every Windows/macOS transport. For source changes,
 also run the calling launcher and relevant model/context/error contract tests.
+
+## Conversation history: compaction, reasoning, rewind, revert and fork
+
+New conversation-item kinds and fields. Every client keys on `kind` and skips
+kinds it does not know (native `Item::display`, TUI, desktop applier, m-next),
+so older clients ignore them safely.
+
+| Shape | Meaning |
+| --- | --- |
+| `{kind:"reasoning", item_id, text, timestamp?}` | The model's shown reasoning. Streams as FRAGMENTS: same-`item_id` items append, like `assistant_text`; the retained log folds a trailing same-id fragment. Never merged into `assistant_text`. |
+| `{kind:"compaction", trigger?, pre_tokens?, post_tokens?, timestamp?}` | Everything before it was summarized out of context. `trigger` is `"manual"`/`"auto"` (Claude only). |
+| `user_message.uuid?` | The provider-facing id of that user message: the uuid the Claude stream driver stamps on the frame (= the CLI's message uuid, echoed back by `--replay-user-messages`), the transcript row's `uuid` on replay, or the echo id the Codex driver matches to codex's `userMessage` item. Absent when unknown, and on a Claude message sent while a turn runs (a steer): the CLI files it under a uuid of its own (observed live on 2.1.299), so no rewind or fork can name it — offer rewind/fork only on items that carry a `uuid`. |
+
+Session row: `compacting` (bool), `compaction_count`, `last_compact_at` are now
+also driven by managed drivers (`SessionStore::set_compacting` /
+`note_compaction`), not just the PreCompact/PostCompact hooks.
+
+Sources:
+
+- Claude stream: `system/status {status:"compacting"}` sets `compacting`;
+  `status:null` (live: `{status:null, compact_result:"success"}`) clears it;
+  `system/compact_boundary {compact_metadata:{trigger, pre_tokens,
+  post_tokens}}` is the boundary. `thinking_delta` streams into
+  `reasoning` (`item_id` = `<api message id>:<block index>`); a thinking
+  block in the `assistant` frame lands whole only when its message did not
+  stream. Current models default to an omitted thinking display
+  (`thinking_display:"updates"`: empty `thinking`, only `estimated_tokens`),
+  which produces nothing. So stream spawns add `--thinking-display
+  summarized` (a hidden CLI option) when `<bin> --version` (cached per
+  resolved binary) is ≥ 2.1.221 and nobody chose a display: no
+  `--thinking-display` / `--thinking disabled` in the extra args and no
+  `showThinkingSummaries` key in the config root's or project's settings.
+  Verified live on 2.1.299: summarized `thinking_delta` text streams.
+  Transcript rows: `system/compact_boundary {compactMetadata}` and non-empty
+  thinking blocks map to the same kinds (PTY sessions and resumed history).
+- Codex: `item/reasoning/summaryTextDelta` streams by `itemId`;
+  `summaryPartAdded` with `summaryIndex>0` adds a paragraph break; raw
+  `item/reasoning/textDelta` is NOT streamed. The completed `reasoning` item
+  (summary joined, raw `content` only when no summary) is dropped when its id
+  already streamed. `contextCompaction` item started/completed brackets the
+  compaction; the deprecated `thread/compacted` only adds a boundary when the
+  turn has none.
+- Handoff briefs and summary sources skip `reasoning` and `compaction`; the hub
+  MCP last-message reduction skips them inside a reply run.
+
+Controls (one store channel, `register_managed_session_control` /
+`ManagedSessionControl {action, reply}`; drivers answer with the provider's own
+result or error text). Naming is deliberate: **rewindFiles restores FILES
+(Claude), revert drops TURNS (Codex)**; each provider refuses the other with an
+error naming the alternative.
+
+| Bus method | claudemon route | Claude stream | Codex |
+| --- | --- | --- | --- |
+| `claude.compact {sessionId, instructions?}` | `POST /sessions/:id/compact {instructions?}` | `/compact [instructions]` as a user message (documented headless path; verified live on 2.1.299) plus a `slash_command` echo; reply `{queued:true}` | `thread/compact/start {threadId}`; reply `{}` |
+| `claude.rewindFiles {sessionId, userMessageId, preview?}` (`preview` is the dry run) | `POST /sessions/:id/rewind-files {user_message_id, dry_run?}` | `rewind_files` control request; reply `RewindFilesResult {canRewind, error?, filesChanged?, insertions?, deletions?, skippedLinks?}` | refused |
+| `claude.revert {sessionId, userMessageId \| beforeTurnId}` | `POST /sessions/:id/revert {user_message_id?, before_turn_id?}` | refused | `thread/revert {threadId, beforeTurnId}`; on success the shown conversation is cut before that turn's user message (a `reset` delta) |
+
+HTTP answers: `200 {ok:true, result}`, `502 {ok:false, error}` (provider
+refused), `501` (no live stream/Codex driver), `504` (no answer in 30s), `400`
+for ids that are not bounded plain ids. All three bus methods are full-tier only.
+
+Claude stream sessions always run with `--replay-user-messages` (replayed text
+frames carry `isReplay:true` and render nothing: the `user` arm reads only tool
+results) and `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true` unless the spawn
+env or daemon env chose a value. Verified live on 2.1.299 (persisted session,
+haiku): after a Write, `rewind_files {user_message_id:<our stamped uuid>,
+dry_run:true}` answered `{canRewind:true, filesChanged:[<abs path>],
+insertions:0, deletions:1}` and the real call `{canRewind:true,
+skippedLinks:0}` and removed the file; the transcript's user row carried the
+same uuid. A session started with `--no-session-persistence` has no
+checkpoints: every rewind there answers "No file checkpoint found for this
+message." (a dry run as a success with `canRewind:false`, a real one as a
+control error).
+
+Fork (claudemon `/sessions/spawn-managed {provider, cwd, resume:<source>,
+fork:true, fork_before?:<user message uuid>}`): a NEW row id (never the
+source's). "Fork before message U" keeps the history before U. Claude runs
+`--resume <source> --fork-session --session-id <new> [--resume-session-at
+<the nearest user/assistant entry up U's parent chain>]`; forking before the first message is refused, and so is a message absent from the source's visible history. The direct parent is often a `system` row (turn duration, hooks); a resume at one was refused live on 2.1.299 (`error_during_execution`), so those rows (and `attachment` rows) are skipped. Verified live on 2.1.299: forking before the 2nd of three turns resumed at the 1st turn's assistant entry (walking past `stop_hook_summary` and `attachment` rows), and the fork remembered turn 1 only. A `priority:"next"` message sent while IDLE keeps our uuid (verified live); only one steered into a running turn does not. `claude.compact` while a turn runs is fine: `/compact` with `priority:"next"` ran as the command after the turn, keeping its uuid (verified live).
+Codex bootstraps the new driver with `thread/fork {threadId:<source thread>,
+lastTurnId?, cwd}` as request id 101 (same capture as `thread/start`); the fork
+point (the turn before U's turn) comes from the LIVE source driver
+(`SessionControlAction::ForkPoint`), so forking a Codex session from a message
+needs the source running. The new session is seeded with the source's visible
+history cut at the fork point.
+
+Hub `agents.fork {sessionId, atMessageId?, label?}` (full tier, local only;
+refused for a hub-qualified call and before launch readiness, like
+agents.spawn) returns the agents.spawn receipt (`sessionId` of the new
+session). It needs this hub's launch record for the source, and takes from it
+provider, cwd, profileId, mcpItemIds, model and parentSessionId; never
+manager, label (pass `label`), permission bypass, or a launch integration
+(such sources are refused). The fork rides OUT OF BAND
+(`SpawnCoordinator::fork_for` → `spawn_admitted(.., Some(ForkSource))`), so
+agents.spawn's wire keys and the spawn-key registries are unchanged and no
+agents.spawn caller can name a fork source. After routing the plan must be a
+managed stream launch of the source's provider; the coordinator then sets
+`request.{resume, fork, fork_before}` and `metadata.forkedFrom`.

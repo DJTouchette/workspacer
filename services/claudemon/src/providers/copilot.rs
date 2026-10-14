@@ -1197,6 +1197,7 @@ async fn run_session(
                 session_id,
                 vec![ConversationItem::UserMessage {
                     text: text.clone(),
+                    uuid: None,
                     timestamp: None,
                 }],
             );
@@ -1362,7 +1363,7 @@ async fn run_turn(
                 Some(text) => {
                     // Echo immediately so the user sees their message land, but
                     // hold the text for the next turn.
-                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), uuid: None, timestamp: None }]);
                     queued.push(text);
                 }
                 None => {

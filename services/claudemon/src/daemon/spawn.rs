@@ -21,7 +21,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use portable_pty::PtySize;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -583,6 +583,19 @@ pub struct SpawnManagedPayload {
     /// starting fresh with a pinned id.
     #[serde(default)]
     pub resume: Option<String>,
+    /// Claude / Codex: with `resume` naming the SOURCE session, fork it into
+    /// a new session (its own id, freshly minted unless `session_id` pins
+    /// one) instead of continuing it. Claude: `--resume <source>
+    /// --fork-session --session-id <new>`; Codex: `thread/fork`.
+    #[serde(default)]
+    pub fork: bool,
+    /// With `fork`: continue from BEFORE this user message (the `uuid` its
+    /// conversation item carries). Absent = fork the whole conversation.
+    #[serde(default)]
+    pub fork_before: Option<String>,
+    /// Resolved by `handle_managed` for a fork; never on the wire.
+    #[serde(skip)]
+    pub fork_plan: Option<ForkPlan>,
     /// Extra argv appended verbatim, for EVERY harness that takes profiles —
     /// Claude's `--settings`, `codex -p <preset>`, and any hand-written
     /// `extraArgs` a profile carries.
@@ -677,11 +690,21 @@ pub async fn handle_managed(
     // unpinned resume must reuse that id as the row id: otherwise every hook
     // arrives under the prior id and drives a stale/ghost PTY row while the
     // stream row never sees its transcript_path.
+    // A fork is a NEW session: it never takes the source's id.
     let session_id = payload
         .session_id
         .clone()
-        .or_else(|| payload.resume.clone())
+        .or_else(|| payload.resume.clone().filter(|_| !payload.fork))
         .unwrap_or_else(|| Uuid::new_v4().to_string());
+    if payload.fork {
+        if payload.resume.as_deref() == Some(session_id.as_str()) {
+            return (StatusCode::BAD_REQUEST, "a fork needs its own session id").into_response();
+        }
+        match resolve_fork(&store, &conv, &payload).await {
+            Ok(plan) => payload.fork_plan = Some(plan),
+            Err((status, problem)) => return (status, problem).into_response(),
+        }
+    }
     // A caller-pinned id (or a resume id) becomes a filesystem sink downstream:
     // the codex-thread sidecar filename, pi's `-e` extension temp file, the
     // `mcp/ask/<id>` url, and the `--session-id` argv. Gate it with the exact
@@ -740,6 +763,183 @@ pub async fn handle_managed(
     .into_response()
 }
 
+/// What a fork starts from, resolved before the new session is published.
+#[derive(Debug, Clone, Default)]
+pub struct ForkPlan {
+    /// Claude: `--resume-session-at`, the transcript entry before the fork
+    /// point (`None` = the whole conversation).
+    pub resume_at: Option<String>,
+    /// Codex: the source thread to `thread/fork`.
+    pub thread: Option<String>,
+    /// Codex: `thread/fork.lastTurnId`, the last turn kept (`None` = all).
+    pub last_turn_id: Option<String>,
+    /// The new session's visible history: the source's, cut at the fork
+    /// point.
+    pub seed: Vec<crate::session::conversation::ConversationItem>,
+}
+
+/// How long the source driver gets to name a Codex fork point.
+const FORK_POINT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Resolve a fork request: where the provider must cut the source's history
+/// and what the new session shows. Claude reads the source transcript (the
+/// row's `parentUuid` is the entry `--resume-session-at` keeps through);
+/// Codex asks the source's live driver, the only holder of which turn each
+/// message landed in.
+async fn resolve_fork(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    payload: &SpawnManagedPayload,
+) -> Result<ForkPlan, (StatusCode, String)> {
+    use crate::session::conversation::{
+        items_before_user, replay_transcript, transcript_parent_of,
+    };
+    let bad = |status: StatusCode, problem: &str| (status, problem.to_string());
+    let source = payload.resume.as_deref().ok_or_else(|| {
+        bad(
+            StatusCode::BAD_REQUEST,
+            "a fork names its source session in `resume`",
+        )
+    })?;
+    if !crate::daemon::api::valid_session_id(source) {
+        return Err(bad(StatusCode::BAD_REQUEST, "invalid source session id"));
+    }
+    let before = payload.fork_before.as_deref().filter(|b| !b.is_empty());
+    let live = conv
+        .snapshot(source)
+        .map(|(_, items)| items)
+        .unwrap_or_default();
+    let mut plan = ForkPlan::default();
+    match payload.provider.as_str() {
+        "claude" => {
+            let state = store.get(source).unwrap_or_else(|| {
+                let mut state = crate::session::SessionState::new(
+                    source.to_string(),
+                    Some(payload.cwd.clone()),
+                );
+                state.provider = "claude".into();
+                state
+            });
+            let path = match state.transcript_path.clone() {
+                Some(path) => Some(path),
+                None => crate::session::claude_subagents::discover_parent(&state).await,
+            };
+            if let Some(before) = before {
+                let path = path.as_deref().ok_or_else(|| {
+                    bad(
+                        StatusCode::CONFLICT,
+                        "the source session's transcript was not found",
+                    )
+                })?;
+                match transcript_parent_of(path, before).await {
+                    Ok(Some(Some(parent))) => plan.resume_at = Some(parent),
+                    Ok(Some(None)) => {
+                        return Err(bad(
+                            StatusCode::BAD_REQUEST,
+                            "nothing comes before that message: start a fresh session instead",
+                        ))
+                    }
+                    Ok(None) => {
+                        return Err(bad(
+                            StatusCode::NOT_FOUND,
+                            "no message with that id in the source transcript",
+                        ))
+                    }
+                    Err(err) => return Err((StatusCode::CONFLICT, err.to_string())),
+                }
+            }
+            let replayed = || async {
+                match &path {
+                    Some(path) => replay_transcript(path).await.unwrap_or_default(),
+                    None => Vec::new(),
+                }
+            };
+            plan.seed = match before {
+                // The live log first, then the transcript (whose rows carry
+                // their own uuids). A fork point neither shows is refused
+                // rather than seeding an empty history.
+                Some(before) => match items_before_user(&live, before) {
+                    Some(seed) => seed,
+                    None => items_before_user(&replayed().await, before).ok_or_else(|| {
+                        bad(
+                            StatusCode::CONFLICT,
+                            "that message is not in the source's visible history",
+                        )
+                    })?,
+                },
+                None if live.is_empty() => replayed().await,
+                None => live,
+            };
+        }
+        "codex" => {
+            plan.thread = crate::providers::codex_rollout::thread_for(source);
+            if plan.thread.is_none() {
+                return Err(bad(
+                    StatusCode::CONFLICT,
+                    "no codex thread is recorded for the source session",
+                ));
+            }
+            if let Some(before) = before {
+                let control = store.managed_session_control(source).ok_or_else(|| {
+                    bad(
+                        StatusCode::CONFLICT,
+                        "forking a Codex session from a message needs the source session running",
+                    )
+                })?;
+                let (reply, verdict) = tokio::sync::oneshot::channel();
+                control
+                    .send(crate::session::store::ManagedSessionControl {
+                        action: crate::session::store::SessionControlAction::ForkPoint {
+                            user_message_id: before.to_string(),
+                        },
+                        reply,
+                    })
+                    .map_err(|_| bad(StatusCode::GONE, "the source session's driver is gone"))?;
+                let point = match tokio::time::timeout(FORK_POINT_TIMEOUT, verdict).await {
+                    Ok(Ok(Ok(point))) => point,
+                    Ok(Ok(Err(problem))) => return Err((StatusCode::CONFLICT, problem)),
+                    Ok(Err(_)) => {
+                        return Err(bad(StatusCode::GONE, "the source session's driver is gone"))
+                    }
+                    Err(_) => {
+                        return Err(bad(
+                            StatusCode::GATEWAY_TIMEOUT,
+                            "the source session did not name a fork point",
+                        ))
+                    }
+                };
+                plan.last_turn_id = point
+                    .get("lastTurnId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                plan.seed = items_before_user(&live, before).ok_or_else(|| {
+                    bad(
+                        StatusCode::CONFLICT,
+                        "that message is not in the source's visible history",
+                    )
+                })?;
+            } else if live.is_empty() {
+                if let Some(path) = plan
+                    .thread
+                    .as_deref()
+                    .and_then(crate::providers::codex_rollout::rollout_for_thread)
+                {
+                    plan.seed = crate::providers::codex_rollout::replay_conversation(&path);
+                }
+            } else {
+                plan.seed = live;
+            }
+        }
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("forking is not supported for {other} sessions"),
+            ))
+        }
+    }
+    Ok(plan)
+}
+
 /// Existing native delegation, owned by ClaudemonEngine. Admission and engine
 /// resolution have completed before this function may publish a session.
 pub(crate) fn start_native_managed(
@@ -788,6 +988,14 @@ pub(crate) fn start_native_managed(
             mcp_url: payload.mcp.clone(),
             instructions: payload.instructions.clone(),
         };
+        // A fork shows the source's history up to the fork point from its
+        // first instant (the driver only narrates new turns).
+        let fork = payload.fork_plan.clone().filter(|_| payload.fork);
+        if let Some(plan) = &fork {
+            if !plan.seed.is_empty() && !conv.has_conversation(&session_id) {
+                conv.push(&session_id, plan.seed.clone());
+            }
+        }
         match payload.provider.as_str() {
             // Claude over the headless stream-json transport (2nd claude
             // transport; the PTY path on `/sessions/spawn` is untouched). The
@@ -806,6 +1014,8 @@ pub(crate) fn start_native_managed(
                         effort: payload.effort.clone(),
                         permission_mode: payload.permission_mode.clone(),
                         resume: payload.resume.clone(),
+                        fork_session: fork.is_some(),
+                        resume_at: fork.as_ref().and_then(|plan| plan.resume_at.clone()),
                         extra_args: payload.extra_args.clone(),
                         env: payload.env.clone(),
                         yolo: payload.yolo,
@@ -829,15 +1039,25 @@ pub(crate) fn start_native_managed(
                 // rollout, so the pane shows the history immediately. Resume is
                 // headless-only — the TUI can't rejoin an arbitrary thread — so it
                 // forces the stream transport.
+                // A fork opens a NEW thread from the source's (`thread/fork`)
+                // instead of rejoining it; the source thread is in the plan.
                 let resume_thread = payload
                     .resume
                     .as_deref()
+                    .filter(|_| fork.is_none())
                     .and_then(crate::providers::codex_rollout::thread_for);
-                if payload.resume.is_some() && resume_thread.is_none() {
+                if payload.resume.is_some() && fork.is_none() && resume_thread.is_none() {
                     tracing::warn!(session = %session_id, "codex resume requested but no thread recorded — starting fresh");
                 }
-                let headless =
-                    payload.transport.as_deref() == Some("stream") || resume_thread.is_some();
+                let codex_fork = fork.as_ref().and_then(|plan| {
+                    Some(crate::providers::codex::CodexFork {
+                        thread: plan.thread.clone()?,
+                        last_turn_id: plan.last_turn_id.clone(),
+                    })
+                });
+                let headless = payload.transport.as_deref() == Some("stream")
+                    || resume_thread.is_some()
+                    || codex_fork.is_some();
                 if headless {
                     // Stamped before the driver starts (like claude-stream above)
                     // so every snapshot/frame gates the pane GUI-only from the
@@ -879,6 +1099,7 @@ pub(crate) fn start_native_managed(
                     payload.yolo,
                     headless,
                     resume_thread,
+                    codex_fork,
                     facade,
                     crate::providers::SpawnExtras {
                         env: payload.env.clone(),
@@ -1127,6 +1348,83 @@ mod tests {
         let mut unsupported = vec!["opencode".to_string()];
         set_context_window_in_argv(&mut unsupported, "opencode", Some(1_000_000));
         assert_eq!(unsupported, vec!["opencode"]);
+    }
+
+    fn fork_payload(provider: &str, before: Option<&str>) -> SpawnManagedPayload {
+        serde_json::from_value(json!({
+            "provider": provider, "cwd": "/work", "resume": "src-session",
+            "fork": true, "fork_before": before,
+        }))
+        .unwrap()
+    }
+
+    /// A Claude fork from before a message resumes at that message's chain
+    /// parent and shows the history before it; the whole-conversation fork
+    /// shows everything.
+    #[tokio::test]
+    async fn claude_fork_resolves_from_the_source_transcript() {
+        use crate::session::conversation::tests::transcript_fixture;
+        let rows = vec![
+            json!({"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"first"}}),
+            json!({"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"one"}]}}),
+            json!({"type":"user","uuid":"u2","parentUuid":"a1","message":{"role":"user","content":"second"}}),
+            json!({"type":"assistant","uuid":"a2","parentUuid":"u2","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"two"}]}}),
+        ];
+        let (_dir, path) = transcript_fixture(&rows);
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.hydrate(vec![crate::store::RestoredSession {
+            id: "src-session".into(),
+            cwd: Some("/work".into()),
+            tool_calls: 0,
+            created_at: 1000,
+            last_event_at: 2000,
+            user_prompt_count: 2,
+            model: None,
+            requested_model: None,
+            requested_selection: None,
+            transcript_path: Some(path),
+            config_root: None,
+        }]);
+        let plan = resolve_fork(&store, &conv, &fork_payload("claude", Some("u2")))
+            .await
+            .unwrap();
+        assert_eq!(plan.resume_at.as_deref(), Some("a1"));
+        assert_eq!(plan.seed.len(), 2, "first + one, not the forked-away turn");
+        let whole = resolve_fork(&store, &conv, &fork_payload("claude", None))
+            .await
+            .unwrap();
+        assert_eq!(whole.resume_at, None);
+        assert_eq!(whole.seed.len(), 4);
+        let first = resolve_fork(&store, &conv, &fork_payload("claude", Some("u1")))
+            .await
+            .unwrap_err();
+        assert_eq!(first.0, StatusCode::BAD_REQUEST);
+        let unknown = resolve_fork(&store, &conv, &fork_payload("claude", Some("zz")))
+            .await
+            .unwrap_err();
+        assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn fork_refuses_what_it_cannot_resolve() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        // Codex: the source thread must be recorded.
+        let no_thread = resolve_fork(&store, &conv, &fork_payload("codex", None))
+            .await
+            .unwrap_err();
+        assert_eq!(no_thread.0, StatusCode::CONFLICT);
+        let other = resolve_fork(&store, &conv, &fork_payload("copilot", None))
+            .await
+            .unwrap_err();
+        assert_eq!(other.0, StatusCode::BAD_REQUEST);
+        let mut no_source = fork_payload("claude", None);
+        no_source.resume = None;
+        assert_eq!(
+            resolve_fork(&store, &conv, &no_source).await.unwrap_err().0,
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[test]

@@ -143,6 +143,9 @@ pub(crate) async fn install(
         "claude.answer",
         "claude.signal",
         "claude.gate",
+        "claude.compact",
+        "claude.rewindFiles",
+        "claude.revert",
     ] {
         let service = service.clone();
         options = options.handler(method, move |_, params| {
@@ -839,6 +842,43 @@ impl Sessions {
                     Some(json!({"on":params["on"].as_bool().unwrap_or(false)})),
                 )
                 .await
+            }
+            // Conversation-history controls, carried out by the session's own
+            // driver through its provider's protocol; claudemon answers
+            // `{ok, result}` with the provider's own result object. The two
+            // "go back" actions are distinct on purpose: rewindFiles restores
+            // FILES to a user message (Claude), revert drops TURNS (Codex).
+            "claude.compact" => {
+                let mut payload = json!({});
+                if let Some(text) = params["instructions"].as_str().filter(|t| !t.is_empty()) {
+                    payload["instructions"] = json!(text);
+                }
+                self.request("POST", format!("{root}/compact"), Some(payload))
+                    .await
+            }
+            "claude.rewindFiles" => {
+                self.request(
+                    "POST",
+                    format!("{root}/rewind-files"),
+                    Some(json!({
+                        "user_message_id": params["userMessageId"],
+                        "dry_run": params["preview"].as_bool().unwrap_or(false),
+                    })),
+                )
+                .await
+            }
+            "claude.revert" => {
+                let mut payload = json!({});
+                for (wire, key) in [
+                    ("user_message_id", "userMessageId"),
+                    ("before_turn_id", "beforeTurnId"),
+                ] {
+                    if let Some(id) = params[key].as_str().filter(|id| !id.is_empty()) {
+                        payload[wire] = json!(id);
+                    }
+                }
+                self.request("POST", format!("{root}/revert"), Some(payload))
+                    .await
             }
             "claude.answer" => {
                 let option = params["option"].as_i64();

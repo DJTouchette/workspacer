@@ -45,7 +45,8 @@ use crate::session::state::{
 };
 use crate::session::store::{
     ConfirmedModelSwitch, Delivery, ManagedAnswer, ManagedPermissionSwitch, ManagedPrompt,
-    ManagedTaskControl, ManagedTaskStop, MessageSender,
+    ManagedSessionControl, ManagedTaskControl, ManagedTaskStop, MessageSender,
+    SessionControlAction,
 };
 use crate::session::transcript::{blocks, flatten_tool_result, Block};
 use crate::session::{ConversationStore, SessionStore};
@@ -69,6 +70,12 @@ pub struct SpawnConfig {
     /// Resume this prior session id (`--resume <id>`) instead of pinning a
     /// fresh one (`--session-id <session_id>`).
     pub resume: Option<String>,
+    /// With `resume`: fork it into this NEW session (`--fork-session`, pinned
+    /// to `session_id`) instead of continuing the original.
+    pub fork_session: bool,
+    /// With `fork_session`: keep the source's history only up to and
+    /// including this transcript entry uuid (`--resume-session-at`).
+    pub resume_at: Option<String>,
     /// Extra argv appended verbatim (escape hatch for new CLI flags).
     pub extra_args: Vec<String>,
     /// Extra env vars merged on top of the daemon's environment (e.g. a Claude
@@ -119,6 +126,12 @@ pub struct StreamTotals {
     tasks: TaskFold,
     /// What this CLI speaks, learned from `system/init` (see [`CliProtocol`]).
     protocol: CliProtocol,
+    /// The API message the current stream events belong to (`message_start`),
+    /// for thinking deltas that do not name it themselves.
+    message_id: Option<String>,
+    /// The latest API message whose thinking streamed as deltas: its whole
+    /// thinking block in the `assistant` frame must not be shown again.
+    thinking_streamed: Option<String>,
 }
 
 /// The protocol facts that decide which optional stream-json fields we may
@@ -320,8 +333,32 @@ fn todo_tools_env(
     spawn_env: &HashMap<String, String>,
     inherited: Option<std::ffi::OsString>,
 ) -> Option<(&'static str, &'static str)> {
-    (!spawn_env.contains_key(TODO_TOOLS_ENV) && inherited.is_none())
-        .then_some((TODO_TOOLS_ENV, "1"))
+    env_default(TODO_TOOLS_ENV, "1", spawn_env, inherited)
+}
+
+/// The env var that turns on file checkpoints for a headless session, which
+/// `rewind_files` restores from. Interactive Claude Code checkpoints by
+/// default; print mode only with this set (the Agent SDK's
+/// `enableFileCheckpointing` sets exactly this, to `"true"`).
+const FILE_CHECKPOINTING_ENV: &str = "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING";
+
+/// [`FILE_CHECKPOINTING_ENV`] on, unless the caller or the daemon's own
+/// environment chose a value (and `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING`
+/// still wins inside the CLI).
+fn file_checkpointing_env(
+    spawn_env: &HashMap<String, String>,
+    inherited: Option<std::ffi::OsString>,
+) -> Option<(&'static str, &'static str)> {
+    env_default(FILE_CHECKPOINTING_ENV, "true", spawn_env, inherited)
+}
+
+fn env_default(
+    key: &'static str,
+    value: &'static str,
+    spawn_env: &HashMap<String, String>,
+    inherited: Option<std::ffi::OsString>,
+) -> Option<(&'static str, &'static str)> {
+    (!spawn_env.contains_key(key) && inherited.is_none()).then_some((key, value))
 }
 
 /// Translate one stdout event into typed updates. Pure and total: unknown
@@ -354,35 +391,95 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             "status" if value.get("status").and_then(Value::as_str) == Some("requesting") => {
                 out.push(AgentUpdate::Busy);
             }
+            // Compaction brackets (`SDKStatusMessage`): `compacting` starts
+            // it; an explicit `status: null` ends it (observed live on CLI
+            // 2.1.299 for `/compact`: `{status: null, compact_result:
+            // "success"}`, then the `compact_boundary` below). A null that
+            // ends nothing is harmless: the store only broadcasts a change.
+            "status" if value.get("status").and_then(Value::as_str) == Some("compacting") => {
+                out.push(AgentUpdate::Compacting(true));
+            }
+            "status" if value.get("status").is_some_and(Value::is_null) => {
+                out.push(AgentUpdate::Compacting(false));
+            }
+            // `SDKCompactBoundaryMessage`: the conversation was summarized
+            // here, manually (`/compact`) or automatically.
+            "compact_boundary" => {
+                if let ConversationItem::Compaction {
+                    trigger,
+                    pre_tokens,
+                    post_tokens,
+                    ..
+                } = crate::session::conversation::compaction_item(value, None)
+                {
+                    out.push(AgentUpdate::Compacted {
+                        trigger,
+                        pre_tokens,
+                        post_tokens,
+                        legacy: false,
+                    });
+                }
+            }
             _ => {}
         },
-        // Live streaming: text grows token by token. Thinking / signature /
+        // Live streaming: text grows token by token, and so does thinking —
+        // into its own reasoning item, never the assistant text. Signature /
         // tool-input deltas are skipped (tool calls land whole via the
-        // `assistant` block events; thinking stays out of the conversation).
+        // `assistant` block events).
         "stream_event" => {
             let event = value.get("event").unwrap_or(&Value::Null);
             match event.get("type").and_then(Value::as_str).unwrap_or("") {
                 "message_start" => {
                     out.push(AgentUpdate::Busy);
-                    if let Some(model) = event
-                        .get("message")
-                        .and_then(|m| m.get("model"))
-                        .and_then(Value::as_str)
+                    let message = event.get("message");
+                    if let Some(id) = message.and_then(|m| m.get("id")).and_then(Value::as_str) {
+                        totals.message_id = Some(id.to_string());
+                    }
+                    if let Some(model) =
+                        message.and_then(|m| m.get("model")).and_then(Value::as_str)
                     {
                         totals.model = Some(model.to_string());
                         out.push(usage_model(model));
                     }
                 }
                 "content_block_delta" => {
-                    if let Some(text) = event
-                        .get("delta")
-                        .filter(|d| d.get("type").and_then(Value::as_str) == Some("text_delta"))
-                        .and_then(|d| d.get("text"))
-                        .and_then(Value::as_str)
-                    {
-                        if !text.is_empty() {
-                            out.push(AgentUpdate::AssistantText(text.to_string()));
+                    let delta = event.get("delta").unwrap_or(&Value::Null);
+                    let text = |key: &str| {
+                        delta
+                            .get(key)
+                            .and_then(Value::as_str)
+                            .filter(|t| !t.is_empty())
+                    };
+                    match delta.get("type").and_then(Value::as_str) {
+                        Some("text_delta") => {
+                            if let Some(text) = text("text") {
+                                out.push(AgentUpdate::AssistantText(text.to_string()));
+                            }
                         }
+                        // Thinking text, when the model and display mode show
+                        // it. Current models default to an omitted display
+                        // (`thinking_display: "updates"`): the deltas carry
+                        // only `estimated_tokens` and an empty `thinking`,
+                        // which produces nothing here (observed live on CLI
+                        // 2.1.299 with Haiku 5.5).
+                        Some("thinking_delta") => {
+                            if let Some(text) = text("thinking") {
+                                let message = value
+                                    .get("api_message_id")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_owned)
+                                    .or_else(|| totals.message_id.clone())
+                                    .unwrap_or_default();
+                                let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+                                totals.thinking_streamed = Some(message.clone());
+                                out.push(AgentUpdate::Reasoning {
+                                    item_id: format!("{message}:{index}"),
+                                    text: text.to_string(),
+                                    complete: false,
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -402,7 +499,23 @@ pub fn translate(value: &Value, totals: &mut StreamTotals) -> Vec<AgentUpdate> {
             if totals.tasks.fold_row(value) {
                 out.push(AgentUpdate::Plan(totals.tasks.to_plan(None)));
             }
+            let message_id = msg.get("id").and_then(Value::as_str).unwrap_or_default();
             for b in blocks(msg.get("content").unwrap_or(&Value::Null)) {
+                // A thinking block whose text did NOT already stream (no
+                // partial messages for it): the whole block lands here.
+                // Redacted / omitted blocks carry only a signature.
+                if let Block::Thinking { text } = b {
+                    if !text.trim().is_empty()
+                        && totals.thinking_streamed.as_deref() != Some(message_id)
+                    {
+                        out.push(AgentUpdate::Reasoning {
+                            item_id: message_id.to_string(),
+                            text: text.to_string(),
+                            complete: false,
+                        });
+                    }
+                    continue;
+                }
                 if let Block::ToolUse { name, input, id } = b {
                     if name == "TodoWrite" {
                         if let Some(plan) = super::plan_from_value(input) {
@@ -1257,6 +1370,10 @@ enum PendingControl {
     /// {status: killed}` + `task_notification {status: stopped}` land before
     /// the empty success response.
     StopTask(ManagedTaskStop),
+    /// `rewind_files` — answered with the CLI's `RewindFilesResult`, or its
+    /// error (observed live on CLI 2.1.299: a dry run with no checkpoint is a
+    /// SUCCESS `{canRewind: false, error}`, a real one is a control error).
+    RewindFiles(tokio::sync::oneshot::Sender<Result<Value, String>>),
 }
 
 /// `{"type":"control_response","response":{"subtype":"success","request_id":…,
@@ -1523,6 +1640,198 @@ async fn seed_resumed_history(
 /// The exact headless argv, per the verified contract. `--verbose` is required
 /// for stream-json output in print mode; `--permission-prompt-tool stdio`
 /// routes approvals to us as `can_use_tool` control requests.
+/// The first CLI known to accept `--thinking-display <summarized|omitted>`
+/// (a hidden option; present in the 2.1.221 bundle, the oldest checked).
+const THINKING_DISPLAY_MIN_VERSION: (u32, u32, u32) = (2, 1, 221);
+
+/// `--thinking-display summarized` when the CLI is known to take it and no one
+/// already chose: not the spawn's own extra args (`--thinking-display`, or
+/// `--thinking disabled`), not a `showThinkingSummaries` setting. Current
+/// models default to an OMITTED display, whose thinking blocks carry no text
+/// (observed live on 2.1.299), so without this reasoning items never fill;
+/// with it, the same CLI streams summarized `thinking_delta` text (verified
+/// live, Haiku 5.5). An unknown or older version gets nothing: an unknown
+/// flag would stop the CLI from starting.
+fn thinking_display_args(
+    version: Option<(u32, u32, u32)>,
+    extra_args: &[String],
+    settings_choose: bool,
+) -> Vec<String> {
+    let chosen = extra_args.iter().any(|a| {
+        a == "--thinking-display"
+            || a.starts_with("--thinking-display=")
+            || a.starts_with("--thinking=disabled")
+    }) || extra_args
+        .windows(2)
+        .any(|w| w[0] == "--thinking" && w[1] == "disabled");
+    if chosen || settings_choose || version.is_none_or(|v| v < THINKING_DISPLAY_MIN_VERSION) {
+        return Vec::new();
+    }
+    vec!["--thinking-display".into(), "summarized".into()]
+}
+
+/// Where the OS keeps Claude Code's managed (policy) settings.
+fn managed_settings_path() -> std::path::PathBuf {
+    if cfg!(target_os = "macos") {
+        "/Library/Application Support/ClaudeCode/managed-settings.json".into()
+    } else if cfg!(windows) {
+        r"C:\Program Files\ClaudeCode\managed-settings.json".into()
+    } else {
+        "/etc/claude-code/managed-settings.json".into()
+    }
+}
+
+/// Whether any settings source the CLI reads for this session sets
+/// `showThinkingSummaries` (either way): the user's config root
+/// (`CLAUDE_CONFIG_DIR` from the spawn env or the daemon's, else
+/// `~/.claude`), the project's `.claude/settings{,.local}.json`, a
+/// `--settings <file | json>` in the spawn's extra args (a profile), and the
+/// OS managed-settings file.
+fn settings_choose_thinking_display(
+    cwd: &str,
+    spawn_env: &HashMap<String, String>,
+    extra_args: &[String],
+) -> bool {
+    let names = |v: &Value| v.get("showThinkingSummaries").is_some();
+    let file_names = |path: &std::path::Path| {
+        std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|v| names(&v))
+    };
+    let inline = extra_args
+        .iter()
+        .enumerate()
+        .filter_map(|(i, arg)| match arg.strip_prefix("--settings=") {
+            Some(value) => Some(value),
+            None => (arg == "--settings")
+                .then(|| extra_args.get(i + 1).map(String::as_str))
+                .flatten(),
+        })
+        .any(|value| match serde_json::from_str::<Value>(value) {
+            Ok(json) => names(&json),
+            Err(_) => file_names(&std::path::Path::new(cwd).join(value)),
+        });
+    let root = spawn_env
+        .get("CLAUDE_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from))
+        .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().join(".claude")));
+    let project = std::path::Path::new(cwd).join(".claude");
+    inline
+        || root
+            .map(|r| r.join("settings.json"))
+            .into_iter()
+            .chain([
+                project.join("settings.json"),
+                project.join("settings.local.json"),
+                managed_settings_path(),
+            ])
+            .any(|path| file_names(&path))
+}
+
+/// How long a failed version probe is trusted before the next spawn retries.
+const VERSION_PROBE_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+
+#[derive(Debug, Clone, Copy)]
+enum ProbeState {
+    Known(Option<(u32, u32, u32)>),
+    Failed(std::time::Instant),
+}
+
+/// The CLI's `(major, minor, patch)` from `<bin> --version` (~40 ms).
+///
+/// Cached per resolved binary FILE `(canonical path, mtime, size)`, so an
+/// update in place re-probes. A failed or timed-out probe is not cached as an
+/// answer: it is retried after [`VERSION_PROBE_RETRY`]. Concurrent spawns of
+/// one binary share a single probe. The probe runs in the session's own cwd
+/// with the session's env (a profile's `PATH` / `CLAUDE_CONFIG_DIR` apply),
+/// never in the daemon's directory. `None` when it cannot be learned.
+async fn cli_version(
+    bin: &str,
+    cwd: &str,
+    env: &HashMap<String, String>,
+) -> Option<(u32, u32, u32)> {
+    type Slot = Arc<tokio::sync::Mutex<Option<ProbeState>>>;
+    static SLOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<String, Slot>>> =
+        std::sync::OnceLock::new();
+    let key = probe_key(bin, env);
+    let slot = SLOTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry(key)
+        .or_default()
+        .clone();
+    let mut state = slot.lock().await;
+    match *state {
+        Some(ProbeState::Known(version)) => return version,
+        Some(ProbeState::Failed(at)) if at.elapsed() < VERSION_PROBE_RETRY => return None,
+        _ => {}
+    }
+    let probe = async {
+        let out = Command::new(bin)
+            .arg("--version")
+            .current_dir(cwd)
+            .envs(env)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .scrub_host_authority()
+            .no_console_window()
+            .output()
+            .await
+            .ok()?;
+        out.status
+            .success()
+            .then(|| parse_cli_version(&String::from_utf8_lossy(&out.stdout)))
+            .flatten()
+    };
+    let version = tokio::time::timeout(std::time::Duration::from_secs(5), probe)
+        .await
+        .ok()
+        .flatten();
+    *state = Some(match version {
+        Some(v) => ProbeState::Known(Some(v)),
+        None => ProbeState::Failed(std::time::Instant::now()),
+    });
+    version
+}
+
+/// The cache key for a binary: its resolved file's canonical path, mtime and
+/// size; the bare spelling when it cannot be resolved.
+fn probe_key(bin: &str, env: &HashMap<String, String>) -> String {
+    which_bin(bin, env)
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .and_then(|p| {
+            let meta = std::fs::metadata(&p).ok()?;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            Some(format!("{}|{mtime}|{}", p.display(), meta.len()))
+        })
+        .unwrap_or_else(|| bin.to_string())
+}
+
+/// `bin` as a path: itself when it names one, else its first hit on the
+/// session's `PATH` (the spawn env's, else the daemon's).
+fn which_bin(bin: &str, env: &HashMap<String, String>) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(bin);
+    if path.components().count() > 1 {
+        return Some(path.to_path_buf());
+    }
+    let search = env
+        .get("PATH")
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os("PATH"))?;
+    std::env::split_paths(&search)
+        .map(|dir| dir.join(bin))
+        .find(|candidate| candidate.is_file())
+}
+
 fn build_argv(cfg: &SpawnConfig) -> Vec<String> {
     let mut argv: Vec<String> = [
         "--print",
@@ -1534,11 +1843,34 @@ fn build_argv(cfg: &SpawnConfig) -> Vec<String> {
         "--verbose",
         "--permission-prompt-tool",
         "stdio",
+        // Re-emit our user messages on stdout (`isReplay: true`, carrying the
+        // uuid we stamped). The `user` arm of `translate` only reads tool
+        // results, so a replayed text frame renders nothing twice; what it
+        // buys is the CLI's acknowledgement of each message's uuid, the id
+        // `rewind_files` takes.
+        "--replay-user-messages",
     ]
     .iter()
     .map(|s| s.to_string())
     .collect();
     match &cfg.resume {
+        // A fork resumes the prior conversation into a NEW session, which we
+        // pin to our row id (`--session-id` with `--resume --fork-session`,
+        // CLI ≥ 2.0.x) so hooks and the transcript filename agree with the
+        // row. `--resume-session-at` keeps only the source's chain up to and
+        // including that entry (print mode only, which this is).
+        Some(prior) if cfg.fork_session => {
+            argv.extend([
+                "--resume".into(),
+                prior.clone(),
+                "--fork-session".into(),
+                "--session-id".into(),
+                cfg.session_id.clone(),
+            ]);
+            if let Some(at) = &cfg.resume_at {
+                argv.extend(["--resume-session-at".into(), at.clone()]);
+            }
+        }
         // Resuming reopens the prior conversation; the CLI keeps its id.
         Some(prior) => argv.extend(["--resume".into(), prior.clone()]),
         // Fresh session: pin our row id as claude's own session id, so the
@@ -1574,11 +1906,25 @@ async fn run_session(
 ) -> anyhow::Result<()> {
     let session_id = cfg.session_id.clone();
     let startup_started = std::time::Instant::now();
-    let argv = build_argv(&cfg);
+    let mut argv = build_argv(&cfg);
+    // Ask for thinking TEXT when the CLI takes the flag and nobody chose a
+    // display already (see `thinking_display_args`).
+    let version = cli_version(&cfg.bin, &cfg.cwd, &cfg.env).await;
+    let settings_choose = settings_choose_thinking_display(&cfg.cwd, &cfg.env, &cfg.extra_args);
+    argv.extend(thinking_display_args(
+        version,
+        &cfg.extra_args,
+        settings_choose,
+    ));
     // `_tie` lives as long as the session: the CLI cannot outlive the app.
     let mut command = Command::new(&cfg.bin);
     command.args(&argv).envs(&cfg.env);
     if let Some((key, value)) = todo_tools_env(&cfg.env, std::env::var_os(TODO_TOOLS_ENV)) {
+        command.env(key, value);
+    }
+    if let Some((key, value)) =
+        file_checkpointing_env(&cfg.env, std::env::var_os(FILE_CHECKPOINTING_ENV))
+    {
         command.env(key, value);
     }
     let (mut child, _tie) = crate::tied_child::spawn(
@@ -1653,6 +1999,9 @@ async fn run_session(
             stop: sttx,
         },
     );
+    // Conversation-history controls: `/compact` and `rewind_files`.
+    let (sctx, mut scrx) = mpsc::unbounded_channel::<ManagedSessionControl>();
+    store.register_managed_session_control(&session_id, sctx);
     // Auto-approve flag, live-switchable via the yolo half of
     // `/permission-mode`'s managed vocabulary as well as the structural
     // switch. A yolo *spawn* also bypasses at the source, but flipping this on
@@ -1731,14 +2080,25 @@ async fn run_session(
                     // the CLI's echo row (clients dedup the pair), so the GUI
                     // shows a command card immediately instead of a raw
                     // "/foo" bubble.
+                    // The echo carries the uuid the frame is sent with: the
+                    // id `rewind_files` and a fork point name this message by.
+                    // NOT for a message sent while a turn runs: the CLI folds
+                    // a steer into the running turn under a uuid of its own
+                    // (observed live on 2.1.299: our stamped uuid never
+                    // reached the transcript), so no rewind or fork can name
+                    // it, and an echo without a uuid offers neither.
+                    let uuid = uuid::Uuid::new_v4().to_string();
+                    let steering = matches!(
+                        cur_mode,
+                        SessionMode::Responding | SessionMode::Approval | SessionMode::Question
+                    );
                     let echo = slash_command_send_item(&text, &acc)
-                        .unwrap_or(ConversationItem::UserMessage { text: text.clone(), timestamp: None });
+                        .unwrap_or(ConversationItem::UserMessage { text: text.clone(), uuid: (!steering).then(|| uuid.clone()), timestamp: None });
                     conv.push(&session_id, vec![echo]);
                     let sent = match pending_instructions.take() {
                         Some(instr) => format!("{instr}\n\n{text}"),
                         None => text,
                     };
-                    let uuid = uuid::Uuid::new_v4().to_string();
                     // Busy only decides the older-CLI fallback (interrupt, then
                     // send). Every send of ours flips the mode to Responding
                     // (`note_user_send`) until a `result` idles it, and the
@@ -1890,6 +2250,14 @@ async fn run_session(
                     }
                 }
             },
+            control = scrx.recv() => {
+                if let Some(control) = control {
+                    session_control(
+                        control, store, conv, &session_id, &out_tx, &mut next_ctl,
+                        &mut pending_controls, &mut totals.protocol, &mut cur_mode,
+                    );
+                }
+            },
             status = child.wait() => {
                 tracing::info!(?status, session = %session_id, "claude stream child exited");
                 // The unbiased select! can pick this arm while the CLI's final
@@ -1999,6 +2367,103 @@ fn send_switch(
     }
 }
 
+/// Carry out one conversation-history control.
+///
+/// * `Compact` sends `/compact [instructions]` as an ordinary user message:
+///   the documented headless path ("Send `/compact` as a prompt string",
+///   Agent SDK agent-loop docs), verified live on CLI 2.1.299 — the CLI
+///   answers with `status: compacting`, `status: null`, a
+///   `compact_boundary {trigger: "manual"}` and a zero-turn `result`. Never
+///   prefixed with the role instructions (the CLI would no longer read it as
+///   a command). Replies once the message is written; the boundary itself
+///   arrives on the conversation.
+/// * `RewindFiles` is the CLI's `rewind_files {user_message_id, dry_run}`
+///   control request; its result object (`canRewind`, `error`,
+///   `filesChanged`, `insertions`, `deletions`, `skippedLinks`) is the reply.
+/// * `Revert` is Codex's; Claude rewinds files, not turns.
+#[allow(clippy::too_many_arguments)]
+fn session_control(
+    control: ManagedSessionControl,
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    next_ctl: &mut u64,
+    pending_controls: &mut HashMap<String, PendingControl>,
+    protocol: &mut CliProtocol,
+    cur_mode: &mut SessionMode,
+) {
+    let ManagedSessionControl { action, reply } = control;
+    match action {
+        SessionControlAction::Compact { instructions } => {
+            let args = instructions
+                .map(|i| i.trim().to_string())
+                .filter(|i| !i.is_empty());
+            let text = match &args {
+                Some(args) => format!("/compact {args}"),
+                None => "/compact".to_string(),
+            };
+            conv.push(
+                session_id,
+                vec![ConversationItem::SlashCommand {
+                    name: "compact".into(),
+                    args,
+                    timestamp: None,
+                }],
+            );
+            let uuid = uuid::Uuid::new_v4().to_string();
+            let busy = matches!(
+                cur_mode,
+                SessionMode::Responding | SessionMode::Approval | SessionMode::Question
+            );
+            let (_, frame) = user_frame(
+                &text,
+                &uuid,
+                Delivery::Steer,
+                MessageSender::Human,
+                protocol,
+                busy,
+            );
+            protocol.remember_sent(uuid);
+            let sent = out_tx.send(frame).is_ok();
+            note_user_send(store, session_id, cur_mode);
+            let _ = reply.send(if sent {
+                Ok(json!({ "queued": true }))
+            } else {
+                Err("session driver is gone".into())
+            });
+        }
+        SessionControlAction::RewindFiles {
+            user_message_id,
+            dry_run,
+        } => {
+            let mut request =
+                json!({ "subtype": "rewind_files", "user_message_id": user_message_id });
+            if dry_run {
+                request["dry_run"] = json!(true);
+            }
+            send_control(
+                out_tx,
+                next_ctl,
+                pending_controls,
+                request,
+                PendingControl::RewindFiles(reply),
+            );
+        }
+        // A Claude fork point is read from the transcript, not the driver.
+        SessionControlAction::ForkPoint { .. } => {
+            let _ = reply.send(Err(
+                "a Claude fork point is resolved from the session transcript".into(),
+            ));
+        }
+        SessionControlAction::Revert { .. } => {
+            let _ = reply.send(Err(
+                "Claude does not revert conversation turns in place; use claude.rewindFiles to restore files, or agents.fork with atMessageId to continue from an earlier point".into(),
+            ));
+        }
+    }
+}
+
 /// The live effort switch: `apply_flag_settings` merges `effortLevel` into the
 /// session's flag-settings layer, applied from the next turn. The CLI takes a
 /// level name (and `ultracode`), so the value passes through verbatim and a
@@ -2083,6 +2548,16 @@ fn handle_line(
                         tracing::warn!(session = %session_id, task = %stop.task_id, error = %err, "claude stream: stop_task refused");
                     }
                     let _ = stop.reply.send(err.map_or(Ok(()), Err));
+                }
+                (PendingControl::RewindFiles(reply), err) => {
+                    let result = match err {
+                        Some(err) => Err(err),
+                        None => Ok(response
+                            .get("response")
+                            .cloned()
+                            .unwrap_or_else(|| json!({}))),
+                    };
+                    let _ = reply.send(result);
                 }
                 (PendingControl::Interrupt, Some(err)) => {
                     tracing::warn!(session = %session_id, error = %err, "claude stream: interrupt failed");
@@ -2381,17 +2856,274 @@ mod tests {
     }
 
     #[test]
-    fn text_delta_is_assistant_text_thinking_is_not() {
+    fn text_delta_is_assistant_text_thinking_is_reasoning() {
         assert_eq!(
             t(json!({ "type": "stream_event", "event": {
                 "type": "content_block_delta", "delta": { "type": "text_delta", "text": "hi" }
             }})),
             vec![AgentUpdate::AssistantText("hi".into())]
         );
-        assert!(t(json!({ "type": "stream_event", "event": {
-            "type": "content_block_delta", "delta": { "type": "thinking_delta", "thinking": "hmm" }
-        }}))
+        // Thinking streams into its own item, keyed by message and block.
+        let mut totals = StreamTotals::default();
+        translate(
+            &json!({ "type": "stream_event", "event": {
+                "type": "message_start", "message": { "id": "msg_1", "model": "m" }
+            }}),
+            &mut totals,
+        );
+        assert_eq!(
+            translate(
+                &json!({ "type": "stream_event", "event": {
+                    "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "thinking_delta", "thinking": "hmm" }
+                }}),
+                &mut totals,
+            ),
+            vec![AgentUpdate::Reasoning {
+                item_id: "msg_1:0".into(),
+                text: "hmm".into(),
+                complete: false,
+            }]
+        );
+        // The wrapper's `api_message_id` wins when present.
+        assert_eq!(
+            translate(
+                &json!({ "type": "stream_event", "api_message_id": "msg_2", "event": {
+                    "type": "content_block_delta", "index": 2,
+                    "delta": { "type": "thinking_delta", "thinking": "more" }
+                }}),
+                &mut totals,
+            ),
+            vec![AgentUpdate::Reasoning {
+                item_id: "msg_2:2".into(),
+                text: "more".into(),
+                complete: false,
+            }]
+        );
+    }
+
+    /// Current models omit thinking text by default (`thinking_display:
+    /// "updates"`): the deltas carry only an estimate, observed live on CLI
+    /// 2.1.299. Nothing to show, so nothing is emitted.
+    #[test]
+    fn omitted_thinking_emits_nothing() {
+        assert!(t(
+            json!({ "type": "stream_event", "thinking_display": "updates", "event": {
+                "type": "content_block_delta", "index": 0,
+                "delta": { "type": "thinking_delta", "thinking": "", "estimated_tokens": 50 }
+            }})
+        )
         .is_empty());
+        // The whole block in the assistant frame is signature-only too.
+        assert!(t(
+            json!({ "type": "assistant", "message": { "id": "msg_1", "content": [
+                { "type": "thinking", "thinking": "", "signature": "CAQS" }
+            ]}})
+        )
+        .is_empty());
+        assert!(t(
+            json!({ "type": "assistant", "message": { "id": "msg_1", "content": [
+                { "type": "redacted_thinking", "data": "opaque" }
+            ]}})
+        )
+        .is_empty());
+    }
+
+    /// A thinking block that did not stream (no partial messages for it)
+    /// lands whole from the assistant frame; one that streamed is not
+    /// repeated.
+    #[test]
+    fn assistant_thinking_block_lands_once() {
+        let frame = json!({ "type": "assistant", "message": { "id": "msg_9", "content": [
+            { "type": "thinking", "thinking": "plan it", "signature": "s" }
+        ]}});
+        assert_eq!(
+            t(frame.clone()),
+            vec![AgentUpdate::Reasoning {
+                item_id: "msg_9".into(),
+                text: "plan it".into(),
+                complete: false,
+            }]
+        );
+        let mut totals = StreamTotals::default();
+        translate(
+            &json!({ "type": "stream_event", "api_message_id": "msg_9", "event": {
+                "type": "content_block_delta", "index": 0,
+                "delta": { "type": "thinking_delta", "thinking": "plan it" }
+            }}),
+            &mut totals,
+        );
+        assert!(translate(&frame, &mut totals).is_empty());
+    }
+
+    #[test]
+    fn compaction_frames_bracket_and_mark_the_boundary() {
+        // Shapes observed live on CLI 2.1.299 for `/compact`.
+        assert_eq!(
+            t(json!({ "type": "system", "subtype": "status", "status": "compacting" })),
+            vec![AgentUpdate::Compacting(true)]
+        );
+        assert_eq!(
+            t(
+                json!({ "type": "system", "subtype": "status", "status": null, "compact_result": "success" })
+            ),
+            vec![AgentUpdate::Compacting(false)]
+        );
+        assert_eq!(
+            t(
+                json!({ "type": "system", "subtype": "compact_boundary", "compact_metadata": {
+                    "trigger": "manual", "pre_tokens": 25000, "post_tokens": 2764,
+                    "cumulative_dropped_tokens": 22236, "duration_ms": 2887
+                }})
+            ),
+            vec![AgentUpdate::Compacted {
+                trigger: Some("manual".into()),
+                pre_tokens: Some(25000),
+                post_tokens: Some(2764),
+                legacy: false,
+            }]
+        );
+        // A status frame without the key says nothing about compaction.
+        assert!(t(json!({ "type": "system", "subtype": "status" })).is_empty());
+    }
+
+    /// Summarized thinking is requested only from a CLI known to take the
+    /// flag, and never over a choice the user already made.
+    #[test]
+    fn thinking_display_is_summarized_unless_unknown_or_chosen() {
+        let summarized = vec!["--thinking-display".to_string(), "summarized".to_string()];
+        assert_eq!(
+            thinking_display_args(Some((2, 1, 299)), &[], false),
+            summarized
+        );
+        assert_eq!(
+            thinking_display_args(Some((2, 1, 221)), &[], false),
+            summarized
+        );
+        assert!(thinking_display_args(Some((2, 1, 220)), &[], false).is_empty());
+        assert!(
+            thinking_display_args(None, &[], false).is_empty(),
+            "unknown CLI"
+        );
+        assert!(
+            thinking_display_args(Some((2, 1, 299)), &[], true).is_empty(),
+            "settings chose"
+        );
+        for chosen in [
+            vec!["--thinking-display".to_string(), "omitted".to_string()],
+            vec!["--thinking-display=omitted".to_string()],
+            vec!["--thinking".to_string(), "disabled".to_string()],
+            vec!["--thinking=disabled".to_string()],
+        ] {
+            assert!(
+                thinking_display_args(Some((2, 1, 299)), &chosen, false).is_empty(),
+                "{chosen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_settings_file_naming_show_thinking_summaries_is_a_choice() {
+        let dir = std::env::temp_dir().join(format!("claudemon-thinking-{}", uuid::Uuid::new_v4()));
+        let project = dir.join("project");
+        let root = dir.join("config");
+        std::fs::create_dir_all(project.join(".claude")).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let env = HashMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            root.to_string_lossy().into_owned(),
+        )]);
+        let cwd = project.to_string_lossy().into_owned();
+        assert!(!settings_choose_thinking_display(&cwd, &env, &[]));
+        std::fs::write(root.join("settings.json"), r#"{"model":"opus"}"#).unwrap();
+        assert!(!settings_choose_thinking_display(&cwd, &env, &[]));
+        std::fs::write(
+            project.join(".claude/settings.local.json"),
+            r#"{"showThinkingSummaries":false}"#,
+        )
+        .unwrap();
+        assert!(settings_choose_thinking_display(&cwd, &env, &[]));
+        std::fs::remove_file(project.join(".claude/settings.local.json")).unwrap();
+        std::fs::write(
+            root.join("settings.json"),
+            r#"{"showThinkingSummaries":true}"#,
+        )
+        .unwrap();
+        assert!(settings_choose_thinking_display(&cwd, &env, &[]));
+        std::fs::write(root.join("settings.json"), r#"{"model":"opus"}"#).unwrap();
+        // A profile's `--settings`: inline JSON or a file.
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(settings_choose_thinking_display(
+            &cwd,
+            &env,
+            &args(&["--settings", r#"{"showThinkingSummaries":false}"#])
+        ));
+        assert!(!settings_choose_thinking_display(
+            &cwd,
+            &env,
+            &args(&["--settings", r#"{"model":"opus"}"#])
+        ));
+        let profile = dir.join("profile.json");
+        std::fs::write(&profile, r#"{"showThinkingSummaries":true}"#).unwrap();
+        assert!(settings_choose_thinking_display(
+            &cwd,
+            &env,
+            &args(&[&format!("--settings={}", profile.display())])
+        ));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The version probe runs in the session's cwd with its env (never the
+    /// daemon's directory), re-probes a binary that changed on disk, and
+    /// retries a failure instead of caching it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn version_probe_runs_in_the_session_and_rekeys_on_change() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("claudemon-probe-{}", uuid::Uuid::new_v4()));
+        let work = dir.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let bin = dir.join("claude");
+        let write = |body: &str| {
+            std::fs::write(&bin, body).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        write(
+            "#!/bin/sh\necho \"$PROBE_TAG\" > \"$PWD/probe-ran\"\necho '2.1.250 (Claude Code)'\n",
+        );
+        let env = HashMap::from([("PROBE_TAG".to_string(), "session-env".to_string())]);
+        let cwd = work.to_string_lossy().into_owned();
+        let bin_s = bin.to_string_lossy().into_owned();
+        let before = probe_key(&bin_s, &env);
+        assert_eq!(cli_version(&bin_s, &cwd, &env).await, Some((2, 1, 250)));
+        assert_eq!(
+            std::fs::read_to_string(work.join("probe-ran"))
+                .unwrap()
+                .trim(),
+            "session-env"
+        );
+        let daemon_cwd = std::env::current_dir().unwrap();
+        assert!(!daemon_cwd.join("probe-ran").exists());
+        // An update in place is a new key, probed afresh.
+        write("#!/bin/sh\necho '2.1.299 (Claude Code) updated'\n");
+        assert_ne!(probe_key(&bin_s, &env), before);
+        assert_eq!(cli_version(&bin_s, &cwd, &env).await, Some((2, 1, 299)));
+        // A failure is remembered only briefly, as a failure.
+        let broken = dir.join("broken").to_string_lossy().into_owned();
+        assert_eq!(cli_version(&broken, &cwd, &env).await, None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn checkpointing_is_on_unless_someone_chose() {
+        let none = HashMap::new();
+        assert_eq!(
+            file_checkpointing_env(&none, None),
+            Some(("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true"))
+        );
+        let chosen = HashMap::from([(FILE_CHECKPOINTING_ENV.to_string(), "0".to_string())]);
+        assert_eq!(file_checkpointing_env(&chosen, None), None);
+        assert_eq!(file_checkpointing_env(&none, Some("false".into())), None);
     }
 
     #[test]
@@ -3702,6 +4434,8 @@ mod tests {
             effort: Some("xhigh".into()),
             permission_mode: Some("plan".into()),
             resume: None,
+            fork_session: false,
+            resume_at: None,
             extra_args: vec!["--fallback-model".into(), "sonnet".into()],
             env: HashMap::new(),
             yolo: true,
@@ -3730,6 +4464,49 @@ mod tests {
         assert!(joined.contains("--resume old-id"));
         assert!(!joined.contains("--session-id"));
         assert!(!joined.contains("--dangerously-skip-permissions"));
+        assert!(!joined.contains("--fork-session"));
+    }
+
+    /// Every stream session asks the CLI to acknowledge its user messages
+    /// (their uuids are what `rewind_files` takes), and a fork resumes the
+    /// source into a NEW session pinned to the row id.
+    #[test]
+    fn argv_replays_user_messages_and_forks_into_the_row_id() {
+        let cfg = SpawnConfig {
+            session_id: "new-row".into(),
+            cwd: "/w".into(),
+            bin: "claude".into(),
+            model: None,
+            effort: None,
+            permission_mode: None,
+            resume: None,
+            fork_session: false,
+            resume_at: None,
+            extra_args: vec![],
+            env: HashMap::new(),
+            yolo: false,
+            facade: Facade::default(),
+        };
+        assert!(build_argv(&cfg).contains(&"--replay-user-messages".to_string()));
+        let joined = build_argv(&SpawnConfig {
+            resume: Some("source".into()),
+            fork_session: true,
+            resume_at: Some("entry-before".into()),
+            ..cfg.clone()
+        })
+        .join(" ");
+        assert!(joined.contains(
+            "--resume source --fork-session --session-id new-row --resume-session-at entry-before"
+        ));
+        // A whole-conversation fork has no cut point.
+        let joined = build_argv(&SpawnConfig {
+            resume: Some("source".into()),
+            fork_session: true,
+            ..cfg
+        })
+        .join(" ");
+        assert!(joined.contains("--resume source --fork-session --session-id new-row"));
+        assert!(!joined.contains("--resume-session-at"));
     }
 
     #[test]
@@ -4271,6 +5048,8 @@ done
                 effort: None,
                 permission_mode: None,
                 resume: None,
+                fork_session: false,
+                resume_at: None,
                 extra_args: vec![],
                 env: HashMap::new(),
                 yolo: false,
@@ -4401,6 +5180,292 @@ kill "$bg" 2>/dev/null
         path
     }
 
+    /// A stub `claude` speaking the history-control shapes observed live on
+    /// CLI 2.1.299: user frames are replayed (`isReplay`) with their uuid, a
+    /// turn streams thinking then text, `/compact` brackets a
+    /// `compact_boundary`, and `rewind_files` answers a dry run with a result
+    /// and a real one with the CLI's no-checkpoint error. It records its argv
+    /// and checkpointing env for the test to read.
+    #[cfg(unix)]
+    fn write_history_stub(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("stub-claude-history");
+        let script = r#"#!/bin/sh
+printf '%s\n' "$*" > "$PWD/argv.txt"
+printf '%s\n' "$CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING" > "$PWD/env.txt"
+while IFS= read -r line; do
+  case "$line" in
+    *'"subtype":"rewind_files"'*)
+      rid=$(printf '%s' "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
+      case "$line" in
+        *'"dry_run":true'*)
+          printf '%s\n' "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"$rid\",\"response\":{\"canRewind\":true,\"filesChanged\":[\"a.txt\"],\"insertions\":0,\"deletions\":1}}}" ;;
+        *)
+          printf '%s\n' "{\"type\":\"control_response\",\"response\":{\"subtype\":\"error\",\"request_id\":\"$rid\",\"error\":\"No file checkpoint found for this message.\"}}" ;;
+      esac
+      ;;
+    *'"type":"control_request"'*) ;;
+    *'"text":"/compact'*)
+      printf '%s\n' '{"type":"system","subtype":"status","status":"compacting"}'
+      printf '%s\n' '{"type":"system","subtype":"status","status":null,"compact_result":"success"}'
+      printf '%s\n' '{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":25000,"post_tokens":2764}}'
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":0,"usage":{"input_tokens":0,"output_tokens":0},"total_cost_usd":0.01}'
+      ;;
+    *'"type":"user"'*)
+      uuid=$(printf '%s' "$line" | sed 's/.*"uuid":"\([^"]*\)".*/\1/')
+      printf '%s\n' "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]},\"parent_tool_use_id\":null,\"uuid\":\"$uuid\",\"isReplay\":true}"
+      printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_1","model":"claude-haiku-5-5"}}}'
+      printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me think."}}}'
+      printf '%s\n' '{"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello"}}}'
+      printf '%s\n' '{"type":"assistant","message":{"id":"msg_1","model":"claude-haiku-5-5","content":[{"type":"thinking","thinking":"Let me think.","signature":"s"}]}}'
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"Hello","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0.01}'
+      ;;
+  esac
+done
+"#;
+        std::fs::write(&path, script).expect("writing the stub CLI");
+        let mut perms = std::fs::metadata(&path)
+            .expect("stub metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).expect("chmod the stub CLI");
+        path
+    }
+
+    /// A message sent while a turn runs (a steer) is echoed WITHOUT a uuid:
+    /// the CLI files it under its own, so nothing can rewind or fork at it.
+    /// A message that starts a turn keeps the uuid it was sent with.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_steered_message_carries_no_uuid() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-steer-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        // The first prompt opens a turn that only the second one closes.
+        let bin = dir.0.join("stub-claude-steer");
+        std::fs::write(
+            &bin,
+            r#"#!/bin/sh
+n=0
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      n=$((n+1))
+      if [ "$n" = 1 ]; then
+        printf '%s\n' '{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1","model":"claude-haiku-5-5"}}}'
+      else
+        printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0}'
+      fi
+      ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let sid = "e2e-steer";
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed(sid, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: sid.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                fork_session: false,
+                resume_at: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+        assert!(settles(|| store.is_managed(sid)).await);
+        let users = || {
+            conv.snapshot(sid)
+                .map(|(_, items)| items)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|i| match i {
+                    ConversationItem::UserMessage { text, uuid, .. } => Some((text, uuid)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        store.submit_message(sid, "first".into());
+        assert!(
+            settles(|| store
+                .get(sid)
+                .is_some_and(|s| s.mode == SessionMode::Responding)
+                && users().len() == 1)
+            .await
+        );
+        store.submit_message(sid, "steered".into());
+        assert!(settles(|| store.get(sid).is_some_and(|s| s.mode == SessionMode::Input)).await);
+        let users = users();
+        assert_eq!(users.len(), 2, "{users:?}");
+        assert!(
+            users[0].1.is_some(),
+            "a turn-starting message keeps its uuid"
+        );
+        assert_eq!(users[1], ("steered".to_string(), None));
+        store.terminate_managed(sid);
+    }
+
+    /// History controls end to end through the real driver: the user echo
+    /// carries the uuid its frame was sent with (and the CLI's replay of it
+    /// renders nothing twice), thinking lands once as reasoning, `/compact`
+    /// marks the boundary and counts it, and `rewind_files` answers with the
+    /// CLI's own verdict.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn history_controls_round_trip_through_the_driver() {
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-history-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        let sid = "e2e-history";
+        let bin = write_history_stub(&dir.0);
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed(sid, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: sid.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                fork_session: false,
+                resume_at: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+        assert!(settles(|| store.is_managed(sid)).await);
+        assert!(matches!(
+            store.submit_message(sid, "hi".into()),
+            crate::session::MessageOutcome::Sent
+        ));
+        let items = || {
+            conv.snapshot(sid)
+                .map(|(_, items)| items)
+                .unwrap_or_default()
+        };
+        assert!(
+            settles(
+                || store.get(sid).is_some_and(|s| s.mode == SessionMode::Input)
+                    && items()
+                        .iter()
+                        .any(|i| matches!(i, ConversationItem::AssistantText { .. }))
+            )
+            .await
+        );
+        let argv = std::fs::read_to_string(dir.0.join("argv.txt")).unwrap();
+        assert!(argv.contains("--replay-user-messages"), "{argv}");
+        assert_eq!(
+            std::fs::read_to_string(dir.0.join("env.txt"))
+                .unwrap()
+                .trim(),
+            "true"
+        );
+        let snapshot = items();
+        let users: Vec<_> = snapshot
+            .iter()
+            .filter_map(|i| match i {
+                ConversationItem::UserMessage { uuid, .. } => Some(uuid.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users.len(), 1, "the replayed frame is not a second message");
+        let uuid = users[0].clone().expect("the echo carries the sent uuid");
+        let reasoning: Vec<_> = snapshot
+            .iter()
+            .filter_map(|i| match i {
+                ConversationItem::Reasoning { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, vec!["Let me think."]);
+        assert!(snapshot
+            .iter()
+            .any(|i| matches!(i, ConversationItem::AssistantText { text, .. } if text == "Hello")));
+
+        let control = store.managed_session_control(sid).expect("history control");
+        let ask = |action| {
+            let control = control.clone();
+            async move {
+                let (reply, verdict) = tokio::sync::oneshot::channel();
+                control
+                    .send(ManagedSessionControl { action, reply })
+                    .unwrap();
+                tokio::time::timeout(std::time::Duration::from_secs(5), verdict)
+                    .await
+                    .expect("answered")
+                    .expect("driver replied")
+            }
+        };
+        assert_eq!(
+            ask(SessionControlAction::Compact { instructions: None }).await,
+            Ok(json!({ "queued": true }))
+        );
+        assert!(
+            settles(|| store
+                .get(sid)
+                .is_some_and(|s| s.compaction_count == 1 && !s.compacting))
+            .await
+        );
+        assert!(store.get(sid).unwrap().last_compact_at.is_some());
+        let snapshot = items();
+        assert!(snapshot.iter().any(|i| matches!(i,
+            ConversationItem::SlashCommand { name, .. } if name == "compact")));
+        assert!(snapshot.iter().any(|i| matches!(i,
+            ConversationItem::Compaction { trigger: Some(t), pre_tokens: Some(25000), post_tokens: Some(2764), .. }
+                if t == "manual")));
+
+        let preview = ask(SessionControlAction::RewindFiles {
+            user_message_id: uuid.clone(),
+            dry_run: true,
+        })
+        .await
+        .expect("a dry run succeeds");
+        assert_eq!(preview["canRewind"], true);
+        assert_eq!(preview["filesChanged"], json!(["a.txt"]));
+        assert_eq!(
+            ask(SessionControlAction::RewindFiles {
+                user_message_id: uuid,
+                dry_run: false,
+            })
+            .await,
+            Err("No file checkpoint found for this message.".to_string())
+        );
+        let refused = ask(SessionControlAction::Revert {
+            user_message_id: Some("x".into()),
+            before_turn_id: None,
+        })
+        .await
+        .unwrap_err();
+        assert!(refused.contains("rewindFiles"), "{refused}");
+
+        store.terminate_managed(sid);
+    }
+
     /// A resumed stream session opens with its prior history (its driver only
     /// narrates new turns), seeded once from the transcript — never on top of a
     /// log that already exists.
@@ -4467,6 +5532,8 @@ kill "$bg" 2>/dev/null
                 effort: None,
                 permission_mode: None,
                 resume: None,
+                fork_session: false,
+                resume_at: None,
                 extra_args: vec![],
                 env: HashMap::new(),
                 yolo: false,
@@ -4728,6 +5795,8 @@ done
                 effort: None,
                 permission_mode: None,
                 resume: None,
+                fork_session: false,
+                resume_at: None,
                 extra_args: vec![],
                 env: HashMap::new(),
                 yolo: false,

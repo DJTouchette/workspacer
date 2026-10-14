@@ -232,9 +232,16 @@ pub(crate) fn install_config(
                 spawn,
             ));
         }
+        let forks = coordinator.clone();
         options = options.handler("agents.spawn", move |caller, params| {
             let coordinator = coordinator.clone();
             async move { coordinator.spawn_for(caller, params).await }
+        });
+        // A fork is a launch: same coordinator, admission and journal as
+        // agents.spawn, with the source's launch record as its template.
+        options = options.handler("agents.fork", move |caller, params| {
+            let coordinator = forks.clone();
+            async move { coordinator.fork_for(caller, params).await }
         });
     }
     options = manager_requests::install(options, workflow.requests.clone());

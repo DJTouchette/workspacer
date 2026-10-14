@@ -8,6 +8,9 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
         "claude.approve" => &["reason"],
         "agents.sendMessage" => &["fromSessionId"],
         "claude.answer" => &["text"],
+        "claude.compact" => &["instructions"],
+        "claude.rewindFiles" => &["userMessageId"],
+        "claude.revert" => &["userMessageId", "beforeTurnId"],
         _ => &[],
     };
     for key in texts {
@@ -70,6 +73,27 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
     {
         bail!("on must be a boolean");
     }
+    if method == "claude.rewindFiles"
+        && params
+            .get("preview")
+            .is_some_and(|value| !value.is_null() && !value.is_boolean())
+    {
+        bail!("preview must be a boolean");
+    }
+    if method == "claude.rewindFiles"
+        && params["userMessageId"]
+            .as_str()
+            .is_none_or(|id| id.is_empty())
+    {
+        bail!("claude.rewindFiles requires {{ sessionId, userMessageId }}");
+    }
+    if method == "claude.revert"
+        && ["userMessageId", "beforeTurnId"]
+            .iter()
+            .all(|key| params[*key].as_str().is_none_or(|id| id.is_empty()))
+    {
+        bail!("claude.revert requires {{ sessionId, userMessageId | beforeTurnId }}");
+    }
     if method == "claude.answer" {
         for key in ["answers", "answerKinds"] {
             if let Some(value) = params.get(key).filter(|value| !value.is_null()) {
@@ -128,5 +152,57 @@ mod tests {
         }
         // The field means nothing to other methods and is not policed there.
         assert!(validate("claude.approve", &mut json!({"delivery":"later"})).is_ok());
+    }
+
+    #[test]
+    fn history_controls_name_their_target_with_typed_ids() {
+        for (method, ok) in [
+            ("claude.compact", json!({"sessionId":"s"})),
+            (
+                "claude.compact",
+                json!({"sessionId":"s","instructions":"keep the API notes"}),
+            ),
+            (
+                "claude.rewindFiles",
+                json!({"sessionId":"s","userMessageId":"u"}),
+            ),
+            (
+                "claude.rewindFiles",
+                json!({"sessionId":"s","userMessageId":"u","preview":true}),
+            ),
+            (
+                "claude.revert",
+                json!({"sessionId":"s","userMessageId":"u"}),
+            ),
+            ("claude.revert", json!({"sessionId":"s","beforeTurnId":"t"})),
+        ] {
+            assert!(validate(method, &mut ok.clone()).is_ok(), "{method} {ok}");
+        }
+        for (method, bad) in [
+            ("claude.compact", json!({"sessionId":"s","instructions":7})),
+            ("claude.rewindFiles", json!({"sessionId":"s"})),
+            (
+                "claude.rewindFiles",
+                json!({"sessionId":"s","userMessageId":""}),
+            ),
+            (
+                "claude.rewindFiles",
+                json!({"sessionId":"s","userMessageId":3}),
+            ),
+            (
+                "claude.rewindFiles",
+                json!({"sessionId":"s","userMessageId":"u","preview":"yes"}),
+            ),
+            ("claude.revert", json!({"sessionId":"s"})),
+            (
+                "claude.revert",
+                json!({"sessionId":"s","beforeTurnId":["t"]}),
+            ),
+        ] {
+            assert!(
+                validate(method, &mut bad.clone()).is_err(),
+                "{method} {bad}"
+            );
+        }
     }
 }

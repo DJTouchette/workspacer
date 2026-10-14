@@ -296,6 +296,9 @@ pub fn router_with_host(state: ApiState, bind_host: Option<String>) -> Router {
         )
         .route("/sessions/:id/tasks/:task_id/output", get(get_task_output))
         .route("/sessions/:id/tasks/:task_id/stop", post(post_task_stop))
+        .route("/sessions/:id/compact", post(post_compact))
+        .route("/sessions/:id/rewind-files", post(post_rewind_files))
+        .route("/sessions/:id/revert", post(post_revert))
         .route("/sessions/:id/handoff", post(post_handoff))
         .route("/conversation/stream", get(conversation_stream))
         .route("/events", get(event_stream))
@@ -1668,6 +1671,167 @@ async fn get_task_output(
     .into_response()
 }
 
+/// `POST /sessions/:id/compact {instructions?}` — summarize the
+/// conversation now (Claude: `/compact [instructions]` as a user message;
+/// Codex: `thread/compact/start`). Progress shows on the row (`compacting`)
+/// and the boundary lands as a `compaction` conversation item.
+#[derive(Debug, Default, Deserialize)]
+struct CompactPayload {
+    #[serde(default)]
+    instructions: Option<String>,
+}
+
+/// `POST /sessions/:id/rewind-files {user_message_id, dry_run?}` — restore
+/// files to their state at that user message (Claude `rewind_files`). The
+/// conversation is untouched.
+#[derive(Debug, Deserialize)]
+struct RewindFilesPayload {
+    user_message_id: String,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+/// `POST /sessions/:id/revert {user_message_id? | before_turn_id?}` — drop
+/// that turn and every later one from the thread (Codex `thread/revert`).
+/// Files are untouched.
+#[derive(Debug, Default, Deserialize)]
+struct RevertPayload {
+    #[serde(default)]
+    user_message_id: Option<String>,
+    #[serde(default)]
+    before_turn_id: Option<String>,
+}
+
+/// Longest compaction instruction accepted (it rides a user message).
+const MAX_COMPACT_INSTRUCTIONS: usize = 4000;
+
+/// A provider message / turn id: opaque, bounded, and plain.
+pub(crate) fn valid_history_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 200
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b':' | b'.'))
+}
+
+async fn post_compact(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(body): Json<CompactPayload>,
+) -> Response {
+    if body
+        .instructions
+        .as_deref()
+        .is_some_and(|i| i.len() > MAX_COMPACT_INSTRUCTIONS)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "compaction instructions are too long",
+        )
+            .into_response();
+    }
+    session_control(
+        &store,
+        &id,
+        crate::session::store::SessionControlAction::Compact {
+            instructions: body.instructions,
+        },
+    )
+    .await
+}
+
+async fn post_rewind_files(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(body): Json<RewindFilesPayload>,
+) -> Response {
+    if !valid_history_id(&body.user_message_id) {
+        return (StatusCode::BAD_REQUEST, "invalid user_message_id").into_response();
+    }
+    session_control(
+        &store,
+        &id,
+        crate::session::store::SessionControlAction::RewindFiles {
+            user_message_id: body.user_message_id,
+            dry_run: body.dry_run,
+        },
+    )
+    .await
+}
+
+async fn post_revert(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+    Json(body): Json<RevertPayload>,
+) -> Response {
+    let ids = [&body.user_message_id, &body.before_turn_id];
+    if ids.iter().all(|i| i.is_none())
+        || ids
+            .iter()
+            .any(|i| i.as_deref().is_some_and(|i| !valid_history_id(i)))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "revert needs a valid user_message_id or before_turn_id",
+        )
+            .into_response();
+    }
+    session_control(
+        &store,
+        &id,
+        crate::session::store::SessionControlAction::Revert {
+            user_message_id: body.user_message_id,
+            before_turn_id: body.before_turn_id,
+        },
+    )
+    .await
+}
+
+/// How long a history control may take to be answered by the provider.
+const SESSION_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Hand one history control to the session's live driver and answer with
+/// the provider's verdict: `200 {ok: true, result}` (the provider's own
+/// result object), `502 {ok: false, error}` when it refused, `501` when the
+/// session has no driver that speaks these controls.
+async fn session_control(
+    store: &SessionStore,
+    id: &str,
+    action: crate::session::store::SessionControlAction,
+) -> Response {
+    if !valid_session_id(id) {
+        return (StatusCode::BAD_REQUEST, "invalid session id").into_response();
+    }
+    let Some(control) = store.managed_session_control(id) else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({ "ok": false, "error": "this needs a live stream-transport Claude or Codex session" })),
+        )
+            .into_response();
+    };
+    let (reply, verdict) = tokio::sync::oneshot::channel();
+    if control
+        .send(crate::session::store::ManagedSessionControl { action, reply })
+        .is_err()
+    {
+        return (StatusCode::GONE, "session driver is gone").into_response();
+    }
+    match tokio::time::timeout(SESSION_CONTROL_TIMEOUT, verdict).await {
+        Ok(Ok(Ok(result))) => Json(json!({ "ok": true, "result": result })).into_response(),
+        Ok(Ok(Err(error))) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "ok": false, "error": error })),
+        )
+            .into_response(),
+        Ok(Err(_)) => (StatusCode::GONE, "session driver is gone").into_response(),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({ "ok": false, "error": "the provider did not answer" })),
+        )
+            .into_response(),
+    }
+}
+
 /// Stop ONE background task through the CLI's own `stop_task` control
 /// request — the same request its task UI sends. No signal is ever sent from
 /// here: the CLI owns its task processes and reports the outcome through the
@@ -2187,11 +2351,13 @@ mod tests {
         let out = dir.join("argv.txt");
         // The deliberate exit can trigger a second, fallback provider launch.
         // Publish the first complete invocation without letting that fallback
-        // replace the native argv this fixture is supposed to observe.
+        // replace the native argv this fixture is supposed to observe. A
+        // `--version` probe (the Claude stream driver asks before it launches)
+        // is not a launch and records nothing.
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nrecord='{0}'.$$.part\nprintf '%s\\n' \"$@\" > \"$record\"\nln \"$record\" '{0}' 2>/dev/null\nrm -f \"$record\"\nexit 1\n",
+                "#!/bin/sh\n[ \"$1\" = --version ] && exit 1\nrecord='{0}'.$$.part\nprintf '%s\\n' \"$@\" > \"$record\"\nln \"$record\" '{0}' 2>/dev/null\nrm -f \"$record\"\nexit 1\n",
                 out.display()
             ),
         )
@@ -2827,6 +2993,7 @@ mod tests {
             vec![
                 ConversationItem::UserMessage {
                     text: "task".into(),
+                    uuid: None,
                     timestamp: None,
                 },
                 ConversationItem::ToolResult {
@@ -2880,6 +3047,7 @@ mod tests {
             "poll-stream",
             vec![ConversationItem::UserMessage {
                 text: "first prompt".into(),
+                uuid: None,
                 timestamp: None,
             }],
         );
@@ -2906,6 +3074,7 @@ mod tests {
             "poll-stream",
             vec![ConversationItem::UserMessage {
                 text: "follow-up".into(),
+                uuid: None,
                 timestamp: None,
             }],
         );
@@ -2939,6 +3108,7 @@ mod tests {
                 "paged",
                 vec![ConversationItem::UserMessage {
                     text: format!("m{i}"),
+                    uuid: None,
                     timestamp: None,
                 }],
             );
@@ -2965,6 +3135,7 @@ mod tests {
             vec![
                 ConversationItem::UserMessage {
                     text: "one".into(),
+                    uuid: None,
                     timestamp: None,
                 },
                 ConversationItem::AssistantText {
@@ -2973,6 +3144,7 @@ mod tests {
                 },
                 ConversationItem::UserMessage {
                     text: "three".into(),
+                    uuid: None,
                     timestamp: None,
                 },
             ],
@@ -3398,6 +3570,117 @@ mod tests {
             StatusCode::NOT_FOUND
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `/compact`, `/rewind-files` and `/revert` hand their action to the
+    /// session's history-control channel and answer with the provider's own
+    /// verdict; bad ids never reach a driver.
+    #[tokio::test]
+    async fn history_controls_route_through_the_driver() {
+        use crate::session::store::{ManagedSessionControl, SessionControlAction};
+        let state = test_state();
+        let sid = "s-hist";
+        assert_eq!(
+            request(
+                state.clone(),
+                post_json("/sessions/s-hist/compact", json!({}))
+            )
+            .await
+            .0,
+            StatusCode::NOT_IMPLEMENTED,
+            "no live driver"
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel::<ManagedSessionControl>();
+        state.store.register_managed_session_control(sid, tx);
+        let driver = tokio::spawn(async move {
+            let compact = rx.recv().await.unwrap();
+            assert_eq!(
+                compact.action,
+                SessionControlAction::Compact {
+                    instructions: Some("keep the API notes".into())
+                }
+            );
+            let _ = compact.reply.send(Ok(json!({ "queued": true })));
+            let rewind = rx.recv().await.unwrap();
+            assert_eq!(
+                rewind.action,
+                SessionControlAction::RewindFiles {
+                    user_message_id: "0b6f-uuid".into(),
+                    dry_run: true
+                }
+            );
+            let _ = rewind
+                .reply
+                .send(Ok(json!({ "canRewind": true, "filesChanged": ["a.txt"] })));
+            let revert = rx.recv().await.unwrap();
+            assert_eq!(
+                revert.action,
+                SessionControlAction::Revert {
+                    user_message_id: None,
+                    before_turn_id: Some("turn-2".into())
+                }
+            );
+            let _ = revert.reply.send(Err("Claude does not revert".into()));
+        });
+        let (status, body) = request(
+            state.clone(),
+            post_json(
+                "/sessions/s-hist/compact",
+                json!({ "instructions": "keep the API notes" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body, json!({ "ok": true, "result": { "queued": true } }));
+        let (status, body) = request(
+            state.clone(),
+            post_json(
+                "/sessions/s-hist/rewind-files",
+                json!({ "user_message_id": "0b6f-uuid", "dry_run": true }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["result"]["filesChanged"], json!(["a.txt"]));
+        let (status, body) = request(
+            state.clone(),
+            post_json(
+                "/sessions/s-hist/revert",
+                json!({ "before_turn_id": "turn-2" }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(String::from_utf8_lossy(&body).contains("does not revert"));
+        driver.await.unwrap();
+
+        // Refused before any driver is asked.
+        for (url, body) in [
+            (
+                "/sessions/s-hist/rewind-files",
+                json!({ "user_message_id": "../x" }),
+            ),
+            ("/sessions/s-hist/revert", json!({})),
+            (
+                "/sessions/s-hist/revert",
+                json!({ "user_message_id": "a b" }),
+            ),
+            (
+                "/sessions/s-hist/compact",
+                json!({ "instructions": "x".repeat(MAX_COMPACT_INSTRUCTIONS + 1) }),
+            ),
+        ] {
+            assert_eq!(
+                request(state.clone(), post_json(url, body)).await.0,
+                StatusCode::BAD_REQUEST,
+                "{url}"
+            );
+        }
+        assert!(valid_history_id("turn_01:abc.def-9"));
+        assert!(!valid_history_id(""));
+        assert!(!valid_history_id(&"a".repeat(201)));
     }
 
     // --- /input -------------------------------------------------------------
@@ -4635,6 +4918,7 @@ mod tests {
             vec![
                 ConversationItem::UserMessage {
                     text: "add a test".into(),
+                    uuid: None,
                     timestamp: None,
                 },
                 ConversationItem::AssistantText {

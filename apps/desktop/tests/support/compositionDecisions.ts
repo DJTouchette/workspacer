@@ -793,6 +793,46 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'agents.fork': {
+    reason:
+      "launches a NEW stream session continuing one this hub already launched, through agents.spawn's own coordinator, admission, routing and launch journal. `sessionId` and `atMessageId` only SELECT the source launch record and where its conversation is cut; provider, cwd, profile, MCP servers and model come from that record, never the caller, and no manager role, permission bypass or launch integration is inherited",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId', 'atMessageId'],
+      },
+    ],
+  },
+  'claude.compact': {
+    reason:
+      "asks an already-running agent to summarize its own conversation (the CLI's own /compact user message, or codex's thread/compact/start). The optional `instructions` are focus text for that summary, delivered to the same session the way agents.sendMessage delivers a prompt, so they reach nothing agents.sendMessage could not; no path, argv or policy value",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['instructions'],
+      },
+    ],
+  },
+  'claude.rewindFiles': {
+    reason:
+      "restores the files an already-running Claude stream session changed to their checkpoint at one of that session's own user messages, through the CLI's own rewind_files control request. `userMessageId` only SELECTS a checkpoint the CLI itself took: which files and what content come from the CLI, never the caller, and the CLI refuses symlinks, hard links and moved parents. Nothing consults the result",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['userMessageId'],
+      },
+    ],
+  },
+  'claude.revert': {
+    reason:
+      "drops one turn and every later one from an already-running Codex session's thread history through codex's own thread/revert. `userMessageId` or `beforeTurnId` only SELECTS where the cut falls; it can only remove conversation history, never add to it, and files are untouched",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['userMessageId', 'beforeTurnId'],
+      },
+    ],
+  },
   'claude.answer': {
     reason:
       "answers an agent's question prompt: `text`, `answers` and `option` are each classified as PTY bytes, the same primitive sessions.terminalInput carries. Gated by the agent's own approvals exactly as agents.sendMessage is \u2014 and that pair (agents.sendMessage + claude.approve) is recorded and accepted for the triage tier, which is where this method's composition risk already lives",
@@ -1634,6 +1674,44 @@ export const parameterDecisions: Record<
         "arms or disarms the PreToolUse parking gate for a running session: with it ON every tool call stops and waits for claude.approve, and with it OFF the agent's own configured permissions apply. It changes what the host will do without asking, which is what KindPermission means",
     },
   },
+  'agents.fork': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        "selects the source session's launch record in this hub's own journal; validated as a bounded plain id and never joined into a path",
+    },
+    atMessageId: {
+      kind: 'id',
+      reason:
+        'an opaque user-message uuid naming where the source conversation is cut; validated as a bounded plain id and never joined into a path',
+    },
+  },
+  'claude.compact': {
+    instructions: {
+      kind: 'shell',
+      reason:
+        "focus text appended to the CLI's own /compact command as one user message to an already-running provider (codex ignores it); the same reach as agents.sendMessage's text, never argv, a path or a raw PTY write",
+    },
+  },
+  'claude.rewindFiles': {
+    userMessageId: {
+      kind: 'id',
+      reason:
+        "an opaque message uuid selecting one of the CLI's own file checkpoints for that session; validated as a bounded plain id by claudemon and never joined into a path",
+    },
+  },
+  'claude.revert': {
+    userMessageId: {
+      kind: 'id',
+      reason:
+        'an opaque message uuid the session driver maps to the codex turn it landed in; validated as a bounded plain id and never joined into a path',
+    },
+    beforeTurnId: {
+      kind: 'id',
+      reason:
+        'an opaque codex turn id naming the first turn thread/revert drops; validated as a bounded plain id and never joined into a path',
+    },
+  },
   'claude.answer': {
     text: {
       kind: 'shell',
@@ -1716,6 +1794,7 @@ export const parameterDecisions: Record<
 };
 export const actors: string[] = [
   'agents.dispatchPrepare',
+  'agents.fork',
   'agents.reportProgress',
   'agents.sendMessage',
   'agents.spawn',
@@ -1724,12 +1803,15 @@ export const actors: string[] = [
   'brief.check',
   'claude.answer',
   'claude.approve',
+  'claude.compact',
   'claude.gate',
   'claude.handoffAgentBrief',
   'claude.handoffBrief',
   'claude.profiles.add',
   'claude.profiles.remove',
   'claude.profiles.update',
+  'claude.revert',
+  'claude.rewindFiles',
   'claude.sessionsForDir',
   'claude.setEffort',
   'claude.setModel',

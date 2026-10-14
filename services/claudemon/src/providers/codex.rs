@@ -52,6 +52,7 @@ use crate::session::state::{
     Pending, PendingOption, PendingOwner, PendingQuestion, PendingWrite, SessionMode,
     SubagentStatus, SubagentUpdate,
 };
+use crate::session::store::{ManagedSessionControl, SessionControlAction};
 use crate::session::{ConversationStore, Delivery, ManagedAnswer, ManagedPrompt, SessionStore};
 use crate::wrapper::pty;
 
@@ -105,8 +106,8 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
             out.push(AgentUpdate::Error(msg));
             out.push(AgentUpdate::Idle);
         }
-        // Streamed assistant text. Reasoning/command-output deltas are skipped
-        // (kept out of the conversation to avoid noise).
+        // Streamed assistant text. Command-output deltas are skipped (kept out
+        // of the conversation to avoid noise); reasoning has its own arms below.
         "item/agentMessage/delta" => {
             if let Some(text) = params
                 .get("delta")
@@ -123,6 +124,50 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 translate_item(method, item, &mut out);
             }
         }
+        // Reasoning summary text, streamed into a reasoning item keyed by the
+        // codex item id. A new summary part (`summaryIndex` > 0) starts a new
+        // paragraph of the same item. Raw reasoning (`item/reasoning/
+        // textDelta`) is deliberately not streamed: the summary is what codex
+        // shows, and raw content only stands in on the completed item when
+        // no summary exists.
+        "item/reasoning/summaryTextDelta" => {
+            if let (Some(item_id), Some(delta)) = (
+                params.get("itemId").and_then(Value::as_str),
+                params.get("delta").and_then(Value::as_str),
+            ) {
+                if !delta.is_empty() {
+                    out.push(AgentUpdate::Reasoning {
+                        item_id: item_id.to_string(),
+                        text: delta.to_string(),
+                        complete: false,
+                    });
+                }
+            }
+        }
+        "item/reasoning/summaryPartAdded" => {
+            let later_part = params
+                .get("summaryIndex")
+                .and_then(Value::as_i64)
+                .is_some_and(|i| i > 0);
+            if let Some(item_id) = params.get("itemId").and_then(Value::as_str) {
+                if later_part {
+                    out.push(AgentUpdate::Reasoning {
+                        item_id: item_id.to_string(),
+                        text: "\n\n".to_string(),
+                        complete: false,
+                    });
+                }
+            }
+        }
+        // Deprecated twin of the `contextCompaction` item, still sent by
+        // older app-servers (0.159 no longer forwards it to v2 clients). Kept
+        // as a boundary only when the item did not already record one.
+        "thread/compacted" => out.push(AgentUpdate::Compacted {
+            trigger: None,
+            pre_tokens: None,
+            post_tokens: None,
+            legacy: true,
+        }),
         "thread/started" => {
             if let Some(update) = subagent_from_thread(params) {
                 out.push(AgentUpdate::Subagent(update));
@@ -322,6 +367,58 @@ fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
     if ty == "subAgentActivity" {
         if let Some(update) = subagent_from_activity(item) {
             out.push(AgentUpdate::Subagent(update));
+        }
+        return;
+    }
+    // `ThreadItem::ContextCompaction {id}` (0.159): started = compacting,
+    // completed = the boundary. Codex does not say what triggered it or how
+    // big the context was.
+    if ty == "contextCompaction" {
+        out.push(match method {
+            "item/started" => AgentUpdate::Compacting(true),
+            _ => AgentUpdate::Compacted {
+                trigger: None,
+                pre_tokens: None,
+                post_tokens: None,
+                legacy: false,
+            },
+        });
+        return;
+    }
+    // `ThreadItem::Reasoning {id, summary[], content[]}`. Its text normally
+    // streams first (`item/reasoning/summaryTextDelta`); the completed item
+    // is the whole block, kept only when nothing streamed for its id. The
+    // summary is preferred; raw `content` only stands in when there is no
+    // summary at all (raw reasoning is opt-in on codex's side).
+    if ty == "reasoning" {
+        if method == "item/completed" {
+            let join = |key: &str| {
+                item.get(key)
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .filter(|p| !p.trim().is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    })
+                    .unwrap_or_default()
+            };
+            let summary = join("summary");
+            let text = if summary.is_empty() {
+                join("content")
+            } else {
+                summary
+            };
+            let id = item.get("id").and_then(Value::as_str).unwrap_or("");
+            if !text.is_empty() && !id.is_empty() {
+                out.push(AgentUpdate::Reasoning {
+                    item_id: id.to_string(),
+                    text,
+                    complete: true,
+                });
+            }
         }
         return;
     }
@@ -1955,6 +2052,7 @@ pub fn spawn_session(
     yolo: bool,
     headless: bool,
     resume_thread: Option<String>,
+    fork: Option<CodexFork>,
     facade: Facade,
     // The profile's CODEX_HOME and its extra argv (`codex -p <preset>`).
     // Carried, not interpreted: the daemon does not decide what a Codex
@@ -1976,6 +2074,7 @@ pub fn spawn_session(
             yolo,
             headless,
             resume_thread,
+            fork,
             &facade,
             &extras,
             &mut evidence,
@@ -2286,7 +2385,7 @@ async fn run_rollout_fallback(
                     // what the agent actually receives — same contract as the ws
                     // path, which is what carries the `wks-result` schema.
                     if store.with_generation(session_id, evidence.generation, || {
-                        conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                        conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), uuid: None, timestamp: None }]);
                     }).is_none() { break; }
                     let sent = with_instructions(&mut pending_instructions, text);
                     write_prompt(&tui, &sent).await;
@@ -2415,6 +2514,9 @@ async fn run_session(
     // A prior life's app-server thread to `thread/resume` instead of starting
     // fresh — headless only (the TUI can't rejoin an arbitrary thread).
     resume_thread: Option<String>,
+    // Fork the source thread into a new one (`thread/fork`) instead of
+    // starting fresh — headless only, like resume.
+    fork: Option<CodexFork>,
     facade: &Facade,
     extras: &SpawnExtras,
     evidence: &mut DriverEvidence,
@@ -2526,6 +2628,10 @@ async fn run_session(
         // driver answers AskUserQuestion through.
         let (atx, arx) = mpsc::unbounded_channel::<ManagedAnswer>();
         store.register_managed_answer(session_id, atx);
+        // Conversation-history controls: `thread/compact/start`,
+        // `thread/revert` and fork points (see `HistoryControls`).
+        let (sctx, scrx) = mpsc::unbounded_channel::<ManagedSessionControl>();
+        store.register_managed_session_control(session_id, sctx);
         // Approval policy, live-switchable via `/permission-mode`: the adapter
         // mediates every approval request on this ws path, so flipping the flag
         // takes effect on the next request without touching the session. A
@@ -2568,9 +2674,11 @@ async fn run_session(
             )
         };
 
-        (rx, drx, mrx, irx, arx, policy, tui_pty)
+        (rx, drx, mrx, irx, arx, scrx, policy, tui_pty)
     });
-    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, policy, tui_pty)) = registration else {
+    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, mut scrx, policy, tui_pty)) =
+        registration
+    else {
         evidence.reason = DriverExit::Superseded;
         evidence.cleanup = child.cleanup().await;
         evidence.exit_status = child.exit_status;
@@ -2609,11 +2717,16 @@ async fn run_session(
         // thread never runs `thread/start`, so without the same params here a
         // resumed worker silently reverts to sandboxed. Non-bypassed sessions
         // send neither param and keep codex's resolved defaults.
-        match &thread_id {
-            Some(tid) => {
+        match (&thread_id, &fork) {
+            (Some(tid), _) => {
                 let _ = out_tx.send(thread_resume_request(tid, headless, yolo));
             }
-            None => {
+            // Same id-101 bootstrap as `thread/start`: the fork's response
+            // names the NEW thread exactly as a start's does.
+            (None, Some(fork)) => {
+                let _ = out_tx.send(thread_fork_request(fork, cwd, headless, yolo));
+            }
+            (None, None) => {
                 let _ = out_tx.send(thread_start_request(cwd, headless, yolo));
             }
         }
@@ -2644,6 +2757,8 @@ async fn run_session(
     // The running turn (which `turn/interrupt` and `turn/steer` must name),
     // our requests in flight, and messages waiting for a turn to take them.
     let mut input = TurnInput::default();
+    // Which turn each of our messages landed in, for compact / revert / fork.
+    let mut history = HistoryControls::default();
     // A closed answer channel (session terminating) only disables
     // its arm; the input channel closing is what ends the driver.
     let mut answers_open = true;
@@ -2674,6 +2789,21 @@ async fn run_session(
                         let line = line.trim();
                         if line.is_empty() { continue; }
                         let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+                        // Our history controls' answers never reach the
+                        // turn machinery; a confirmed revert cuts the shown
+                        // conversation where the dropped turns began.
+                        if let Some(cut) = history.settle(&value) {
+                            if let Some(uuid) = cut {
+                                let cut = store.with_generation(session_id, evidence.generation, || {
+                                    conv.truncate_before_user(session_id, &uuid);
+                                });
+                                if cut.is_none() { break 'driver DriverExit::Superseded; }
+                            }
+                            continue;
+                        }
+                        if let Some(method) = value.get("method").and_then(Value::as_str) {
+                            history.observe(method, value.get("params").unwrap_or(&Value::Null));
+                        }
                         let applied = store.with_generation(session_id, evidence.generation, || handle_message(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
@@ -2786,6 +2916,13 @@ async fn run_session(
                 }
                 None => break DriverExit::ModelClosed,
             },
+            control = scrx.recv() => {
+                // A closed channel only means teardown is under way; the
+                // input channel closing is what ends the driver.
+                if let Some(control) = control {
+                    history.act(control, thread_id.as_deref().filter(|_| subscribed), &out_tx, &mut req_id);
+                }
+            },
             result = writer.join_next() => break result.and_then(Result::ok).unwrap_or(DriverExit::WriterTaskFailed),
             status = child.exited() => {
                 break if status.is_ok() { DriverExit::ChildExited } else { DriverExit::ChildWaitFailed };
@@ -2794,12 +2931,16 @@ async fn run_session(
         // A user message, from either send channel. Echo it verbatim, but
         // prepend the role instructions (once) to what's actually sent.
         if let Some(ManagedPrompt { text, delivery, .. }) = incoming {
+            // The echo's uuid names this message to the history controls
+            // once codex places it in a turn (see `HistoryControls`).
+            let uuid = uuid::Uuid::new_v4().to_string();
             if store
                 .with_generation(session_id, evidence.generation, || {
                     conv.push(
                         session_id,
                         vec![ConversationItem::UserMessage {
                             text: text.clone(),
+                            uuid: Some(uuid.clone()),
                             timestamp: None,
                         }],
                     );
@@ -2810,6 +2951,7 @@ async fn run_session(
                 break DriverExit::Superseded;
             }
             let sent = with_instructions(&mut pending_instructions, text);
+            history.expect(uuid, sent.clone());
             match &thread_id {
                 Some(tid) => input.submit(&out_tx, &mut req_id, tid, sent, delivery, &policy),
                 // Thread not open yet — buffer the (already-wrapped) prompt.
@@ -3315,6 +3457,27 @@ fn thread_start_request(cwd: &str, headless: bool, yolo: bool) -> Value {
     json!({ "jsonrpc": "2.0", "id": 101, "method": "thread/start", "params": params })
 }
 
+/// A fork of another session's thread: `thread/fork {threadId, lastTurnId?}`
+/// (0.159 `ThreadForkParams`; `lastTurnId` is the last turn kept, inclusive).
+/// The experimental `beforeTurnId` is not used: this client does not opt into
+/// the experimental API.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexFork {
+    pub thread: String,
+    pub last_turn_id: Option<String>,
+}
+
+/// The headless bootstrap `thread/fork` (id 101, in place of `thread/start`),
+/// with the same sandbox/approval overrides a start states.
+fn thread_fork_request(fork: &CodexFork, cwd: &str, headless: bool, yolo: bool) -> Value {
+    let mut params = json!({ "threadId": fork.thread, "cwd": cwd });
+    if let Some(turn) = &fork.last_turn_id {
+        params["lastTurnId"] = json!(turn);
+    }
+    apply_thread_bypass(&mut params, headless, yolo);
+    json!({ "jsonrpc": "2.0", "id": 101, "method": "thread/fork", "params": params })
+}
+
 /// The headless `thread/resume` (id 2) — the resume path skips `thread/start`
 /// entirely, so it needs the same overrides or a resumed bypassed worker comes
 /// back sandboxed.
@@ -3558,6 +3721,253 @@ const MAX_STEER_ATTEMPTS: u8 = 3;
 /// a long silent tool call is a legitimate quiet turn — and a `turn/start`
 /// into a turn that IS still running steers it rather than racing it.
 const STALLED_TURN: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How many sends / turns [`HistoryControls`] remembers.
+const HISTORY_KEPT: usize = 256;
+
+/// What the conversation-history controls (`thread/compact/start`,
+/// `thread/revert`, a fork point) need to know about this thread: which turn
+/// each of our user messages landed in, and the order turns started in.
+///
+/// A user message is named by the uuid on its conversation echo. Codex names
+/// the turn only later, on the `userMessage` item it creates for the input
+/// (`item/started {turnId, item: {type: "userMessage", content}}`), so sends
+/// wait in `expected` until an item with the same text claims them, oldest
+/// first. Only this driver life's turns are known: a resumed session's
+/// earlier turns have no uuids here.
+#[derive(Debug, Default)]
+struct HistoryControls {
+    /// (echo uuid, text as sent), oldest first.
+    expected: VecDeque<(String, String)>,
+    /// (echo uuid, turn id), oldest first.
+    user_turns: VecDeque<(String, String)>,
+    /// Turn ids in start order.
+    turns: VecDeque<String>,
+    /// Codex `userMessage` item ids that already claimed a send.
+    claimed: VecDeque<String>,
+    /// Our control requests awaiting their JSON-RPC response, by request id.
+    waiting: HashMap<u64, ControlWait>,
+}
+
+#[derive(Debug)]
+enum ControlWait {
+    Compact(tokio::sync::oneshot::Sender<Result<Value, String>>),
+    Revert {
+        reply: tokio::sync::oneshot::Sender<Result<Value, String>>,
+        /// The first turn the revert drops.
+        turn: String,
+        /// The first user message the revert drops, when known: the retained
+        /// conversation is cut there once codex confirms.
+        from_user: Option<String>,
+    },
+}
+
+fn bounded_push<T>(queue: &mut VecDeque<T>, value: T) {
+    if queue.len() == HISTORY_KEPT {
+        queue.pop_front();
+    }
+    queue.push_back(value);
+}
+
+impl HistoryControls {
+    fn expect(&mut self, uuid: String, sent: String) {
+        bounded_push(&mut self.expected, (uuid, sent));
+    }
+
+    /// Learn turns and user-message placement from one notification.
+    fn observe(&mut self, method: &str, params: &Value) {
+        match method {
+            "turn/started" => {
+                if let Some(turn) = params.pointer("/turn/id").and_then(Value::as_str) {
+                    if self.turns.back().map(String::as_str) != Some(turn) {
+                        bounded_push(&mut self.turns, turn.to_string());
+                    }
+                }
+            }
+            "item/started" | "item/completed" => {
+                let item = params.get("item").unwrap_or(&Value::Null);
+                if item.get("type").and_then(Value::as_str) != Some("userMessage") {
+                    return;
+                }
+                let Some(turn) = params.get("turnId").and_then(Value::as_str) else {
+                    return;
+                };
+                // One codex item claims ONE send, once: `item/started` claims
+                // it, and the same item's `item/completed` only stands in when
+                // the start was missed. Claiming on both let one item take two
+                // identical sends and misplace every later one.
+                let item_id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+                if !item_id.is_empty() {
+                    if self.claimed.iter().any(|seen| seen == item_id) {
+                        return;
+                    }
+                    bounded_push(&mut self.claimed, item_id.to_string());
+                }
+                let text = item
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter(|p| p.get("type").and_then(Value::as_str) == Some("text"))
+                            .filter_map(|p| p.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default();
+                if let Some(at) = self.expected.iter().position(|(_, sent)| *sent == text) {
+                    if let Some((uuid, _)) = self.expected.remove(at) {
+                        bounded_push(&mut self.user_turns, (uuid, turn.to_string()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn turn_of(&self, user_message_id: &str) -> Option<&str> {
+        self.user_turns
+            .iter()
+            .find(|(uuid, _)| uuid == user_message_id)
+            .map(|(_, turn)| turn.as_str())
+    }
+
+    /// The first of our user messages that landed in `turn`.
+    fn first_user_in(&self, turn: &str) -> Option<&str> {
+        self.user_turns
+            .iter()
+            .find(|(_, t)| t == turn)
+            .map(|(uuid, _)| uuid.as_str())
+    }
+
+    /// The fork point for "continue from before this user message": the turn
+    /// before the message's turn, which `thread/fork` keeps through
+    /// (`lastTurnId`, inclusive).
+    fn fork_point(&self, user_message_id: &str) -> Result<Value, String> {
+        let turn = self.turn_of(user_message_id).ok_or_else(|| {
+            "that message's turn is unknown to this session (sent before a resume or not yet started)".to_string()
+        })?;
+        let at = self
+            .turns
+            .iter()
+            .position(|t| t == turn)
+            .ok_or_else(|| "that message's turn is unknown to this session".to_string())?;
+        match at.checked_sub(1).and_then(|i| self.turns.get(i)) {
+            Some(previous) => Ok(json!({ "lastTurnId": previous })),
+            None => Err("nothing comes before that message: start a fresh session instead".into()),
+        }
+    }
+
+    /// Carry out one control. Requests go out with ids from the shared
+    /// counter; their answers come back through [`Self::settle`].
+    fn act(
+        &mut self,
+        control: ManagedSessionControl,
+        thread_id: Option<&str>,
+        out_tx: &mpsc::UnboundedSender<Value>,
+        req_id: &mut u64,
+    ) {
+        let ManagedSessionControl { action, reply } = control;
+        if let SessionControlAction::RewindFiles { .. } = action {
+            let _ = reply.send(Err(
+                "Codex does not checkpoint files; claude.revert drops turns from the thread but leaves files as they are".into(),
+            ));
+            return;
+        }
+        if let SessionControlAction::ForkPoint { user_message_id } = &action {
+            let _ = reply.send(self.fork_point(user_message_id));
+            return;
+        }
+        let Some(thread) = thread_id else {
+            let _ = reply.send(Err("the codex thread is not open yet".into()));
+            return;
+        };
+        match action {
+            SessionControlAction::Compact { .. } => {
+                *req_id += 1;
+                self.waiting.insert(*req_id, ControlWait::Compact(reply));
+                let _ = out_tx.send(json!({
+                    "jsonrpc": "2.0", "id": *req_id, "method": "thread/compact/start",
+                    "params": { "threadId": thread }
+                }));
+            }
+            SessionControlAction::Revert {
+                user_message_id,
+                before_turn_id,
+            } => {
+                let turn = match (&before_turn_id, &user_message_id) {
+                    (Some(turn), _) => Some(turn.clone()),
+                    (None, Some(uuid)) => self.turn_of(uuid).map(str::to_owned),
+                    (None, None) => None,
+                };
+                let Some(turn) = turn else {
+                    let _ = reply.send(Err(
+                        "that message's turn is unknown to this session (sent before a resume or not yet started); name the turn with beforeTurnId".into(),
+                    ));
+                    return;
+                };
+                let from_user =
+                    user_message_id.or_else(|| self.first_user_in(&turn).map(str::to_owned));
+                *req_id += 1;
+                self.waiting.insert(
+                    *req_id,
+                    ControlWait::Revert {
+                        reply,
+                        turn: turn.clone(),
+                        from_user,
+                    },
+                );
+                let _ = out_tx.send(json!({
+                    "jsonrpc": "2.0", "id": *req_id, "method": "thread/revert",
+                    "params": { "threadId": thread, "beforeTurnId": turn }
+                }));
+            }
+            SessionControlAction::RewindFiles { .. } | SessionControlAction::ForkPoint { .. } => {}
+        }
+    }
+
+    /// If `value` answers one of our control requests, settle it and return
+    /// the user message the conversation should now be cut before (a
+    /// successful revert). `None` = not ours, or nothing to cut.
+    fn settle(&mut self, value: &Value) -> Option<Option<String>> {
+        if value.get("method").is_some() {
+            return None;
+        }
+        let id = value.get("id").and_then(Value::as_u64)?;
+        let wait = self.waiting.remove(&id)?;
+        let outcome = match value.get("error") {
+            Some(err) => Err(err
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| err.to_string())),
+            None => Ok(value.get("result").cloned().unwrap_or_else(|| json!({}))),
+        };
+        Some(match wait {
+            ControlWait::Compact(reply) => {
+                let _ = reply.send(outcome);
+                None
+            }
+            ControlWait::Revert {
+                reply,
+                turn,
+                from_user,
+            } => {
+                let reverted = outcome.is_ok();
+                let _ = reply.send(outcome);
+                if !reverted {
+                    return Some(None);
+                }
+                // The dropped turns are gone from the thread: forget them.
+                if let Some(at) = self.turns.iter().position(|t| *t == turn) {
+                    let dropped: Vec<String> = self.turns.drain(at..).collect();
+                    self.user_turns.retain(|(_, t)| !dropped.contains(t));
+                }
+                from_user
+            }
+        })
+    }
+}
 
 /// How user messages reach the thread: `turn/start` when nothing is running,
 /// `turn/steer` (naming the running turn) when something is.
@@ -3912,6 +4322,276 @@ async fn write_msg(stdin: &mut ChildStdin, value: &Value) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Reasoning, compaction and history controls ──────────────────────
+
+    fn reasoning(id: &str, text: &str, complete: bool) -> AgentUpdate {
+        AgentUpdate::Reasoning {
+            item_id: id.into(),
+            text: text.into(),
+            complete,
+        }
+    }
+
+    /// Reasoning summaries stream into one reasoning item per codex item; a
+    /// later summary part is a new paragraph; raw reasoning text never
+    /// streams. Shapes from the 0.159 protocol (`v2/item.rs`).
+    #[test]
+    fn reasoning_summary_streams_and_raw_text_does_not() {
+        assert_eq!(
+            translate(
+                "item/reasoning/summaryTextDelta",
+                &json!({"threadId":"t","turnId":"u","itemId":"rs_1","delta":"Weighing","summaryIndex":0}),
+            ),
+            vec![reasoning("rs_1", "Weighing", false)]
+        );
+        assert!(translate(
+            "item/reasoning/summaryPartAdded",
+            &json!({"threadId":"t","turnId":"u","itemId":"rs_1","summaryIndex":0}),
+        )
+        .is_empty());
+        assert_eq!(
+            translate(
+                "item/reasoning/summaryPartAdded",
+                &json!({"threadId":"t","turnId":"u","itemId":"rs_1","summaryIndex":1}),
+            ),
+            vec![reasoning("rs_1", "\n\n", false)]
+        );
+        assert!(translate(
+            "item/reasoning/textDelta",
+            &json!({"threadId":"t","turnId":"u","itemId":"rs_1","delta":"raw","contentIndex":0}),
+        )
+        .is_empty());
+    }
+
+    /// The completed `reasoning` item is the whole block (dropped downstream
+    /// when deltas already streamed it): summary first, raw content only
+    /// when there is no summary, nothing for an empty block.
+    #[test]
+    fn completed_reasoning_prefers_summary_over_content() {
+        let done = |item: Value| translate("item/completed", &json!({ "item": item }));
+        assert_eq!(
+            done(json!({"type":"reasoning","id":"rs_1","summary":["A","B"],"content":["raw"]})),
+            vec![reasoning("rs_1", "A\n\nB", true)]
+        );
+        assert_eq!(
+            done(json!({"type":"reasoning","id":"rs_2","summary":[],"content":["raw"]})),
+            vec![reasoning("rs_2", "raw", true)]
+        );
+        assert!(done(json!({"type":"reasoning","id":"rs_3","summary":[],"content":[]})).is_empty());
+        assert!(translate(
+            "item/started",
+            &json!({"item":{"type":"reasoning","id":"rs_1","summary":[],"content":[]}})
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn context_compaction_item_and_deprecated_notification() {
+        assert_eq!(
+            translate(
+                "item/started",
+                &json!({"item":{"type":"contextCompaction","id":"c1"}})
+            ),
+            vec![AgentUpdate::Compacting(true)]
+        );
+        let boundary = |legacy| AgentUpdate::Compacted {
+            trigger: None,
+            pre_tokens: None,
+            post_tokens: None,
+            legacy,
+        };
+        assert_eq!(
+            translate(
+                "item/completed",
+                &json!({"item":{"type":"contextCompaction","id":"c1"}})
+            ),
+            vec![boundary(false)]
+        );
+        assert_eq!(
+            translate("thread/compacted", &json!({"threadId":"t","turnId":"u"})),
+            vec![boundary(true)]
+        );
+    }
+
+    fn user_item(turn: &str, text: &str) -> Value {
+        user_item_id(&format!("{turn}/{text}"), turn, text)
+    }
+
+    fn user_item_id(id: &str, turn: &str, text: &str) -> Value {
+        json!({"threadId":"th","turnId":turn,"item":{"type":"userMessage","id":id,"content":[{"type":"text","text":text}]}})
+    }
+
+    /// Two identical sends land in their own turns: each codex item claims
+    /// one send once, its completed copy claims nothing, and a completed item
+    /// whose start was missed still places its send.
+    #[test]
+    fn identical_sends_are_placed_in_their_own_turns() {
+        let mut h = HistoryControls::default();
+        h.expect("m1".into(), "again".into());
+        h.expect("m2".into(), "again".into());
+        h.expect("m3".into(), "again".into());
+        h.observe("turn/started", &json!({"turn":{"id":"t1"}}));
+        h.observe("item/started", &user_item_id("i1", "t1", "again"));
+        h.observe("item/completed", &user_item_id("i1", "t1", "again"));
+        h.observe("turn/started", &json!({"turn":{"id":"t2"}}));
+        h.observe("item/started", &user_item_id("i2", "t2", "again"));
+        h.observe("item/completed", &user_item_id("i2", "t2", "again"));
+        h.observe("turn/started", &json!({"turn":{"id":"t3"}}));
+        // Only the completed notification reached us for this one.
+        h.observe("item/completed", &user_item_id("i3", "t3", "again"));
+        assert_eq!(h.turn_of("m1"), Some("t1"));
+        assert_eq!(h.turn_of("m2"), Some("t2"));
+        assert_eq!(h.turn_of("m3"), Some("t3"));
+        assert_eq!(h.fork_point("m3"), Ok(json!({"lastTurnId":"t2"})));
+    }
+
+    /// Each sent message is placed in the turn codex put it in; the fork
+    /// point before a message is the turn before its turn.
+    #[test]
+    fn history_controls_place_messages_in_turns() {
+        let mut h = HistoryControls::default();
+        h.expect("m1".into(), "first".into());
+        h.expect("m2".into(), "second".into());
+        h.expect("m3".into(), "steered".into());
+        h.observe("turn/started", &json!({"turn":{"id":"t1"}}));
+        h.observe("item/started", &user_item("t1", "first"));
+        h.observe("turn/started", &json!({"turn":{"id":"t2"}}));
+        h.observe("item/started", &user_item("t2", "second"));
+        h.observe("item/started", &user_item("t2", "steered"));
+        // The completed copy of the same item claims nothing new.
+        h.observe("item/completed", &user_item("t2", "second"));
+        assert_eq!(h.turn_of("m1"), Some("t1"));
+        assert_eq!(h.turn_of("m2"), Some("t2"));
+        assert_eq!(h.turn_of("m3"), Some("t2"));
+        assert_eq!(h.first_user_in("t2"), Some("m2"));
+        assert_eq!(h.fork_point("m2"), Ok(json!({"lastTurnId":"t1"})));
+        assert!(h
+            .fork_point("m1")
+            .unwrap_err()
+            .contains("nothing comes before"));
+        assert!(h.fork_point("zz").unwrap_err().contains("unknown"));
+    }
+
+    /// `thread/compact/start` and `thread/revert` go out with fresh ids and
+    /// resolve on their responses; a confirmed revert forgets the dropped
+    /// turns and names the user message to cut the conversation at.
+    #[test]
+    fn history_controls_compact_and_revert_round_trip() {
+        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
+        let mut req_id = 10;
+        let mut h = HistoryControls::default();
+        h.expect("m1".into(), "first".into());
+        h.expect("m2".into(), "second".into());
+        h.observe("turn/started", &json!({"turn":{"id":"t1"}}));
+        h.observe("item/started", &user_item("t1", "first"));
+        h.observe("turn/started", &json!({"turn":{"id":"t2"}}));
+        h.observe("item/started", &user_item("t2", "second"));
+        let control = |action| {
+            let (reply, verdict) = tokio::sync::oneshot::channel();
+            (ManagedSessionControl { action, reply }, verdict)
+        };
+
+        let (c, mut verdict) = control(SessionControlAction::Compact { instructions: None });
+        h.act(c, Some("th"), &out_tx, &mut req_id);
+        let sent = out_rx.try_recv().unwrap();
+        assert_eq!(sent["method"], "thread/compact/start");
+        assert_eq!(sent["params"], json!({"threadId":"th"}));
+        assert_eq!(sent["id"], 11);
+        assert!(
+            h.settle(&json!({"method":"turn/started","id":11}))
+                .is_none(),
+            "notifications are not answers"
+        );
+        assert_eq!(
+            h.settle(&json!({"jsonrpc":"2.0","id":11,"result":{}})),
+            Some(None)
+        );
+        assert_eq!(verdict.try_recv().unwrap(), Ok(json!({})));
+
+        let (c, mut verdict) = control(SessionControlAction::Revert {
+            user_message_id: Some("m2".into()),
+            before_turn_id: None,
+        });
+        h.act(c, Some("th"), &out_tx, &mut req_id);
+        let sent = out_rx.try_recv().unwrap();
+        assert_eq!(sent["method"], "thread/revert");
+        assert_eq!(sent["params"], json!({"threadId":"th","beforeTurnId":"t2"}));
+        assert_eq!(
+            h.settle(&json!({"id":12,"result":{"thread":{"id":"th"},"turnsBackwardsCursor":null}})),
+            Some(Some("m2".into()))
+        );
+        assert!(verdict.try_recv().unwrap().is_ok());
+        assert_eq!(h.turn_of("m2"), None, "the dropped turn is forgotten");
+        assert_eq!(h.turn_of("m1"), Some("t1"));
+
+        // A refused revert is reported and cuts nothing.
+        let (c, mut verdict) = control(SessionControlAction::Revert {
+            user_message_id: None,
+            before_turn_id: Some("t1".into()),
+        });
+        h.act(c, Some("th"), &out_tx, &mut req_id);
+        let _ = out_rx.try_recv().unwrap();
+        assert_eq!(
+            h.settle(&json!({"id":13,"error":{"code":-32600,"message":"thread is not paginated"}})),
+            Some(None)
+        );
+        assert_eq!(
+            verdict.try_recv().unwrap(),
+            Err("thread is not paginated".into())
+        );
+
+        // Unknown messages, no thread yet, and file rewinds are refused
+        // without asking codex.
+        let (c, mut verdict) = control(SessionControlAction::Revert {
+            user_message_id: Some("zz".into()),
+            before_turn_id: None,
+        });
+        h.act(c, Some("th"), &out_tx, &mut req_id);
+        assert!(verdict.try_recv().unwrap().is_err());
+        let (c, mut verdict) = control(SessionControlAction::Compact { instructions: None });
+        h.act(c, None, &out_tx, &mut req_id);
+        assert!(verdict.try_recv().unwrap().is_err());
+        let (c, mut verdict) = control(SessionControlAction::RewindFiles {
+            user_message_id: "m1".into(),
+            dry_run: false,
+        });
+        h.act(c, Some("th"), &out_tx, &mut req_id);
+        assert!(verdict
+            .try_recv()
+            .unwrap()
+            .unwrap_err()
+            .contains("does not checkpoint files"));
+        assert!(out_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn thread_fork_request_bootstraps_like_a_start() {
+        let fork = CodexFork {
+            thread: "src".into(),
+            last_turn_id: Some("t1".into()),
+        };
+        let req = thread_fork_request(&fork, "/w", true, true);
+        assert_eq!(req["method"], "thread/fork");
+        assert_eq!(req["id"], 101, "the id-101 handler captures the new thread");
+        assert_eq!(req["params"]["threadId"], "src");
+        assert_eq!(req["params"]["lastTurnId"], "t1");
+        assert_eq!(req["params"]["cwd"], "/w");
+        assert_eq!(
+            req["params"]["sandbox"],
+            thread_start_request("/w", true, true)["params"]["sandbox"]
+        );
+        let whole = thread_fork_request(
+            &CodexFork {
+                thread: "src".into(),
+                last_turn_id: None,
+            },
+            "/w",
+            true,
+            false,
+        );
+        assert!(whole["params"].get("lastTurnId").is_none());
+    }
 
     #[cfg(unix)]
     #[tokio::test]
@@ -4473,6 +5153,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 false,
                 true,
                 Some("fixture-thread".into()),
+                None,
                 &Facade::default(),
                 &extras,
                 &mut evidence,
@@ -4584,6 +5265,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                     false,
                     true,
                     Some("fixture-thread".into()),
+                    None,
                     &Facade::default(),
                     &extras,
                     &mut evidence,
@@ -4677,6 +5359,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 false,
                 true,
                 Some("fixture-thread".into()),
+                None,
                 &Facade::default(),
                 &fake.extras,
                 &mut evidence,
@@ -4848,6 +5531,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             false,
             true,
             Some("fixture-thread".into()),
+            None,
             &Facade::default(),
             &fake.extras,
             &mut evidence,
@@ -4943,6 +5627,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 false,
                 headless,
                 Some("fixture-thread".into()),
+                None,
                 &Facade::default(),
                 &fake.extras,
                 &mut evidence,

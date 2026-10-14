@@ -16,7 +16,9 @@ pub(super) fn reduce(value: Value, last_message: bool, text_only: bool) -> Value
         let mut blocks = Vec::new();
         for item in items.iter().rev() {
             match item["kind"].as_str().unwrap_or("") {
-                "usage" | "plan" => (),
+                // Reasoning and compaction boundaries sit between the
+                // fragments of one reply without ending it.
+                "usage" | "plan" | "reasoning" | "compaction" => (),
                 "assistant_text" => {
                     if let Some(text) = item["text"].as_str().filter(|s| !s.is_empty()) {
                         blocks.push(text);
@@ -50,6 +52,19 @@ mod tests {
                 .unwrap()
                 .len(),
             3
+        );
+        let thought = json!({"seq":44,"items":[{"kind":"user_message","text":"go"},{"kind":"assistant_text","text":"one"},{"kind":"reasoning","item_id":"r","text":"hidden"},{"kind":"compaction","trigger":"auto"},{"kind":"assistant_text","text":"two"}]});
+        assert_eq!(
+            reduce(thought.clone(), true, true),
+            json!({"seq":44,"lastMessage":"one\n\ntwo"})
+        );
+        assert_eq!(
+            reduce(thought, false, true)["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3,
+            "text-only drops reasoning"
         );
         let pending = json!({"seq":43,"items":[{"kind":"assistant_text","text":"old"},{"kind":"user_message","text":"new request"}]});
         assert!(reduce(pending, true, false)["lastMessage"].is_null());
