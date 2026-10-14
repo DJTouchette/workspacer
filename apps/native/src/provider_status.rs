@@ -148,10 +148,15 @@ impl Status {
             None if full => self.fast_mode = None,
             None => {}
         }
-        match field(row, &["fastModeDisabledReason", "fast_mode_disabled_reason"]) {
+        match field(
+            row,
+            &["fastModeDisabledReason", "fast_mode_disabled_reason"],
+        ) {
             Some(_) => {
-                self.fast_mode_disabled_reason =
-                    text(row, &["fastModeDisabledReason", "fast_mode_disabled_reason"])
+                self.fast_mode_disabled_reason = text(
+                    row,
+                    &["fastModeDisabledReason", "fast_mode_disabled_reason"],
+                )
             }
             None if full => self.fast_mode_disabled_reason = None,
             None => {}
@@ -305,7 +310,8 @@ mod tests {
 
     #[test]
     fn an_interrupt_names_what_still_runs() {
-        let reply = json!({"ok":true,"interrupt":{"supported":true,"stillQueued":["u2"],"cancelled":[]}});
+        let reply =
+            json!({"ok":true,"interrupt":{"supported":true,"stillQueued":["u2"],"cancelled":[]}});
         let interrupt = Interrupt::parse(&reply).unwrap();
         let notice = interrupt.notice(|uuid| (uuid == "u2").then(|| "run the tests".to_owned()));
         assert_eq!(notice, "Stopped. “run the tests” will still run next.");

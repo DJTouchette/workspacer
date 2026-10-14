@@ -174,7 +174,10 @@ impl Workspace {
         };
         match self.controller.command(Command::Act {
             session,
-            action: Action::Answers(answers.clone(), self.selected_session().and_then(Session::card)),
+            action: Action::Answers(
+                answers.clone(),
+                self.selected_session().and_then(Session::card),
+            ),
         }) {
             Ok(()) => {
                 self.extras.answer_submission =
@@ -495,9 +498,13 @@ impl Workspace {
             kind: Kind::Url(url),
         }) = &elicitation
         {
-            return card
-                .child(header)
-                .child(self.render_url_elicitation(server, url, &list[0], interactive, cx));
+            return card.child(header).child(self.render_url_elicitation(
+                server,
+                url,
+                &list[0],
+                interactive,
+                cx,
+            ));
         }
         let failed = failed.filter(|_| !sent);
         let status: Option<AnyElement> = if let Some(error) = failed {
@@ -586,7 +593,11 @@ impl Workspace {
             None => "Send answer".into(),
         };
         let submit = self
-            .primary_button("submit-answers", label, interactive && ready && !self.view.busy)
+            .primary_button(
+                "submit-answers",
+                label,
+                interactive && ready && !self.view.busy,
+            )
             .debug_selector(|| "submit-answers".into())
             .flex_shrink_0()
             .when(interactive && ready, |d| {

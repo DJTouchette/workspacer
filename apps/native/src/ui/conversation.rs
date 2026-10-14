@@ -487,6 +487,7 @@ impl Workspace {
                     .child({
                         let card = card.clone();
                         self.primary_button("approve", "Allow once", enabled)
+                            .debug_selector(|| "approve".into())
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
                                     this.act(Action::Approve(true, card.clone()), cx)
@@ -522,7 +523,7 @@ impl Workspace {
                     }))
                     .child({
                         let card = card.clone();
-                        self.button("deny", "Deny", enabled).when(enabled, |d| {
+                        self.button("deny", "Deny", enabled).debug_selector(|| "deny".into()).when(enabled, |d| {
                             d.on_click(cx.listener(move |this, _, _, cx| {
                                 this.act(Action::Approve(false, card.clone()), cx)
                             }))
@@ -614,11 +615,15 @@ impl Workspace {
                         self.primary_button("approve", "Approve plan", enabled)
                             .debug_selector(|| "plan-approve".into())
                             .when(enabled, |d| {
-                                d.on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.act(Action::Approve(true, this.selected_session().and_then(Session::card)), cx)
-                                    }),
-                                )
+                                d.on_click(cx.listener(|this, _, _, cx| {
+                                    this.act(
+                                        Action::Approve(
+                                            true,
+                                            this.selected_session().and_then(Session::card),
+                                        ),
+                                        cx,
+                                    )
+                                }))
                             }),
                     )
                     .when(!self.extras.deny_open, |d| {
@@ -791,7 +796,10 @@ impl Workspace {
             .deny_note
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.extras.deny_open = false;
-        self.act(Action::DenyWithNote(note, self.selected_session().and_then(Session::card)), cx);
+        self.act(
+            Action::DenyWithNote(note, self.selected_session().and_then(Session::card)),
+            cx,
+        );
         self.composer
             .update(cx, |input, cx| input.focus(window, cx));
     }

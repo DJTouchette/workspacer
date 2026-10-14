@@ -331,7 +331,11 @@ impl Workspace {
                 .map(|s| (s.number, s.loading))
         };
         if state(&self.view) != state(next) {
-            let count = next.transcript.rows.len().max(self.view.transcript.rows.len());
+            let count = next
+                .transcript
+                .rows
+                .len()
+                .max(self.view.transcript.rows.len());
             let anchor = self.scroll_anchor();
             self.list.splice(0..self.view.transcript.rows.len(), count);
             self.list.scroll_to(anchor);
@@ -362,6 +366,7 @@ impl Workspace {
                 });
                 let line = |text: String, tone: chrome::Tone| {
                     chrome::notice_line(text, tone, p, "message-action-status")
+                        .debug_selector(|| "message-action-status".into())
                 };
                 match state {
                     None => card.child(line(
@@ -431,9 +436,9 @@ impl Workspace {
                         })
                         .when(can, |d| {
                             d.child(
-                                div()
-                                    .text_color(rgb(p.muted))
-                                    .child("Only files are restored; the conversation stays as it is."),
+                                div().text_color(rgb(p.muted)).child(
+                                    "Only files are restored; the conversation stays as it is.",
+                                ),
                             )
                         })
                         .child(
@@ -450,11 +455,14 @@ impl Workspace {
                                             enabled,
                                         )
                                         .debug_selector(|| "rewind-files-confirm".into())
-                                        .when(enabled, |d| {
-                                            d.on_click(cx.listener(|this, _, _, cx| {
-                                                this.confirm_rewind(cx)
-                                            }))
-                                        }),
+                                        .when(
+                                            enabled,
+                                            |d| {
+                                                d.on_click(cx.listener(|this, _, _, cx| {
+                                                    this.confirm_rewind(cx)
+                                                }))
+                                            },
+                                        ),
                                     )
                                 }),
                         )
@@ -565,7 +573,11 @@ impl Workspace {
                 if n == 1 { "" } else { "s" },
                 at.map(|at| format!(
                     " · last {}",
-                    timing::timestamp_label(Some(at), timing::now_ms(), self.settings.twelve_hour_clock)
+                    timing::timestamp_label(
+                        Some(at),
+                        timing::now_ms(),
+                        self.settings.twelve_hour_clock
+                    )
                 ))
                 .unwrap_or_default()
             )),
@@ -687,14 +699,20 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(div().flex_1().child(projects::section_label("MCP servers", p)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(projects::section_label("MCP servers", p)),
+                        )
                         .child(
                             self.button("mcp-refresh", "Refresh", refresh)
                                 .debug_selector(|| "mcp-refresh".into())
                                 .when(refresh, |d| {
-                                    d.on_click(cx.listener(|this, _, _, cx| {
-                                        this.act(Action::McpStatus, cx)
-                                    }))
+                                    d.on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.act(Action::McpStatus, cx)
+                                        }),
+                                    )
                                 }),
                         ),
                 )
@@ -883,7 +901,9 @@ impl Workspace {
                         )
                         .debug_selector(|| "goal-save".into())
                         .when(live, |d| {
-                            d.on_click(cx.listener(|this, _, window, cx| this.save_goal(window, cx)))
+                            d.on_click(
+                                cx.listener(|this, _, window, cx| this.save_goal(window, cx)),
+                            )
                         }),
                     ),
             );
@@ -952,49 +972,50 @@ impl Workspace {
                     ),
             )
         });
-        let card = card.when_some(sandbox, |d, sandbox| {
-            let setting_up = sandbox.setting_up();
-            let enabled = live && !sandbox.ready && !setting_up;
-            d.child(
-                div()
-                    .debug_selector(|| "sandbox-section".into())
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(projects::section_label("Windows sandbox", p))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().flex_1().min_w_0().child(chrome::notice_line(
-                                sandbox
-                                    .notice()
-                                    .unwrap_or_else(|| "Codex's Windows sandbox is ready.".into()),
-                                if sandbox.ready {
-                                    chrome::Tone::Success
-                                } else if setting_up {
-                                    chrome::Tone::Loading
-                                } else {
-                                    chrome::Tone::Warning
-                                },
-                                p,
-                                "sandbox-status",
-                            )))
-                            .when(!sandbox.ready, |d| {
-                                d.child(
-                                    self.button("sandbox-setup", "Set up sandbox", enabled)
-                                        .debug_selector(|| "sandbox-setup".into())
-                                        .when(enabled, |d| {
-                                            d.on_click(cx.listener(|this, _, _, cx| {
-                                                this.act(Action::SandboxSetup, cx)
-                                            }))
-                                        }),
-                                )
-                            }),
-                    ),
-            )
-        });
+        let card =
+            card.when_some(sandbox, |d, sandbox| {
+                let setting_up = sandbox.setting_up();
+                let enabled = live && !sandbox.ready && !setting_up;
+                d.child(
+                    div()
+                        .debug_selector(|| "sandbox-section".into())
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(projects::section_label("Windows sandbox", p))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().flex_1().min_w_0().child(chrome::notice_line(
+                                    sandbox.notice().unwrap_or_else(|| {
+                                        "Codex's Windows sandbox is ready.".into()
+                                    }),
+                                    if sandbox.ready {
+                                        chrome::Tone::Success
+                                    } else if setting_up {
+                                        chrome::Tone::Loading
+                                    } else {
+                                        chrome::Tone::Warning
+                                    },
+                                    p,
+                                    "sandbox-status",
+                                )))
+                                .when(!sandbox.ready, |d| {
+                                    d.child(
+                                        self.button("sandbox-setup", "Set up sandbox", enabled)
+                                            .debug_selector(|| "sandbox-setup".into())
+                                            .when(enabled, |d| {
+                                                d.on_click(cx.listener(|this, _, _, cx| {
+                                                    this.act(Action::SandboxSetup, cx)
+                                                }))
+                                            }),
+                                    )
+                                }),
+                        ),
+                )
+            });
         Some(card)
     }
 
@@ -1097,9 +1118,11 @@ impl Workspace {
                 )
                 .cursor_pointer()
                 .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.open_feature(Screen::Session, window, cx)
-                }))
+                .on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.open_feature(Screen::Session, window, cx)
+                    }),
+                )
                 .into_any_element(),
             );
         }
@@ -1146,9 +1169,9 @@ impl Workspace {
                 )
                 .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
                 .when(toggle, |d| {
-                    d.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| {
-                        this.act(Action::SetFastMode(!on), cx)
-                    }))
+                    d.cursor_pointer().on_click(
+                        cx.listener(move |this, _, _, cx| this.act(Action::SetFastMode(!on), cx)),
+                    )
                 })
                 .into_any_element(),
             );

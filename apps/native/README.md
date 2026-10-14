@@ -639,8 +639,10 @@ be expanded, and attachment controls share the composer action row.
   form with its identity, known model/context, and Ask permissions. Creation is
   explicit. Claude and Codex resumes are supported.
   **Session…** renames, archives/restores, and offers a confirmed **End session**;
-  Interrupt remains a separate control. Names are client-local and scoped to the
-  connection. Archives are the hub's shared `sessionArchive` document, so a
+  Interrupt remains a separate control. Names are saved on this device, scoped
+  to the connection; where the hub offers `agents.rename` the name is also sent
+  there, so every client shows it and a Codex session's own thread is renamed
+  (a hub without it leaves the device name and says so). Archives are the hub's shared `sessionArchive` document, so a
   session archived here also leaves the web sidebar (and the other way round);
   against an older hub without it they stay on this device, and device-only
   archives move to the hub the first time it offers one. Archiving does not stop
@@ -699,9 +701,11 @@ be expanded, and attachment controls share the composer action row.
   conversation as the chat, like the sidebar's child rows. **Stop** asks first,
   then sends Claude Code's own `stop_task` request (`sessions.taskStop`); it
   never signals a process, and the list updates when the CLI reports the task
-  ended. Task details come from Claude's stream transport; a PTY session shows
-  only the count, and the panel says so. Codex sessions do not report
-  background tasks yet. The panel has no pop-out window.
+  ended. Task details come from Claude's stream transport and from Codex,
+  whose background terminals list as shells (`codex-<pid>`) with their logs;
+  stopping one asks Codex to terminate it, which needs its experimental API
+  opt-in (the refusal says so otherwise). A Claude PTY session shows only the
+  count, and the panel says so. The panel has no pop-out window.
 
   A pid is shown only when the daemon proved it on Linux: exactly one direct
   child of the session's own `claude` process has the task's output file as
@@ -758,12 +762,35 @@ be expanded, and attachment controls share the composer action row.
   (`ExitPlanMode`), the approval card renders the plan as Markdown in a
   scrollable panel, with **Approve plan** and **Keep planning…**; the latter is
   a deny with your note, so Claude revises the plan from your feedback.
-- **Deny with note…** on a Claude approval card opens a one-line box: Enter
-  (or **Deny and tell it**) denies the tool and hands the agent your note
-  (`claude.approve` with a `reason`; the stream transport's deny message, the
-  PTY hook's block reason), so it can change course. The composer draft is
-  untouched, and the box closes when that approval is resolved. Codex's
-  approval API has no field for a note, so it is not offered there.
+- **Deny with note…** on a Claude or Codex approval card opens a one-line box:
+  Enter (or **Deny and tell it**) denies the tool and hands the agent your note
+  (`claude.approve` with a `reason`; Claude's stream deny message or PTY hook
+  block reason; Codex declines and then receives the note as a user message,
+  `Denied …: note`, which shows in the chat like any other), so it can change
+  course. The composer draft is untouched, and the box closes when that
+  approval is resolved.
+- **Decisions are bound to the card you saw.** Allow, Deny, Deny with note,
+  the question card's Send and its composer answer carry the card's id
+  (`pendingRequestId`, sent as `requestId`). If another card replaced it before
+  the decision arrived, the hub refuses it (409); nothing is resent, the notice
+  says the request changed, and the current card is read again and shown.
+- **Always allow.** When the agent offers session-scoped grants
+  (`pendingApproval.alwaysOptions`), the card shows one button per grant in the
+  hub's exact words, such as **Always allow Bash(npm test:*) this session** or
+  **Allow all edits this session**, beside **Allow once**. Choosing one allows
+  this request and grants exactly that option (`claude.approve` with
+  `decision: "yes"`, `alwaysOption` and `requestId`). There is no generic
+  "Allow all" button: the hub now treats a bare `"always"` as a plain allow.
+  An "Allow all edits" grant changes the CLI's own mode, which the title chip
+  and the Access row then show (`observedPermissionMode`).
+- **MCP servers asking for information** (MCP elicitations) arrive on the
+  question card, headed **MCP server “name” asks for information**. The
+  typed fields come first; the last step is a separate consent panel: the
+  answers go to that server only on **Submit**, and **Decline** sends nothing.
+  Consent is chosen, never typed, and the send button names what happens
+  (**Submit to name** or **Send decline**). A server asking you to open a link
+  shows the URL on its own line with **Open link** and **Decline**; only Open
+  opens it, in the system browser, and only an `http(s)` link is ever opened.
 - **Settings → Workspace** includes notifications and a persistent keep-running
   preference. Closing can minimize while local agents continue; explicit Quit
   still stops the owned backend. Completion, approval and question transitions
@@ -814,7 +841,60 @@ be expanded, and attachment controls share the composer action row.
   Claude's four modes, Codex's Ask to approve / Full access). The daemon
   drives and verifies it, and its refusal, such as Claude full access for a
   session launched with approvals on, appears as the notice. A mode other than
-  Ask to approve also shows on the title bar's model chip.
+  Ask to approve also shows on the title bar's model chip. Both show the mode
+  the CLI itself reports (`observedPermissionMode`), falling back to the live
+  or requested one. A Codex session whose Codex offers plan mode
+  (`collaborationMode` on its row) also gets **Plan mode** / **Leave plan
+  mode** under Access: plan mode rides beside Ask/Full access rather than
+  replacing it (`claude.setPermissionMode` with `plan`, and back with the
+  session's `ask`/`yolo`), a **Plan** chip shows on the title while it is on,
+  and a refusal (Codex without the opt-in) is shown as the notice. A handoff
+  from a Codex session in plan mode starts the Claude successor in Plan mode.
+- **Context and history.** Session details has a **Context and history**
+  card: **Compact context** (`claude.compact`, with optional instructions for
+  what the summary keeps) and **Fork session** (`agents.fork`), which opens
+  the new session as soon as the hub has made it. At 90% context the title's
+  context notice also offers **Compact now**. While the provider compacts, a
+  **Compacting…** chip sits in the title capsule; the chat then shows a divider,
+  **Context compacted (auto) · 25k → 2.8k tokens**.
+- **Your messages' history controls.** Hovering one of your messages that the
+  provider can name (it carries a `uuid`; messages steered into a running turn
+  never do) shows, beside Copy: **Rewind files to here** on Claude stream
+  sessions, which first previews what would change (files, +/−) and restores
+  files only after **Rewind files**, with any refusal shown in the CLI's words;
+  **Undo from here** on Codex, which after a confirmation drops that message
+  and every later turn (`claude.revert`); and **Fork from here**, a new session
+  with the conversation before that message. When the agent reports delivery
+  receipts, the bubble also says **Queued by the agent**, **Started** or
+  **Completed**.
+- **Thinking.** The model's shown reasoning is a quiet, collapsed **Thinking**
+  line above the reply, opened by a click; it grows in place while it streams
+  and is never merged into the reply.
+- **Codex extras** on Session details (Codex sessions): **Goal** shows the
+  thread's goal, status and usage, with **Pause/Resume goal**, **Mark
+  complete**, **Clear goal**, and a field to set or update it with an optional
+  token budget (`agents.setGoal` / `agents.clearGoal`); a **Goal · Active**
+  chip on the title opens it. **Review changes** starts a Codex review of the
+  uncommitted changes, against a branch, of one commit, or with your own
+  instructions (`agents.review`); the review runs in the conversation. On
+  Windows, a sandbox that is not set up says so in the title capsule with
+  **Set up sandbox** (`agents.windowsSandboxSetup`), also on Session details.
+- **Provider status.** When the agent reports them, the title capsule shows
+  a running hook (**Hook: lint**), failed MCP servers (**MCP · 1 failed**,
+  which opens Session details, where an **MCP servers** card lists each
+  server with **Reconnect** for a failed one and **Refresh**), and fast mode
+  (**Fast**, **Fast · cooling down**, **Fast off**; a click toggles it with
+  `claude.setFastMode` unless the CLI says it is unavailable, and the chip
+  follows what the CLI reports). After **Stop**, the notice names any of your
+  messages that will still run, and any that were cancelled. A queued send
+  whose delivery was uncertain and that the agent's receipt later confirmed
+  shows in the queue panel as **Delivered — confirmed by the agent**, with
+  **Dismiss**; a paused queue still waits for its own **Resume**.
+- **Access tier.** The hub's hello lists the methods this connection may
+  call. Controls behind methods it does not list (compact, rewind, revert,
+  fork, goals, review, sandbox setup, MCP reconnect, fast mode, rename) are
+  hidden rather than refused after a click. The owner token and the embedded
+  backend may call everything.
 - **Updates follow the build's channel.** A nightly install (version contains
   `-nightly`) checks the rolling `nightly` prerelease; a stable install checks the
   latest release. The app checks 8 seconds after launch and every 6 hours, shows
@@ -1027,6 +1107,11 @@ composer's Enter binding taking precedence over the send shortcut.
 | `src/ui/queue.rs` | Queue panel above the composer: edit, reorder, remove, send now, paused and may-have-been-sent |
 | `src/questions.rs` | Codex async questions and their reply envelope |
 | `src/ui/async_questions.rs` | Async question cards in the transcript and replies read as answers |
+| `src/session_controls.rs` | Card ids and stale-card refusals, Always allow options, compaction labels, rewind previews |
+| `src/elicitation.rs` | Recognises MCP elicitations (form consent, links) on the question card |
+| `src/codex_extras.rs` | Codex goal, Windows sandbox, review targets and goal changes |
+| `src/provider_status.rs` | Delivery receipts, MCP servers, running hooks, fast mode, interrupt receipts |
+| `src/ui/session_tools.rs` | Thinking rows, per-message rewind/undo/fork, Session page context/Codex/MCP cards, title status chips |
 | `src/plan.rs` | The agent's task list (TodoWrite, Task tools, Codex plans) and which plan is current |
 | `src/ui/plan.rs` | Task list pinned under the title and its transcript markers |
 | `src/ui/attachments.rs` | Draft attachments: picking, pasting, uploads and thumbnails |

@@ -362,7 +362,10 @@ mod tests {
         queue.merge(&json!({"queuedMessages":[],"queuePaused":true,
             "queueConfirmed":{"id":"q-1","text":"run the tests","messageUuid":"u1","delivery":"started","at":5}}));
         let confirmed = queue.confirmed.clone().unwrap();
-        assert_eq!((confirmed.id.as_str(), confirmed.delivery.as_str()), ("q-1", "started"));
+        assert_eq!(
+            (confirmed.id.as_str(), confirmed.delivery.as_str()),
+            ("q-1", "started")
+        );
         assert!(queue.visible());
         queue.merge(&json!({"queuedMessages":[]}));
         assert!(queue.confirmed.is_none() && !queue.visible());

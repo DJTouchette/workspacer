@@ -120,7 +120,8 @@ fn bound(mut params: Value, card: &Card) -> Value {
 }
 
 impl Action {
-    pub(crate) fn wire(&self, id: &str) -> (&'static str, Value) {
+    /// The bus call this action makes for session `id`.
+    pub fn wire(&self, id: &str) -> (&'static str, Value) {
         match self {
             Self::Terminate => ("claude.signal", json!({"sessionId":id,"signal":"SIGTERM"})),
             Self::Answers(answers, card) => (
@@ -154,14 +155,8 @@ impl Action {
                 json!({"sessionId":id,"target":target.wire().unwrap_or(Value::Null)}),
             ),
             Self::Goal(change) => change.wire(id),
-            Self::SandboxSetup => (
-                "agents.windowsSandboxSetup",
-                json!({"sessionId":id}),
-            ),
-            Self::Rename(name) => (
-                "agents.rename",
-                json!({"sessionId":id,"name":name.trim()}),
-            ),
+            Self::SandboxSetup => ("agents.windowsSandboxSetup", json!({"sessionId":id})),
+            Self::Rename(name) => ("agents.rename", json!({"sessionId":id,"name":name.trim()})),
             Self::McpStatus => ("sessions.mcpStatus", json!({"sessionId":id})),
             Self::McpReconnect(server) => (
                 "claude.mcpReconnect",
@@ -920,7 +915,9 @@ impl Worker {
         {
             return;
         }
-        if request.method().is_some_and(|m| !self.view.may_call(m)) || !self.view.connected && request.method().is_some() {
+        if request.method().is_some_and(|m| !self.view.may_call(m))
+            || !self.view.connected && request.method().is_some()
+        {
             return;
         }
         let key = request.key();
@@ -1615,18 +1612,16 @@ impl Worker {
                             s.approval.is_some() && !note.trim().is_empty() && note.len() <= 4000
                         }
                         // Only an option the card on screen offered, on that card.
-                        Action::AlwaysAllow { option, .. } => s
-                            .approval
-                            .as_ref()
-                            .is_some_and(|a| {
+                        Action::AlwaysAllow { option, .. } => {
+                            s.approval.as_ref().is_some_and(|a| {
                                 crate::session_controls::always_options(a)
                                     .iter()
                                     .any(|o| &o.id == option)
-                            }),
+                            })
+                        }
                         Action::Compact(instructions) => instructions.len() <= 4000,
                         Action::Revert(uuid) => {
-                            s.provider_id() == "codex"
-                                && crate::session_controls::usable_uuid(uuid)
+                            s.provider_id() == "codex" && crate::session_controls::usable_uuid(uuid)
                         }
                         Action::SetPlanMode { posture, .. } => {
                             s.plan_mode_available() && matches!(posture.as_str(), "ask" | "yolo")
@@ -2298,9 +2293,7 @@ impl Worker {
                     _ if error.starts_with("The model change was accepted") => error,
                     // The card moved on: never retried; the refreshed row
                     // below shows the current one.
-                    _ if action.card().is_some()
-                        && crate::session_controls::stale_card(&error) =>
-                    {
+                    _ if action.card().is_some() && crate::session_controls::stale_card(&error) => {
                         crate::session_controls::STALE_NOTICE.into()
                     }
                     Action::SetPlanMode { .. } => format!("Plan mode change refused: {error}"),
@@ -2312,7 +2305,9 @@ impl Worker {
                     Action::Rename(_) => {
                         format!("Name saved on this device; the hub did not rename it: {error}")
                     }
-                    Action::McpReconnect(server) => format!("Reconnecting {server} failed: {error}"),
+                    Action::McpReconnect(server) => {
+                        format!("Reconnecting {server} failed: {error}")
+                    }
                     Action::SetFastMode(_) => format!("Fast mode change refused: {error}"),
                     Action::SetModel { .. } => format!("Model change refused: {error}"),
                     Action::SetEffort(_) => format!("Effort change refused: {error}"),

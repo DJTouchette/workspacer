@@ -224,7 +224,10 @@ impl GoalChange {
 /// A typed token budget: empty is none, otherwise a positive whole number
 /// (`50000`, `50k`, `1.5m`).
 pub fn parse_budget(text: &str) -> Result<Option<i64>, &'static str> {
-    let text = text.trim().to_ascii_lowercase().replace([',', '_', ' '], "");
+    let text = text
+        .trim()
+        .to_ascii_lowercase()
+        .replace([',', '_', ' '], "");
     if text.is_empty() {
         return Ok(None);
     }

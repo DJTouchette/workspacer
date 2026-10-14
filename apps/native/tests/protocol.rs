@@ -631,6 +631,61 @@ async fn approval_contract_send_receipt_and_reconnect_reseed_use_real_websocket(
 }
 
 #[tokio::test]
+async fn decisions_carry_their_card_and_a_stale_card_is_reread_not_retried() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let fleet = hub.frame("call", Some("sessions.snapshots")).await;
+    let mut row = session("a");
+    row["pendingRequestId"] = json!("req-1");
+    row["pendingApproval"] = json!({"toolName":"Bash","requestId":"req-1"});
+    fleet.result(json!([row])).await;
+    let conversation = hub.frame("call", Some("sessions.conversation")).await;
+    conversation.result(snapshot(1, "Start")).await;
+    let v = view(&controller, |v| v.transcript.seq == Some(1)).await;
+    let card = v.sessions[0].card();
+    assert_eq!(card.as_deref(), Some("req-1"));
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::Approve(true, card),
+        })
+        .unwrap();
+    let approval = hub.frame("call", Some("claude.approve")).await;
+    assert_eq!(
+        approval.value["params"],
+        json!({"sessionId":"a","decision":"yes","requestId":"req-1"})
+    );
+    approval
+        .send
+        .send(Message::Text(
+            json!({"op":"error","id":approval.value["id"],
+                "error":"daemon returned 409 Conflict: {\"error\":\"that card is no longer the one awaiting the user\",\"requestId\":\"req-1\",\"current\":\"req-2\"}"})
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+    let v = view(&controller, |v| {
+        v.receipt.as_ref().is_some_and(|r| r.error.is_some())
+    })
+    .await;
+    assert_eq!(v.notice, wks_native::session_controls::STALE_NOTICE);
+    // The current card is read again; nothing is resent.
+    let reread = hub.frame("call", Some("sessions.snapshots")).await;
+    let mut row = session("a");
+    row["pendingRequestId"] = json!("req-2");
+    row["pendingApproval"] = json!({"toolName":"Write","requestId":"req-2"});
+    reread.result(json!([row])).await;
+    let v = view(&controller, |v| {
+        v.sessions[0].card().as_deref() == Some("req-2")
+    })
+    .await;
+    assert_eq!(
+        v.sessions[0].approval.as_ref().unwrap()["toolName"],
+        "Write"
+    );
+}
+
+#[tokio::test]
 async fn demo_fixture_completes_a_streaming_send_round_trip() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = Config::new(format!("ws://{}/bus", listener.local_addr().unwrap()), None).unwrap();

@@ -810,9 +810,7 @@ impl Workspace {
             if !name.is_empty()
                 && self.view.connected
                 && self.view.may_call("agents.rename")
-                && self
-                    .selected_session()
-                    .is_some_and(|s| s.label != name)
+                && self.selected_session().is_some_and(|s| s.label != name)
             {
                 self.act(Action::Rename(name), cx);
             }

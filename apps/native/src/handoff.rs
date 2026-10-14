@@ -379,8 +379,10 @@ mod tests {
         assert_eq!(carry_permission("claude", "auto"), Permission::Ask);
         // Codex plan mode is its collaboration mode, beside ask/yolo.
         let mut codex = Session::default();
-        codex.merge(&json!({"sessionId":"c","provider":"codex","compacting":false,
-            "livePermissionMode":"ask","collaborationMode":"plan"}));
+        codex.merge(
+            &json!({"sessionId":"c","provider":"codex","compacting":false,
+            "livePermissionMode":"ask","collaborationMode":"plan"}),
+        );
         assert_eq!(source_mode(&codex), "plan");
         assert_eq!(
             carry_permission("claude", source_mode(&codex)),

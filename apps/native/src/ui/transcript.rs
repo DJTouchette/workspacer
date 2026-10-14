@@ -714,27 +714,20 @@ impl Workspace {
                                 })),
                         )
                         .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .children(actions)
-                                .child(
-                                    self.icon_button(
-                                        SharedString::from(format!("copy-{key}")),
-                                        "Copy message",
-                                        IconName::Copy,
-                                        true,
-                                    )
-                                    .size(px(24.))
-                                    .opacity(0.)
-                                    .group_hover("message", |style| style.opacity(1.))
-                                    .on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            copy.clone(),
-                                        ))
-                                    }),
-                                ),
+                            div().flex().items_center().gap_1().children(actions).child(
+                                self.icon_button(
+                                    SharedString::from(format!("copy-{key}")),
+                                    "Copy message",
+                                    IconName::Copy,
+                                    true,
+                                )
+                                .size(px(24.))
+                                .opacity(0.)
+                                .group_hover("message", |style| style.opacity(1.))
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                                }),
+                            ),
                         ),
                 )
             })

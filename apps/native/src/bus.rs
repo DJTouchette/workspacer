@@ -118,7 +118,10 @@ impl Client {
 
     /// The methods the hub's hello allowed (`*` for the owner), if it said.
     pub fn methods(&self) -> Option<Vec<String>> {
-        self.methods.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.methods
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Explicit host/UI intent only. Consuming the latch here prevents duplicate

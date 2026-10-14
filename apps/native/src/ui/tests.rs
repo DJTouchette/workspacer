@@ -27,6 +27,7 @@ mod preferences;
 mod project_registry;
 mod question_sets;
 mod scrolling;
+mod session_controls;
 mod session_list;
 mod switching;
 mod tables;

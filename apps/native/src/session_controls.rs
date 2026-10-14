@@ -134,7 +134,10 @@ pub struct Rewind {
 impl Rewind {
     /// The hub's reply (`{ok, result}`) or the bare result.
     pub fn parse(reply: &Value) -> Self {
-        let result = reply.get("result").filter(|r| r.is_object()).unwrap_or(reply);
+        let result = reply
+            .get("result")
+            .filter(|r| r.is_object())
+            .unwrap_or(reply);
         let files: Vec<String> = match result.get("filesChanged") {
             Some(Value::Array(files)) => files
                 .iter()
@@ -239,7 +242,9 @@ mod tests {
         ));
         assert!(!stale_card("Request refused"));
         assert_eq!(
-            refusal("daemon returned 502 Bad Gateway: {\"ok\":false,\"error\":\"No file checkpoint found for this message.\"}; execution outcome is unknown"),
+            refusal(
+                "daemon returned 502 Bad Gateway: {\"ok\":false,\"error\":\"No file checkpoint found for this message.\"}; execution outcome is unknown"
+            ),
             "No file checkpoint found for this message."
         );
         assert_eq!(refusal("plain"), "plain");

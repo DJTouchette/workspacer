@@ -149,7 +149,10 @@ mod tests {
         };
         let ok = card("https://example.com/login?x=1");
         let found = detect(ok.as_array().unwrap()).unwrap();
-        assert_eq!(found.kind, Kind::Url("https://example.com/login?x=1".into()));
+        assert_eq!(
+            found.kind,
+            Kind::Url("https://example.com/login?x=1".into())
+        );
         assert_eq!(found.message(&ok[0]), "Sign in");
         for bad in [
             "file:///etc/passwd",

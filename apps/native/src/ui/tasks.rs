@@ -592,7 +592,7 @@ impl Workspace {
             let text: SharedString = if session.background_tasks > 0 {
                 format!(
                     "{} background task{} running. This session reports only a count: task \
-                     details and logs need a Claude session on the stream transport.",
+                     details and logs need a Claude stream or Codex session.",
                     session.background_tasks,
                     if session.background_tasks == 1 {
                         ""

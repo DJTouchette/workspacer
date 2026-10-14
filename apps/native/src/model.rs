@@ -522,9 +522,14 @@ impl Session {
         // says which card it is (the hub drops `pendingRequestId` when the
         // card has none).
         if full
-            || ["pendingRequestId", "pendingApproval", "pendingQuestions", "pending"]
-                .iter()
-                .any(|key| value.get(*key).is_some())
+            || [
+                "pendingRequestId",
+                "pendingApproval",
+                "pendingQuestions",
+                "pending",
+            ]
+            .iter()
+            .any(|key| value.get(*key).is_some())
         {
             self.pending_request_id = value
                 .get("pendingRequestId")
@@ -546,12 +551,13 @@ impl Session {
     /// Compaction state, the CLI's observed mode and the Codex extras.
     fn merge_extras(&mut self, value: &Value, full: bool) {
         let field = |names: &[&str]| names.iter().find_map(|name| value.get(*name));
-        let text = |v: &Value, limit: usize| crate::transcript::head(v.as_str().unwrap_or("").trim(), limit);
+        let text = |v: &Value, limit: usize| {
+            crate::transcript::head(v.as_str().unwrap_or("").trim(), limit)
+        };
         if let Some(compacting) = field(&["compacting"]).and_then(Value::as_bool) {
             self.compacting = compacting;
         }
-        if let Some(count) =
-            field(&["compaction_count", "compactionCount"]).and_then(Value::as_u64)
+        if let Some(count) = field(&["compaction_count", "compactionCount"]).and_then(Value::as_u64)
         {
             self.compaction_count = count;
         }
@@ -581,9 +587,7 @@ impl Session {
             None => {}
         }
         match field(&["collaborationMode", "collaboration_mode"]) {
-            Some(mode) => {
-                self.collaboration_mode = Some(text(mode, 32)).filter(|m| !m.is_empty())
-            }
+            Some(mode) => self.collaboration_mode = Some(text(mode, 32)).filter(|m| !m.is_empty()),
             None if full => self.collaboration_mode = None,
             None => {}
         }
@@ -1161,13 +1165,12 @@ impl Transcript {
                 || (item.kind == "command_output" && item.output.is_empty()));
         let questions = crate::questions::parse(&item.questions);
         let item_id = crate::transcript::head(&item.item_id, 256);
-        let uuid = if item.kind == "user_message"
-            && crate::session_controls::usable_uuid(&item.uuid)
-        {
-            item.uuid.clone()
-        } else {
-            String::new()
-        };
+        let uuid =
+            if item.kind == "user_message" && crate::session_controls::usable_uuid(&item.uuid) {
+                item.uuid.clone()
+            } else {
+                String::new()
+            };
         let Some((role, text)) = item.display() else {
             return;
         };
@@ -2145,7 +2148,10 @@ mod tests {
         });
         assert_eq!(t.rows[0].uuid, "6f1c2e1a-0b5e-4bd8-9f7e-2d6a8a1b9c3d");
         assert_eq!(t.rows[1].role, "Compaction");
-        assert_eq!(t.rows[1].text, "Context compacted (auto) · 25k → 2.8k tokens");
+        assert_eq!(
+            t.rows[1].text,
+            "Context compacted (auto) · 25k → 2.8k tokens"
+        );
         assert_eq!(t.rows[2].uuid, "");
         assert_eq!(t.rows[3].uuid, "");
         // The transcript tailer's timestamped echo carries the uuid in.
@@ -2192,9 +2198,11 @@ mod tests {
         assert_eq!(s.access_mode(), "default");
         assert!(!s.compacting);
         let mut codex = Session::default();
-        codex.merge(&json!({"sessionId":"c","provider":"codex","compacting":false,
+        codex.merge(
+            &json!({"sessionId":"c","provider":"codex","compacting":false,
             "goal":{"objective":"Ship it","status":"active"},"threadName":"Parser work",
-            "windowsSandbox":{"ready":false,"status":"notConfigured"},"collaborationMode":"plan"}));
+            "windowsSandbox":{"ready":false,"status":"notConfigured"},"collaborationMode":"plan"}),
+        );
         assert_eq!(codex.goal.as_ref().unwrap().objective, "Ship it");
         assert_eq!(codex.thread_name, "Parser work");
         assert!(codex.in_plan_mode());
