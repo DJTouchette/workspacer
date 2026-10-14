@@ -378,7 +378,7 @@
       "Server": "claudemon-api",
       "Pattern": "/sessions/:id/mcp-reconnect",
       "Disposition": "loopback-confined",
-      "Reason": "reconnects one MCP server the session already lists (Claude mcp_reconnect; Codex reloads its MCP configuration). claude.mcpReconnect is TRIAGE-tier like sessions.taskStop: it repairs a connection the agent already has and adds no server",
+      "Reason": "reconnects one MCP server the session already lists (Claude mcp_reconnect). Codex has no per-server reconnect, so there it reloads the whole MCP configuration (config/mcpServer/reload), which can start servers added to the config since launch. claude.mcpReconnect is therefore OPERATOR-tier, like claude.setFastMode",
       "Twin": "claude.mcpReconnect",
       "TwinKind": "bus-method",
       "Gate": ""
@@ -921,8 +921,7 @@
       "sessions.queueResume",
       "sessions.queueSendNow",
       "sessions.queueUpdate",
-      "sessions.mcpStatus",
-      "claude.mcpReconnect"
+      "sessions.mcpStatus"
     ],
     "view": [
       "remote.sharingInfo",

@@ -772,7 +772,7 @@ export const claims: Record<string, Claim> = {
   },
   'claude.mcpReconnect': {
     reason:
-      "reconnects one MCP server the session already lists, through the provider's own reconnect (Claude `mcp_reconnect`, Codex `config/mcpServer/reload`). It repairs a connection the agent already has: it adds no server, writes no config and takes no path, argv or policy value. `server` must name a server on the session's own row",
+      "reconnects one MCP server the session already lists. On Claude it is the CLI's own `mcp_reconnect` of that server; Codex has no per-server reconnect, so there it reloads the whole MCP configuration (`config/mcpServer/reload`), which can start servers added to the config since launch. It writes no config and takes no path, argv or policy value. `server` must name a server on the session's own row; operator-tier because of the Codex reload",
     witnesses: [
       {
         kind: 'params',

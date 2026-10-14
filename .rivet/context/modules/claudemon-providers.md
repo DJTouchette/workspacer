@@ -174,8 +174,8 @@ Hub bus methods:
 
 - `sessions.mcpStatus {sessionId}` returns `{ok, mcpServers}` (view and triage
   tiers).
-- `claude.mcpReconnect {sessionId, server}` returns `{ok, server}` (triage
-  tier).
+- `claude.mcpReconnect {sessionId, server}` returns `{ok, server}` (operator
+  tier, because on Codex it reloads the whole MCP configuration).
 - `claude.setFastMode {sessionId, enabled}` returns `{ok, enabled}` (operator
   tier).
 - `claude.signal` now adds `interrupt: {supported, stillQueued, cancelled}`

@@ -283,7 +283,6 @@
       "files.upload",
       "sessionArchive.set",
       "sessions.taskStop",
-      "claude.mcpReconnect",
       "sessions.queueAdd",
       "sessions.queueClear",
       "sessions.queueMove",
