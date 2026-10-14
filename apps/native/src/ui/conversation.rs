@@ -115,6 +115,7 @@ impl Workspace {
             ),
         };
         let title_island = self.render_title_island(title_bar, title_actions, notice, window, cx);
+        let plan = self.render_pinned_plan(layout.compact, window, cx);
         // A header that grows or shrinks while reading history keeps the
         // same message under the reader's eye.
         let header_size = chrome::measure(cx.entity().downgrade(), |this: &mut Self, bounds, _| {
@@ -167,14 +168,15 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .child(header_size)
-                    .child(title_island),
+                    .child(title_island)
+                    .children(plan),
             )
     }
 
     /// The notice the title capsule carries: this window's own first, and a
     /// local backend that is still starting says so in the empty state
     /// instead.
-    fn title_notice(&self) -> String {
+    pub(super) fn title_notice(&self) -> String {
         if !self.local_notice.is_empty() {
             self.local_notice.clone()
         } else if !self.view.connected && self.view.notice.starts_with("Starting Rust backend") {
@@ -257,7 +259,11 @@ impl Workspace {
             .when_some(selected.filter(|s| s.questions.is_some()), |d, session| {
                 d.child(self.render_questions(session, layout.enabled, compact, window, cx))
             })
-            .children(self.render_child_bar(cx));
+            .children(self.render_child_bar(cx))
+            // Closest to the composer: what will be sent from it next.
+            .children(selected.and_then(|session| {
+                self.render_queue_panel(session, layout.enabled, compact, window, cx)
+            }));
         let composer_layer = chrome::chat_column()
             .relative()
             .flex_shrink_0()
@@ -799,13 +805,58 @@ impl Workspace {
         } else {
             self.quiet_button("stop", "Interrupt", IconName::WindowClose, enabled)
         };
+        // Mid-turn the send steers the running turn; Queue holds the draft
+        // for the turn's end and Send now has the agent read it at once.
+        let steering = self.composer_busy();
         let send_label = if self.view.busy {
             "Sending…"
-        } else if working {
-            "Queue message"
+        } else if steering {
+            "Send — the agent reads it at its next step"
         } else {
             "Send message"
         };
+        let tip = |text: &'static str| {
+            move |window: &mut Window, cx: &mut App| {
+                gpui_component::tooltip::Tooltip::new(text).build(window, cx)
+            }
+        };
+        let queue_button = if narrow {
+            self.icon_button(
+                "composer-queue",
+                "Queue for when this turn ends (Tab)",
+                IconName::Inbox,
+                can_send,
+            )
+        } else {
+            self.quiet_button("composer-queue", "Queue", IconName::Inbox, can_send)
+                .tooltip(tip("Hold it until this turn ends (Tab)"))
+        }
+        .debug_selector(|| "composer-queue".into())
+        .when(can_send, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| this.submit(Submit::Queue, window, cx)))
+        });
+        let now_button = if narrow {
+            self.icon_button(
+                "composer-send-now",
+                "Send now — the agent reads it right away",
+                IconName::ArrowRight,
+                can_send,
+            )
+        } else {
+            self.quiet_button(
+                "composer-send-now",
+                "Send now",
+                IconName::ArrowRight,
+                can_send,
+            )
+            .tooltip(tip(
+                "The agent sets its current work aside and reads it right away",
+            ))
+        }
+        .debug_selector(|| "composer-send-now".into())
+        .when(can_send, |d| {
+            d.on_click(cx.listener(|this, _, window, cx| this.submit(Submit::Now, window, cx)))
+        });
         let attach_label = if uploading {
             "Attaching file…"
         } else {
@@ -890,6 +941,7 @@ impl Workspace {
                                     )
                                 }))
                             })
+                            .when(steering, |d| d.child(queue_button).child(now_button))
                             .child(
                                 self.primary_icon_button(
                                     "send",
@@ -917,7 +969,7 @@ impl Workspace {
             .gap_2()
             .children(self.render_cold_note(cx))
             .child(composer)
-            .child(self.render_activity_line(layout))
+            .child(self.render_activity_line(layout, steering))
     }
 
     /// Draft attachments with their thumbnails (images only; PDFs keep the
@@ -942,7 +994,7 @@ impl Workspace {
     }
 
     /// What the session is doing, beside how to send.
-    fn render_activity_line(&self, layout: ChatLayout) -> Div {
+    fn render_activity_line(&self, layout: ChatLayout, steering: bool) -> Div {
         let p = self.appearance.palette();
         let now = timing::now_ms();
         let clock = self
@@ -988,6 +1040,12 @@ impl Workspace {
         } else {
             "Ctrl Enter"
         };
+        let now_key = match (enter_sends, cfg!(target_os = "macos")) {
+            (true, true) => "⌘ Enter",
+            (true, false) => "Ctrl Enter",
+            (false, true) => "⌘ ⇧ Enter",
+            (false, false) => "Ctrl Shift Enter",
+        };
         div()
             .when(layout.compact, |d| d.hidden())
             .occlude()
@@ -1021,9 +1079,20 @@ impl Workspace {
                     .items_center()
                     .flex_shrink_0()
                     .child(keycap(send_key, p))
-                    .child("to send"),
+                    .map(|d| {
+                        if !steering {
+                            return d.child("to send");
+                        }
+                        // Mid-turn: how each key delivers the draft.
+                        d.child("steer")
+                            .child(keycap("Tab", p))
+                            .child("queue")
+                            .when(!layout.narrow, |d| {
+                                d.child(keycap(now_key, p)).child("send now")
+                            })
+                    }),
             )
-            .when(!layout.narrow, |d| {
+            .when(!layout.narrow && !steering, |d| {
                 d.child(if enter_sends {
                     "Shift Enter for a new line"
                 } else {

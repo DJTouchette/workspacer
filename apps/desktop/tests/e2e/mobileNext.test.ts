@@ -365,7 +365,14 @@ test.describe('/m-next', () => {
   }) => {
     await open(page);
     const swipe = async (title: string) => {
-      const box = (await row(page, title).boundingBox())!;
+      // boundingBox() is null while the list is re-rendering (after Restore and
+      // Back, or a pushed snapshot); wait for the row to be laid out first.
+      const target = row(page, title);
+      await expect(target).toBeVisible();
+      await target.scrollIntoViewIfNeeded();
+      let box = await target.boundingBox();
+      await expect.poll(async () => (box = await target.boundingBox()) !== null).toBe(true);
+      box = box!;
       await page.mouse.move(box.x + box.width - 40, box.y + box.height / 2);
       await page.mouse.down();
       for (let i = 1; i <= 8; i++)

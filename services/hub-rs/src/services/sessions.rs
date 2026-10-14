@@ -160,6 +160,7 @@ pub(crate) async fn install(
         "sessions.queueMove",
         "sessions.queueSendNow",
         "sessions.queueClear",
+        "sessions.queueResume",
     ] {
         let service = service.clone();
         options = options.handler(method, move |_, params| {

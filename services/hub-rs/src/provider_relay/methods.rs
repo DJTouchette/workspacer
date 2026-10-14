@@ -61,6 +61,7 @@ const FULL: &[&str] = &[
     "sessions.queueMove",
     "sessions.queueSendNow",
     "sessions.queueClear",
+    "sessions.queueResume",
     "sessions.snapshots",
     "sessions.snapshot",
     "sessions.terminalInput",
