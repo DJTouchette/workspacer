@@ -1,10 +1,12 @@
 //! `sessions.queue*` bus methods and the auto-flush worker over the hub-owned
 //! message queue (`services::message_queue`). Delivery always goes through the
-//! ordinary `agents.sendMessage` path of this service.
+//! same internal send path as `agents.sendMessage` (`send::send_message`),
+//! as a human's message: the queue only ever holds what a person typed.
 use super::super::message_queue::{Delivery, Entry, valid_id};
-use super::{Sessions, segment, snapshots};
+use super::{Sessions, segment, send::MessageOutcome, snapshots};
 use crate::protocol::Event;
 use anyhow::{Result, anyhow, bail};
+use claudemon::session::Delivery as SendDelivery;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
@@ -30,35 +32,15 @@ fn entry_param(params: &Value) -> Result<&str> {
     Ok(id)
 }
 
-/// Errors `agents.sendMessage` raises before anything reaches the engine.
-const REFUSED_BEFORE_SEND: &[&str] = &[
-    "agents.sendMessage requires",
-    "invalid session identifier",
-    "must be text",
-];
-
-/// Sort an `agents.sendMessage` result into a definite rejection (safe to put
-/// back and retry on the user's say-so) or an uncertain outcome (never
-/// retried). Only the daemon's own refusal (`CommandRejected`, surfaced by
-/// the tracked path as "message delivery rejected") and validation before the
-/// send count as definite; anything else may have been delivered.
-pub(super) fn classify(result: Result<Value>) -> Delivery {
-    let error = match result {
-        Ok(_) => return Delivery::Sent,
-        Err(error) => error,
-    };
-    let text = error.to_string();
-    let definite = error
-        .downcast_ref::<claudemon::daemon::embedded::CommandRejected>()
-        .is_some()
-        || text.starts_with("message delivery rejected")
-        || REFUSED_BEFORE_SEND
-            .iter()
-            .any(|refused| text.contains(refused));
-    if definite {
-        Delivery::Rejected(text)
-    } else {
-        Delivery::Uncertain(text)
+/// Sort a send's typed outcome into the queue's vocabulary: a definite
+/// rejection (safe to put back and retry on the user's say-so) or an
+/// uncertain outcome (never retried). The send path decides which is which
+/// structurally (see `send::MessageOutcome`), so no error wording is matched.
+pub(super) fn classify(outcome: MessageOutcome) -> Delivery {
+    match outcome {
+        MessageOutcome::Delivered(_) => Delivery::Sent,
+        MessageOutcome::Rejected(error) => Delivery::Rejected(error.to_string()),
+        MessageOutcome::Uncertain(error) => Delivery::Uncertain(error.to_string()),
     }
 }
 
@@ -111,10 +93,11 @@ impl Sessions {
             "sessions.queueClear" => self.queue.clear(&id).await,
             "sessions.queueSendNow" => {
                 let delivery = match params.get("delivery") {
-                    None | Some(Value::Null) => None,
-                    Some(Value::String(mode)) if matches!(mode.as_str(), "steer" | "now") => {
-                        Some(mode.clone())
-                    }
+                    None | Some(Value::Null) => SendDelivery::default(),
+                    Some(Value::String(mode)) => match SendDelivery::from_wire(mode) {
+                        Some(delivery) => delivery,
+                        None => bail!("delivery must be 'steer' or 'now'"),
+                    },
                     Some(_) => bail!("delivery must be 'steer' or 'now'"),
                 };
                 let entry = entry_param(&params)?.to_owned();
@@ -136,14 +119,13 @@ impl Sessions {
         Ok(reply)
     }
 
-    /// Deliver one entry through `agents.sendMessage`. `delivery` is passed
-    /// through under that exact name.
-    async fn deliver(&self, id: &str, entry: Entry, delivery: Option<String>) -> Delivery {
-        let mut params = json!({"sessionId":id,"text":entry.text});
-        if let Some(delivery) = delivery {
-            params["delivery"] = json!(delivery);
-        }
-        classify(self.call("agents.sendMessage", params).await)
+    /// Deliver one entry through the `agents.sendMessage` send path, as the
+    /// human who queued it (no sending session), with `delivery` honoured.
+    async fn deliver(&self, id: &str, entry: Entry, delivery: SendDelivery) -> Delivery {
+        classify(
+            self.send_message(id, Some(&entry.text), delivery, None)
+                .await,
+        )
     }
 
     /// Re-publish the session's snapshot after a queue change.
@@ -172,7 +154,9 @@ impl Sessions {
         };
         if self
             .queue
-            .flush(id, &row, |entry| self.deliver(id, entry, None))
+            .flush(id, &row, |entry| {
+                self.deliver(id, entry, SendDelivery::Steer)
+            })
             .await
             .is_some()
         {
@@ -271,36 +255,24 @@ impl Sessions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use claudemon::daemon::embedded::CommandRejected;
 
     #[test]
-    fn only_definite_refusals_are_rejections() {
-        assert_eq!(classify(Ok(json!({"ok":true}))), Delivery::Sent);
-        let refused = anyhow::Error::new(CommandRejected {
-            status: 409,
-            message: "session is stopped".into(),
-        });
-        assert!(matches!(classify(Err(refused)), Delivery::Rejected(_)));
-        for definite in [
-            "message delivery rejected: no wrapper",
-            "agents.sendMessage requires { sessionId, text }",
-            "invalid session identifier",
-            "fromSessionId must be text",
-        ] {
-            assert!(
-                matches!(classify(Err(anyhow!(definite))), Delivery::Rejected(_)),
-                "{definite}"
-            );
-        }
-        for unknown in [
-            "message delivery outcome is unknown; do not retry automatically: timed out",
-            "embedded session engine stopped",
-            "connection reset",
-        ] {
-            assert!(
-                matches!(classify(Err(anyhow!(unknown))), Delivery::Uncertain(_)),
-                "{unknown}"
-            );
-        }
+    fn classification_follows_the_typed_outcome_not_the_wording() {
+        assert_eq!(
+            classify(MessageOutcome::Delivered(json!({"ok":true}))),
+            Delivery::Sent
+        );
+        // Wording that once read as "uncertain" is a rejection when the send
+        // path says so, and vice versa.
+        assert!(matches!(
+            classify(MessageOutcome::Rejected(anyhow!("connection reset"))),
+            Delivery::Rejected(reason) if reason == "connection reset"
+        ));
+        assert!(matches!(
+            classify(MessageOutcome::Uncertain(anyhow!(
+                "message delivery rejected: looks definite"
+            ))),
+            Delivery::Uncertain(_)
+        ));
     }
 }

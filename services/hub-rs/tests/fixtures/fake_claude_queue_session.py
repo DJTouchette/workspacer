@@ -30,7 +30,9 @@ def finish(reply):
           "usage": {"input_tokens": 1, "output_tokens": 1}, "modelUsage": {"claude-sonnet-4-6": {"contextWindow": 200000}}})
 
 
-emit({"type": "system", "subtype": "init", "session_id": session, "model": "claude-sonnet-4-6", "tools": [], "mcp_servers": []})
+# A CLI new enough for `priority` / `origin` on user frames, so the test can see
+# how each send was delivered.
+emit({"type": "system", "subtype": "init", "session_id": session, "model": "claude-sonnet-4-6", "claude_code_version": "2.1.299", "tools": [], "mcp_servers": []})
 for line in sys.stdin:
     frame = json.loads(line)
     if frame.get("type") == "control_response" and frame.get("response", {}).get("request_id") == "queue-question":
@@ -47,7 +49,7 @@ for line in sys.stdin:
         prompt = content
     else:
         prompt = "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
-    record({"message": prompt})
+    record({"message": prompt, "priority": frame.get("priority"), "origin": frame.get("origin")})
     if "ask-question" in prompt:
         emit({"type": "control_request", "request_id": "queue-question", "request": {
             "subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [

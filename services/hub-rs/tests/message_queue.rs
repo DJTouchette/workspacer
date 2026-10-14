@@ -120,6 +120,18 @@ fn received(root: &Path, id: &str) -> Vec<String> {
         .collect()
 }
 
+/// How the CLI received the user frame whose text ends with `text`: its
+/// `(priority, origin)`.
+fn delivered_as(root: &Path, id: &str, text: &str) -> (Value, Value) {
+    std::fs::read_to_string(root.join(format!("received-{id}.jsonl")))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|row| row["message"].as_str().is_some_and(|m| m.ends_with(text)))
+        .map(|row| (row["priority"].clone(), row["origin"].clone()))
+        .unwrap_or_else(|| panic!("{text:?} was never received"))
+}
+
 fn texts(queue: &Value) -> Vec<String> {
     queue
         .as_array()
@@ -368,7 +380,9 @@ async fn run(root: PathBuf) {
     .await;
 
     // 4. Send now: removed and sent immediately while the agent is busy; the
-    //    rest still waits for a turn end.
+    //    rest still waits for a turn end. `delivery: "now"` reaches the CLI as
+    //    `priority: "now"` from a human — the queue only holds what a person
+    //    typed.
     for text in ["fourth hold:fourth", "fifth"] {
         client
             .call("sessions.queueAdd", json!({"sessionId":id,"text":text}))
@@ -380,7 +394,7 @@ async fn run(root: PathBuf) {
     let sent = client
         .call(
             "sessions.queueSendNow",
-            json!({"sessionId":id,"id":fourth_id,"delivery":"steer"}),
+            json!({"sessionId":id,"id":fourth_id,"delivery":"now"}),
         )
         .await
         .unwrap();
@@ -421,6 +435,11 @@ async fn run(root: PathBuf) {
     })
     .await;
     assert_eq!(received(&root, &id)[3], "fourth hold:fourth");
+    assert_eq!(
+        delivered_as(&root, &id, "fourth hold:fourth"),
+        (json!("now"), json!({"kind":"human"})),
+        "send-now delivery and sender reach the engine"
+    );
     // The held turn that the sent-now text waited behind has ended, but the
     // sent-now text's own turn is still running: the next entry waits for it.
     tokio::time::sleep(Duration::from_millis(2500)).await;
@@ -436,6 +455,11 @@ async fn run(root: PathBuf) {
     })
     .await;
     assert_eq!(received(&root, &id)[4], "fifth");
+    // An automatic flush is an ordinary steer.
+    assert_eq!(
+        delivered_as(&root, &id, "fifth"),
+        (json!("next"), Value::Null)
+    );
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert_eq!(received(&root, &id).len(), 5, "an entry was sent twice");
 
