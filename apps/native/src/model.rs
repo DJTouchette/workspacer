@@ -51,6 +51,12 @@ pub struct Session {
     pub prompt_cache: Option<PromptCache>,
     /// The account's usage windows as the session's status line reports them.
     pub limits: Limits,
+    /// Messages the hub holds for this session until its turn ends; see
+    /// [`crate::queue`].
+    pub queue: crate::queue::Queue,
+    /// The task list the row reports (absent from older daemons); the
+    /// transcript's `Plan` rows carry the same plan as it streams.
+    pub plan: Option<crate::plan::Plan>,
 }
 
 /// One account's usage windows from a session's status line: what decides
@@ -275,6 +281,10 @@ impl Session {
     pub fn merge(&mut self, value: &Value) {
         self.telemetry.merge(value);
         self.context.merge(value);
+        self.queue.merge(value);
+        if let Some(plan) = value.get("plan") {
+            self.plan = crate::plan::Plan::from_row(plan);
+        }
         for (target, names) in [
             (&mut self.id, &["sessionId", "session_id"][..]),
             (
@@ -532,6 +542,19 @@ impl Session {
     pub fn stopped(&self) -> bool {
         self.state == "stopped" || self.state == "ended"
     }
+
+    /// Mid-turn, or waiting on the user's decision: a message sent now is
+    /// read inside the running turn (steered) rather than starting one, and
+    /// the hub's queue holds anything that should wait for the turn to end.
+    pub fn busy(&self) -> bool {
+        !self.stopped()
+            && (self.approval.is_some()
+                || self.questions.is_some()
+                || !matches!(
+                    self.state.as_str(),
+                    "" | "input" | "idle" | "done" | "background"
+                ))
+    }
 }
 
 fn prioritized_children(value: &Value, previous: &Value) -> Value {
@@ -641,12 +664,32 @@ pub struct Item {
     pub timestamp: Option<String>,
     #[serde(default)]
     pub args: Option<String>,
+    /// Non-blocking questions on an `assistant_text` item (Codex's async
+    /// user input); see [`crate::questions`].
+    #[serde(default)]
+    pub questions: Vec<Value>,
+    #[serde(default, rename = "async")]
+    pub is_async: bool,
+    /// A driver notice on an `assistant_text` item: the daemon speaking, not
+    /// the agent.
+    #[serde(default)]
+    pub notice: bool,
+    /// The provider's id for the item (Codex's question item, which a reply
+    /// names).
+    #[serde(default)]
+    pub item_id: String,
 }
 
 impl Item {
     pub fn display(self) -> Option<(&'static str, String)> {
         Some(match self.kind.as_str() {
             "user_message" => ("You", self.text),
+            // Their own roles, so streamed assistant text never merges into
+            // them (or them into it).
+            "assistant_text" if self.notice => ("Notice", self.text),
+            "assistant_text" if self.is_async || !self.questions.is_empty() => {
+                ("Questions", self.text)
+            }
             "assistant_text" => ("Assistant", self.text),
             "tool_use" => ("Tool", format!("{}\n{}", self.name, self.input)),
             "tool_result" => (
@@ -711,6 +754,9 @@ pub struct Row {
     pub timestamp_ms: Option<i64>,
     pub tool: Option<crate::transcript::Tool>,
     pub result_id: String,
+    /// A `Questions` row's questions, and the provider item they belong to.
+    pub questions: Vec<crate::questions::AsyncQuestion>,
+    pub item_id: String,
 }
 
 impl Row {
@@ -722,6 +768,8 @@ impl Row {
             && self.timestamp_ms == other.timestamp_ms
             && self.tool == other.tool
             && self.result_id == other.result_id
+            && self.questions == other.questions
+            && self.item_id == other.item_id
     }
 
     pub fn copy_text(&self) -> String {
@@ -746,6 +794,12 @@ impl Row {
             + self.timestamp.as_ref().map_or(0, String::len)
             + self.result_id.len()
             + self.tool.as_ref().map_or(0, crate::transcript::Tool::bytes)
+            + self.item_id.len()
+            + self
+                .questions
+                .iter()
+                .map(|q| q.title.len() + q.options.iter().map(String::len).sum::<usize>())
+                .sum::<usize>()
     }
 }
 
@@ -952,8 +1006,15 @@ impl Transcript {
         let empty_error = item.is_error
             && ((item.kind == "tool_result" && item.content.is_empty())
                 || (item.kind == "command_output" && item.output.is_empty()));
+        let questions = crate::questions::parse(&item.questions);
+        let item_id = crate::transcript::head(&item.item_id, 256);
         let Some((role, text)) = item.display() else {
             return;
+        };
+        let (questions, item_id) = if role == "Questions" {
+            (questions, item_id)
+        } else {
+            (Vec::new(), String::new())
         };
         // Stream sends are echoed without a timestamp, then the provider's
         // transcript tailer delivers the same turn with its real timestamp.
@@ -986,7 +1047,7 @@ impl Transcript {
         } else {
             text
         };
-        if text.is_empty() && tool.is_none() {
+        if text.is_empty() && tool.is_none() && questions.is_empty() {
             return;
         }
         // Only stream transports coalesce fragments; PTY transcript blocks are
@@ -1022,6 +1083,8 @@ impl Transcript {
                 timestamp_ms,
                 tool,
                 result_id,
+                questions,
+                item_id,
             };
             self.bytes += row.bytes();
             self.rows.push_back(Arc::new(row));
@@ -1327,6 +1390,69 @@ mod tests {
             seq,
             items: vec![assistant(text)],
             ..Default::default()
+        }
+    }
+
+    /// Codex's async questions and driver notices arrive as `assistant_text`
+    /// but are rows of their own: streamed text never merges into them, nor
+    /// they into it, from a delta or a full snapshot.
+    #[test]
+    fn async_questions_and_notices_never_merge_with_streamed_text() {
+        let items: Vec<Item> = serde_json::from_value(serde_json::json!([
+            {"kind":"assistant_text","text":"Looking."},
+            {"kind":"assistant_text","text":"Which DB?\n1. Postgres","questions":[{"title":"Which DB?","options":["Postgres"]}],"async":true,"item_id":"q-1"},
+            {"kind":"assistant_text","text":" More"},
+            {"kind":"assistant_text","text":"An MCP server asked for input","notice":true},
+            {"kind":"assistant_text","text":" and more"}
+        ]))
+        .unwrap();
+        let mut live = Transcript::default();
+        live.snapshot_for_transport(
+            ConversationSnapshot {
+                seq: 0,
+                first_seq: 1,
+                items: Vec::new(),
+            },
+            true,
+        );
+        for (n, item) in items.iter().cloned().enumerate() {
+            live.delta(
+                Delta {
+                    seq: n as u64 + 1,
+                    items: vec![item],
+                    ..Default::default()
+                },
+                true,
+            );
+        }
+        let mut read = Transcript::default();
+        read.snapshot_for_transport(
+            ConversationSnapshot {
+                seq: 5,
+                first_seq: 1,
+                items,
+            },
+            true,
+        );
+        for transcript in [live, read] {
+            let rows = transcript
+                .rows
+                .iter()
+                .map(|r| (r.role.as_str(), r.text.as_str()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rows,
+                [
+                    ("Assistant", "Looking."),
+                    ("Questions", "Which DB?\n1. Postgres"),
+                    ("Assistant", " More"),
+                    ("Notice", "An MCP server asked for input"),
+                    ("Assistant", " and more"),
+                ]
+            );
+            let questions = &transcript.rows[1];
+            assert_eq!(questions.item_id, "q-1");
+            assert_eq!(questions.questions[0].options, ["Postgres"]);
         }
     }
 

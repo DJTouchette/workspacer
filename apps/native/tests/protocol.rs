@@ -1551,7 +1551,14 @@ async fn queued_bubbles_wait_for_a_new_authoritative_user_turn() {
         .unwrap();
     let send = hub.frame("call", Some("agents.sendMessage")).await;
     let pending = view(&controller, |v| !v.pending_messages.is_empty()).await;
-    assert!(pending.pending_messages[0].queued);
+    assert!(
+        pending.pending_messages[0].steered,
+        "sent mid-turn: steered into it"
+    );
+    assert!(
+        !pending.pending_messages[0].queued,
+        "only the daemon's reply says a send waits for the turn end"
+    );
     assert!(!pending.pending_messages[0].accepted);
     send.result(json!({"ok":true,"queued":true})).await;
     let reread = hub.frame("call", Some("sessions.conversation")).await;
@@ -1617,6 +1624,134 @@ async fn queued_bubbles_wait_for_a_new_authoritative_user_turn() {
         v.transcript.seq == Some(4) && v.pending_messages.is_empty()
     })
     .await;
+}
+
+/// Send now, the hub-owned queue's calls (Send again as a queue-then-dismiss
+/// pair), queue state from snapshot rows, and refused live switches named in
+/// the notice.
+#[tokio::test]
+async fn delivery_modes_and_queue_changes_use_the_hub_contracts() {
+    let mut hub = Hub::new().await;
+    let controller = Controller::start(hub.config.clone());
+    let mut row = session("a");
+    row["mode"] = json!("responding");
+    row["queuedMessages"] = json!([{"id":"q1","text":"later","createdAt":5}]);
+    row["queuePaused"] = json!(true);
+    row["queueError"] = json!("delivery refused");
+    row["queueUncertain"] = json!({"id":"q0","text":"maybe sent","at":4});
+    hub.frame("call", Some("sessions.snapshots"))
+        .await
+        .result(json!([row]))
+        .await;
+    let read = hub.frame("call", Some("sessions.conversation")).await;
+    read.result(snapshot(1, "Working")).await;
+    let v = view(&controller, |v| {
+        v.transcript.seq == Some(1) && !v.loading
+    })
+    .await;
+    let queue = &v.sessions[0].queue;
+    assert_eq!(queue.entries[0].text, "later");
+    assert!(queue.paused);
+    assert_eq!(queue.uncertain.as_ref().unwrap().id, "q0");
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::SendNow("stop and look".into()),
+        })
+        .unwrap();
+    let send = hub.frame("call", Some("agents.sendMessage")).await;
+    assert_eq!(send.value["params"]["delivery"], "now");
+    assert_eq!(send.value["params"]["text"], "stop and look");
+    let pending = view(&controller, |v| !v.pending_messages.is_empty()).await;
+    assert!(pending.pending_messages[0].now && pending.pending_messages[0].steered);
+    send.result(json!({"ok":true})).await;
+    view(&controller, |v| v.receipt.is_some() && !v.busy).await;
+    let op = |op| Command::Act {
+        session: "a".into(),
+        action: Action::Queue(op),
+    };
+    use wks_native::queue::Op;
+    controller.command(op(Op::Add("after this turn".into()))).unwrap();
+    let add = hub.frame("call", Some("sessions.queueAdd")).await;
+    assert_eq!(
+        add.value["params"],
+        json!({"sessionId":"a","text":"after this turn"})
+    );
+    add.result(json!({"id":"q2","queue":[]})).await;
+    view(&controller, |v| {
+        v.receipt
+            .as_ref()
+            .is_some_and(|r| matches!(r.action, Action::Queue(Op::Add(_))) && r.error.is_none())
+            && !v.busy
+    })
+    .await;
+    controller
+        .command(op(Op::Move {
+            id: "q2".into(),
+            index: 0,
+        }))
+        .unwrap();
+    let moved = hub.frame("call", Some("sessions.queueMove")).await;
+    assert_eq!(moved.value["params"]["index"], 0);
+    moved
+        .result(json!({"ok":false,"error":"queued message not found"}))
+        .await;
+    view(&controller, |v| {
+        v.notice == "Queue change failed: queued message not found" && !v.busy
+    })
+    .await;
+    controller
+        .command(op(Op::Resend {
+            uncertain: "q0".into(),
+            text: "maybe sent".into(),
+        }))
+        .unwrap();
+    let again = hub.frame("call", Some("sessions.queueAdd")).await;
+    assert_eq!(again.value["params"]["text"], "maybe sent");
+    again.result(json!({"id":"q3","queue":[]})).await;
+    let dismiss = hub.frame("call", Some("sessions.queueRemove")).await;
+    assert_eq!(
+        dismiss.value["params"],
+        json!({"sessionId":"a","id":"q0"}),
+        "the uncertain record is dismissed only after the add"
+    );
+    dismiss.result(json!({"queue":[]})).await;
+    view(&controller, |v| {
+        v.receipt.as_ref().is_some_and(|r| {
+            matches!(r.action, Action::Queue(Op::Resend { .. })) && r.error.is_none()
+        }) && !v.busy
+    })
+    .await;
+    controller
+        .command(Command::Act {
+            session: "a".into(),
+            action: Action::SetEffort("high".into()),
+        })
+        .unwrap();
+    let effort = hub.frame("call", Some("claude.setEffort")).await;
+    effort
+        .result(json!({"ok":false,"error":"the CLI rejected the effort switch"}))
+        .await;
+    view(&controller, |v| {
+        v.notice == "Effort change refused: the CLI rejected the effort switch" && !v.busy
+    })
+    .await;
+    // A stopped session's queue can still be tidied, never added to.
+    effort
+        .event("agent.snapshot", json!({"sessionId":"a","mode":"stopped"}))
+        .await;
+    view(&controller, |v| v.sessions[0].stopped()).await;
+    controller.command(op(Op::Add("refused".into()))).unwrap();
+    view(&controller, |v| {
+        v.receipt.as_ref().is_some_and(|r| {
+            matches!(&r.action, Action::Queue(Op::Add(text)) if text == "refused")
+                && r.error.is_some()
+        })
+    })
+    .await;
+    controller.command(op(Op::Clear)).unwrap();
+    let clear = hub.frame("call", Some("sessions.queueClear")).await;
+    assert_eq!(clear.value["params"], json!({"sessionId":"a"}));
 }
 
 #[tokio::test]
