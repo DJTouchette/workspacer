@@ -324,6 +324,20 @@
       "cutRustTests": true
     },
     {
+      "file": "services/hub-rs/src/services/sessions/codex.rs",
+      "server": "claudemon-api",
+      "what": "the Codex extras bus methods (agents.review / setGoal / clearGoal / windowsSandboxSetup / rename) over the embedded API",
+      "patterns": [
+        "rustRequestPathRe",
+        "rustRequestCallRe",
+        "rustPathBindingRe",
+        "rustRootRe"
+      ],
+      "floor": 1,
+      "suffix": "",
+      "cutRustTests": true
+    },
+    {
       "file": "services/hub-rs/src/services/agent_lifecycle.rs",
       "server": "claudemon-api",
       "what": "Rust embedded API caller; raw requests pass through the same daemon router as HTTP clients.",

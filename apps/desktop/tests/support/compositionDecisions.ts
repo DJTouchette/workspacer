@@ -588,6 +588,56 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'agents.review': {
+    reason:
+      "starts Codex's own reviewer (`review/start`) on a live Codex session. The `target` is rebuilt by the hub and again by claudemon from only its typed fields, so it is the reach of agents.sendMessage asking for a review and no more: no path, argv or policy value, and owner-tier only",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['target'],
+      },
+    ],
+  },
+  'agents.setGoal': {
+    reason:
+      "sets a live Codex thread's persisted goal (`thread/goal/set`): `objective` is instruction text for the agent already running, `status` one of Codex's own goal states and `tokenBudget` a positive integer or null. The reach of agents.sendMessage; owner-tier only",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['objective'],
+      },
+    ],
+  },
+  'agents.clearGoal': {
+    reason:
+      "clears a live Codex thread's persisted goal (`thread/goal/clear`). It can only withhold work and takes nothing but `sessionId`",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId'],
+      },
+    ],
+  },
+  'agents.rename': {
+    reason:
+      'records one bounded line of display text as the launch label of the session named by `sessionId` and, for a live Codex session, as its thread name (`thread/name/set`). WRITE-THEN-INTERPRET: the label is read only for display and attribution, never as a path, argv, config key or policy input',
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId'],
+      },
+    ],
+  },
+  'agents.windowsSandboxSetup': {
+    reason:
+      "starts Codex's own Windows sandbox setup (`windowsSandbox/setupStart`) for the session's own cwd. `mode` is the enum elevated|unelevated; Codex owns the setup and the OS owns the elevation prompt. No caller path, argv or policy value, and non-Windows hosts refuse it without contacting Codex",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['mode'],
+      },
+    ],
+  },
   'sessions.taskStop': {
     reason:
       "stops one background task of a running agent through the CLI's own `stop_task` control request. It can only ever STOP work: no signal is sent, nothing consults it, and it takes no path, argv or policy value. `taskId` selects a task the daemon already lists as running on that session and is validated as one plain id segment by both the hub and claudemon",
@@ -1408,6 +1458,41 @@ export const parameterDecisions: Record<
         'selects the session whose hub-held queue is emptied; validated as one plain id segment and never joined into a path',
     },
   },
+  'agents.windowsSandboxSetup': {
+    mode: {
+      kind: 'permission',
+      reason:
+        "one of Codex's own setup modes, elevated or unelevated, validated by the hub and claudemon; selects which of Codex's setup flows runs, never a path or argv",
+    },
+  },
+  'agents.rename': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        'selects the hub-launched session whose launch label (and live Codex thread name) is set; validated as one plain id segment and never joined into a path',
+    },
+  },
+  'agents.review': {
+    target: {
+      kind: 'shell',
+      reason:
+        "Codex's typed review target, rebuilt by the hub and claudemon from its own fields; custom instructions are prompt text for Codex's reviewer, never argv, a path or a raw PTY write",
+    },
+  },
+  'agents.setGoal': {
+    objective: {
+      kind: 'shell',
+      reason:
+        "goal text for the running Codex thread, handed to Codex's own thread/goal/set; prompt-like text, never argv, a path or a raw PTY write",
+    },
+  },
+  'agents.clearGoal': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        'selects the live Codex session whose goal is cleared; validated as one plain id segment and never joined into a path',
+    },
+  },
   'sessions.taskStop': {
     taskId: {
       kind: 'id',
@@ -1701,6 +1786,11 @@ export const actors: string[] = [
   'agents.dispatchPrepare',
   'agents.reportProgress',
   'agents.sendMessage',
+  'agents.review',
+  'agents.setGoal',
+  'agents.clearGoal',
+  'agents.windowsSandboxSetup',
+  'agents.rename',
   'agents.spawn',
   'brief.append',
   'brief.archive',

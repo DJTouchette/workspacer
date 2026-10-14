@@ -25,7 +25,7 @@ describe('Rust dispatcher caller parameter extraction', () => {
         (n, row) => n + row.fields.filter((field) => !!policy.dangerousKind(field)).length,
         0,
       ),
-    }).toEqual({ rows: 76, bindings: 51 }); // git.pull + git.discard arms (cwd, path each); terminals.shells (no params); sessions.taskOutput / taskStop: id + integer arms, no dangerous field; claude.handoffSummaryBrief: session id only
+    }).toEqual({ rows: 87, bindings: 51 }); // git.pull + git.discard arms (cwd, path each); terminals.shells (no params); sessions.taskOutput / taskStop: id + integer arms, no dangerous field; claude.handoffSummaryBrief: session id only; Codex extras (agents.review / setGoal / clearGoal / windowsSandboxSetup / rename): mode and name are read through helpers, so no dangerous inline field
     for (const [method, field] of [
       ['git.status', 'cwd'],
       ['git.stage', 'path'],

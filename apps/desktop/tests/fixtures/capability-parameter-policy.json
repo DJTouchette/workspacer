@@ -140,7 +140,12 @@
     "sessions.queueMove": "reorders one entry this hub already queued for that session (selected by its opaque hub-minted id) to a bounded index. It changes only WHICH queued prompt the hub delivers it later through this hub's own agents.sendMessage path (the same reach, the same session, and only when that session is ready for input with no approval or question open)",
     "sessions.queueSendNow": "removes one queued entry (selected by its opaque hub-minted id) and sends it immediately through this hub's own agents.sendMessage path — exactly agents.sendMessage's reach for text a caller holding this tier could have sent directly. The optional `delivery` value (\"steer\" or \"now\" only) is forwarded under that name to agents.sendMessage, which alone decides what it means; the queue itself gives it no effect",
     "sessions.queueRemove": "deletes one entry this hub queued for that session (selected by its opaque hub-minted id); it can only withhold a prompt. Clearing a paused queue's error may let the remaining entries, already queued by sessions.queueAdd, be delivered when the session is ready",
-    "sessions.queueClear": "deletes every entry this hub queued for that session; it can only withhold prompts. No path, argv or policy value, and nothing is sent"
+    "sessions.queueClear": "deletes every entry this hub queued for that session; it can only withhold prompts. No path, argv or policy value, and nothing is sent",
+    "agents.review": "sessionId selects a live Codex session; target is rebuilt by the hub and again by claudemon from only its typed fields (uncommittedChanges, baseBranch.branch, commit.sha/title, custom.instructions) and handed to Codex's own review/start. It starts Codex's reviewer on the user's own checkout — the reach of agents.sendMessage asking for a review — and takes no path, argv or policy value",
+    "agents.setGoal": "sessionId selects a live Codex session; objective is prompt-like text, status one of Codex's own goal states and tokenBudget a positive integer or null, all handed to Codex's thread/goal/set. A goal is an instruction to the agent already running, the reach of agents.sendMessage; no path, argv or policy value",
+    "agents.clearGoal": "sessionId selects a live Codex session; the only effect is Codex's own thread/goal/clear. It can only withhold work and takes nothing else",
+    "agents.rename": "sessionId selects a session the hub launched; name is one bounded line of display text recorded as its launch label and, for a live Codex session, sent as thread/name/set. A label is read only for display and attribution — never a path, argv, config key or policy input",
+    "agents.windowsSandboxSetup": "sessionId selects a live Codex session on a Windows host; mode is the enum elevated|unelevated passed to Codex's own windowsSandbox/setupStart with the session's own cwd. Codex owns what setup does (its own ACL/user provisioning, with the OS's own elevation prompt for elevated); the caller supplies no path, argv or policy value, and other hosts refuse it"
   },
   "inertMethods": {
     "fleet.dispatchTargets": "Read-only discovery of explicitly enabled paired or linked worker targets. Returns remote protocol, actual provider readiness and remote repository choices, never the pairing credential.",
@@ -925,6 +930,18 @@
       "id": {
         "kind": "id",
         "reason": "an opaque hub-minted queue-entry id (q- plus hex) that selects an entry of that session's queue; never joined into a path"
+      }
+    },
+    "agents.windowsSandboxSetup": {
+      "mode": {
+        "kind": "permission",
+        "reason": "one of Codex's own setup modes, elevated or unelevated, validated by the hub and claudemon; selects which of Codex's setup flows runs, never a path or argv"
+      }
+    },
+    "agents.rename": {
+      "name": {
+        "kind": "inert",
+        "reason": "one bounded line of display text stored as the launch label and sent as the Codex thread name; never joined into a path, argv or config key"
       }
     }
   },

@@ -1,4 +1,5 @@
 //! Session service over claudemon's in-process API and typed update stream.
+mod codex;
 mod params;
 mod queue;
 mod send;
@@ -148,6 +149,19 @@ pub(crate) async fn install(
         options = options.handler(method, move |_, params| {
             let service = service.clone();
             async move { service.call(method, params).await }
+        });
+    }
+    for method in [
+        "agents.review",
+        "agents.setGoal",
+        "agents.clearGoal",
+        "agents.windowsSandboxSetup",
+        "agents.rename",
+    ] {
+        let service = service.clone();
+        options = options.handler(method, move |_, params| {
+            let service = service.clone();
+            async move { service.codex_call(method, params).await }
         });
     }
     for method in [

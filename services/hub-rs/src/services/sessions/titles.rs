@@ -157,13 +157,17 @@ impl Sessions {
             .await
         {
             Ok(true) => {
-                let _mutation = self.mutations.lock().await;
-                let row = self.rows.read().unwrap().get(id).cloned();
-                if let Some(row) = row {
-                    if let Err(error) = self.publish(row).await {
-                        eprintln!("title: snapshot publish failed for {id}: {error}");
+                {
+                    let _mutation = self.mutations.lock().await;
+                    let row = self.rows.read().unwrap().get(id).cloned();
+                    if let Some(row) = row {
+                        if let Err(error) = self.publish(row).await {
+                            eprintln!("title: snapshot publish failed for {id}: {error}");
+                        }
                     }
                 }
+                // A Codex thread with no name of its own takes the title too.
+                self.name_codex_thread(id).await;
             }
             // Superseded: resumed, renamed or already named. Drop silently.
             Ok(false) => {}

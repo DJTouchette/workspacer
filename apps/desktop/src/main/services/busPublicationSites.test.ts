@@ -276,6 +276,12 @@ const PASSTHROUGH: Record<string, { count: number; reason: string; proof: string
       'A committed automatic title republishes the stored row through the same classified snapshot helper.',
     proof: ['self.publish(row).await', '.note_auto_title(id,generation,record(&outcome))'],
   },
+  'services/sessions/codex.rs: row': {
+    count: 1,
+    reason:
+      'agents.rename republishes the stored row through the same classified snapshot helper once the launch label is recorded.',
+    proof: ['self.publish(row).await?', 'lifecycle.note_label(id,name).await?'],
+  },
   'services/terminals.rs: event': {
     count: 1,
     reason:
