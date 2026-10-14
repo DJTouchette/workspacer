@@ -299,12 +299,13 @@ async fn run(root: PathBuf) {
             .await
             .is_err()
     );
-    assert!(
-        client
-            .call("sessions.queueAdd", json!({"sessionId":id,"text":""}))
-            .await
-            .is_err()
-    );
+    for bad in [
+        json!({"sessionId":id,"text":""}),
+        json!({"sessionId":id,"text":"x".repeat(64 * 1024 + 1)}),
+        json!({"sessionId":id,"text":"with a file","attachments":[{"name":"x.png"}]}),
+    ] {
+        assert!(client.call("sessions.queueAdd", bad).await.is_err());
+    }
     let row = snapshot(&client, &id).await;
     assert_eq!(
         texts(&row["queuedMessages"]),
@@ -368,7 +369,7 @@ async fn run(root: PathBuf) {
 
     // 4. Send now: removed and sent immediately while the agent is busy; the
     //    rest still waits for a turn end.
-    for text in ["fourth", "fifth"] {
+    for text in ["fourth hold:fourth", "fifth"] {
         client
             .call("sessions.queueAdd", json!({"sessionId":id,"text":text}))
             .await
@@ -419,7 +420,17 @@ async fn run(root: PathBuf) {
         received(&root, &id).len() >= 4
     })
     .await;
-    assert_eq!(received(&root, &id)[3], "fourth");
+    assert_eq!(received(&root, &id)[3], "fourth hold:fourth");
+    // The held turn that the sent-now text waited behind has ended, but the
+    // sent-now text's own turn is still running: the next entry waits for it.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(received(&root, &id).len(), 4);
+    assert_eq!(
+        texts(&snapshot(&client, &id).await["queuedMessages"]),
+        ["fifth"],
+        "flushed in the same turn end as the sent-now text"
+    );
+    release("fourth");
     until("fifth after the next turn end", async || {
         received(&root, &id).len() == 5
     })

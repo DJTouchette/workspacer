@@ -1,15 +1,18 @@
 //! `sessions.queue*` bus methods and the auto-flush worker over the hub-owned
 //! message queue (`services::message_queue`). Delivery always goes through the
 //! ordinary `agents.sendMessage` path of this service.
+use super::super::message_queue::{Delivery, Entry, valid_id};
 use super::{Sessions, segment, snapshots};
 use crate::protocol::Event;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 /// How often queued sessions are re-evaluated without a new row (startup,
 /// and the stale-turn fallback).
-const TICK: std::time::Duration = std::time::Duration::from_secs(2);
+const TICK: Duration = Duration::from_secs(2);
+/// How often queues are pruned against the daemon's FULL inventory.
+const PRUNE_EVERY: Duration = Duration::from_secs(10 * 60);
 
 fn text_param<'a>(params: &'a Value, key: &str) -> Result<&'a str> {
     match params.get(key) {
@@ -21,10 +24,42 @@ fn text_param<'a>(params: &'a Value, key: &str) -> Result<&'a str> {
 
 fn entry_param(params: &Value) -> Result<&str> {
     let id = text_param(params, "id")?;
-    if !super::super::message_queue::valid_id(id) {
+    if !valid_id(id) {
         bail!("invalid queued message id");
     }
     Ok(id)
+}
+
+/// Errors `agents.sendMessage` raises before anything reaches the engine.
+const REFUSED_BEFORE_SEND: &[&str] = &[
+    "agents.sendMessage requires",
+    "invalid session identifier",
+    "must be text",
+];
+
+/// Sort an `agents.sendMessage` result into a definite rejection (safe to put
+/// back and retry on the user's say-so) or an uncertain outcome (never
+/// retried). Only the daemon's own refusal (`CommandRejected`, surfaced by
+/// the tracked path as "message delivery rejected") and validation before the
+/// send count as definite; anything else may have been delivered.
+pub(super) fn classify(result: Result<Value>) -> Delivery {
+    let error = match result {
+        Ok(_) => return Delivery::Sent,
+        Err(error) => error,
+    };
+    let text = error.to_string();
+    let definite = error
+        .downcast_ref::<claudemon::daemon::embedded::CommandRejected>()
+        .is_some()
+        || text.starts_with("message delivery rejected")
+        || REFUSED_BEFORE_SEND
+            .iter()
+            .any(|refused| text.contains(refused));
+    if definite {
+        Delivery::Rejected(text)
+    } else {
+        Delivery::Uncertain(text)
+    }
 }
 
 impl Sessions {
@@ -45,30 +80,35 @@ impl Sessions {
         let lock = self.queue.session_lock(&id);
         let _serial = lock.lock().await;
         let mut reply = json!({});
-        match method {
+        let outcome = match method {
             "sessions.queueAdd" => {
+                if params.get("attachments").is_some_and(|a| !a.is_null()) {
+                    bail!(
+                        "queued messages cannot carry attachments (agents.sendMessage takes none)"
+                    );
+                }
                 if !self.rows.read().unwrap().contains_key(&id) {
                     bail!("unknown session");
                 }
-                let text = text_param(&params, "text")?;
-                let entry = self
-                    .queue
-                    .add(&id, text, params.get("attachments").cloned())?;
+                let entry = self.queue.add(&id, text_param(&params, "text")?).await?;
                 reply["id"] = json!(entry);
+                Ok(())
             }
             "sessions.queueUpdate" => {
                 self.queue
-                    .update(&id, entry_param(&params)?, text_param(&params, "text")?)?;
+                    .update(&id, entry_param(&params)?, text_param(&params, "text")?)
+                    .await
             }
-            "sessions.queueRemove" => self.queue.remove(&id, entry_param(&params)?),
+            "sessions.queueRemove" => self.queue.remove(&id, entry_param(&params)?).await,
             "sessions.queueMove" => {
                 let index = params["index"]
                     .as_u64()
                     .ok_or_else(|| anyhow!("index must be a non-negative integer"))?;
                 self.queue
-                    .move_to(&id, entry_param(&params)?, index as usize)?;
+                    .move_to(&id, entry_param(&params)?, index as usize)
+                    .await
             }
-            "sessions.queueClear" => self.queue.clear(&id),
+            "sessions.queueClear" => self.queue.clear(&id).await,
             "sessions.queueSendNow" => {
                 let delivery = match params.get("delivery") {
                     None | Some(Value::Null) => None,
@@ -77,44 +117,33 @@ impl Sessions {
                     }
                     Some(_) => bail!("delivery must be 'steer' or 'now'"),
                 };
+                let entry = entry_param(&params)?.to_owned();
                 let row = self.rows.read().unwrap().get(&id).cloned();
-                let (index, entry) = self.queue.take(&id, entry_param(&params)?, row.as_ref())?;
-                self.queue.persist().await?;
-                if let Err(error) = self.deliver(&id, &entry, delivery).await {
-                    self.queue.restore(&id, index, entry, None);
-                    if let Err(error) = self.queue.persist().await {
-                        eprintln!("message queue was not persisted: {error}");
-                    }
-                    self.queue_changed(&id).await;
-                    return Err(error);
-                }
+                self.queue
+                    .send_now(&id, &entry, row.as_ref(), |entry| {
+                        self.deliver(&id, entry, delivery)
+                    })
+                    .await
             }
             _ => bail!("unknown queue method"),
-        }
-        if method != "sessions.queueSendNow" {
-            self.queue.persist().await?;
-        }
+        };
+        // Publish whatever was committed, including a send-now's bookkeeping.
         self.queue_changed(&id).await;
+        outcome?;
         // Any mutation resumes a paused queue; let the worker look again.
         self.queue.kick(&id);
         reply["queue"] = self.queue.list(&id);
         Ok(reply)
     }
 
-    async fn deliver(
-        &self,
-        id: &str,
-        entry: &super::super::message_queue::Entry,
-        delivery: Option<String>,
-    ) -> Result<Value> {
+    /// Deliver one entry through `agents.sendMessage`. `delivery` is passed
+    /// through under that exact name.
+    async fn deliver(&self, id: &str, entry: Entry, delivery: Option<String>) -> Delivery {
         let mut params = json!({"sessionId":id,"text":entry.text});
-        if let Some(attachments) = &entry.attachments {
-            params["attachments"] = attachments.clone();
-        }
         if let Some(delivery) = delivery {
             params["delivery"] = json!(delivery);
         }
-        self.call("agents.sendMessage", params).await
+        classify(self.call("agents.sendMessage", params).await)
     }
 
     /// Re-publish the session's snapshot after a queue change.
@@ -141,21 +170,50 @@ impl Sessions {
         let Some(row) = self.rows.read().unwrap().get(id).cloned() else {
             return;
         };
-        let Some(entry) = self.queue.take_head(id, &row) else {
+        if self
+            .queue
+            .flush(id, &row, |entry| self.deliver(id, entry, None))
+            .await
+            .is_some()
+        {
+            self.queue_changed(id).await;
+        }
+    }
+
+    /// Drop queues of sessions neither the launch journal nor the daemon's
+    /// FULL inventory (archived and empty rows included) still knows.
+    async fn prune_queues(&self) {
+        if self.queue.sessions().is_empty() {
+            return;
+        }
+        let inventory = match self
+            .request(
+                "GET",
+                "/sessions?include_archived=true&include_empty=true".into(),
+                None,
+            )
+            .await
+        {
+            Ok(inventory) => inventory,
+            Err(error) => {
+                eprintln!("message queue pruning skipped: {error}");
+                return;
+            }
+        };
+        let Some(rows) = inventory.as_array() else {
             return;
         };
-        // Removed (and persisted) before the send: an interrupted delivery is
-        // uncertain, and is never replayed automatically after a restart.
-        if let Err(error) = self.queue.persist().await {
+        let mut keep: BTreeSet<String> = rows
+            .iter()
+            .filter_map(|row| row["session_id"].as_str().map(str::to_owned))
+            .collect();
+        keep.extend(self.rows.read().unwrap().keys().cloned());
+        if let Some(lifecycle) = &self.lifecycle {
+            keep.extend(lifecycle.session_ids());
+        }
+        if let Err(error) = self.queue.prune(&keep).await {
             eprintln!("message queue was not persisted: {error}");
         }
-        if let Err(error) = self.deliver(id, &entry, None).await {
-            self.queue.restore(id, 0, entry, Some(error.to_string()));
-            if let Err(error) = self.queue.persist().await {
-                eprintln!("message queue was not persisted: {error}");
-            }
-        }
-        self.queue_changed(id).await;
     }
 
     /// Auto-flush worker: woken by observed rows and by a periodic tick.
@@ -165,6 +223,8 @@ impl Sessions {
     ) {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut prune = tokio::time::interval(PRUNE_EVERY);
+        prune.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut flushes = tokio::task::JoinSet::new();
         loop {
             let ids = tokio::select! {
@@ -183,6 +243,10 @@ impl Sessions {
                     }
                     Vec::new()
                 }
+                _ = prune.tick() => {
+                    self.prune_queues().await;
+                    Vec::new()
+                }
                 Some(_) = flushes.join_next(), if !flushes.is_empty() => Vec::new(),
             };
             for id in ids {
@@ -197,23 +261,46 @@ impl Sessions {
         self.queue.observe(row);
     }
 
-    /// Prune queues to the sessions the hub retains.
-    pub(super) fn queue_retain(&self, ids: &std::collections::BTreeSet<String>) {
-        if self.queue.retain(ids) {
-            let queue = self.queue.clone();
-            tokio::spawn(async move {
-                if let Err(error) = queue.persist().await {
-                    eprintln!("message queue was not persisted: {error}");
-                }
-            });
+    pub(super) async fn queue_forget(&self, id: &str) {
+        if let Err(error) = self.queue.forget(id).await {
+            eprintln!("message queue was not persisted: {error}");
         }
     }
+}
 
-    pub(super) async fn queue_forget(&self, id: &str) {
-        if self.queue.forget(id)
-            && let Err(error) = self.queue.persist().await
-        {
-            eprintln!("message queue was not persisted: {error}");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use claudemon::daemon::embedded::CommandRejected;
+
+    #[test]
+    fn only_definite_refusals_are_rejections() {
+        assert_eq!(classify(Ok(json!({"ok":true}))), Delivery::Sent);
+        let refused = anyhow::Error::new(CommandRejected {
+            status: 409,
+            message: "session is stopped".into(),
+        });
+        assert!(matches!(classify(Err(refused)), Delivery::Rejected(_)));
+        for definite in [
+            "message delivery rejected: no wrapper",
+            "agents.sendMessage requires { sessionId, text }",
+            "invalid session identifier",
+            "fromSessionId must be text",
+        ] {
+            assert!(
+                matches!(classify(Err(anyhow!(definite))), Delivery::Rejected(_)),
+                "{definite}"
+            );
+        }
+        for unknown in [
+            "message delivery outcome is unknown; do not retry automatically: timed out",
+            "embedded session engine stopped",
+            "connection reset",
+        ] {
+            assert!(
+                matches!(classify(Err(anyhow!(unknown))), Delivery::Uncertain(_)),
+                "{unknown}"
+            );
         }
     }
 }

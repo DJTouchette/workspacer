@@ -289,11 +289,6 @@ impl Sessions {
         }
         step("rows");
         self.dismissals.retain_inventory(&retained);
-        let mut queued: std::collections::BTreeSet<String> = rows.keys().cloned().collect();
-        if let Some(lifecycle) = &self.lifecycle {
-            queued.extend(lifecycle.session_ids());
-        }
-        self.queue_retain(&queued);
         self.confirmed.retain(&rows.keys().cloned().collect());
         let old = std::mem::replace(&mut *self.rows.write().unwrap(), rows.clone());
         let mut observations: Vec<_> = rows.values().cloned().collect();
