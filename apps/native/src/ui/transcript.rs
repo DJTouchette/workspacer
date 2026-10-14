@@ -627,6 +627,24 @@ impl Workspace {
                         )
                         .child(div().flex_1().min_w_0().child(row.text.clone()));
                 }
+                "Thinking" => {
+                    return self.render_thinking(row, &key, window, cx);
+                }
+                "Compaction" => {
+                    return div()
+                        .debug_selector(|| "compaction-row".into())
+                        .w_full()
+                        .px_3()
+                        .py_2()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .text_size(px(11.))
+                        .text_color(rgb(p.muted))
+                        .child(div().flex_1().h(px(1.)).bg(rgb(p.border)))
+                        .child(div().flex_shrink_0().child(row.text.clone()))
+                        .child(div().flex_1().h(px(1.)).bg(rgb(p.border)));
+                }
                 "Questions" if !row.questions.is_empty() => {
                     return div().w_full().py_1().child(self.render_async_questions(
                         row,
@@ -639,6 +657,24 @@ impl Workspace {
             }
         }
         let copy = row.copy_text();
+        // A live message of yours: what the agent did with it, and the
+        // history controls that can name it.
+        let live_you = row.role == "You" && namespace == "live" && self.view.child.is_none();
+        let receipt = live_you
+            .then(|| {
+                self.selected_session()
+                    .and_then(|s| s.status.receipt(&row.uuid))
+                    .and_then(|r| r.label())
+            })
+            .flatten();
+        let actions = if live_you {
+            self.message_actions(row, cx)
+        } else {
+            Vec::new()
+        };
+        let panel = live_you
+            .then(|| self.render_message_action(row, cx))
+            .flatten();
         let mut body = div()
             .w_full()
             .px_3()
@@ -669,21 +705,36 @@ impl Workspace {
                                 .gap_2()
                                 .when(row.role != "Assistant" && row.tool.is_none(), |d| {
                                     d.child(row.role.clone())
-                                }),
+                                })
+                                .children(receipt.map(|label| {
+                                    div()
+                                        .debug_selector(|| "message-receipt".into())
+                                        .text_color(rgb(p.disabled))
+                                        .child(format!("· {label}"))
+                                })),
                         )
                         .child(
-                            self.icon_button(
-                                SharedString::from(format!("copy-{key}")),
-                                "Copy message",
-                                IconName::Copy,
-                                true,
-                            )
-                            .size(px(24.))
-                            .opacity(0.)
-                            .group_hover("message", |style| style.opacity(1.))
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
-                            }),
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .children(actions)
+                                .child(
+                                    self.icon_button(
+                                        SharedString::from(format!("copy-{key}")),
+                                        "Copy message",
+                                        IconName::Copy,
+                                        true,
+                                    )
+                                    .size(px(24.))
+                                    .opacity(0.)
+                                    .group_hover("message", |style| style.opacity(1.))
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copy.clone(),
+                                        ))
+                                    }),
+                                ),
                         ),
                 )
             })
@@ -980,7 +1031,11 @@ impl Workspace {
             if let Some(replies) = wks_native::questions::parse_reply(&row.text) {
                 return body.child(super::async_questions::render_reply(&replies, p));
             }
-            return body.child(literal(key, &text, window, cx));
+            let body = body.child(literal(key, &text, window, cx));
+            return match panel {
+                Some(panel) => div().w_full().flex().flex_col().child(body).child(panel),
+                None => body,
+            };
         }
         for (n, block) in content::assistant_blocks(&text).into_iter().enumerate() {
             let block_key = format!("{key}-{n}");

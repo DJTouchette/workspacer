@@ -847,7 +847,7 @@ fn deny_with_note_sends_the_note_and_closes_with_its_approval(cx: &mut TestAppCo
         [
             Command::Act {
                 session,
-                action: Action::DenyWithNote(note),
+                action: Action::DenyWithNote(note, _),
             },
         ] => {
             assert_eq!(session, "a");
@@ -892,13 +892,13 @@ fn a_finished_plan_reads_as_a_plan_with_approve_and_keep_planning(cx: &mut TestA
     visual.simulate_input("split step 1 into lexer and parser");
     click(&mut visual, "deny-note-send");
     assert!(matches!(effects(&mut commands).as_slice(),
-        [Command::Act { action: Action::DenyWithNote(note), .. }]
+        [Command::Act { action: Action::DenyWithNote(note, _), .. }]
             if note == "split step 1 into lexer and parser"));
     click(&mut visual, "plan-approve");
     assert!(matches!(
         effects(&mut commands).as_slice(),
         [Command::Act {
-            action: Action::Approve(true),
+            action: Action::Approve(true, _),
             ..
         }]
     ));

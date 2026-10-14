@@ -393,6 +393,10 @@ impl Workspace {
         )
         .unwrap_or_default();
         let open = self.extras.approval_details;
+        // The card the user is deciding on, sent with the decision so it can
+        // never land on a newer one.
+        let card = self.selected_session().and_then(Session::card);
+        let always = wks_native::session_controls::always_options(approval);
         div()
             .debug_selector(|| "approval-card".into())
             .occlude()
@@ -478,27 +482,60 @@ impl Workspace {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap_2()
-                    .child(self.primary_button("approve", "Allow once", enabled).when(
-                        enabled,
-                        |d| {
-                            d.on_click(
-                                cx.listener(|this, _, _, cx| this.act(Action::Approve(true), cx)),
-                            )
-                        },
-                    ))
-                    .child(self.button("deny", "Deny", enabled).when(enabled, |d| {
-                        d.on_click(
-                            cx.listener(|this, _, _, cx| this.act(Action::Approve(false), cx)),
+                    .child({
+                        let card = card.clone();
+                        self.primary_button("approve", "Allow once", enabled)
+                            .when(enabled, |d| {
+                                d.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.act(Action::Approve(true, card.clone()), cx)
+                                }))
+                            })
+                    })
+                    // One button per grant the card offers, in the hub's own
+                    // words: the user sees exactly what "always" would allow.
+                    .children(always.into_iter().enumerate().map(|(ix, option)| {
+                        let card = card.clone();
+                        let enabled = enabled && card.is_some();
+                        self.button(
+                            SharedString::from(format!("always-option-{ix}")),
+                            option.label.clone(),
+                            enabled,
                         )
+                        .debug_selector(move || format!("always-option-{ix}"))
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                let Some(card) = card.clone() else {
+                                    return;
+                                };
+                                this.act(
+                                    Action::AlwaysAllow {
+                                        option: option.id.clone(),
+                                        label: option.label.clone(),
+                                        card,
+                                    },
+                                    cx,
+                                )
+                            }))
+                        })
                     }))
-                    // Only Claude reads a deny's note (stream: the deny message; PTY: the
-                    // hook's reason); other providers' approval APIs have no field for it.
+                    .child({
+                        let card = card.clone();
+                        self.button("deny", "Deny", enabled).when(enabled, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.act(Action::Approve(false, card.clone()), cx)
+                            }))
+                        })
+                    })
+                    // Claude reads a deny's note (stream: the deny message; PTY:
+                    // the hook's reason); Codex gets it as a user message
+                    // ("Denied …: note"). Other providers have no field for it.
                     .when(
                         !self.extras.deny_open
                             && self
                                 .selected_session()
-                                .is_some_and(|s| s.provider_id() == "claude"),
+                                .is_some_and(|s| matches!(s.provider_id(), "claude" | "codex")),
                         |d| {
                             d.child(
                                 self.button("deny-with-note", "Deny with note…", enabled)
@@ -579,7 +616,7 @@ impl Workspace {
                             .when(enabled, |d| {
                                 d.on_click(
                                     cx.listener(|this, _, _, cx| {
-                                        this.act(Action::Approve(true), cx)
+                                        this.act(Action::Approve(true, this.selected_session().and_then(Session::card)), cx)
                                     }),
                                 )
                             }),
@@ -754,7 +791,7 @@ impl Workspace {
             .deny_note
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.extras.deny_open = false;
-        self.act(Action::DenyWithNote(note), cx);
+        self.act(Action::DenyWithNote(note, self.selected_session().and_then(Session::card)), cx);
         self.composer
             .update(cx, |input, cx| input.focus(window, cx));
     }

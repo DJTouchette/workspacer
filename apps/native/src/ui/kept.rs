@@ -91,7 +91,7 @@ impl Workspace {
         } else {
             "claude"
         };
-        let permission = match session.permission_mode.as_str() {
+        let permission = match session.access_mode() {
             "bypassPermissions" | "yolo" | "full" => wks_native::launch::Permission::FullAccess,
             "acceptEdits" if provider == "claude" => wks_native::launch::Permission::AcceptEdits,
             "plan" if provider == "claude" => wks_native::launch::Permission::Plan,

@@ -104,6 +104,18 @@ pub fn provider_name(provider: &str) -> &'static str {
     }
 }
 
+/// The mode a successor inherits from: Codex plan mode lives beside its
+/// approvals (`collaborationMode`, never `livePermissionMode`), so a Codex
+/// session in plan mode hands over "plan"; otherwise the CLI's observed mode,
+/// else its live or requested one.
+pub fn source_mode(session: &Session) -> &str {
+    if session.in_plan_mode() {
+        "plan"
+    } else {
+        session.access_mode()
+    }
+}
+
 /// Carry the source's access to the successor without ever widening it.
 /// Bypass in either vocabulary stays full access (the same intent); a mode
 /// the target does not offer, an unknown or live-only mode, or no report at
@@ -365,6 +377,17 @@ mod tests {
         assert_eq!(carry_permission("claude", ""), Permission::Ask);
         assert_eq!(carry_permission("claude", "dontAsk"), Permission::Ask);
         assert_eq!(carry_permission("claude", "auto"), Permission::Ask);
+        // Codex plan mode is its collaboration mode, beside ask/yolo.
+        let mut codex = Session::default();
+        codex.merge(&json!({"sessionId":"c","provider":"codex","compacting":false,
+            "livePermissionMode":"ask","collaborationMode":"plan"}));
+        assert_eq!(source_mode(&codex), "plan");
+        assert_eq!(
+            carry_permission("claude", source_mode(&codex)),
+            Permission::Plan
+        );
+        codex.merge(&json!({"collaborationMode":"default"}));
+        assert_eq!(source_mode(&codex), "ask");
     }
 
     #[test]

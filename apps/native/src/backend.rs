@@ -77,6 +77,15 @@ impl HubClient {
 }
 
 impl Backend {
+    /// The methods this connection may call, as the hub's hello said; `None`
+    /// for the in-process backend (this app owns it) and hubs that do not say.
+    pub fn methods(&self) -> Option<Vec<String>> {
+        match &self.hub {
+            HubClient::Remote(client) => client.methods(),
+            #[cfg(feature = "rust-hub")]
+            HubClient::Embedded(_) => None,
+        }
+    }
     pub fn can_resume_power_pause(&self) -> bool {
         matches!(&self.hub, HubClient::Remote(_))
     }

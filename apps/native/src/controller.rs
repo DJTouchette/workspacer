@@ -464,6 +464,21 @@ pub struct View {
     pub terminals: BTreeMap<String, crate::terminal::Terminal>,
     /// Shell output waiting for the window (shared, not snapshotted).
     pub terminal_feed: Arc<crate::terminal::Feed>,
+    /// The bus methods this connection may call, as the hub's hello listed
+    /// them (`*` = all, the owner). `None` when the hub did not say (an
+    /// in-process backend, older hubs): everything is offered and the hub
+    /// still refuses what the caller may not do.
+    pub methods: Option<Arc<Vec<String>>>,
+}
+
+impl View {
+    /// Whether this connection's access tier includes `method`: controls it
+    /// cannot use are hidden rather than refused after a click.
+    pub fn may_call(&self, method: &str) -> bool {
+        self.methods
+            .as_ref()
+            .is_none_or(|methods| methods.iter().any(|m| m == "*" || m == method))
+    }
 }
 
 #[derive(Clone)]
@@ -905,12 +920,22 @@ impl Worker {
         {
             return;
         }
+        if request.method().is_some_and(|m| !self.view.may_call(m)) || !self.view.connected && request.method().is_some() {
+            return;
+        }
         let key = request.key();
         // A write already on its way cannot be recalled: superseding it would
         // report "superseded" for a change the hub may still apply.
         if matches!(
             key,
-            "upload" | "project-save" | "file-save" | "job-action" | "task-stop" | "git-action"
+            "upload"
+                | "project-save"
+                | "file-save"
+                | "job-action"
+                | "task-stop"
+                | "git-action"
+                | "fork"
+                | "rewind-files"
         ) && self.view.requests.get(key).is_some_and(|s| s.loading)
         {
             return;
@@ -1362,6 +1387,7 @@ impl Worker {
                 self.first_replies.clear();
                 self.archive_resync = true;
                 self.view.connected = true;
+                self.view.methods = self.backend.methods().map(Arc::new);
                 self.view.power_paused = false;
                 self.view.notice.clear();
                 self.fleet_pending = false;
@@ -1854,6 +1880,24 @@ impl Worker {
                 if matches!(key, "archive" | "archive-set") && error.is_none() {
                     self.apply_archive(&value);
                 }
+                // A fork opens as soon as the hub has made it.
+                if let crate::features::Request::Fork { session, label, .. } = &request
+                    && error.is_none()
+                    && let Some(id) = value["sessionId"].as_str().map(str::to_owned)
+                {
+                    let source = self.sessions.get(session).cloned().unwrap_or_default();
+                    let row = json!({"sessionId":id,"cwd":source.cwd,"provider":source.provider,
+                        "transport":"stream","mode":"unknown","model":source.model,
+                        "label":label.clone().unwrap_or_default(),
+                        "parentSessionId":source.parent_session_id});
+                    if !self.sessions.contains_key(&id) {
+                        self.upsert(&row);
+                        self.fleet_dirty = true;
+                    }
+                    self.view.notice = format!("Forked from {}", source.title());
+                    self.select(Some(id)).await;
+                    self.fetch_fleet();
+                }
                 if let crate::features::Request::SetArchive { session, archived } = &request {
                     self.view.archive_receipts.push_back(ArchiveReceipt {
                         number,
@@ -2265,7 +2309,9 @@ impl Worker {
                     Action::Review(_) => format!("Review not started: {error}"),
                     Action::Goal(_) => format!("Goal change refused: {error}"),
                     Action::SandboxSetup => format!("Sandbox setup refused: {error}"),
-                    Action::Rename(_) => format!("Rename refused: {error}"),
+                    Action::Rename(_) => {
+                        format!("Name saved on this device; the hub did not rename it: {error}")
+                    }
                     Action::McpReconnect(server) => format!("Reconnecting {server} failed: {error}"),
                     Action::SetFastMode(_) => format!("Fast mode change refused: {error}"),
                     Action::SetModel { .. } => format!("Model change refused: {error}"),

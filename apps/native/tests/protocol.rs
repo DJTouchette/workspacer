@@ -607,7 +607,7 @@ async fn approval_contract_send_receipt_and_reconnect_reseed_use_real_websocket(
     controller
         .command(Command::Act {
             session: "a".into(),
-            action: Action::Approve(true),
+            action: Action::Approve(true, None),
         })
         .unwrap();
     let approval = hub.frame("call", Some("claude.approve")).await;
@@ -1405,7 +1405,7 @@ async fn end_model_and_question_controls_use_structured_contracts() {
     controller
         .command(Command::Act {
             session: "a".into(),
-            action: Action::Answers(vec!["One".into()]),
+            action: Action::Answers(vec!["One".into()], None),
         })
         .unwrap();
     let answer = hub.frame("call", Some("claude.answer")).await;

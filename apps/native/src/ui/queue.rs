@@ -376,6 +376,9 @@ impl Workspace {
         if let Some(uncertain) = &queue.uncertain {
             card = card.child(self.render_queue_uncertain(uncertain, tidy, live, cx));
         }
+        if let Some(confirmed) = &queue.confirmed {
+            card = card.child(self.render_queue_confirmed(confirmed, queue.paused, tidy, cx));
+        }
         // An edit whose entry left the queue keeps its text here.
         if let Some(edit) = edit.filter(|e| !queue.entries.iter().any(|x| x.id == e.id)) {
             card = card.child(self.render_queue_editor(edit, live, cx));
@@ -493,6 +496,67 @@ impl Workspace {
                     .child(
                         self.button("queue-uncertain-dismiss", "Dismiss", tidy)
                             .debug_selector(|| "queue-uncertain-dismiss".into())
+                            .when(tidy, |d| {
+                                d.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.queue_op(Op::Remove(id.clone()), cx)
+                                }))
+                            }),
+                    ),
+            )
+    }
+
+    /// An uncertain send the agent's own receipt confirmed: it was read, so
+    /// there is nothing to send again. Dismiss clears the record; a paused
+    /// queue still waits for Resume.
+    fn render_queue_confirmed(
+        &self,
+        confirmed: &wks_native::queue::Confirmed,
+        paused: bool,
+        tidy: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let id = confirmed.id.clone();
+        div()
+            .debug_selector(|| "queue-confirmed".into())
+            .p_2()
+            .rounded(px(p.control_radius))
+            .bg(gpui::Hsla::from(rgb(p.success)).opacity(0.08))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(chrome::notice_line(
+                "Delivered — confirmed by the agent",
+                chrome::Tone::Success,
+                p,
+                "queue-confirmed-line",
+            ))
+            .child(
+                div()
+                    .pl(px(19.))
+                    .text_color(rgb(p.prose))
+                    .max_h(px(60.))
+                    .overflow_hidden()
+                    .child(confirmed.text.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    // A paused queue's own row above carries Resume.
+                    .when(paused, |d| {
+                        d.child(
+                            div()
+                                .flex_1()
+                                .text_size(px(chrome::scale::CAPTION))
+                                .text_color(rgb(p.muted))
+                                .child("Nothing to send again. Resume the queue when ready."),
+                        )
+                    })
+                    .child(
+                        self.button("queue-confirmed-dismiss", "Dismiss", tidy)
+                            .debug_selector(|| "queue-confirmed-dismiss".into())
                             .when(tidy, |d| {
                                 d.on_click(cx.listener(move |this, _, _, cx| {
                                     this.queue_op(Op::Remove(id.clone()), cx)

@@ -44,6 +44,18 @@ impl Uncertain {
     }
 }
 
+/// An uncertain send that the agent's delivery receipt later confirmed
+/// (`queueConfirmed`): it did reach the agent. Informational; dismissing it
+/// is removing its id, and it never resumes a paused queue by itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Confirmed {
+    pub id: String,
+    pub text: String,
+    /// The receipt that confirmed it: `started` or `completed`.
+    pub delivery: String,
+    pub at: Option<i64>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Queue {
     pub entries: Vec<Entry>,
@@ -52,6 +64,7 @@ pub struct Queue {
     pub paused: bool,
     pub error: Option<String>,
     pub uncertain: Option<Uncertain>,
+    pub confirmed: Option<Confirmed>,
 }
 
 impl Queue {
@@ -92,11 +105,23 @@ impl Queue {
                 at: value["at"].as_i64(),
             })
         });
+        self.confirmed = row.get("queueConfirmed").and_then(|value| {
+            let id = value["id"].as_str().filter(|id| !id.is_empty())?;
+            Some(Confirmed {
+                id: crate::transcript::head(id, 128),
+                text: crate::transcript::head(value["text"].as_str().unwrap_or(""), 4 * 1024),
+                delivery: crate::transcript::head(value["delivery"].as_str().unwrap_or(""), 32),
+                at: value["at"].as_i64(),
+            })
+        });
     }
 
     /// Something for the queue panel to show.
     pub fn visible(&self) -> bool {
-        !self.entries.is_empty() || self.paused || self.uncertain.is_some()
+        !self.entries.is_empty()
+            || self.paused
+            || self.uncertain.is_some()
+            || self.confirmed.is_some()
     }
 }
 
@@ -329,5 +354,17 @@ mod tests {
             ..Default::default()
         };
         assert!(!cut.complete());
+    }
+
+    #[test]
+    fn a_confirmed_delivery_is_shown_until_the_row_drops_it() {
+        let mut queue = Queue::default();
+        queue.merge(&json!({"queuedMessages":[],"queuePaused":true,
+            "queueConfirmed":{"id":"q-1","text":"run the tests","messageUuid":"u1","delivery":"started","at":5}}));
+        let confirmed = queue.confirmed.clone().unwrap();
+        assert_eq!((confirmed.id.as_str(), confirmed.delivery.as_str()), ("q-1", "started"));
+        assert!(queue.visible());
+        queue.merge(&json!({"queuedMessages":[]}));
+        assert!(queue.confirmed.is_none() && !queue.visible());
     }
 }

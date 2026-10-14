@@ -115,7 +115,7 @@ impl Workspace {
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.reset_model_picker(window, cx);
         self.reconcile_effort(window, cx);
-        self.permission = handoff::carry_permission(target, &source.permission_mode);
+        self.permission = handoff::carry_permission(target, handoff::source_mode(source));
         // Starting fresh exists to leave the source's context alone, and an
         // ended agent cannot write its own brief: both default to the summary.
         self.extras.handoff_brief = if source.stopped() || fresh {

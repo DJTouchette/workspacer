@@ -4,6 +4,7 @@ use super::*;
 use gpui::AnyElement;
 use gpui_component::scroll::ScrollableElement;
 use serde_json::Value;
+use wks_native::elicitation::{Elicitation, Kind};
 
 /// The questions in a pending set, whether sent bare or under `questions`.
 pub(super) fn question_list(value: &Value) -> Vec<Value> {
@@ -173,7 +174,7 @@ impl Workspace {
         };
         match self.controller.command(Command::Act {
             session,
-            action: Action::Answers(answers.clone()),
+            action: Action::Answers(answers.clone(), self.selected_session().and_then(Session::card)),
         }) {
             Ok(()) => {
                 self.extras.answer_submission =
@@ -184,6 +185,121 @@ impl Workspace {
             Err(error) => self.local_notice = error.to_string(),
         }
         cx.notify();
+    }
+
+    /// An MCP server's link: its message, the URL itself, and Open (which
+    /// opens it in the system browser and answers Open) or Decline.
+    fn render_url_elicitation(
+        &self,
+        server: &str,
+        url: &str,
+        question: &Value,
+        interactive: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = self.appearance.palette();
+        let message = Elicitation {
+            server: server.to_owned(),
+            kind: Kind::Url(url.to_owned()),
+        }
+        .message(question);
+        let enabled = interactive && !self.view.busy;
+        let open = url.to_owned();
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .when(!message.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(px(14.))
+                        .line_height(gpui::relative(1.4))
+                        .text_color(rgb(p.text))
+                        .child(message),
+                )
+            })
+            .child(
+                div()
+                    .debug_selector(|| "elicitation-url".into())
+                    .p_2()
+                    .rounded(px(p.control_radius))
+                    .bg(rgb(p.code_block))
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .font_family(mono_font())
+                    .text_size(px(12.))
+                    .text_color(rgb(p.text))
+                    .child(url.to_owned()),
+            )
+            .child(
+                div()
+                    .text_size(px(chrome::scale::CAPTION))
+                    .text_color(rgb(p.muted))
+                    .child(format!(
+                        "Open lets “{server}” know you opened it, and opens the link in your browser. Decline tells it you did not."
+                    )),
+            )
+            .children(
+                self.extras
+                    .answer_error
+                    .clone()
+                    .filter(|_| !self.extras.answers_sent)
+                    .map(|error| chrome::notice_line(error, chrome::Tone::Error, p, "question-error")),
+            )
+            .when(self.extras.answers_sent, |d| {
+                d.child(chrome::notice_line(
+                    "Answer sent. Waiting for the agent…",
+                    chrome::Tone::Loading,
+                    p,
+                    "question-sent",
+                ))
+            })
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        self.button("elicitation-decline", "Decline", enabled)
+                            .debug_selector(|| "elicitation-decline".into())
+                            .when(enabled, |d| {
+                                d.on_click(cx.listener(|this, _, window, cx| {
+                                    this.answer_with_option(0, 1, window, cx)
+                                }))
+                            }),
+                    )
+                    .child(
+                        self.primary_button("elicitation-open", "Open link", enabled)
+                            .debug_selector(|| "elicitation-open".into())
+                            .when(enabled, |d| {
+                                d.on_click(cx.listener(move |this, _, window, cx| {
+                                    // Only ever an http(s) link, and only on this click.
+                                    if wks_native::elicitation::web_url(&open) {
+                                        cx.open_url(&open);
+                                    }
+                                    this.answer_with_option(0, 0, window, cx)
+                                }))
+                            }),
+                    ),
+            )
+    }
+
+    /// Choose one option of a one-question card and send it at once.
+    fn answer_with_option(
+        &mut self,
+        ix: usize,
+        option_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selected) = self.extras.selected_options.get_mut(ix) {
+            selected.clear();
+            selected.insert(option_ix);
+        }
+        if let Some(input) = self.extras.answers.get(ix).cloned() {
+            input.update(cx, |input, cx| input.set_value("", window, cx));
+        }
+        self.submit_answers(cx);
     }
 
     /// Toggle (multiple choice) or choose (single choice) one option. A choice
@@ -285,6 +401,7 @@ impl Workspace {
         let failed = self.extras.answer_error.clone();
         let pad = px(if compact { 8. } else { 12. });
         let body_max = window.viewport_size().height * if compact { 0.4 } else { 0.46 };
+        let elicitation = wks_native::elicitation::detect(&list);
         let header = div()
             .flex()
             .items_center()
@@ -298,10 +415,15 @@ impl Workspace {
                     .truncate()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(rgb(p.warning))
-                    .child(if total > 1 && !compact {
-                        format!("Needs your input · {total} questions")
-                    } else {
-                        "Needs your input".into()
+                    .child(match (&elicitation, total > 1 && !compact) {
+                        (Some(e), _) if matches!(e.kind, Kind::Url(_)) => {
+                            format!("MCP server “{}” asks you to open a link", e.server)
+                        }
+                        (Some(e), _) => {
+                            format!("MCP server “{}” asks for information", e.server)
+                        }
+                        (None, true) => format!("Needs your input · {total} questions"),
+                        (None, false) => "Needs your input".into(),
                     }),
             )
             .when(total > 1, |d| {
@@ -357,13 +479,25 @@ impl Workspace {
                             .when(enabled, |d| {
                                 d.on_click(cx.listener(|this, _, _, cx| {
                                     this.act(
-                                        Action::Answer(this.composer.read(cx).value().to_string()),
+                                        Action::Answer(
+                                            this.composer.read(cx).value().to_string(),
+                                            this.selected_session().and_then(Session::card),
+                                        ),
                                         cx,
                                     )
                                 }))
                             }),
                     ),
                 );
+        }
+        if let Some(Elicitation {
+            server,
+            kind: Kind::Url(url),
+        }) = &elicitation
+        {
+            return card
+                .child(header)
+                .child(self.render_url_elicitation(server, url, &list[0], interactive, cx));
         }
         let failed = failed.filter(|_| !sent);
         let status: Option<AnyElement> = if let Some(error) = failed {
@@ -440,16 +574,19 @@ impl Workspace {
                     .into_any_element(),
             )
         };
+        // An MCP form's button says where the answers go, or that only a
+        // decline is sent.
+        let label: SharedString = match &elicitation {
+            Some(e) => match answers.last().map(String::as_str) {
+                Some(wks_native::elicitation::SUBMIT) => format!("Submit to {}", e.server).into(),
+                Some(wks_native::elicitation::DECLINE) => "Send decline".into(),
+                _ => "Submit or decline".into(),
+            },
+            None if total > 1 => "Send answers".into(),
+            None => "Send answer".into(),
+        };
         let submit = self
-            .primary_button(
-                "submit-answers",
-                if total > 1 {
-                    "Send answers"
-                } else {
-                    "Send answer"
-                },
-                interactive && ready && !self.view.busy,
-            )
+            .primary_button("submit-answers", label, interactive && ready && !self.view.busy)
             .debug_selector(|| "submit-answers".into())
             .flex_shrink_0()
             .when(interactive && ready, |d| {
@@ -460,12 +597,39 @@ impl Workspace {
         let mut children = Vec::new();
         let mut focused = None;
         for (ix, q) in list.iter().enumerate() {
+            let consent = elicitation
+                .as_ref()
+                .filter(|e| ix == e.consent_index(&list))
+                .map(|e| e.server.as_str());
+            if let Some(server) = consent {
+                // The consent step stands apart from the fields it sends.
+                children.push(
+                    div()
+                        .debug_selector(|| "elicitation-consent".into())
+                        .mt(px(8.))
+                        .p_2()
+                        .rounded(px(p.control_radius))
+                        .border_1()
+                        .border_color(gpui::Hsla::from(rgb(p.warning)).opacity(0.45))
+                        .bg(gpui::Hsla::from(rgb(p.warning)).opacity(0.08))
+                        .child(chrome::notice_line(
+                            format!(
+                                "Your answers above are sent to the MCP server “{server}” only if you choose Submit. Decline sends nothing."
+                            ),
+                            chrome::Tone::Warning,
+                            p,
+                            "elicitation-consent-line",
+                        ))
+                        .into_any_element(),
+                );
+            }
             self.push_question(
                 ix,
                 q,
                 total,
                 interactive,
                 compact,
+                consent.is_some(),
                 window,
                 cx,
                 &mut children,
@@ -527,6 +691,7 @@ impl Workspace {
         total: usize,
         interactive: bool,
         compact: bool,
+        consent: bool,
         window: &Window,
         cx: &mut Context<Self>,
         children: &mut Vec<AnyElement>,
@@ -660,7 +825,8 @@ impl Workspace {
                 .into_any_element(),
             );
         }
-        if let Some(input) = self.extras.answers.get(ix) {
+        // Consent is Submit or Decline, never typed: typed text would decline.
+        if let Some(input) = self.extras.answers.get(ix).filter(|_| !consent) {
             if input.read(cx).focus_handle(cx).is_focused(window) {
                 *focused = Some(children.len());
             }

@@ -497,11 +497,26 @@ impl Workspace {
         // row is named (and dismissed) by its band, so a token tick neither
         // greets again nor undoes a dismissal.
         if let Some(context) = context {
+            let can_compact = self.view.connected
+                && !self.view.busy
+                && self.view.may_call("claude.compact")
+                && self.selected_session().is_some_and(|s| {
+                    !s.stopped() && !s.compacting && matches!(s.provider_id(), "claude" | "codex")
+                });
+            let action = can_compact.then(|| {
+                self.quiet_button("context-compact", "Compact now", IconName::Minimize, true)
+                    .debug_selector(|| "context-compact".into())
+                    .py_1()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.act(Action::Compact(String::new()), cx)
+                    }))
+                    .into_any_element()
+            });
             let row = self.island_notice(
                 "context",
                 context.text.clone(),
                 context.tone,
-                None,
+                action,
                 Some(context.key.clone()),
                 compact,
                 cx,
@@ -514,6 +529,40 @@ impl Workspace {
                 dismissible: true,
             };
             rows.push((notice, row));
+        }
+        // Codex on Windows without its sandbox: say so, with the fix.
+        if let Some(sandbox) = self
+            .selected_session()
+            .filter(|_| self.view.child.is_none() && self.view.connected)
+            .and_then(|s| s.windows_sandbox.clone())
+            && let Some(text) = sandbox.notice()
+        {
+            let can = !sandbox.setting_up()
+                && !self.view.busy
+                && self.view.may_call("agents.windowsSandboxSetup");
+            let action = can.then(|| {
+                self.quiet_button("sandbox-setup-notice", "Set up sandbox", IconName::Settings, true)
+                    .debug_selector(|| "sandbox-setup-notice".into())
+                    .py_1()
+                    .on_click(cx.listener(|this, _, _, cx| this.act(Action::SandboxSetup, cx)))
+                    .into_any_element()
+            });
+            let tone = if sandbox.setting_up() {
+                Tone::Loading
+            } else {
+                Tone::Warning
+            };
+            let row = self.island_notice("sandbox", text.clone(), tone, action, None, compact, cx);
+            rows.push((
+                Notice {
+                    slot: "sandbox",
+                    key: text.clone(),
+                    text,
+                    tone,
+                    dismissible: false,
+                },
+                row,
+            ));
         }
         if self.view.loading && !self.view.transcript.rows.is_empty() {
             let text = "Refreshing conversation…";
@@ -933,7 +982,7 @@ impl Workspace {
                 // Only a mode that differs from asking is worth the room.
                 let access = wks_native::launch::Permission::from_wire(
                     session.provider_id(),
-                    &session.permission_mode,
+                    session.access_mode(),
                 )
                 .filter(|mode| *mode != wks_native::launch::Permission::Ask);
                 d.child(
@@ -992,6 +1041,7 @@ impl Workspace {
                 )
             }) // Background work is status, not a hidden action: the chip
             // stays in the capsule, narrow windows included.
+            .children(session.map(|s| self.status_chips(s, narrow, cx)).unwrap_or_default())
             .children(session.and_then(|session| self.render_tasks_chip(session, cx)))
     }
 

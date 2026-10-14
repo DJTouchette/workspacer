@@ -190,6 +190,7 @@ fn queued() -> View {
             text: "maybe sent".into(),
             at: Some(0),
         }),
+        confirmed: None,
     };
     next
 }

@@ -164,7 +164,7 @@ fn question_picker_answers_by_click_and_keyboard_without_touching_the_draft(
     visual.simulate_keystrokes("ctrl-enter"); // before any busy/receipt frame
     let sent = sent_actions(&mut commands);
     assert!(
-        matches!(sent.as_slice(), [Action::Answers(answers)] if *answers == expected),
+        matches!(sent.as_slice(), [Action::Answers(answers, _)] if *answers == expected),
         "{sent:?}"
     );
     // Wire shape (answerKinds all "text"): tests/protocol.rs.
@@ -177,7 +177,7 @@ fn question_picker_answers_by_click_and_keyboard_without_touching_the_draft(
     accepted.receipt = Some(wks_native::controller::Receipt {
         number: 1,
         session: "a".into(),
-        action: Action::Answers(expected),
+        action: Action::Answers(expected, None),
         error: None,
     });
     visual.update(|window, cx| {
@@ -297,7 +297,7 @@ fn single_question_needs_an_explicit_send_and_keeps_typed_numbers_literal(cx: &m
     visual.simulate_keystrokes("enter");
     let sent = sent_actions(&mut commands);
     assert!(
-        matches!(sent.as_slice(), [Action::Answers(answers)] if answers == &["2".to_owned()]),
+        matches!(sent.as_slice(), [Action::Answers(answers, _)] if answers == &["2".to_owned()]),
         "{sent:?}"
     );
 }
@@ -399,7 +399,7 @@ fn secret_answers_are_sent_then_never_kept(cx: &mut TestAppContext) {
         })
     });
     let sent = sent_actions(&mut commands);
-    assert!(matches!(&sent[..], [Action::Answers(a)] if a == &["s3cr3t", "eu-west"]));
+    assert!(matches!(&sent[..], [Action::Answers(a, _)] if a == &["s3cr3t", "eu-west"]));
     let mut accepted = pending;
     accepted.receipt = Some(Receipt {
         number: 1,

@@ -227,6 +227,21 @@ pub enum Request {
         session: String,
         archived: bool,
     },
+    /// Claude stream: restore files to how they were at a user message
+    /// (`claude.rewindFiles`). `preview` is the dry run that says what would
+    /// change; only a confirmed preview is followed by the real call.
+    RewindFiles {
+        session: String,
+        message: String,
+        preview: bool,
+    },
+    /// A new session from this one (`agents.fork`), optionally keeping only
+    /// the history before a user message. The controller opens it.
+    Fork {
+        session: String,
+        at: Option<String>,
+        label: Option<String>,
+    },
 }
 
 /// One change to `agents.autoTitle`; everything else in it is left alone.
@@ -387,6 +402,18 @@ impl Request {
             Self::JobAction(_) => "job-action",
             Self::Archive => "archive",
             Self::SetArchive { .. } => "archive-set",
+            Self::RewindFiles { .. } => "rewind-files",
+            Self::Fork { .. } => "fork",
+        }
+    }
+
+    /// The bus method behind a history control, for hiding it from a
+    /// connection that cannot call it.
+    pub fn method(&self) -> Option<&'static str> {
+        match self {
+            Self::RewindFiles { .. } => Some("claude.rewindFiles"),
+            Self::Fork { .. } => Some("agents.fork"),
+            _ => None,
         }
     }
     pub async fn run(&self, backend: &Backend) -> Result<Value> {
@@ -494,6 +521,41 @@ impl Request {
                     }
                 }
                 backend.call("jobs.list", json!({})).await
+            }
+            Self::RewindFiles {
+                session,
+                message,
+                preview,
+            } => {
+                ensure!(
+                    crate::session_controls::usable_uuid(message),
+                    "This message cannot be named to Claude."
+                );
+                backend
+                    .call(
+                        "claude.rewindFiles",
+                        json!({"sessionId":session,"userMessageId":message,"preview":preview}),
+                    )
+                    .await
+            }
+            Self::Fork { session, at, label } => {
+                let mut params = json!({"sessionId":session});
+                if let Some(at) = at {
+                    ensure!(
+                        crate::session_controls::usable_uuid(at),
+                        "This message cannot be named to the agent."
+                    );
+                    params["atMessageId"] = json!(at);
+                }
+                if let Some(label) = label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+                    params["label"] = json!(label);
+                }
+                let value = backend.call("agents.fork", params).await?;
+                ensure!(
+                    value["sessionId"].as_str().is_some_and(|id| !id.is_empty()),
+                    "The fork returned no session id; refresh before trying again"
+                );
+                Ok(value)
             }
             Self::Archive => archive_document(backend.call("sessionArchive.get", json!({})).await?),
             Self::SetArchive { session, archived } => {

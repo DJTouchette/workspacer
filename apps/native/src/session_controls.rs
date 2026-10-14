@@ -33,6 +33,20 @@ pub fn stale_card(error: &str) -> bool {
 /// again on the card that is shown now.
 pub const STALE_NOTICE: &str = "That request changed before your answer reached it, so nothing was sent. The current one is shown now.";
 
+/// The provider's own words from a refusal the hub relayed
+/// (`daemon returned 502 …: {"ok":false,"error":"…"}`), else the error.
+pub fn refusal(error: &str) -> String {
+    error
+        .find('{')
+        .and_then(|at| {
+            let body = &error[at..];
+            let end = body.rfind('}')?;
+            serde_json::from_str::<Value>(&body[..=end]).ok()
+        })
+        .and_then(|body| body["error"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| error.to_owned())
+}
+
 /// One "Always allow …" choice on an approval card.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlwaysOption {
@@ -224,6 +238,11 @@ mod tests {
             "daemon returned 409 Conflict: {\"error\":\"session is not awaiting approval\"}"
         ));
         assert!(!stale_card("Request refused"));
+        assert_eq!(
+            refusal("daemon returned 502 Bad Gateway: {\"ok\":false,\"error\":\"No file checkpoint found for this message.\"}; execution outcome is unknown"),
+            "No file checkpoint found for this message."
+        );
+        assert_eq!(refusal("plain"), "plain");
     }
 
     #[test]

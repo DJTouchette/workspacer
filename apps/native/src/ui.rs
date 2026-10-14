@@ -28,6 +28,7 @@ mod recent;
 mod remote;
 mod review;
 mod scroll;
+mod session_tools;
 mod settings;
 mod sidebar;
 mod smooth_scroll;
@@ -546,6 +547,7 @@ pub fn bind_keys(cx: &mut App) {
 pub struct Workspace {
     ui_bus: bus_commands::UiState,
     extras: features::Extras,
+    tools: session_tools::ToolsUi,
     explorer: explorer::Explorer,
     review: review::ReviewUi,
     terminal: terminal::TerminalUi,
@@ -746,6 +748,7 @@ impl Workspace {
             },
         ));
         let extras = features::Extras::new(window, cx);
+        let tools = session_tools::ToolsUi::new(window, cx);
         // Enter in Session details' name field saves, like its button.
         focus_watch.push(cx.subscribe_in(
             &extras.name,
@@ -829,6 +832,7 @@ impl Workspace {
         let queue = queue::QueueUi::new(window, cx);
         Self {
             extras,
+            tools,
             explorer: Default::default(),
             review: Default::default(),
             terminal: Default::default(),
@@ -959,6 +963,7 @@ impl Workspace {
         let children_changed = self.sync_children(&view, cx);
         self.receive_chat_requests(&view, cx);
         self.sync_features(&view, window, cx);
+        self.sync_message_action(&view, cx);
         self.sync_tasks(&view, cx);
         self.sync_explorer(&view, cx);
         self.sync_kept_open(&view, cx);
@@ -1113,7 +1118,7 @@ impl Workspace {
             self.last_receipt = receipt.number;
             self.note_model_receipt(receipt);
             if let Some((signature, answers)) = &self.extras.answer_submission {
-                let ours = matches!(&receipt.action, Action::Answers(sent) if sent == answers)
+                let ours = matches!(&receipt.action, Action::Answers(sent, _) if sent == answers)
                     && view.selected.as_ref() == Some(&receipt.session);
                 if ours {
                     let same_question = *signature == self.extras.question_signature;
@@ -1138,7 +1143,7 @@ impl Workspace {
             }
             if receipt.error.is_none()
                 && let Some(sent) = receipt.action.draft_text().or(match &receipt.action {
-                    Action::Answer(sent) => Some(sent.as_str()),
+                    Action::Answer(sent, _) => Some(sent.as_str()),
                     _ => None,
                 })
             {

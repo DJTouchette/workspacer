@@ -89,7 +89,12 @@ pub struct Client {
     connected: Arc<AtomicBool>,
     power_paused: Arc<AtomicBool>,
     call_timeout: Duration,
+    /// The methods the hub's latest hello allowed this connection.
+    methods: Methods,
 }
+
+/// The `methods` of the hub's hello, `None` until one lists them.
+type Methods = Arc<std::sync::Mutex<Option<Vec<String>>>>;
 
 impl Client {
     /// Must be called within a Tokio runtime. Dropping all handles stops the
@@ -99,14 +104,21 @@ impl Client {
         let (events, incoming) = async_channel::bounded(256);
         let connected = Arc::new(AtomicBool::new(false));
         let power_paused = Arc::new(AtomicBool::new(false));
+        let methods = Methods::default();
         let client = Self {
+            methods: methods.clone(),
             commands,
             connected: connected.clone(),
             power_paused: power_paused.clone(),
             call_timeout: config.call_timeout,
         };
-        tokio::spawn(run(config, rx, events, connected, power_paused));
+        tokio::spawn(run(config, rx, events, connected, power_paused, methods));
         (client, incoming)
+    }
+
+    /// The methods the hub's hello allowed (`*` for the owner), if it said.
+    pub fn methods(&self) -> Option<Vec<String>> {
+        self.methods.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Explicit host/UI intent only. Consuming the latch here prevents duplicate
@@ -207,6 +219,7 @@ async fn run(
     events: async_channel::Sender<Event>,
     connected: Arc<AtomicBool>,
     power_paused: Arc<AtomicBool>,
+    methods: Methods,
 ) {
     let mut topics = BTreeSet::new();
     let mut counter = 0u64;
@@ -356,6 +369,9 @@ async fn run(
                                 match v["op"].as_str() {
                                     Some("hello") if !ready => {
                                         ready = true;
+                                        *methods.lock().unwrap_or_else(|e| e.into_inner()) = v["methods"].as_array().map(|list| {
+                                            list.iter().filter_map(Value::as_str).take(4096).map(str::to_owned).collect()
+                                        });
                                         backoff = Duration::from_millis(250);
                                         connected.store(true, Ordering::Release);
                                         if !send_json(&mut socket, json!({"op": "subscribe", "topics": topics})).await {

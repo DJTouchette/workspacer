@@ -801,10 +801,21 @@ impl Workspace {
             if name.is_empty() {
                 names.remove(&id);
             } else {
-                names.insert(id, name);
+                names.insert(id, name.clone());
             }
             self.save_settings(cx);
             self.extras.notice = "Name saved".into();
+            // The hub's own name too (every client, and a Codex thread),
+            // where the hub offers it; the device name above stays either way.
+            if !name.is_empty()
+                && self.view.connected
+                && self.view.may_call("agents.rename")
+                && self
+                    .selected_session()
+                    .is_some_and(|s| s.label != name)
+            {
+                self.act(Action::Rename(name), cx);
+            }
         }
         cx.notify();
     }
@@ -1040,6 +1051,9 @@ impl Workspace {
                     .child(SESSION_FOOTER),
             );
         let notice = self.view.notice.clone();
+        let context = self.render_context_card(s, cx);
+        let mcp = self.render_mcp_card(s, cx);
+        let codex = self.render_codex_card(s, cx);
         div()
             .flex()
             .flex_col()
@@ -1047,6 +1061,9 @@ impl Workspace {
             .child(name)
             .child(details)
             .child(actions)
+            .children(context)
+            .children(codex)
+            .children(mcp)
             .when(!notice.is_empty(), |d| {
                 d.child(chrome::notice_line(
                     notice.clone(),
@@ -1441,7 +1458,7 @@ impl Workspace {
             return div();
         };
         let provider = session.provider_id().to_owned();
-        let current = Permission::from_wire(&provider, &session.permission_mode);
+        let current = Permission::from_wire(&provider, session.access_mode());
         let switching = self.view.busy && self.extras.access_switching;
         chrome::card(p)
             .p_4()
@@ -1504,6 +1521,54 @@ impl Workspace {
                         ),
                     }),
             )
+            // Codex plan mode rides beside approvals (`collaborationMode`),
+            // offered only once the session reports it is available.
+            .when(session.plan_mode_available(), |d| {
+                let plan = session.in_plan_mode();
+                let posture = match session.permission_mode.as_str() {
+                    "yolo" => "yolo",
+                    _ => "ask",
+                }
+                .to_owned();
+                let enabled = !busy;
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            self.button(
+                                "live-plan-mode",
+                                if plan { "Leave plan mode" } else { "Plan mode" },
+                                enabled,
+                            )
+                            .debug_selector(|| "live-plan-mode".into())
+                            .when(plan, |d| d.bg(rgb(p.selected)).text_color(rgb(p.accent)))
+                            .when(enabled, |d| {
+                                d.on_click(cx.listener(move |this, _, _, cx| {
+                                    this.act(
+                                        Action::SetPlanMode {
+                                            plan: !plan,
+                                            posture: posture.clone(),
+                                        },
+                                        cx,
+                                    )
+                                }))
+                            }),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(12.))
+                                .text_color(rgb(p.muted))
+                                .child(if plan {
+                                    "Codex plans before it acts in its next turns; approvals stay as set above."
+                                } else {
+                                    "Codex can plan before it acts in its next turns, keeping the approvals above."
+                                }),
+                        ),
+                )
+            })
     }
     /// Send exactly what changed on Change model: the model (with its context
     /// window), the effort, or both in that order. An unchanged form sends
