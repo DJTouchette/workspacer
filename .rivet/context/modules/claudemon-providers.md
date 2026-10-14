@@ -147,6 +147,40 @@ Turn failure is principally reported on `turn/completed` with failed status/erro
 terminal out-of-band errors also surface, while retryable notifications are not
 immediately treated as final failure. Preserve the error before the Idle update.
 
+### Codex server requests, steering, and async questions
+
+Every server→client request (has `id` and `method`) is answered, or the turn
+hangs. `*/requestApproval` and `item/tool/requestUserInput` park in ONE FIFO
+(`ServerRequests`): only the head is the card, an `/approve` answers only an
+approval head and an `/answer` only a question head. A question parks as the same
+`Pending::Question` Claude's AskUserQuestion uses (plus `secret` for `isSecret`),
+and its reply is `{answers:{<questionId>:{answers:[label]}}}`, free text encoded
+like Codex's own picker (`"user_note: …"`, behind `"None of the above"` when
+`isOther`). `item/permissions/requestApproval` replies with the granted profile
+`{permissions, scope:"turn"}`, never `{decision}`. `serverRequest/resolved` and
+the owning turn's `turn/completed` drop parked requests. Elicitations are
+declined with a conversation notice; anything else gets JSON-RPC `-32601`.
+
+The driver and the MCP AskUserQuestion shim register SEPARATE answer channels
+(`register_managed_answer` / `register_ask_answer`); `/answer` routes by the
+card's `PendingOwner`. One shared slot let the shim's unregister strip the
+driver's channel for the rest of the session.
+
+A send while a turn runs is `turn/steer` with `expectedTurnId` (held while our
+`turn/start` has no turn id yet), never a second `turn/start`. A refused steer is
+re-queued, not lost. `Delivery::Now` (`submit_message_with_delivery`) sends
+`turn/interrupt` and starts the message as the next turn. Errors to our own
+requests are tracked by id (`TurnInput::inflight`) and surfaced.
+
+`request_user_input_async` / `send_message_to_user_async` arrive as an
+`agentMessage` item with `delivery:"async"` on `item/started` + `item/completed`
+only, with no deltas, so they are emitted from the completed item. Questions become
+`ConversationItem::AssistantQuestions` (wire kind `assistant_text` plus
+`questions`, `async:true` and `item_id`). It is non-blocking and never parks. Codex's desktop
+answers them as ordinary input in an envelope
+`<send_user_message_question_reply>[{"questionItemId","question","answer"}]</send_user_message_question_reply>`
+(see codex `tui/src/async_question_reply.rs`).
+
 Plans use `turn/plan/updated`, including camelCase `inProgress`; partial plan delta
 text is not an authoritative complete plan. Subagent identity joins three shapes:
 

@@ -16,19 +16,20 @@
 //! it (`thread/resume`, which subscribes us to the live stream). The reverse (RPC
 //! `thread/start` + TUI `resume`) fails: a just-started thread has no rollout, so
 //! `resume` errors with "no rollout found for thread id …". Once rejoined we
-//! `turn/start` each GUI prompt and consume the streamed notifications:
-//! `turn/started|completed|failed`,
+//! `turn/start` each GUI prompt (or `turn/steer` it into the running turn) and
+//! consume the streamed notifications: `turn/started|completed|failed`,
 //! `item/started|completed` (commandExecution / fileChange / mcpToolCall / …),
 //! `item/agentMessage/delta` (streamed text), `thread/tokenUsage/updated`, and
-//! the approval requests (`item/commandExecution/requestApproval`,
-//! `item/fileChange/requestApproval`).
+//! answer every server request: approvals (`item/*/requestApproval`) and
+//! questions (`item/tool/requestUserInput`) park for the user, anything else
+//! is answered at once (see `handle_server_request`).
 //!
 //! The pure `translate(method, params)` is unit-tested; the live ws client
 //! needs a real `codex` binary to validate end-to-end.
 
 use crate::background_process::BackgroundCommand;
 use crate::child_env::SanitizeChildEnvironment;
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -45,11 +46,12 @@ use tokio_tungstenite::tungstenite::Message;
 use super::SpawnExtras;
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, ModelInfo, UsageAcc};
 use crate::protocol::Signal;
-use crate::session::conversation::ConversationItem;
+use crate::session::conversation::{AsyncQuestion, ConversationItem};
 use crate::session::state::{
-    Pending, PendingOwner, PendingWrite, SessionMode, SubagentStatus, SubagentUpdate,
+    Pending, PendingOption, PendingOwner, PendingQuestion, PendingWrite, SessionMode,
+    SubagentStatus, SubagentUpdate,
 };
-use crate::session::{ConversationStore, SessionStore};
+use crate::session::{ConversationStore, Delivery, ManagedAnswer, ManagedSend, SessionStore};
 use crate::wrapper::pty;
 
 /// Translate one Codex app-server message (`method` + `params`) into typed
@@ -247,6 +249,27 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
                 raw: params.clone(),
             });
         }
+        // Additional sandbox permissions for the rest of the turn (network,
+        // extra writable roots). Its answer is NOT a `{decision}`: it is the
+        // granted subset of what was asked — see `approval_result`.
+        "item/permissions/requestApproval" => {
+            let summary = params
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| {
+                    params
+                        .get("permissions")
+                        .filter(|p| !p.is_null())
+                        .map(Value::to_string)
+                });
+            out.push(AgentUpdate::PermissionPending {
+                id: None,
+                tool: Some("permissions".into()),
+                summary,
+                raw: params.clone(),
+            });
+        }
         "item/fileChange/requestApproval" => {
             let path = params
                 .get("path")
@@ -276,7 +299,8 @@ pub fn translate(method: &str, params: &Value) -> Vec<AgentUpdate> {
 /// completed `ThreadItem` carries the output fields (`aggregatedOutput` /
 /// `exitCode` / mcp `result`), which never appear on the started one.
 /// Assistant text arrives via `item/agentMessage/delta`, so completed
-/// agentMessage items are not re-emitted.
+/// agentMessage items are not re-emitted — except an async one, which never
+/// streams (see [`async_agent_message`]).
 fn translate_item(method: &str, item: &Value, out: &mut Vec<AgentUpdate>) {
     let ty = item
         .get("type")
@@ -382,6 +406,54 @@ fn translate_item_started(ty: &str, id: String, item: &Value, out: &mut Vec<Agen
     }
 }
 
+/// An `agentMessage` item Codex injected *whole* rather than streamed — the
+/// `request_user_input_async` / `send_message_to_user_async` tools (0.153+)
+/// emit it as `item/started` + `item/completed` with `delivery: "async"` and
+/// no `item/agentMessage/delta` at all, so unlike an ordinary message it is
+/// only ever visible here. Its `questions` do NOT block the turn: the user
+/// answers with an ordinary message (`turn/steer` while the turn runs). `text`
+/// is Codex's own plain rendering of the questions, kept for clients that
+/// ignore the structured list.
+fn async_agent_message(id: String, item: &Value) -> Option<AgentUpdate> {
+    let delivery = item.get("delivery").and_then(Value::as_str)?;
+    if !delivery.eq_ignore_ascii_case("async") {
+        return None;
+    }
+    let text = item
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let questions: Vec<AsyncQuestion> = item
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|q| {
+            let title = q.get("title").and_then(Value::as_str)?.trim();
+            (!title.is_empty()).then(|| AsyncQuestion {
+                title: title.to_string(),
+                options: q
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect(),
+            })
+        })
+        .collect();
+    if questions.is_empty() {
+        return (!text.is_empty()).then_some(AgentUpdate::AssistantText(text));
+    }
+    Some(AgentUpdate::AssistantQuestions {
+        text,
+        questions,
+        item_id: (!id.is_empty()).then_some(id),
+    })
+}
+
 /// Map a completed item to the `ToolResult` joined to the started `ToolUse` by
 /// item id, normalizing the per-type output fields the same way the rollout
 /// path's `function_output_text` does (plain display text + an error flag).
@@ -394,6 +466,9 @@ fn translate_item_completed(ty: &str, id: String, item: &Value, out: &mut Vec<Ag
         "failed" | "declined"
     );
     match ty {
+        // Streamed messages already arrived as deltas; only an async one has
+        // to be emitted from the completed item.
+        "agentMessage" => out.extend(async_agent_message(id, item)),
         "commandExecution" => {
             let mut content = item
                 .get("aggregatedOutput")
@@ -785,65 +860,101 @@ fn command_text(params: &Value) -> Option<String> {
     }
 }
 
-/// An approval request parked while the user decides: the JSON-RPC request id
-/// (what the decision must answer) together with the display fields, so a
-/// request queued *behind* the surfaced one can be re-surfaced when it reaches
-/// the head of the FIFO. Mirrors `claude_stream::ParkedCanUse`.
+/// A server→client request parked while the user decides: the JSON-RPC request
+/// id (what the answer must name), the turn it belongs to, and what to show, so
+/// a request queued *behind* the surfaced one can be re-surfaced when it
+/// reaches the head of the FIFO. Mirrors `claude_stream::ParkedCanUse`.
 #[derive(Debug)]
-struct ParkedApproval {
+struct ParkedRequest {
     id: Value,
-    tool: Option<String>,
-    summary: Option<String>,
-    raw: Value,
+    /// `turnId` from the request params: a turn that ends voids its requests.
+    turn_id: Option<String>,
+    kind: ParkedKind,
 }
 
-/// Surface a parked approval as the session's pending card. The store's pending
+#[derive(Debug)]
+enum ParkedKind {
+    /// A `*/requestApproval`. `method` picks the answer shape — a permissions
+    /// grant is not a `{decision}` (see [`approval_result`]).
+    Approval {
+        method: String,
+        tool: Option<String>,
+        summary: Option<String>,
+        raw: Value,
+    },
+    /// `item/tool/requestUserInput` (Plan mode's blocking questions). `wire`
+    /// keeps Codex's questions, whose ids key the answer; `card` is the same
+    /// questions in the shape Claude's AskUserQuestion parks, so every client
+    /// renders them with the card it already has.
+    Question {
+        wire: Vec<Value>,
+        card: Vec<PendingQuestion>,
+        raw: Value,
+    },
+}
+
+/// The driver's server→client request state: the FIFO of requests waiting on
+/// the user, plus the unsupported methods already logged (each is logged once,
+/// then answered quietly).
+///
+/// ONE queue for approvals and questions, because the store's pending slot is
+/// one card: whatever is at the head is what the user sees, and an answer of
+/// the wrong kind for the head (an `/approve` while a question shows) is
+/// dropped rather than aimed at a request the user cannot see.
+#[derive(Debug, Default)]
+struct ServerRequests {
+    queue: VecDeque<ParkedRequest>,
+    unsupported_logged: HashSet<String>,
+}
+
+/// Surface a parked request as the session's pending card. The store's pending
 /// is a single slot, so only the FIFO *head* is ever displayed — later requests
-/// wait parked and are re-surfaced by [`resolve_approval`] when the head is
+/// wait parked and are re-surfaced by [`surface_next`] when the head is
 /// answered, keeping the displayed card and the answered request in sync.
-fn surface_approval(
+fn surface_parked(
     store: &SessionStore,
     session_id: &str,
     cur_mode: &mut SessionMode,
-    parked: &ParkedApproval,
+    parked: &ParkedRequest,
 ) {
+    let (mode, pending) = match &parked.kind {
+        ParkedKind::Approval {
+            tool, summary, raw, ..
+        } => (
+            SessionMode::Approval,
+            Pending::Approval {
+                tool: tool.clone(),
+                summary: summary.clone(),
+                raw: raw.clone(),
+            },
+        ),
+        ParkedKind::Question { card, raw, .. } => (
+            SessionMode::Question,
+            Pending::Question {
+                questions: card.clone(),
+                raw: raw.clone(),
+            },
+        ),
+    };
     set_mode(
         store,
         session_id,
-        SessionMode::Approval,
-        PendingWrite::Park(
-            PendingOwner::Primary,
-            Pending::Approval {
-                tool: parked.tool.clone(),
-                summary: parked.summary.clone(),
-                raw: parked.raw.clone(),
-            },
-        ),
+        mode,
+        PendingWrite::Park(PendingOwner::Primary, pending),
         cur_mode,
     );
 }
 
-/// Answer the FIFO head of the parked approvals with the user's decision, then
-/// surface the next parked request (parallel tool calls can park several) or —
-/// when the queue is empty — return the session to Responding. Answering the
-/// head (the request `surface_approval` displayed) is what guarantees the user
-/// approves the card they actually saw.
-fn resolve_approval(
+/// Show the new FIFO head, or — when the queue is empty — release the card and
+/// return the session to Responding (the turn is still running).
+fn surface_next(
     store: &SessionStore,
     session_id: &str,
-    out_tx: &mpsc::UnboundedSender<Value>,
-    pending_approvals: &mut VecDeque<ParkedApproval>,
+    requests: &ServerRequests,
     cur_mode: &mut SessionMode,
-    approve: bool,
 ) {
-    let Some(parked) = pending_approvals.pop_front() else {
-        tracing::debug!(session = %session_id, "codex: decision with no parked approval — dropped");
-        return;
-    };
-    let result = json!({ "decision": if approve { "accept" } else { "decline" } });
-    let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": parked.id, "result": result }));
-    match pending_approvals.front() {
-        Some(next) => surface_approval(store, session_id, cur_mode, next),
+    match requests.queue.front() {
+        Some(next) => surface_parked(store, session_id, cur_mode, next),
         None => set_mode(
             store,
             session_id,
@@ -851,6 +962,365 @@ fn resolve_approval(
             PendingWrite::Resolve(PendingOwner::Primary),
             cur_mode,
         ),
+    }
+}
+
+/// Park a request at the back of the FIFO, surfacing it when it is the head.
+fn park_request(
+    store: &SessionStore,
+    session_id: &str,
+    requests: &mut ServerRequests,
+    cur_mode: &mut SessionMode,
+    parked: ParkedRequest,
+) {
+    requests.queue.push_back(parked);
+    if requests.queue.len() == 1 {
+        surface_parked(store, session_id, cur_mode, &requests.queue[0]);
+    }
+}
+
+/// The answer to an approval request. Command and file-change approvals take a
+/// `{decision}`; `item/permissions/requestApproval` takes the GRANTED subset of
+/// the requested profile (`{permissions, scope}`), so allowing grants exactly
+/// what was asked for this turn and denying grants nothing — a `{decision}`
+/// there fails to deserialize, and the turn would sit on it.
+fn approval_result(method: &str, params: &Value, approve: bool) -> Value {
+    if method == "item/permissions/requestApproval" {
+        let mut granted = serde_json::Map::new();
+        if approve {
+            if let Some(requested) = params.get("permissions").and_then(Value::as_object) {
+                for (key, value) in requested {
+                    if !value.is_null() {
+                        granted.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        return json!({ "permissions": granted, "scope": "turn" });
+    }
+    json!({ "decision": if approve { "accept" } else { "decline" } })
+}
+
+/// Answer the FIFO head with the user's approval decision, then surface the
+/// next parked request (parallel tool calls can park several) or — when the
+/// queue is empty — return the session to Responding. Answering the head (the
+/// request `surface_parked` displayed) is what guarantees the user approves the
+/// card they actually saw; a decision while a question is the head is dropped.
+fn resolve_approval(
+    store: &SessionStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    requests: &mut ServerRequests,
+    cur_mode: &mut SessionMode,
+    approve: bool,
+) {
+    let Some(ParkedRequest {
+        kind: ParkedKind::Approval { .. },
+        ..
+    }) = requests.queue.front()
+    else {
+        tracing::debug!(session = %session_id, "codex: decision with no parked approval at the head — dropped");
+        return;
+    };
+    let Some(ParkedRequest {
+        id,
+        kind: ParkedKind::Approval { method, raw, .. },
+        ..
+    }) = requests.queue.pop_front()
+    else {
+        return;
+    };
+    let result = approval_result(&method, &raw, approve);
+    let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+    surface_next(store, session_id, requests, cur_mode);
+}
+
+/// Answer the parked `item/tool/requestUserInput` at the FIFO head with the
+/// user's choices, then surface the next request. An answer while an approval
+/// is the head is dropped (the user cannot have been answering it).
+fn resolve_question(
+    store: &SessionStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    requests: &mut ServerRequests,
+    cur_mode: &mut SessionMode,
+    answer: &ManagedAnswer,
+) {
+    let Some(ParkedRequest {
+        kind: ParkedKind::Question { .. },
+        ..
+    }) = requests.queue.front()
+    else {
+        tracing::debug!(session = %session_id, "codex: answer with no parked question at the head — dropped");
+        return;
+    };
+    let Some(ParkedRequest {
+        id,
+        kind: ParkedKind::Question { wire, .. },
+        ..
+    }) = requests.queue.pop_front()
+    else {
+        return;
+    };
+    // The answers themselves are never logged: a question may be `isSecret`.
+    let result = user_input_response(&wire, answer);
+    let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+    surface_next(store, session_id, requests, cur_mode);
+}
+
+/// Drop parked requests the server has voided, re-surfacing the head when it
+/// was among them. `serverRequest/resolved` names one request (answered or
+/// cleared by a turn start/complete/interrupt); a `turn/completed` voids every
+/// request of that turn even if that notification is missed.
+fn drop_parked(
+    store: &SessionStore,
+    session_id: &str,
+    requests: &mut ServerRequests,
+    cur_mode: &mut SessionMode,
+    void: impl Fn(&ParkedRequest) -> bool,
+) {
+    let head_voided = requests.queue.front().is_some_and(&void);
+    let before = requests.queue.len();
+    requests.queue.retain(|r| !void(r));
+    if requests.queue.len() != before {
+        tracing::debug!(session = %session_id, dropped = before - requests.queue.len(), "codex: server cleared parked requests");
+    }
+    if head_voided {
+        surface_next(store, session_id, requests, cur_mode);
+    }
+}
+
+/// Codex's free-text encoding, matching its own TUI picker: a typed answer
+/// rides as a `user_note: …` entry, behind "None of the above" when the
+/// question offers that choice (`isOther`).
+const USER_NOTE_PREFIX: &str = "user_note: ";
+const OTHER_OPTION_LABEL: &str = "None of the above";
+
+/// Build the `item/tool/requestUserInput` response —
+/// `{answers: {<questionId>: {answers: [..]}}}` — from the `/answer` payload,
+/// which carries one entry per question in display order (or a lone
+/// `option`/`text` for the first). An option number or an exact option label
+/// becomes that label; anything else is free text, encoded the way Codex's
+/// own picker encodes it. An unanswered question gets an empty list.
+fn user_input_response(questions: &[Value], answer: &ManagedAnswer) -> Value {
+    let mut answers = serde_json::Map::new();
+    for (i, q) in questions.iter().enumerate() {
+        let Some(qid) = q.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let raw = match &answer.answers {
+            Some(list) => list.get(i).cloned(),
+            None if i == 0 => answer
+                .option
+                .map(|o| o.to_string())
+                .or_else(|| answer.text.clone()),
+            None => None,
+        };
+        // A `"text"` kind is literal: "3" typed by the user is not option 3.
+        let literal = answer
+            .answer_kinds
+            .as_ref()
+            .and_then(|k| k.get(i))
+            .is_some_and(|k| k == "text");
+        let labels: Vec<&str> = q
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|o| o.get("label").and_then(Value::as_str))
+            .collect();
+        let chosen = raw.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+        let list: Vec<String> = match chosen {
+            None => Vec::new(),
+            Some(r) => {
+                let by_number = (!literal)
+                    .then(|| r.parse::<usize>().ok())
+                    .flatten()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|n| labels.get(n).copied());
+                match by_number.or_else(|| labels.iter().copied().find(|l| *l == r)) {
+                    Some(label) => vec![label.to_string()],
+                    None => {
+                        let is_other = q.get("isOther").and_then(Value::as_bool) == Some(true);
+                        let mut list = Vec::new();
+                        if is_other && !labels.is_empty() {
+                            list.push(OTHER_OPTION_LABEL.to_string());
+                        }
+                        list.push(format!("{USER_NOTE_PREFIX}{r}"));
+                        list
+                    }
+                }
+            }
+        };
+        answers.insert(qid.to_string(), json!({ "answers": list }));
+    }
+    json!({ "answers": answers })
+}
+
+/// Codex's `ToolRequestUserInputQuestion`s as the card Claude's AskUserQuestion
+/// parks. Codex questions are single-choice; `header` is its short label.
+fn user_input_card(questions: &[Value]) -> Vec<PendingQuestion> {
+    questions
+        .iter()
+        .map(|q| {
+            let text = |k: &str| q.get(k).and_then(Value::as_str).map(str::trim);
+            let header = text("header").filter(|h| !h.is_empty()).map(str::to_owned);
+            PendingQuestion {
+                question: text("question")
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_owned)
+                    .or_else(|| header.clone())
+                    .unwrap_or_default(),
+                header,
+                multi_select: false,
+                options: q
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|o| {
+                        Some(PendingOption {
+                            label: o.get("label").and_then(Value::as_str)?.to_string(),
+                            description: o
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .filter(|d| !d.is_empty())
+                                .map(str::to_owned),
+                        })
+                    })
+                    .collect(),
+                secret: q.get("isSecret").and_then(Value::as_bool) == Some(true),
+            }
+        })
+        .collect()
+}
+
+/// JSON-RPC "method not found", the answer to every server request this
+/// client does not implement — so the agent is told at once instead of
+/// blocking on a reply that never comes.
+const METHOD_NOT_FOUND: i64 = -32601;
+
+/// Answer a server→client request (it carries an `id`). Every one is answered
+/// — approvals and questions once the user decides, the rest immediately — so
+/// no request can leave the turn hanging.
+#[allow(clippy::too_many_arguments)]
+fn handle_server_request(
+    value: &Value,
+    method: &str,
+    params: &Value,
+    approval_card: Option<(Option<String>, Option<String>, Value)>,
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+    policy: &TurnPolicy,
+    requests: &mut ServerRequests,
+) {
+    let id = value.get("id").cloned().unwrap_or(Value::Null);
+    let turn_id = params
+        .get("turnId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    match method {
+        // YOLO accepts inline; otherwise park the request id + card and
+        // surface the FIFO head, so the user's /approve decision answers the
+        // request that's actually on screen (see `resolve_approval`, called
+        // from the decision branch in run_session).
+        m if m.ends_with("/requestApproval") => {
+            if policy.bypassing() {
+                let result = approval_result(method, params, true);
+                let _ = out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+                return;
+            }
+            let (tool, summary, raw) = approval_card.unwrap_or((None, None, params.clone()));
+            park_request(
+                store,
+                session_id,
+                requests,
+                cur_mode,
+                ParkedRequest {
+                    id,
+                    turn_id,
+                    kind: ParkedKind::Approval {
+                        method: method.to_string(),
+                        tool,
+                        summary,
+                        raw,
+                    },
+                },
+            );
+        }
+        // A question for the human — parked even under YOLO, like Claude's
+        // AskUserQuestion: auto-answering it would be nonsense.
+        "item/tool/requestUserInput" => {
+            let wire = params
+                .get("questions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if wire.is_empty() {
+                let _ =
+                    out_tx.send(json!({ "jsonrpc": "2.0", "id": id, "result": { "answers": {} } }));
+                return;
+            }
+            park_request(
+                store,
+                session_id,
+                requests,
+                cur_mode,
+                ParkedRequest {
+                    id,
+                    turn_id,
+                    kind: ParkedKind::Question {
+                        card: user_input_card(&wire),
+                        wire,
+                        raw: params.clone(),
+                    },
+                },
+            );
+        }
+        // No elicitation UI yet: decline at once (the MCP tool call fails
+        // cleanly instead of hanging the turn) and say so in the conversation,
+        // so the user knows why the tool did not get what it asked for.
+        "mcpServer/elicitation/request" => {
+            let server = params
+                .get("serverName")
+                .and_then(Value::as_str)
+                .unwrap_or("an MCP server");
+            tracing::warn!(session = %session_id, server = %server, "codex: MCP elicitation declined — no UI for it yet");
+            let _ = out_tx.send(json!({
+                "jsonrpc": "2.0", "id": id,
+                "result": { "action": "decline", "content": null, "_meta": null }
+            }));
+            let asked = params
+                .pointer("/request/message")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(|m| format!(" It asked: “{m}”"))
+                .unwrap_or_default();
+            apply_updates(
+                store,
+                conv,
+                session_id,
+                vec![AgentUpdate::AssistantText(format!(
+                    "\n⚠️ The MCP server `{server}` asked for input, which Workspacer cannot show yet, so the request was declined.{asked}\n"
+                ))],
+                cur_mode,
+                acc,
+            );
+        }
+        _ => {
+            if requests.unsupported_logged.insert(method.to_string()) {
+                tracing::warn!(session = %session_id, method = %method, "codex: unsupported server request — answered with method-not-found");
+            }
+            let _ = out_tx.send(json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": { "code": METHOD_NOT_FOUND, "message": format!("workspacer does not support {method}") }
+            }));
+        }
     }
 }
 
@@ -1901,6 +2371,15 @@ async fn run_session(
         // clients with no PTY to Ctrl-C into (mobile remote, the inbox, wks-tui).
         let (itx, irx) = mpsc::unbounded_channel::<()>();
         store.register_managed_interrupt(session_id, itx);
+        // Structural answers to the questions this driver parks
+        // (`item/tool/requestUserInput`), the same channel Claude's stream
+        // driver answers AskUserQuestion through.
+        let (atx, arx) = mpsc::unbounded_channel::<ManagedAnswer>();
+        store.register_managed_answer(session_id, atx);
+        // Sends that carry a non-default delivery (`now`: interrupt, then
+        // send as the next turn). Ordinary sends keep using `rx`.
+        let (stx, srx) = mpsc::unbounded_channel::<ManagedSend>();
+        store.register_managed_send(session_id, stx);
         // Approval policy, live-switchable via `/permission-mode`: the adapter
         // mediates every approval request on this ws path, so flipping the flag
         // takes effect on the next request without touching the session. A
@@ -1943,9 +2422,10 @@ async fn run_session(
             )
         };
 
-        (rx, drx, mrx, irx, policy, tui_pty)
+        (rx, drx, mrx, irx, arx, srx, policy, tui_pty)
     });
-    let Some((mut rx, mut drx, mut mrx, mut irx, policy, tui_pty)) = registration else {
+    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, mut srx, policy, tui_pty)) = registration
+    else {
         evidence.reason = DriverExit::Superseded;
         evidence.cleanup = child.cleanup().await;
         evidence.exit_status = child.exit_status;
@@ -2002,22 +2482,27 @@ async fn run_session(
     // setting so the status line isn't blank (and the window-table fallback has
     // something to key on if the event omits `modelContextWindow`).
     acc.seed_model(model.as_deref());
-    // Approval requests awaiting the user's decision (non-YOLO), FIFO — the
-    // JSON-RPC request id plus the display fields. A queue (not a single slot)
-    // so two requests arriving before the user answers don't drop the first and
-    // deadlock the agent; only the head is surfaced as the store's pending, and
-    // a decision answers that head (see `resolve_approval`). YOLO answers inline
-    // and never parks one here.
-    let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+    // Server requests awaiting the user (approvals when not YOLO, and
+    // questions), FIFO — the JSON-RPC request id plus the display fields. A
+    // queue (not a single slot) so two requests arriving before the user
+    // answers don't drop the first and deadlock the agent; only the head is
+    // surfaced as the store's pending, and a decision or answer resolves that
+    // head (see `resolve_approval` / `resolve_question`). YOLO answers
+    // approvals inline and never parks one here.
+    let mut requests = ServerRequests::default();
     // Role instructions to prepend to the first turn only (supervisors).
     let mut pending_instructions: Option<String> = facade.instructions.clone();
     // A model/effort switch requested before the thread is joined can't be sent
     // yet (there's no thread to update), but the HTTP call already returned 200 —
     // stash it here and apply it the instant we subscribe rather than dropping it.
     let mut pending_switch: Option<crate::session::ModelSwitch> = None;
-    // The running turn, which `turn/interrupt` must name.
-    let mut turns = TurnTracker::default();
-    let mut interrupt_req: Option<u64> = None;
+    // The running turn (which `turn/interrupt` and `turn/steer` must name),
+    // our requests in flight, and messages waiting for a turn to take them.
+    let mut input = TurnInput::default();
+    // A closed answer/delivery channel (session terminating) only disables
+    // its arm; the input channel closing is what ends the driver.
+    let mut answers_open = true;
+    let mut sends_open = true;
     // Poll `thread/loaded/list` until the TUI's thread appears, then rejoin it —
     // retrying the resume until we're actually subscribed. Bounded by a deadline
     // so a TUI that never creates a thread (or died at startup) can't busy-poll
@@ -2034,6 +2519,7 @@ async fn run_session(
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
 
     let reason = 'driver: loop {
+        let mut incoming: Option<ManagedSend> = None;
         tokio::select! {
             msg = ws_read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
@@ -2043,21 +2529,10 @@ async fn run_session(
                         let line = line.trim();
                         if line.is_empty() { continue; }
                         let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
-                        if interrupt_req.is_some() && value.get("id").and_then(Value::as_u64) == interrupt_req {
-                            if let Some(err) = value.get("error") {
-                                tracing::warn!(session = %session_id, error = %err, "codex turn/interrupt refused");
-                            }
-                            interrupt_req = None;
-                        }
-                        if let (Some(turn), Some(tid)) = (turns.observe(&value), thread_id.as_deref()) {
-                            req_id += 1;
-                            interrupt_req = Some(req_id);
-                            let _ = out_tx.send(turn_interrupt_request(req_id, tid, &turn));
-                        }
                         let applied = store.with_generation(session_id, evidence.generation, || handle_message(
                             &value, store, conv, session_id, &out_tx,
                             &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc, &policy, &mut pending_approvals,
+                            &mut cur_mode, &mut acc, &policy, &mut requests, &mut input,
                             &mut pending_switch, headless,
                         ));
                         if applied.is_none() { break 'driver DriverExit::Superseded; }
@@ -2102,33 +2577,28 @@ async fn run_session(
                 }
             },
             msg = rx.recv() => match msg {
-                Some(text) => {
-                    // Echo the user's message verbatim, but prepend the role
-                    // instructions (once) to what's actually sent to the agent.
-                    if store.with_generation(session_id, evidence.generation, || {
-                        conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
-                        note_user_send(store, session_id, &mut cur_mode);
-                    }).is_none() { break DriverExit::Superseded; }
-                    let sent = with_instructions(&mut pending_instructions, text);
-                    turns.sent_turn();
-                    match &thread_id {
-                        Some(tid) => {
-                            req_id += 1;
-                            send_turn(&out_tx, req_id, tid, &sent, &policy);
-                        }
-                        // Thread not open yet — buffer the (already-wrapped) prompt.
-                        None => pending_prompts.push(sent),
-                    }
-                }
+                Some(text) => incoming = Some(ManagedSend { text, delivery: Delivery::Steer }),
                 None => break DriverExit::InputClosed, // managed input dropped → terminated
+            },
+            send = srx.recv(), if sends_open => match send {
+                Some(send) => incoming = Some(send),
+                None => sends_open = false,
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
                     if store.with_generation(session_id, evidence.generation, || {
-                        resolve_approval(store, session_id, &out_tx, &mut pending_approvals, &mut cur_mode, approve);
+                        resolve_approval(store, session_id, &out_tx, &mut requests, &mut cur_mode, approve);
                     }).is_none() { break DriverExit::Superseded; }
                 }
                 None => break DriverExit::DecisionClosed,
+            },
+            answer = arx.recv(), if answers_open => match answer {
+                Some(answer) => {
+                    if store.with_generation(session_id, evidence.generation, || {
+                        resolve_question(store, session_id, &out_tx, &mut requests, &mut cur_mode, &answer);
+                    }).is_none() { break DriverExit::Superseded; }
+                }
+                None => answers_open = false,
             },
             intr = irx.recv() => match intr {
                 Some(()) => {
@@ -2136,12 +2606,8 @@ async fn run_session(
                     // thread; before that there is no turn to interrupt. A
                     // turn still starting is interrupted when its id arrives.
                     if let Some(tid) = thread_id.as_deref().filter(|_| subscribed) {
-                        match turns.request_interrupt() {
-                            Some(turn) => {
-                                req_id += 1;
-                                interrupt_req = Some(req_id);
-                                let _ = out_tx.send(turn_interrupt_request(req_id, tid, &turn));
-                            }
+                        match input.turns.request_interrupt() {
+                            Some(turn) => input.send_interrupt(&out_tx, &mut req_id, tid, &turn),
                             None => tracing::debug!(session = %session_id, "codex interrupt: no running turn yet"),
                         }
                     }
@@ -2156,7 +2622,7 @@ async fn run_session(
                     // `translate`), which refreshes the status-line model.
                     match &thread_id {
                         Some(tid) if subscribed => {
-                            send_model_switch(&out_tx, &mut req_id, tid, &sw);
+                            send_model_switch(&out_tx, &mut req_id, tid, &sw, &mut input);
                         }
                         // Not joined yet — stash it; `handle_message` applies it
                         // the moment the resume subscribes us to the thread.
@@ -2171,6 +2637,31 @@ async fn run_session(
             result = writer.join_next() => break result.and_then(Result::ok).unwrap_or(DriverExit::WriterTaskFailed),
             status = child.exited() => {
                 break if status.is_ok() { DriverExit::ChildExited } else { DriverExit::ChildWaitFailed };
+            }
+        }
+        // A user message, from either send channel. Echo it verbatim, but
+        // prepend the role instructions (once) to what's actually sent.
+        if let Some(ManagedSend { text, delivery }) = incoming {
+            if store
+                .with_generation(session_id, evidence.generation, || {
+                    conv.push(
+                        session_id,
+                        vec![ConversationItem::UserMessage {
+                            text: text.clone(),
+                            timestamp: None,
+                        }],
+                    );
+                    note_user_send(store, session_id, &mut cur_mode);
+                })
+                .is_none()
+            {
+                break DriverExit::Superseded;
+            }
+            let sent = with_instructions(&mut pending_instructions, text);
+            match &thread_id {
+                Some(tid) => input.submit(&out_tx, &mut req_id, tid, sent, delivery, &policy),
+                // Thread not open yet — buffer the (already-wrapped) prompt.
+                None => pending_prompts.push(sent),
             }
         }
     };
@@ -2200,6 +2691,8 @@ async fn run_session(
     // buffered while waiting for the thread, so a message the GUI already shows
     // as sent still reaches the agent.
     if needs_fallback {
+        // Anything still waiting for a turn has not reached the agent either.
+        pending_prompts.extend(input.held.drain(..).map(|held| held.text));
         return run_rollout_fallback(
             store,
             conv,
@@ -2317,11 +2810,81 @@ fn handle_message(
     cur_mode: &mut SessionMode,
     acc: &mut UsageAcc,
     policy: &TurnPolicy,
-    pending_approvals: &mut VecDeque<ParkedApproval>,
+    requests: &mut ServerRequests,
+    input: &mut TurnInput,
+    pending_switch: &mut Option<crate::session::ModelSwitch>,
+    headless: bool,
+) {
+    // Track the running turn first: everything below (steering, a held
+    // interrupt) needs its id.
+    if let (Some(turn), Some(tid)) = (input.turns.observe(value), thread_id.as_deref()) {
+        input.send_interrupt(out_tx, req_id, tid, &turn);
+    }
+    handle_message_inner(
+        value,
+        store,
+        conv,
+        session_id,
+        out_tx,
+        thread_id,
+        subscribed,
+        pending_prompts,
+        req_id,
+        cur_mode,
+        acc,
+        policy,
+        requests,
+        input,
+        pending_switch,
+        headless,
+    );
+    // Deliver whatever the turn state now allows: a held message steers into
+    // a turn whose id just arrived, or starts the next turn once one ends.
+    if let Some(tid) = thread_id.as_deref() {
+        input.pump(out_tx, req_id, tid, policy);
+    }
+}
+
+/// Flush prompts buffered before the thread existed, through the same steer
+/// vs start rule as a live send.
+fn flush_pending_prompts(
+    out_tx: &mpsc::UnboundedSender<Value>,
+    req_id: &mut u64,
+    thread_id: &str,
+    pending_prompts: &mut Vec<String>,
+    input: &mut TurnInput,
+    policy: &TurnPolicy,
+) {
+    for text in std::mem::take(pending_prompts) {
+        input.submit(out_tx, req_id, thread_id, text, Delivery::Steer, policy);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_message_inner(
+    value: &Value,
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    thread_id: &mut Option<String>,
+    subscribed: &mut bool,
+    pending_prompts: &mut Vec<String>,
+    req_id: &mut u64,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+    policy: &TurnPolicy,
+    requests: &mut ServerRequests,
+    input: &mut TurnInput,
     pending_switch: &mut Option<crate::session::ModelSwitch>,
     headless: bool,
 ) {
     // A response to one of our requests:
+    //  - a user turn (`turn/start` / `turn/steer`), a live switch
+    //    (`thread/settings/update`) or a `turn/interrupt`: tracked by id in
+    //    `input`, so an ERROR to one is surfaced (or a refused steer is
+    //    re-delivered) instead of dropped. Checked first, so a counter that
+    //    climbs to 100/101 can never be mistaken for the bootstrap ids.
     //  - `thread/loaded/list` (id=100): `result.data` lists thread ids loaded in
     //    this per-session app-server — the one the TUI created. Rejoin it
     //    (`thread/resume`), which for a *running* thread subscribes us to its live
@@ -2332,7 +2895,9 @@ fn handle_message(
     //    success is both the thread id AND the subscription (the starter gets the
     //    live stream). Its failure is fatal for the pane — there is no TUI thread
     //    to fall back to — so surface it in the conversation.
-    if value.get("id").is_some() && (value.get("result").is_some() || value.get("error").is_some())
+    if value.get("id").is_some()
+        && value.get("method").is_none()
+        && (value.get("result").is_some() || value.get("error").is_some())
     {
         if value.get("id").and_then(Value::as_str) == Some(SKILL_ROOTS_RPC_ID) {
             // An older Codex without the method still runs; the launcher's
@@ -2345,6 +2910,31 @@ fn handle_message(
             return;
         }
         let id = value.get("id").and_then(Value::as_u64);
+        if let Some(updates) = id.and_then(|id| input.on_response(id, value, session_id)) {
+            if !updates.is_empty() {
+                apply_updates(store, conv, session_id, updates, cur_mode, acc);
+            }
+            return;
+        }
+        if id == Some(1) {
+            // `initialize` refused: nothing else on this connection will work,
+            // and the user should see why rather than an empty pane.
+            if let Some(err) = value.get("error") {
+                tracing::error!(session = %session_id, error = %err, "codex initialize failed");
+                let msg = error_message(Some(err)).unwrap_or_else(|| err.to_string());
+                apply_updates(
+                    store,
+                    conv,
+                    session_id,
+                    vec![AgentUpdate::Error(format!(
+                        "codex initialize failed: {msg}"
+                    ))],
+                    cur_mode,
+                    acc,
+                );
+            }
+            return;
+        }
         if id == Some(2) {
             if let Some(err) = value.get("error") {
                 tracing::warn!(session = %session_id, error = %err, "codex thread/resume failed; retrying");
@@ -2352,7 +2942,7 @@ fn handle_message(
                 *subscribed = true;
                 tracing::info!(session = %session_id, thread = ?thread_id, "codex: rejoined thread — GUI stream subscribed");
                 if let (Some(sw), Some(tid)) = (pending_switch.take(), thread_id.as_deref()) {
-                    send_model_switch(out_tx, req_id, tid, &sw);
+                    send_model_switch(out_tx, req_id, tid, &sw, input);
                 }
             }
         }
@@ -2380,12 +2970,9 @@ fn handle_message(
                 super::codex_rollout::record_thread(session_id, &tid);
                 tracing::info!(session = %session_id, thread = %tid, "codex: headless thread started");
                 if let Some(sw) = pending_switch.take() {
-                    send_model_switch(out_tx, req_id, tid.as_str(), &sw);
+                    send_model_switch(out_tx, req_id, tid.as_str(), &sw, input);
                 }
-                for text in std::mem::take(pending_prompts) {
-                    *req_id += 1;
-                    send_turn(out_tx, *req_id, &tid, &text, policy);
-                }
+                flush_pending_prompts(out_tx, req_id, &tid, pending_prompts, input, policy);
             }
             return;
         }
@@ -2405,10 +2992,7 @@ fn handle_message(
                     "params": { "threadId": tid }
                 }));
                 // Flush any prompts that arrived before the thread was found.
-                for text in std::mem::take(pending_prompts) {
-                    *req_id += 1;
-                    send_turn(out_tx, *req_id, tid, &text, policy);
-                }
+                flush_pending_prompts(out_tx, req_id, tid, pending_prompts, input, policy);
             }
         }
         return;
@@ -2430,12 +3014,9 @@ fn handle_message(
             super::codex_rollout::record_thread(session_id, &tid);
             tracing::info!(session = %session_id, thread = %tid, "codex: headless thread started (via notification)");
             if let Some(sw) = pending_switch.take() {
-                send_model_switch(out_tx, req_id, tid.as_str(), &sw);
+                send_model_switch(out_tx, req_id, tid.as_str(), &sw, input);
             }
-            for text in std::mem::take(pending_prompts) {
-                *req_id += 1;
-                send_turn(out_tx, *req_id, &tid, &text, policy);
-            }
+            flush_pending_prompts(out_tx, req_id, &tid, pending_prompts, input, policy);
         }
     }
 
@@ -2444,7 +3025,7 @@ fn handle_message(
     if !*subscribed && (method.starts_with("turn/") || method.starts_with("item/")) {
         *subscribed = true;
         if let (Some(sw), Some(tid)) = (pending_switch.take(), thread_id.as_deref()) {
-            send_model_switch(out_tx, req_id, tid, &sw);
+            send_model_switch(out_tx, req_id, tid, &sw, input);
         }
     }
 
@@ -2468,28 +3049,55 @@ fn handle_message(
         apply_updates(store, conv, session_id, updates, cur_mode, acc);
     }
 
-    // Server→client *requests* (they carry an id) must be answered or the agent
-    // blocks. For an approval request: YOLO accepts inline; otherwise we park the
-    // request id + card and surface the FIFO head, so the user's /approve
-    // decision answers the request that's actually on screen (see
-    // `resolve_approval`, called from the decision branch in run_session).
-    if value.get("id").is_some() && method.ends_with("/requestApproval") {
-        let id = value.get("id").cloned().unwrap_or(Value::Null);
-        if policy.bypassing() {
-            let _ = out_tx
-                .send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "accept" } }));
-        } else {
-            let (tool, summary, raw) = approval_card.take().unwrap_or((None, None, Value::Null));
-            pending_approvals.push_back(ParkedApproval {
-                id,
-                tool,
-                summary,
-                raw,
-            });
-            if pending_approvals.len() == 1 {
-                surface_approval(store, session_id, cur_mode, &pending_approvals[0]);
+    match method {
+        // The server answered or cleared one of its requests (answered
+        // elsewhere — the hybrid TUI — or voided by a turn start, completion
+        // or interrupt): its card must go, or the user is left answering a
+        // request that no longer exists.
+        "serverRequest/resolved" => {
+            if let Some(rid) = params.get("requestId").filter(|v| !v.is_null()) {
+                drop_parked(store, session_id, requests, cur_mode, |r| &r.id == rid);
             }
         }
+        // The turn is over, and with it every request it raised — even when
+        // its `serverRequest/resolved` is missed. The `Idle` above already
+        // released the card, so a request still parked (another turn's)
+        // must be put back on it.
+        "turn/completed" if !requests.queue.is_empty() => {
+            let ended = params
+                .pointer("/turn/id")
+                .or_else(|| params.get("turnId"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if let Some(ended) = ended {
+                requests
+                    .queue
+                    .retain(|r| r.turn_id.as_deref() != Some(ended.as_str()));
+            }
+            if let Some(head) = requests.queue.front() {
+                surface_parked(store, session_id, cur_mode, head);
+            }
+        }
+        _ => {}
+    }
+
+    // Server→client *requests* (they carry an id) must be answered or the
+    // agent blocks — every one, including methods we do not implement.
+    if value.get("id").is_some_and(|id| !id.is_null()) {
+        handle_server_request(
+            value,
+            method,
+            &params,
+            approval_card,
+            store,
+            conv,
+            session_id,
+            out_tx,
+            cur_mode,
+            acc,
+            policy,
+            requests,
+        );
     }
 }
 
@@ -2657,6 +3265,13 @@ impl TurnTracker {
         self.starting = true;
     }
 
+    /// Our `turn/start` was rejected: no turn is coming, so a held interrupt
+    /// has nothing to land on.
+    fn start_failed(&mut self) {
+        self.starting = false;
+        self.interrupt_wanted = false;
+    }
+
     /// Fold one app-server message. Returns a held interrupt's turn id once
     /// that turn is known.
     fn observe(&mut self, value: &Value) -> Option<String> {
@@ -2717,6 +3332,216 @@ impl TurnTracker {
     }
 }
 
+/// One of our own requests awaiting its response, so a JSON-RPC error to it is
+/// surfaced — or, for a steer, recovered — instead of silently dropped.
+#[derive(Debug)]
+enum Inflight {
+    TurnStart,
+    Steer {
+        text: String,
+        expected: String,
+        attempts: u8,
+    },
+    ModelSwitch,
+    Interrupt,
+}
+
+/// A user message waiting for a turn that can take it.
+#[derive(Debug)]
+struct Held {
+    text: String,
+    /// Deliver only once no turn is running (`turn/start`), never as a steer:
+    /// a `delivery: "now"` send waiting out its interrupt, or a steer the
+    /// running turn refused (a review or compaction turn cannot be steered).
+    after_turn: bool,
+    attempts: u8,
+}
+
+/// A refused steer is retried against whatever turn is running at most this
+/// many times before it waits for the turn to end instead.
+const MAX_STEER_ATTEMPTS: u8 = 3;
+
+/// How user messages reach the thread: `turn/start` when nothing is running,
+/// `turn/steer` (naming the running turn) when something is.
+///
+/// A second `turn/start` while a turn runs is what this replaced: it raced the
+/// running turn instead of joining it. Steering is codex's own mid-turn input
+/// (what its TUI does when you type while it works), and it needs the running
+/// turn's id — so a message sent between our `turn/start` and that id arriving
+/// is held, and steered in the moment the id is known.
+///
+/// Nothing is ever dropped: a steer the server refuses (the turn just ended,
+/// another one replaced it, or it is not steerable) goes back to the front of
+/// the queue and is re-delivered by [`Self::pump`] — steered into the turn now
+/// running, or started as the next turn once none is.
+#[derive(Debug, Default)]
+struct TurnInput {
+    turns: TurnTracker,
+    inflight: HashMap<u64, Inflight>,
+    held: VecDeque<Held>,
+}
+
+impl TurnInput {
+    fn track(&mut self, id: u64, request: Inflight) {
+        self.inflight.insert(id, request);
+    }
+
+    /// Accept a user message for `thread_id`. `Delivery::Now` interrupts the
+    /// running (or starting) turn and holds the message for the next one.
+    fn submit(
+        &mut self,
+        out_tx: &mpsc::UnboundedSender<Value>,
+        req_id: &mut u64,
+        thread_id: &str,
+        text: String,
+        delivery: Delivery,
+        policy: &TurnPolicy,
+    ) {
+        let after_turn = delivery == Delivery::Now && {
+            if let Some(turn) = self.turns.request_interrupt() {
+                self.send_interrupt(out_tx, req_id, thread_id, &turn);
+            }
+            self.turns.active.is_some() || self.turns.starting
+        };
+        self.held.push_back(Held {
+            text,
+            after_turn,
+            attempts: 0,
+        });
+        self.pump(out_tx, req_id, thread_id, policy);
+    }
+
+    fn send_interrupt(
+        &mut self,
+        out_tx: &mpsc::UnboundedSender<Value>,
+        req_id: &mut u64,
+        thread_id: &str,
+        turn_id: &str,
+    ) {
+        *req_id += 1;
+        self.track(*req_id, Inflight::Interrupt);
+        let _ = out_tx.send(turn_interrupt_request(*req_id, thread_id, turn_id));
+    }
+
+    /// Deliver whatever the current turn state allows, in order: steer the
+    /// leading messages into a running turn, or start a turn with the first
+    /// one when nothing is running or starting (the rest then steer into it).
+    /// A message held for after the turn stops the run, so order is kept.
+    fn pump(
+        &mut self,
+        out_tx: &mpsc::UnboundedSender<Value>,
+        req_id: &mut u64,
+        thread_id: &str,
+        policy: &TurnPolicy,
+    ) {
+        if let Some(turn) = self.turns.active.clone() {
+            while self.held.front().is_some_and(|h| !h.after_turn) {
+                let Some(held) = self.held.pop_front() else {
+                    break;
+                };
+                *req_id += 1;
+                let _ = out_tx.send(turn_steer_request(*req_id, thread_id, &turn, &held.text));
+                self.track(
+                    *req_id,
+                    Inflight::Steer {
+                        text: held.text,
+                        expected: turn.clone(),
+                        attempts: held.attempts + 1,
+                    },
+                );
+            }
+        } else if !self.turns.starting {
+            if let Some(held) = self.held.pop_front() {
+                self.turns.sent_turn();
+                *req_id += 1;
+                self.track(*req_id, Inflight::TurnStart);
+                send_turn(out_tx, *req_id, thread_id, &held.text, policy);
+                // Whatever waited for a turn to end now joins the new one.
+                for rest in &mut self.held {
+                    rest.after_turn = false;
+                }
+            }
+        }
+    }
+
+    /// Fold the response to one of OUR requests. `None` when the id is not one
+    /// this tracks; otherwise the updates to apply (empty on success).
+    fn on_response(
+        &mut self,
+        id: u64,
+        value: &Value,
+        session_id: &str,
+    ) -> Option<Vec<AgentUpdate>> {
+        let request = self.inflight.remove(&id)?;
+        let Some(err) = value.get("error") else {
+            return Some(Vec::new());
+        };
+        let msg = error_message(Some(err)).unwrap_or_else(|| err.to_string());
+        Some(match request {
+            Inflight::TurnStart => {
+                tracing::warn!(session = %session_id, error = %err, "codex turn/start failed");
+                self.turns.start_failed();
+                let mut updates = vec![AgentUpdate::Error(format!(
+                    "codex turn/start failed: {msg}"
+                ))];
+                // No turn is running, so nothing will ever send `Idle`.
+                if self.turns.active.is_none() {
+                    updates.push(AgentUpdate::Idle);
+                }
+                updates
+            }
+            Inflight::Steer {
+                text,
+                expected,
+                attempts,
+            } => {
+                // Not an error the user needs to see: the message is
+                // re-delivered, never lost.
+                tracing::info!(session = %session_id, error = %err, "codex turn/steer refused — re-delivering");
+                let still_running = self.turns.active.as_deref() == Some(expected.as_str());
+                self.held.push_front(Held {
+                    text,
+                    after_turn: still_running || attempts >= MAX_STEER_ATTEMPTS,
+                    attempts,
+                });
+                Vec::new()
+            }
+            Inflight::ModelSwitch => {
+                tracing::warn!(session = %session_id, error = %err, "codex thread/settings/update failed");
+                vec![AgentUpdate::Error(format!(
+                    "codex thread/settings/update failed: {msg}"
+                ))]
+            }
+            Inflight::Interrupt => {
+                tracing::warn!(session = %session_id, error = %err, "codex turn/interrupt refused");
+                // Refused because the turn already ended is not a failure.
+                if self.turns.active.is_some() {
+                    vec![AgentUpdate::Error(format!(
+                        "codex turn/interrupt failed: {msg}"
+                    ))]
+                } else {
+                    Vec::new()
+                }
+            }
+        })
+    }
+}
+
+/// `turn/steer`: add input to the RUNNING turn. `expectedTurnId` is a
+/// precondition the server checks; a fresh `clientUserMessageId` lets codex
+/// tie the echoed user message back to this send.
+fn turn_steer_request(id: u64, thread_id: &str, turn_id: &str, text: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "turn/steer",
+        "params": {
+            "threadId": thread_id,
+            "expectedTurnId": turn_id,
+            "clientUserMessageId": uuid::Uuid::new_v4().to_string(),
+            "input": [ { "type": "text", "text": text } ]
+        }
+    })
+}
+
 fn turn_interrupt_request(id: u64, thread_id: &str, turn_id: &str) -> Value {
     json!({
         "jsonrpc": "2.0", "id": id, "method": "turn/interrupt",
@@ -2742,6 +3567,7 @@ fn send_model_switch(
     req_id: &mut u64,
     thread_id: &str,
     switch: &crate::session::ModelSwitch,
+    input: &mut TurnInput,
 ) {
     let mut params = json!({ "threadId": thread_id });
     if let Some(m) = &switch.model {
@@ -2751,6 +3577,7 @@ fn send_model_switch(
         params["effort"] = json!(e);
     }
     *req_id += 1;
+    input.track(*req_id, Inflight::ModelSwitch);
     let _ = out_tx.send(json!({
         "jsonrpc": "2.0",
         "id": *req_id,
@@ -3105,6 +3932,43 @@ class Server(http.server.BaseHTTPRequestHandler):
             for i in range(size): data[i] ^= mask[i % 4]
             if head[0] & 0x0f == 8: return None
             return data.decode() if head[0] & 0x0f == 1 else ''
+        if mode == 'steer_turn':
+            # Steering, a blocking question, and delivery "now" — the
+            # turn/steer precondition is checked like the real app-server.
+            send({'id': 2, 'result': {}})
+            log = open(os.environ['WKS_FAKE_DIR'] + '/requests', 'a')
+            n = 0
+            active = None
+            while True:
+                text = recv()
+                if text is None: return
+                for line in text.split('\n'):
+                    if not line.strip(): continue
+                    msg = json.loads(line)
+                    log.write(line + '\n'); log.flush()
+                    method = msg.get('method')
+                    if method == 'turn/start':
+                        n += 1
+                        active = {'id': 'turn-%d' % n, 'items': [], 'status': 'inProgress'}
+                        send({'id': msg['id'], 'result': {'turn': active}})
+                        send({'method': 'turn/started', 'params': {'threadId': 'fixture-thread', 'turn': active}})
+                        if n == 1:
+                            send({'id': 900, 'method': 'item/tool/requestUserInput', 'params': {
+                                'threadId': 'fixture-thread', 'turnId': active['id'], 'itemId': 'q', 'isBlocking': True,
+                                'questions': [{'id': 'pick', 'header': 'Pick', 'question': 'Which?', 'isOther': False,
+                                               'isSecret': False, 'options': [{'label': 'A', 'description': ''}, {'label': 'B', 'description': ''}]}]}})
+                    elif method == 'turn/steer':
+                        p = msg.get('params') or {}
+                        if active and p.get('expectedTurnId') == active['id']:
+                            send({'id': msg['id'], 'result': {'turnId': active['id']}})
+                        else:
+                            send({'id': msg['id'], 'error': {'code': -32600, 'message': 'no active turn to steer'}})
+                    elif method == 'turn/interrupt':
+                        send({'id': msg['id'], 'result': {}})
+                        send({'method': 'turn/completed', 'params': {'threadId': 'fixture-thread', 'turn': dict(active, status='interrupted')}})
+                        active = None
+                    elif msg.get('id') == 900 and 'result' in msg:
+                        send({'method': 'serverRequest/resolved', 'params': {'threadId': 'fixture-thread', 'requestId': 900}})
         if mode in ('interrupt_turn', 'interrupt_held'):
             # Codex 0.159's TurnInterruptParams require threadId AND turnId;
             # anything else is refused exactly like the real app-server.
@@ -3278,6 +4142,117 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
     /// Stop on a running Codex turn reaches the app-server as a
     /// `turn/interrupt` naming the turn, and the turn actually ends. The fake
     /// refuses a request without `turnId`, as Codex 0.159 does.
+    /// End to end through `run_session`: a blocking `requestUserInput` is
+    /// answered through the store's `/answer` route, a send during the turn
+    /// steers it (never a second `turn/start`), and a `delivery: "now"` send
+    /// interrupts the turn and becomes the next one.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn codex_turn_steers_answers_questions_and_delivers_now() {
+        let fake = FakeAppServer::new("steer_turn");
+        let log = fake.dir.join("requests");
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "steer-fixture";
+        store.register_managed(sid, fake.dir.to_str().unwrap(), "codex");
+        let generation = store.claim_generation(sid);
+        let (task_store, task_conv) = (store.clone(), conv.clone());
+        let dir = fake.dir.to_str().unwrap().to_owned();
+        let (bin, extras) = (fake.bin.clone(), fake.extras.clone());
+        let task = tokio::spawn(async move {
+            let mut evidence = DriverEvidence::new(sid, generation);
+            let _ = run_session(
+                &task_store,
+                &task_conv,
+                sid,
+                &dir,
+                None,
+                None,
+                None,
+                &bin,
+                false,
+                true,
+                Some("fixture-thread".into()),
+                &Facade::default(),
+                &extras,
+                &mut evidence,
+            )
+            .await;
+        });
+        let sent = || -> Vec<Value> {
+            std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                .collect()
+        };
+        let calls = |method: &str| -> Vec<Value> {
+            sent()
+                .into_iter()
+                .filter(|v| v["method"] == method)
+                .collect()
+        };
+        async fn until(mut done: impl FnMut() -> bool) -> bool {
+            for _ in 0..500 {
+                if done() {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            done()
+        }
+        assert!(
+            until(|| matches!(
+                store.submit_message(sid, "first".into()),
+                crate::session::store::MessageOutcome::Sent
+            ))
+            .await
+        );
+        assert!(until(|| store.get(sid).unwrap().mode == SessionMode::Question).await);
+        assert!(store.submit_managed_answer(
+            sid,
+            ManagedAnswer {
+                option: None,
+                text: None,
+                answers: Some(vec!["2".into()]),
+                answer_kinds: None,
+            },
+        ));
+        assert!(until(|| sent().iter().any(|v| v["id"] == json!(900))).await);
+        let reply = sent().into_iter().find(|v| v["id"] == json!(900)).unwrap();
+        assert_eq!(
+            reply["result"],
+            json!({ "answers": { "pick": { "answers": ["B"] } } })
+        );
+        assert!(until(|| store.get(sid).unwrap().mode == SessionMode::Responding).await);
+
+        store.submit_message(sid, "also this".into());
+        assert!(until(|| !calls("turn/steer").is_empty()).await);
+        let steer = &calls("turn/steer")[0];
+        assert_eq!(steer["params"]["expectedTurnId"], "turn-1");
+        assert_eq!(steer["params"]["input"][0]["text"], "also this");
+        assert_eq!(calls("turn/start").len(), 1, "a steer, not a second turn");
+
+        store.submit_message_with_delivery(sid, "now!".into(), Delivery::Now);
+        assert!(until(|| calls("turn/start").len() == 2).await);
+        assert_eq!(calls("turn/interrupt")[0]["params"]["turnId"], "turn-1");
+        assert_eq!(calls("turn/start")[1]["params"]["input"][0]["text"], "now!");
+        // Every message landed in the conversation, in order.
+        let users: Vec<String> = conv
+            .snapshot(sid)
+            .unwrap()
+            .1
+            .into_iter()
+            .filter_map(|i| match i {
+                ConversationItem::UserMessage { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users, ["first", "also this", "now!"]);
+        store.terminate_managed(sid);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(8), task).await;
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn interrupt_stops_the_running_codex_turn() {
@@ -4998,7 +5973,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut req_id: u64 = 5;
         let thread_id = Some("t1".to_string());
         if let (Some(sw), Some(tid)) = (pending.take(), thread_id.as_deref()) {
-            send_model_switch(&tx, &mut req_id, tid, &sw);
+            send_model_switch(&tx, &mut req_id, tid, &sw, &mut TurnInput::default());
         }
         assert!(pending.is_none());
         let sent = rx
@@ -5033,7 +6008,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut cur_mode = SessionMode::Input;
         let mut acc = UsageAcc::new();
         let policy = policy_for(true, false);
-        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_approvals = ServerRequests::default();
+        let mut input = TurnInput::default();
         let mut pending_switch = None;
 
         handle_message(
@@ -5050,6 +6026,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut acc,
             &policy,
             &mut pending_approvals,
+            &mut input,
             &mut pending_switch,
             true,
         );
@@ -5096,7 +6073,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             let mut cur_mode = SessionMode::Input;
             let mut acc = UsageAcc::new();
             let policy = policy_for(false, false);
-            let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+            let mut pending_approvals = ServerRequests::default();
+            let mut input = TurnInput::default();
             let mut pending_switch = None;
             handle_message(
                 &reply,
@@ -5112,6 +6090,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 &mut acc,
                 &policy,
                 &mut pending_approvals,
+                &mut input,
                 &mut pending_switch,
                 false,
             );
@@ -5143,7 +6122,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             let mut cur_mode = SessionMode::Input;
             let mut acc = UsageAcc::new();
             let policy = policy_for(headless, false);
-            let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+            let mut pending_approvals = ServerRequests::default();
+            let mut input = TurnInput::default();
             let mut pending_switch = None;
 
             handle_message(
@@ -5161,6 +6141,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                 &mut acc,
                 &policy,
                 &mut pending_approvals,
+                &mut input,
                 &mut pending_switch,
                 headless,
             );
@@ -5205,7 +6186,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut cur_mode = SessionMode::Input;
         let mut acc = UsageAcc::new();
         let policy = policy_for(true, false);
-        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_approvals = ServerRequests::default();
+        let mut input = TurnInput::default();
         let mut pending_switch = None;
 
         handle_message(
@@ -5223,6 +6205,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut acc,
             &policy,
             &mut pending_approvals,
+            &mut input,
             &mut pending_switch,
             true,
         );
@@ -5269,7 +6252,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
         let policy = policy_for(true, false);
-        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_approvals = ServerRequests::default();
+        let mut input = TurnInput::default();
         let mut pending_switch = None;
 
         // A turn sent with id 101 fails; Codex replies with an error at id 101.
@@ -5288,6 +6272,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut acc,
             &policy,
             &mut pending_approvals,
+            &mut input,
             &mut pending_switch,
             true,
         );
@@ -5338,7 +6323,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
         let policy = policy_for(false, false);
-        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_approvals = ServerRequests::default();
+        let mut input = TurnInput::default();
         let mut pending_switch = None;
 
         let approval_req = |id: u64, cmd: &str| {
@@ -5349,9 +6335,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             })
         };
         let mut handle =
-            |v: &Value,
-             cur_mode: &mut SessionMode,
-             pending_approvals: &mut VecDeque<ParkedApproval>| {
+            |v: &Value, cur_mode: &mut SessionMode, pending_approvals: &mut ServerRequests| {
                 handle_message(
                     v,
                     &store,
@@ -5366,6 +6350,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
                     &mut acc,
                     &policy,
                     pending_approvals,
+                    &mut input,
                     &mut pending_switch,
                     false,
                 );
@@ -5382,7 +6367,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut cur_mode,
             &mut pending_approvals,
         );
-        assert_eq!(pending_approvals.len(), 2);
+        assert_eq!(pending_approvals.queue.len(), 2);
         assert_eq!(cur_mode, SessionMode::Approval);
         // The DISPLAYED card is the FIFO head (first request) — a later request
         // must not overwrite it while the head is what a decision answers.
@@ -5421,7 +6406,7 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         assert_eq!(sent["result"]["decision"], "accept");
         assert_eq!(cur_mode, SessionMode::Responding);
         assert!(pending_summary(&store, "s").is_none());
-        assert!(pending_approvals.is_empty());
+        assert!(pending_approvals.queue.is_empty());
 
         // A stray decision with nothing parked is a no-op, not a panic.
         resolve_approval(
@@ -5448,7 +6433,8 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
         let mut cur_mode = SessionMode::Responding;
         let mut acc = UsageAcc::new();
         let policy = policy_for(false, true);
-        let mut pending_approvals: VecDeque<ParkedApproval> = VecDeque::new();
+        let mut pending_approvals = ServerRequests::default();
+        let mut input = TurnInput::default();
         let mut pending_switch = None;
 
         handle_message(
@@ -5469,15 +6455,615 @@ http.server.HTTPServer(('127.0.0.1', port), Server).serve_forever()
             &mut acc,
             &policy,
             &mut pending_approvals,
+            &mut input,
             &mut pending_switch,
             false,
         );
         let sent = out_rx.try_recv().expect("yolo auto-accept");
         assert_eq!(sent["id"], json!(9));
         assert_eq!(sent["result"]["decision"], "accept");
-        assert!(pending_approvals.is_empty());
+        assert!(pending_approvals.queue.is_empty());
         // The stripped PermissionPending must not have flipped the mode either.
         assert_eq!(cur_mode, SessionMode::Responding);
         assert!(pending_summary(&store, "s2").is_none());
+    }
+
+    /// The driver's per-message state, so a test can feed app-server messages
+    /// through `handle_message` exactly as `run_session` does and read back
+    /// what went out on the wire.
+    struct Driver {
+        sid: &'static str,
+        store: SessionStore,
+        conv: ConversationStore,
+        out_tx: mpsc::UnboundedSender<Value>,
+        out_rx: mpsc::UnboundedReceiver<Value>,
+        thread_id: Option<String>,
+        subscribed: bool,
+        pending_prompts: Vec<String>,
+        req_id: u64,
+        cur_mode: SessionMode,
+        acc: UsageAcc,
+        policy: TurnPolicy,
+        requests: ServerRequests,
+        input: TurnInput,
+        pending_switch: Option<crate::session::ModelSwitch>,
+    }
+
+    impl Driver {
+        fn new(yolo: bool) -> Self {
+            let sid = "drv";
+            let store = SessionStore::new();
+            store.register_managed(sid, "/w", "codex");
+            let (out_tx, out_rx) = mpsc::unbounded_channel::<Value>();
+            Self {
+                sid,
+                store,
+                conv: ConversationStore::new(),
+                out_tx,
+                out_rx,
+                thread_id: Some("th".into()),
+                subscribed: true,
+                pending_prompts: Vec::new(),
+                req_id: 2,
+                cur_mode: SessionMode::Responding,
+                acc: UsageAcc::new(),
+                policy: policy_for(true, yolo),
+                requests: ServerRequests::default(),
+                input: TurnInput::default(),
+                pending_switch: None,
+            }
+        }
+
+        fn feed(&mut self, value: Value) {
+            handle_message(
+                &value,
+                &self.store,
+                &self.conv,
+                self.sid,
+                &self.out_tx,
+                &mut self.thread_id,
+                &mut self.subscribed,
+                &mut self.pending_prompts,
+                &mut self.req_id,
+                &mut self.cur_mode,
+                &mut self.acc,
+                &self.policy,
+                &mut self.requests,
+                &mut self.input,
+                &mut self.pending_switch,
+                true,
+            );
+        }
+
+        fn send(&mut self, text: &str, delivery: Delivery) {
+            let tid = self.thread_id.clone().unwrap();
+            self.input.submit(
+                &self.out_tx,
+                &mut self.req_id,
+                &tid,
+                text.into(),
+                delivery,
+                &self.policy,
+            );
+        }
+
+        fn answer(&mut self, answer: ManagedAnswer) {
+            resolve_question(
+                &self.store,
+                self.sid,
+                &self.out_tx,
+                &mut self.requests,
+                &mut self.cur_mode,
+                &answer,
+            );
+        }
+
+        fn decide(&mut self, approve: bool) {
+            resolve_approval(
+                &self.store,
+                self.sid,
+                &self.out_tx,
+                &mut self.requests,
+                &mut self.cur_mode,
+                approve,
+            );
+        }
+
+        fn sent(&mut self) -> Vec<Value> {
+            std::iter::from_fn(|| self.out_rx.try_recv().ok()).collect()
+        }
+
+        fn pending(&self) -> Option<Pending> {
+            self.store.get(self.sid).unwrap().pending().cloned()
+        }
+
+        fn conversation_text(&self) -> String {
+            self.conv
+                .snapshot(self.sid)
+                .map(|(_, items)| serde_json::to_string(&items).unwrap())
+                .unwrap_or_default()
+        }
+
+        fn started(&mut self, turn: &str) {
+            self.feed(json!({"method":"turn/started","params":{"threadId":"th","turn":{"id":turn,"status":"inProgress"}}}));
+        }
+
+        fn completed(&mut self, turn: &str, status: &str) {
+            self.feed(json!({"method":"turn/completed","params":{"threadId":"th","turn":{"id":turn,"status":status}}}));
+        }
+    }
+
+    fn user_input_request(id: u64, turn: &str) -> Value {
+        json!({
+            "jsonrpc": "2.0", "id": id, "method": "item/tool/requestUserInput",
+            "params": {
+                "threadId": "th", "turnId": turn, "itemId": "call-1", "isBlocking": true,
+                "questions": [
+                    {
+                        "id": "scope", "header": "Scope", "question": "How wide should the change go?",
+                        "isOther": true, "isSecret": false,
+                        "options": [
+                            { "label": "Narrow", "description": "Only the driver" },
+                            { "label": "Wide", "description": "" }
+                        ]
+                    },
+                    {
+                        "id": "token", "header": "Token", "question": "Paste the deploy token",
+                        "isOther": false, "isSecret": true, "options": null
+                    }
+                ]
+            }
+        })
+    }
+
+    fn answers(list: &[&str], kinds: &[&str]) -> ManagedAnswer {
+        ManagedAnswer {
+            option: None,
+            text: None,
+            answers: Some(list.iter().map(|s| s.to_string()).collect()),
+            answer_kinds: Some(kinds.iter().map(|s| s.to_string()).collect()),
+        }
+    }
+
+    #[test]
+    fn request_user_input_parks_a_question_card_and_answers_in_codex_shape() {
+        let mut d = Driver::new(true);
+        d.feed(user_input_request(40, "u1"));
+        // Parked even under YOLO, and nothing answered yet.
+        assert!(d.sent().is_empty());
+        assert_eq!(d.cur_mode, SessionMode::Question);
+        let Some(Pending::Question { questions, raw }) = d.pending() else {
+            panic!("expected a question card, got {:?}", d.pending());
+        };
+        assert_eq!(raw["itemId"], "call-1");
+        assert_eq!(questions.len(), 2);
+        assert_eq!(questions[0].question, "How wide should the change go?");
+        assert_eq!(questions[0].header.as_deref(), Some("Scope"));
+        assert!(!questions[0].multi_select);
+        assert_eq!(questions[0].options[0].label, "Narrow");
+        assert_eq!(
+            questions[0].options[0].description.as_deref(),
+            Some("Only the driver")
+        );
+        assert_eq!(questions[0].options[1].description, None);
+        assert!(!questions[0].secret);
+        assert!(questions[1].options.is_empty());
+        assert!(questions[1].secret);
+        // The card serializes like Claude's, plus `secret` only where set.
+        let card = serde_json::to_value(&questions).unwrap();
+        assert!(card[0].get("secret").is_none());
+        assert_eq!(card[1]["secret"], true);
+
+        // An option number picks its label; free text rides as a user note.
+        d.answer(answers(&["2", "s3cr3t"], &["option", "text"]));
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["id"], json!(40));
+        assert_eq!(
+            sent[0]["result"],
+            json!({ "answers": {
+                "scope": { "answers": ["Wide"] },
+                "token": { "answers": ["user_note: s3cr3t"] }
+            }})
+        );
+        assert_eq!(d.cur_mode, SessionMode::Responding);
+        assert!(d.pending().is_none());
+    }
+
+    #[test]
+    fn user_input_free_text_and_labels_follow_codex_encoding() {
+        let questions = user_input_request(1, "u")["params"]["questions"]
+            .as_array()
+            .unwrap()
+            .clone();
+        // An exact label is that option, even when sent as text.
+        let r = user_input_response(&questions, &answers(&["Narrow", ""], &["text", "text"]));
+        assert_eq!(r["answers"]["scope"]["answers"], json!(["Narrow"]));
+        // Unanswered: an empty list, not a missing key.
+        assert_eq!(r["answers"]["token"]["answers"], json!([]));
+        // Free text on an `isOther` question goes behind "None of the above".
+        let r = user_input_response(&questions, &answers(&["Somewhere else"], &[]));
+        assert_eq!(
+            r["answers"]["scope"]["answers"],
+            json!(["None of the above", "user_note: Somewhere else"])
+        );
+        // A "text"-tagged digit is literal, never option 2.
+        let r = user_input_response(&questions, &answers(&["2"], &["text"]));
+        assert_eq!(
+            r["answers"]["scope"]["answers"],
+            json!(["None of the above", "user_note: 2"])
+        );
+        // The single-answer shape addresses the first question.
+        let r = user_input_response(
+            &questions,
+            &ManagedAnswer {
+                option: Some(1),
+                text: None,
+                answers: None,
+                answer_kinds: None,
+            },
+        );
+        assert_eq!(r["answers"]["scope"]["answers"], json!(["Narrow"]));
+    }
+
+    #[test]
+    fn a_question_waits_behind_a_parked_approval_and_answers_route_by_kind() {
+        let mut d = Driver::new(false);
+        d.feed(json!({
+            "jsonrpc": "2.0", "id": 7, "method": "item/commandExecution/requestApproval",
+            "params": { "threadId": "th", "turnId": "u1", "command": "rm -rf build" }
+        }));
+        d.feed(user_input_request(8, "u1"));
+        // The approval keeps the card; the question queues behind it.
+        assert_eq!(d.cur_mode, SessionMode::Approval);
+        assert!(matches!(d.pending(), Some(Pending::Approval { .. })));
+        // An answer cannot be for the approval on screen: dropped.
+        d.answer(answers(&["1"], &[]));
+        assert!(d.sent().is_empty());
+        d.decide(true);
+        let sent = d.sent();
+        assert_eq!(sent[0]["id"], json!(7));
+        assert_eq!(sent[0]["result"]["decision"], "accept");
+        // Now the question is up, and a stray decision cannot answer it.
+        assert_eq!(d.cur_mode, SessionMode::Question);
+        d.decide(false);
+        assert!(d.sent().is_empty());
+        d.answer(answers(&["1"], &[]));
+        let sent = d.sent();
+        assert_eq!(sent[0]["id"], json!(8));
+        assert_eq!(
+            sent[0]["result"]["answers"]["scope"]["answers"],
+            json!(["Narrow"])
+        );
+        assert_eq!(d.cur_mode, SessionMode::Responding);
+    }
+
+    #[test]
+    fn server_request_resolved_and_turn_end_clear_parked_requests() {
+        let mut d = Driver::new(false);
+        d.feed(user_input_request(9, "u1"));
+        d.feed(json!({
+            "jsonrpc": "2.0", "id": 10, "method": "item/fileChange/requestApproval",
+            "params": { "threadId": "th", "turnId": "u1", "path": "a.rs" }
+        }));
+        assert_eq!(d.cur_mode, SessionMode::Question);
+        // The head is cleared by the server: the queued approval surfaces.
+        d.feed(json!({"method":"serverRequest/resolved","params":{"threadId":"th","requestId":9}}));
+        assert_eq!(d.cur_mode, SessionMode::Approval);
+        assert_eq!(d.requests.queue.len(), 1);
+        // A late answer for the cleared question goes nowhere.
+        d.answer(answers(&["1"], &[]));
+        assert!(d.sent().is_empty());
+        // An unknown id changes nothing.
+        d.feed(
+            json!({"method":"serverRequest/resolved","params":{"threadId":"th","requestId":99}}),
+        );
+        assert_eq!(d.requests.queue.len(), 1);
+        // The turn ending voids its requests even without a resolved notice.
+        d.completed("u1", "interrupted");
+        assert!(d.requests.queue.is_empty());
+        assert!(d.pending().is_none());
+        assert_eq!(d.cur_mode, SessionMode::Input);
+    }
+
+    #[test]
+    fn a_request_from_another_turn_survives_a_turn_end() {
+        let mut d = Driver::new(false);
+        d.feed(user_input_request(9, "u0"));
+        d.completed("u1", "completed");
+        // The `Idle` released the card; the still-live request is back on it.
+        assert_eq!(d.requests.queue.len(), 1);
+        assert!(matches!(d.pending(), Some(Pending::Question { .. })));
+        assert_eq!(d.cur_mode, SessionMode::Question);
+    }
+
+    #[test]
+    fn permissions_approval_answers_with_a_granted_profile_not_a_decision() {
+        let request = |id: u64| {
+            json!({
+                "jsonrpc": "2.0", "id": id, "method": "item/permissions/requestApproval",
+                "params": {
+                    "threadId": "th", "turnId": "u1", "itemId": "i", "startedAtMs": 1,
+                    "cwd": "/w", "reason": "needs the network",
+                    "permissions": { "network": { "enabled": true }, "fileSystem": null }
+                }
+            })
+        };
+        let mut d = Driver::new(false);
+        d.feed(request(20));
+        let Some(Pending::Approval { tool, summary, .. }) = d.pending() else {
+            panic!("expected an approval card");
+        };
+        assert_eq!(tool.as_deref(), Some("permissions"));
+        assert_eq!(summary.as_deref(), Some("needs the network"));
+        d.decide(true);
+        assert_eq!(
+            d.sent()[0]["result"],
+            json!({ "permissions": { "network": { "enabled": true } }, "scope": "turn" })
+        );
+        d.feed(request(21));
+        d.decide(false);
+        assert_eq!(
+            d.sent()[0]["result"],
+            json!({ "permissions": {}, "scope": "turn" })
+        );
+        // YOLO grants inline, in the same shape.
+        let mut d = Driver::new(true);
+        d.feed(request(22));
+        let sent = d.sent();
+        assert_eq!(sent[0]["id"], json!(22));
+        assert_eq!(sent[0]["result"]["permissions"]["network"]["enabled"], true);
+        assert!(d.requests.queue.is_empty());
+    }
+
+    #[test]
+    fn mcp_elicitation_is_declined_at_once_with_a_visible_notice() {
+        let mut d = Driver::new(false);
+        d.feed(json!({
+            "jsonrpc": "2.0", "id": 30, "method": "mcpServer/elicitation/request",
+            "params": {
+                "threadId": "th", "turnId": "u1", "serverName": "github",
+                "request": { "mode": "form", "message": "Which repository?", "requestedSchema": {} }
+            }
+        }));
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["id"], json!(30));
+        assert_eq!(sent[0]["result"]["action"], "decline");
+        assert!(d.requests.queue.is_empty());
+        let text = d.conversation_text();
+        assert!(text.contains("`github` asked for input"), "{text}");
+        assert!(text.contains("Which repository?"), "{text}");
+    }
+
+    #[test]
+    fn unknown_server_requests_get_method_not_found_immediately() {
+        let mut d = Driver::new(false);
+        for (id, method) in [
+            (31, "item/tool/call"),
+            (32, "account/chatgptAuthTokens/refresh"),
+            (33, "currentTime/read"),
+            (34, "item/tool/call"),
+        ] {
+            d.feed(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} }));
+            let sent = d.sent();
+            assert_eq!(sent.len(), 1, "{method}");
+            assert_eq!(sent[0]["id"], json!(id));
+            assert_eq!(sent[0]["error"]["code"], json!(-32601));
+            assert_eq!(
+                sent[0]["error"]["message"],
+                format!("workspacer does not support {method}")
+            );
+        }
+        // Logged once per method, not once per request.
+        assert_eq!(d.requests.unsupported_logged.len(), 3);
+        // A notification (no id) is never answered.
+        d.feed(json!({ "method": "some/notification", "params": {} }));
+        assert!(d.sent().is_empty());
+    }
+
+    #[test]
+    fn a_send_starts_a_turn_when_idle_and_steers_a_running_one() {
+        let mut d = Driver::new(false);
+        d.send("first", Delivery::Steer);
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["method"], "turn/start");
+        // Sent between our turn/start and the turn's id: held, not a second start.
+        d.send("second", Delivery::Steer);
+        assert!(d.sent().is_empty());
+        d.started("u1");
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["method"], "turn/steer");
+        assert_eq!(sent[0]["params"]["expectedTurnId"], "u1");
+        assert_eq!(sent[0]["params"]["threadId"], "th");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "second");
+        assert!(sent[0]["params"]["clientUserMessageId"].is_string());
+        // While it runs, a send steers straight away, each with its own id.
+        d.send("third", Delivery::Steer);
+        let third = d.sent();
+        assert_eq!(third[0]["method"], "turn/steer");
+        assert_ne!(
+            third[0]["params"]["clientUserMessageId"],
+            sent[0]["params"]["clientUserMessageId"]
+        );
+        // Once it ends, the next send is a fresh turn again.
+        d.completed("u1", "completed");
+        d.send("fourth", Delivery::Steer);
+        assert_eq!(d.sent()[0]["method"], "turn/start");
+    }
+
+    #[test]
+    fn a_refused_steer_is_redelivered_never_lost() {
+        // The turn ended under the steer: it becomes the next turn.
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.send("late", Delivery::Steer);
+        let steer = d.sent().remove(0);
+        d.completed("u1", "completed");
+        d.feed(json!({ "id": steer["id"], "error": { "code": -32600, "message": "no active turn to steer" } }));
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["method"], "turn/start");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "late");
+        // A refusal is recovered, not shown as an error.
+        assert!(!d.conversation_text().contains("Error"));
+
+        // The turn is still running but cannot be steered (a review turn): the
+        // message waits for it to end, then starts the next turn.
+        let mut d = Driver::new(false);
+        d.started("r1");
+        d.send("after review", Delivery::Steer);
+        let steer = d.sent().remove(0);
+        d.feed(json!({ "id": steer["id"], "error": {
+            "code": -32600, "message": "cannot steer a review turn",
+            "data": { "codexErrorInfo": { "activeTurnNotSteerable": { "turnKind": "review" } } }
+        }}));
+        assert!(d.sent().is_empty(), "no retry into the unsteerable turn");
+        d.completed("r1", "completed");
+        let sent = d.sent();
+        assert_eq!(sent[0]["method"], "turn/start");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "after review");
+
+        // Another turn replaced the expected one: steer into the new one.
+        let mut d = Driver::new(false);
+        d.started("a1");
+        d.send("moving target", Delivery::Steer);
+        let steer = d.sent().remove(0);
+        d.completed("a1", "completed");
+        d.started("a2");
+        d.feed(json!({ "id": steer["id"], "error": { "code": -32600, "message": "expected active turn id `a1` but found `a2`" } }));
+        let sent = d.sent();
+        assert_eq!(sent[0]["method"], "turn/steer");
+        assert_eq!(sent[0]["params"]["expectedTurnId"], "a2");
+    }
+
+    #[test]
+    fn delivery_now_interrupts_the_turn_then_sends_it_as_the_next_one() {
+        let mut d = Driver::new(false);
+        d.started("u1");
+        d.send("stop and do this", Delivery::Now);
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0]["method"], "turn/interrupt");
+        assert_eq!(sent[0]["params"]["turnId"], "u1");
+        // An ordinary send behind it keeps its place in line.
+        d.send("then this", Delivery::Steer);
+        assert!(d.sent().is_empty());
+        d.feed(json!({ "id": sent[0]["id"], "result": {} }));
+        d.completed("u1", "interrupted");
+        let sent = d.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["method"], "turn/start");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "stop and do this");
+        d.started("u2");
+        let sent = d.sent();
+        assert_eq!(sent[0]["method"], "turn/steer");
+        assert_eq!(sent[0]["params"]["input"][0]["text"], "then this");
+        assert_eq!(sent[0]["params"]["expectedTurnId"], "u2");
+
+        // With nothing running, `now` is just a send.
+        let mut d = Driver::new(false);
+        d.send("idle now", Delivery::Now);
+        assert_eq!(d.sent()[0]["method"], "turn/start");
+    }
+
+    #[test]
+    fn error_responses_to_our_requests_are_surfaced() {
+        let mut d = Driver::new(false);
+        d.send("hello", Delivery::Steer);
+        let start = d.sent().remove(0);
+        d.feed(json!({ "id": start["id"], "error": { "code": -32600, "message": "model `gpt-x` not found" } }));
+        let text = d.conversation_text();
+        assert!(
+            text.contains("codex turn/start failed: model `gpt-x` not found"),
+            "{text}"
+        );
+        // No turn is coming, so the session must not sit in Responding.
+        assert_eq!(d.cur_mode, SessionMode::Input);
+        // The tracker let go too: the next send is a fresh start.
+        d.send("again", Delivery::Steer);
+        assert_eq!(d.sent()[0]["method"], "turn/start");
+
+        let mut d = Driver::new(false);
+        send_model_switch(
+            &d.out_tx,
+            &mut d.req_id,
+            "th",
+            &crate::session::ModelSwitch {
+                model: Some("nope".into()),
+                effort: None,
+            },
+            &mut d.input,
+        );
+        let switch = d.sent().remove(0);
+        d.feed(
+            json!({ "id": switch["id"], "error": { "code": -32602, "message": "unknown model" } }),
+        );
+        assert!(d
+            .conversation_text()
+            .contains("codex thread/settings/update failed: unknown model"));
+
+        // A success is consumed quietly.
+        let mut d = Driver::new(false);
+        d.send("ok", Delivery::Steer);
+        let start = d.sent().remove(0);
+        d.feed(json!({ "id": start["id"], "result": { "turn": { "id": "u9", "status": "inProgress" } } }));
+        assert!(!d.conversation_text().contains("Error"));
+        assert!(d.input.inflight.is_empty());
+    }
+
+    #[test]
+    fn async_questions_become_a_structured_assistant_item() {
+        let item = json!({
+            "id": "call-9", "type": "agentMessage", "phase": "finalAnswer", "delivery": "async",
+            "text": "Which database?\n- Postgres\n- SQLite\n\nAnything else?",
+            "questions": [
+                { "title": "Which database?", "options": ["Postgres", "SQLite"] },
+                { "title": "Anything else?", "options": null }
+            ]
+        });
+        // Only the completed item carries it (no deltas ever stream).
+        assert!(translate("item/started", &json!({ "item": item })).is_empty());
+        let updates = translate("item/completed", &json!({ "item": item }));
+        assert_eq!(updates.len(), 1);
+        let mut d = Driver::new(false);
+        d.feed(json!({ "method": "item/completed", "params": { "item": item } }));
+        // Non-blocking: nothing parked, no mode change.
+        assert!(d.pending().is_none());
+        assert_eq!(d.cur_mode, SessionMode::Responding);
+        let (_, items) = d.conv.snapshot(d.sid).unwrap();
+        let wire = serde_json::to_value(&items).unwrap();
+        let mut wire = wire[0].clone();
+        assert!(wire["timestamp"].is_string());
+        wire.as_object_mut().unwrap().remove("timestamp");
+        assert_eq!(
+            wire,
+            json!({
+                "kind": "assistant_text",
+                "text": "Which database?\n- Postgres\n- SQLite\n\nAnything else?",
+                "questions": [
+                    { "title": "Which database?", "options": ["Postgres", "SQLite"] },
+                    { "title": "Anything else?", "options": [] }
+                ],
+                "async": true,
+                "item_id": "call-9"
+            })
+        );
+        // Streamed text after it starts a new item rather than folding in.
+        d.feed(json!({ "method": "item/agentMessage/delta", "params": { "delta": "Working." } }));
+        let (_, items) = d.conv.snapshot(d.sid).unwrap();
+        assert_eq!(items.len(), 2);
+
+        // send_message_to_user_async: plain assistant text.
+        let message = json!({ "id": "m", "type": "agentMessage", "delivery": "async", "text": "FYI: tests pass" });
+        assert!(matches!(
+            translate("item/completed", &json!({ "item": message })).as_slice(),
+            [AgentUpdate::AssistantText(t)] if t == "FYI: tests pass"
+        ));
+        // An ordinary streamed message is still not re-emitted on completion.
+        let streamed = json!({ "id": "m2", "type": "agentMessage", "text": "streamed" });
+        assert!(translate("item/completed", &json!({ "item": streamed })).is_empty());
     }
 }

@@ -36,9 +36,10 @@ fn usable(item: &ConversationItem) -> Option<(&'static str, &str, &Option<String
         ConversationItem::UserMessage { text, timestamp } => {
             Some(("user_message", text.as_str(), timestamp))
         }
-        ConversationItem::AssistantText { text, timestamp } => {
-            Some(("assistant_text", text.as_str(), timestamp))
-        }
+        ConversationItem::AssistantText { text, timestamp }
+        | ConversationItem::AssistantQuestions {
+            text, timestamp, ..
+        } => Some(("assistant_text", text.as_str(), timestamp)),
         // This tool's schema is {note, needsDecision?}; no suffix/substring matching.
         ConversationItem::ToolUse {
             name,
