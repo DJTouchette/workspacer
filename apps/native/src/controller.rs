@@ -40,14 +40,52 @@ pub enum Action {
     SendNow(String),
     /// A change to the session's hub-owned message queue.
     Queue(crate::queue::Op),
-    Approve(bool),
+    /// Allow once or deny, for the card the user saw (its `requestId`; see
+    /// [`Card`]).
+    Approve(bool, Card),
     /// Deny the pending tool with a note the agent reads, so it can change
-    /// course instead of guessing why.
-    DenyWithNote(String),
+    /// course instead of guessing why. Codex also gets the note as a user
+    /// message ("Denied …: note").
+    DenyWithNote(String, Card),
+    /// Allow, and grant exactly one of the card's session-scoped "Always
+    /// allow" options (`alwaysOption`). `label` is what the button said.
+    AlwaysAllow {
+        option: String,
+        label: String,
+        card: String,
+    },
     Stop,
-    Answer(String),
-    Answers(Vec<String>),
+    Answer(String, Card),
+    Answers(Vec<String>, Card),
     Terminate,
+    /// Summarise the conversation out of the context window now
+    /// (`claude.compact`), optionally steering what the summary keeps.
+    Compact(String),
+    /// Codex: drop the turns from this user message on (`claude.revert`);
+    /// the conversation is re-read from the cut.
+    Revert(String),
+    /// Codex plan (collaboration) mode on, or off back to `posture` (the
+    /// session's `ask` / `yolo`), through `claude.setPermissionMode`.
+    SetPlanMode {
+        plan: bool,
+        posture: String,
+    },
+    /// Codex review of changes (`agents.review`), inline in this thread.
+    Review(crate::codex_extras::ReviewTarget),
+    /// Set, pause/resume/complete or clear the thread's goal.
+    Goal(crate::codex_extras::GoalChange),
+    /// Codex on Windows: set its sandbox up (`agents.windowsSandboxSetup`).
+    SandboxSetup,
+    /// Name the session on the hub (`agents.rename`), for every client and,
+    /// for Codex, its thread.
+    Rename(String),
+    /// Re-read the session's MCP servers (`sessions.mcpStatus`).
+    McpStatus,
+    /// Reconnect one MCP server (`claude.mcpReconnect`).
+    McpReconnect(String),
+    /// Ask the CLI to turn fast mode on or off (`claude.setFastMode`); the
+    /// row's `fastMode` says what it did.
+    SetFastMode(bool),
     SetModel {
         model: String,
         context_window: Option<u64>,
@@ -67,13 +105,71 @@ pub enum Action {
     },
 }
 
+/// The id of the card a decision or answer was made on (the session's
+/// `pendingRequestId` as the user saw it). `None` when the card has none
+/// (hook approvals, older daemons): the hub then binds it to the card shown
+/// when it arrives.
+pub type Card = Option<String>;
+
+/// Stamp a card binding on decision and answer params.
+fn bound(mut params: Value, card: &Card) -> Value {
+    if let Some(card) = card {
+        params["requestId"] = json!(card);
+    }
+    params
+}
+
 impl Action {
     pub(crate) fn wire(&self, id: &str) -> (&'static str, Value) {
         match self {
             Self::Terminate => ("claude.signal", json!({"sessionId":id,"signal":"SIGTERM"})),
-            Self::Answers(answers) => (
+            Self::Answers(answers, card) => (
                 "claude.answer",
-                json!({"sessionId":id,"answers":answers,"answerKinds":vec!["text"; answers.len()]}),
+                bound(
+                    json!({"sessionId":id,"answers":answers,"answerKinds":vec!["text"; answers.len()]}),
+                    card,
+                ),
+            ),
+            Self::AlwaysAllow { option, card, .. } => (
+                "claude.approve",
+                json!({"sessionId":id,"decision":"yes","alwaysOption":option,"requestId":card}),
+            ),
+            Self::Compact(instructions) => {
+                let mut params = json!({"sessionId":id});
+                if !instructions.trim().is_empty() {
+                    params["instructions"] = json!(instructions.trim());
+                }
+                ("claude.compact", params)
+            }
+            Self::Revert(uuid) => (
+                "claude.revert",
+                json!({"sessionId":id,"userMessageId":uuid}),
+            ),
+            Self::SetPlanMode { plan, posture } => (
+                "claude.setPermissionMode",
+                json!({"sessionId":id,"mode":if *plan { "plan" } else { posture.as_str() }}),
+            ),
+            Self::Review(target) => (
+                "agents.review",
+                json!({"sessionId":id,"target":target.wire().unwrap_or(Value::Null)}),
+            ),
+            Self::Goal(change) => change.wire(id),
+            Self::SandboxSetup => (
+                "agents.windowsSandboxSetup",
+                json!({"sessionId":id}),
+            ),
+            Self::Rename(name) => (
+                "agents.rename",
+                json!({"sessionId":id,"name":name.trim()}),
+            ),
+            Self::McpStatus => ("sessions.mcpStatus", json!({"sessionId":id})),
+            Self::McpReconnect(server) => (
+                "claude.mcpReconnect",
+                json!({"sessionId":id,"server":server}),
+            ),
+            Self::SetFastMode(enabled) => (
+                "claude.setFastMode",
+                json!({"sessionId":id,"enabled":enabled}),
             ),
             Self::SetModel {
                 model,
@@ -96,19 +192,46 @@ impl Action {
                 json!({"sessionId":id, "text":text, "delivery":"now"}),
             ),
             Self::Queue(op) => op.wire(id),
-            Self::DenyWithNote(reason) => (
+            Self::DenyWithNote(reason, card) => (
                 "claude.approve",
-                json!({"sessionId":id, "decision":"no", "reason":reason}),
+                bound(
+                    json!({"sessionId":id, "decision":"no", "reason":reason}),
+                    card,
+                ),
             ),
-            Self::Approve(yes) => (
+            Self::Approve(yes, card) => (
                 "claude.approve",
-                json!({"sessionId":id, "decision":if *yes {"yes"} else {"no"}}),
+                bound(
+                    json!({"sessionId":id, "decision":if *yes {"yes"} else {"no"}}),
+                    card,
+                ),
             ),
             Self::Stop => ("claude.signal", json!({"sessionId":id, "signal":"SIGINT"})),
-            Self::Answer(text) => (
+            Self::Answer(text, card) => (
                 "claude.answer",
-                json!({"sessionId":id, "text":text,"answers":[text],"answerKinds":["text"]}),
+                bound(
+                    json!({"sessionId":id, "text":text,"answers":[text],"answerKinds":["text"]}),
+                    card,
+                ),
             ),
+        }
+    }
+
+    /// The bus method this action calls, for hiding what the connection's
+    /// access cannot use.
+    pub fn method(&self) -> &'static str {
+        self.wire("").0
+    }
+
+    /// A decision or answer bound to a card.
+    pub fn card(&self) -> Option<&str> {
+        match self {
+            Self::Approve(_, card)
+            | Self::DenyWithNote(_, card)
+            | Self::Answer(_, card)
+            | Self::Answers(_, card) => card.as_deref(),
+            Self::AlwaysAllow { card, .. } => Some(card),
+            _ => None,
         }
     }
 
@@ -1455,14 +1578,54 @@ impl Worker {
         let number = self.action_number;
         let valid = self.view.connected
             && self.view.selected.as_ref() == Some(&session)
+            && self.view.may_call(action.method())
             && self.sessions.get(&session).is_some_and(|s| {
-                (!s.stopped() || matches!(&action, Action::Queue(op) if !op.needs_live_session()))
+                (!s.stopped()
+                    || matches!(&action, Action::Queue(op) if !op.needs_live_session())
+                    || matches!(&action, Action::Rename(_)))
                     && match &action {
-                        Action::Approve(_) => s.approval.is_some(),
-                        Action::DenyWithNote(note) => {
+                        Action::Approve(..) => s.approval.is_some(),
+                        Action::DenyWithNote(note, _) => {
                             s.approval.is_some() && !note.trim().is_empty() && note.len() <= 4000
                         }
-                        Action::Answer(text) => {
+                        // Only an option the card on screen offered, on that card.
+                        Action::AlwaysAllow { option, .. } => s
+                            .approval
+                            .as_ref()
+                            .is_some_and(|a| {
+                                crate::session_controls::always_options(a)
+                                    .iter()
+                                    .any(|o| &o.id == option)
+                            }),
+                        Action::Compact(instructions) => instructions.len() <= 4000,
+                        Action::Revert(uuid) => {
+                            s.provider_id() == "codex"
+                                && crate::session_controls::usable_uuid(uuid)
+                        }
+                        Action::SetPlanMode { posture, .. } => {
+                            s.plan_mode_available() && matches!(posture.as_str(), "ask" | "yolo")
+                        }
+                        Action::Review(target) => {
+                            s.provider_id() == "codex" && target.wire().is_ok()
+                        }
+                        Action::Goal(change) => s.provider_id() == "codex" && change.valid(),
+                        Action::SandboxSetup => s.windows_sandbox.is_some(),
+                        Action::Rename(name) => {
+                            !name.trim().is_empty()
+                                && name.trim().len() <= 200
+                                && !name.chars().any(char::is_control)
+                        }
+                        Action::McpStatus => true,
+                        Action::McpReconnect(server) => {
+                            !server.is_empty()
+                                && s.status
+                                    .mcp_servers
+                                    .iter()
+                                    .flatten()
+                                    .any(|m| &m.name == server)
+                        }
+                        Action::SetFastMode(_) => s.status.fast_mode.is_some(),
+                        Action::Answer(text, _) => {
                             s.questions.is_some() && !text.trim().is_empty() && text.len() <= 65536
                         }
                         Action::Send(text) | Action::SendNow(text) => {
@@ -1472,7 +1635,7 @@ impl Worker {
                             !text.trim().is_empty() && text.len() <= crate::queue::MAX_TEXT_BYTES
                         }),
                         Action::Stop | Action::Terminate => true,
-                        Action::Answers(answers) => {
+                        Action::Answers(answers, _) => {
                             s.questions.is_some()
                                 && !answers.is_empty()
                                 && answers.len() <= 20
@@ -2046,6 +2209,22 @@ impl Worker {
                 let queued = result
                     .as_ref()
                     .is_ok_and(|v| v["queued"] == true || v["disposition"] == "queued");
+                // After Stop: which of the user's messages still run.
+                let interrupt = match (&action, &result) {
+                    (Action::Stop, Ok(reply)) => crate::provider_status::Interrupt::parse(reply)
+                        .map(|interrupt| {
+                            interrupt.notice(|uuid| {
+                                self.view
+                                    .transcript
+                                    .rows
+                                    .iter()
+                                    .rev()
+                                    .find(|r| r.role == "You" && r.uuid == uuid)
+                                    .map(|r| r.text.clone())
+                            })
+                        }),
+                    _ => None,
+                };
                 let error = result
                     .and_then(|v| {
                         anyhow::ensure!(
@@ -2073,6 +2252,22 @@ impl Worker {
                 // sign the pick did not take.
                 let error = error.map(|error| match &action {
                     _ if error.starts_with("The model change was accepted") => error,
+                    // The card moved on: never retried; the refreshed row
+                    // below shows the current one.
+                    _ if action.card().is_some()
+                        && crate::session_controls::stale_card(&error) =>
+                    {
+                        crate::session_controls::STALE_NOTICE.into()
+                    }
+                    Action::SetPlanMode { .. } => format!("Plan mode change refused: {error}"),
+                    Action::Compact(_) => format!("Compaction refused: {error}"),
+                    Action::Revert(_) => format!("Undo refused: {error}"),
+                    Action::Review(_) => format!("Review not started: {error}"),
+                    Action::Goal(_) => format!("Goal change refused: {error}"),
+                    Action::SandboxSetup => format!("Sandbox setup refused: {error}"),
+                    Action::Rename(_) => format!("Rename refused: {error}"),
+                    Action::McpReconnect(server) => format!("Reconnecting {server} failed: {error}"),
+                    Action::SetFastMode(_) => format!("Fast mode change refused: {error}"),
                     Action::SetModel { .. } => format!("Model change refused: {error}"),
                     Action::SetEffort(_) => format!("Effort change refused: {error}"),
                     Action::SetPermission { .. } => format!("Access change refused: {error}"),
@@ -2099,6 +2294,23 @@ impl Worker {
                                 format!("Access change accepted: {label}")
                             }
                             Action::Queue(op) => op.success().into(),
+                            Action::Stop => interrupt.clone().unwrap_or_default(),
+                            Action::AlwaysAllow { label, .. } => format!("Allowed · {label}"),
+                            Action::Compact(_) => "Compacting context…".into(),
+                            Action::Revert(_) => {
+                                "Undone: the conversation now ends before that message".into()
+                            }
+                            Action::SetPlanMode { plan: true, .. } => "Plan mode on".into(),
+                            Action::SetPlanMode { plan: false, .. } => "Plan mode off".into(),
+                            Action::Review(target) => {
+                                format!("Review started: {}", target.label())
+                            }
+                            Action::Goal(crate::codex_extras::GoalChange::Clear) => {
+                                "Goal cleared".into()
+                            }
+                            Action::Goal(_) => "Goal saved".into(),
+                            Action::SandboxSetup => "Setting up the Windows sandbox…".into(),
+                            Action::McpReconnect(server) => format!("Reconnecting {server}…"),
                             _ => String::new(),
                         }
                     }

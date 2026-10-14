@@ -57,6 +57,28 @@ pub struct Session {
     /// The task list the row reports (absent from older daemons); the
     /// transcript's `Plan` rows carry the same plan as it streams.
     pub plan: Option<crate::plan::Plan>,
+    /// The id of the card on screen (`pendingRequestId`, or the approval's
+    /// `requestId`): echoed on a decision or answer so it can never land on
+    /// a newer card. `None` for hook approvals and older daemons.
+    pub pending_request_id: Option<String>,
+    /// The mode the CLI itself reports (`observedPermissionMode`), e.g. after
+    /// an "Allow all edits this session" grant. Empty when not reported.
+    pub observed_permission_mode: String,
+    /// The provider is summarising the conversation out of its context.
+    pub compacting: bool,
+    pub compaction_count: u64,
+    /// Epoch milliseconds of the last compaction.
+    pub last_compact_at: Option<i64>,
+    /// Codex: the thread's goal, its own name, Windows sandbox readiness and
+    /// collaboration mode (`plan` / `default`; absent while plan mode is
+    /// unavailable). See [`crate::codex_extras`].
+    pub goal: Option<crate::codex_extras::Goal>,
+    pub thread_name: String,
+    pub windows_sandbox: Option<crate::codex_extras::Sandbox>,
+    pub collaboration_mode: Option<String>,
+    /// Receipts, MCP servers, hooks and fast mode as the provider reports
+    /// them; see [`crate::provider_status`].
+    pub status: crate::provider_status::Status,
 }
 
 /// One account's usage windows from a session's status line: what decides
@@ -282,6 +304,12 @@ impl Session {
         self.telemetry.merge(value);
         self.context.merge(value);
         self.queue.merge(value);
+        // A whole daemon row always carries `compacting`; an optional field it
+        // omits has cleared. Partial rows (state-only reconciliations, a
+        // launch receipt) leave those fields as they were.
+        let full = value.get("compacting").is_some_and(Value::is_boolean);
+        self.status.merge(value, full);
+        self.merge_extras(value, full);
         if let Some(plan) = value.get("plan") {
             self.plan = crate::plan::Plan::from_row(plan);
         }
@@ -490,6 +518,100 @@ impl Session {
                     (pending["kind"] == "question").then(|| pending["questions"].clone());
             }
         }
+        // The card id moves with the card: any row that says what is pending
+        // says which card it is (the hub drops `pendingRequestId` when the
+        // card has none).
+        if full
+            || ["pendingRequestId", "pendingApproval", "pendingQuestions", "pending"]
+                .iter()
+                .any(|key| value.get(*key).is_some())
+        {
+            self.pending_request_id = value
+                .get("pendingRequestId")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    self.approval
+                        .as_ref()
+                        .and_then(|a| a.get("requestId"))
+                        .and_then(Value::as_str)
+                })
+                .filter(|id| !id.is_empty() && id.len() <= 256)
+                .map(str::to_owned);
+        }
+        if self.approval.is_none() && self.questions.is_none() {
+            self.pending_request_id = None;
+        }
+    }
+
+    /// Compaction state, the CLI's observed mode and the Codex extras.
+    fn merge_extras(&mut self, value: &Value, full: bool) {
+        let field = |names: &[&str]| names.iter().find_map(|name| value.get(*name));
+        let text = |v: &Value, limit: usize| crate::transcript::head(v.as_str().unwrap_or("").trim(), limit);
+        if let Some(compacting) = field(&["compacting"]).and_then(Value::as_bool) {
+            self.compacting = compacting;
+        }
+        if let Some(count) =
+            field(&["compaction_count", "compactionCount"]).and_then(Value::as_u64)
+        {
+            self.compaction_count = count;
+        }
+        match field(&["last_compact_at", "lastCompactAt"]) {
+            Some(at) => self.last_compact_at = at.as_i64(),
+            None if full => self.last_compact_at = None,
+            None => {}
+        }
+        match field(&["observedPermissionMode", "permission_mode"]) {
+            Some(mode) => self.observed_permission_mode = text(mode, 32),
+            None if full => self.observed_permission_mode.clear(),
+            None => {}
+        }
+        match field(&["goal"]) {
+            Some(goal) => self.goal = crate::codex_extras::Goal::parse(goal),
+            None if full => self.goal = None,
+            None => {}
+        }
+        match field(&["threadName", "thread_name"]) {
+            Some(name) => self.thread_name = text(name, 200),
+            None if full => self.thread_name.clear(),
+            None => {}
+        }
+        match field(&["windowsSandbox", "windows_sandbox"]) {
+            Some(sandbox) => self.windows_sandbox = crate::codex_extras::Sandbox::parse(sandbox),
+            None if full => self.windows_sandbox = None,
+            None => {}
+        }
+        match field(&["collaborationMode", "collaboration_mode"]) {
+            Some(mode) => {
+                self.collaboration_mode = Some(text(mode, 32)).filter(|m| !m.is_empty())
+            }
+            None if full => self.collaboration_mode = None,
+            None => {}
+        }
+    }
+
+    /// The access mode to show: what the CLI reports it is in, else the
+    /// live or requested mode.
+    pub fn access_mode(&self) -> &str {
+        if self.observed_permission_mode.is_empty() {
+            &self.permission_mode
+        } else {
+            &self.observed_permission_mode
+        }
+    }
+
+    /// Codex plan (collaboration) mode is offered: the row says which
+    /// collaboration mode is current.
+    pub fn plan_mode_available(&self) -> bool {
+        self.provider_id() == "codex" && self.collaboration_mode.is_some()
+    }
+
+    pub fn in_plan_mode(&self) -> bool {
+        self.plan_mode_available() && self.collaboration_mode.as_deref() == Some("plan")
+    }
+
+    /// The card a decision or answer is for, as this view shows it.
+    pub fn card(&self) -> Option<String> {
+        self.pending_request_id.clone()
     }
 
     /// Human model name for display: the running model when it matches the
@@ -678,12 +800,34 @@ pub struct Item {
     /// names).
     #[serde(default)]
     pub item_id: String,
+    /// A `user_message`'s provider-facing id: what a rewind or fork names.
+    /// Absent when unknown, and on messages steered into a running turn.
+    #[serde(default)]
+    pub uuid: String,
+    /// A `compaction` item's trigger (`manual` / `auto`) and token counts.
+    #[serde(default)]
+    pub trigger: Option<String>,
+    #[serde(default)]
+    pub pre_tokens: Option<u64>,
+    #[serde(default)]
+    pub post_tokens: Option<u64>,
 }
 
 impl Item {
     pub fn display(self) -> Option<(&'static str, String)> {
         Some(match self.kind.as_str() {
             "user_message" => ("You", self.text),
+            // The model's shown reasoning: its own role, never merged into
+            // the reply, and folded by `item_id` as it streams.
+            "reasoning" => ("Thinking", self.text),
+            "compaction" => (
+                "Compaction",
+                crate::session_controls::compaction_label(
+                    self.trigger.as_deref(),
+                    self.pre_tokens,
+                    self.post_tokens,
+                ),
+            ),
             // Their own roles, so streamed assistant text never merges into
             // them (or them into it).
             "assistant_text" if self.notice => ("Notice", self.text),
@@ -756,7 +900,10 @@ pub struct Row {
     pub result_id: String,
     /// A `Questions` row's questions, and the provider item they belong to.
     pub questions: Vec<crate::questions::AsyncQuestion>,
+    /// A `Questions` row's provider item, or the `Thinking` block it folds.
     pub item_id: String,
+    /// A `You` row's provider uuid (see [`Item::uuid`]); empty when unknown.
+    pub uuid: String,
 }
 
 impl Row {
@@ -770,6 +917,7 @@ impl Row {
             && self.result_id == other.result_id
             && self.questions == other.questions
             && self.item_id == other.item_id
+            && self.uuid == other.uuid
     }
 
     pub fn copy_text(&self) -> String {
@@ -780,6 +928,10 @@ impl Row {
     }
 
     fn identity(&self) -> String {
+        // A thinking block grows as it streams: its item is its identity.
+        if self.role == "Thinking" && !self.item_id.is_empty() {
+            return format!("Thinking:{}", self.item_id);
+        }
         let identity = self
             .tool
             .as_ref()
@@ -795,6 +947,7 @@ impl Row {
             + self.result_id.len()
             + self.tool.as_ref().map_or(0, crate::transcript::Tool::bytes)
             + self.item_id.len()
+            + self.uuid.len()
             + self
                 .questions
                 .iter()
@@ -1008,14 +1161,44 @@ impl Transcript {
                 || (item.kind == "command_output" && item.output.is_empty()));
         let questions = crate::questions::parse(&item.questions);
         let item_id = crate::transcript::head(&item.item_id, 256);
+        let uuid = if item.kind == "user_message"
+            && crate::session_controls::usable_uuid(&item.uuid)
+        {
+            item.uuid.clone()
+        } else {
+            String::new()
+        };
         let Some((role, text)) = item.display() else {
             return;
         };
-        let (questions, item_id) = if role == "Questions" {
-            (questions, item_id)
-        } else {
-            (Vec::new(), String::new())
+        let (questions, item_id) = match role {
+            "Questions" => (questions, item_id),
+            "Thinking" => (Vec::new(), item_id),
+            _ => (Vec::new(), String::new()),
         };
+        // Reasoning streams as fragments of one item: each appends to the
+        // block it belongs to, wherever the reply has got to meanwhile.
+        if role == "Thinking"
+            && !item_id.is_empty()
+            && let Some(row) = self
+                .rows
+                .iter_mut()
+                .rev()
+                .take(16)
+                .find(|r| r.role == "Thinking" && r.item_id == item_id)
+        {
+            self.bytes -= row.bytes();
+            let row = Arc::make_mut(row);
+            row.text.push_str(&text);
+            if !self.history {
+                row.truncated |= truncate(&mut row.text, MAX_ROW_BYTES);
+            }
+            row.timestamp_ms = row.timestamp_ms.or(timestamp_ms);
+            row.timestamp = row.timestamp.take().or(timestamp);
+            self.bytes += row.bytes();
+            self.enforce_bounds();
+            return;
+        }
         // Stream sends are echoed without a timestamp, then the provider's
         // transcript tailer delivers the same turn with its real timestamp.
         // Merge that acknowledgement in place, including full snapshots.
@@ -1038,6 +1221,9 @@ impl Transcript {
             let row = Arc::make_mut(row);
             row.timestamp = timestamp;
             row.timestamp_ms = timestamp_ms;
+            if row.uuid.is_empty() {
+                row.uuid = uuid;
+            }
             self.bytes += row.bytes();
             self.enforce_bounds();
             return;
@@ -1085,6 +1271,7 @@ impl Transcript {
                 result_id,
                 questions,
                 item_id,
+                uuid,
             };
             self.bytes += row.bytes();
             self.rows.push_back(Arc::new(row));
@@ -1878,5 +2065,142 @@ mod tests {
         assert!(!Arc::ptr_eq(&t.rows[1], &before.rows[1]));
         assert_eq!(t.rows[1].key, before.rows[1].key);
         assert_eq!(before.rows[1].text, "Second");
+    }
+
+    #[test]
+    fn reasoning_fragments_fold_by_item_and_never_into_the_reply() {
+        let thinking = |id: &str, text: &str| {
+            serde_json::from_value::<Item>(json!({"kind":"reasoning","item_id":id,"text":text}))
+                .unwrap()
+        };
+        let mut t = Transcript::default();
+        t.snapshot_for_transport(
+            ConversationSnapshot {
+                seq: 1,
+                first_seq: 1,
+                items: vec![thinking("m1:0", "Reading the ")],
+            },
+            true,
+        );
+        for (seq, item) in [
+            (2, thinking("m1:0", "parser first.")),
+            (3, assistant("Here is the fix.")),
+            (4, thinking("m1:0", " Then the tests.")),
+            (5, assistant(" Done.")),
+        ] {
+            t.delta(
+                Delta {
+                    seq,
+                    items: vec![item],
+                    ..Default::default()
+                },
+                true,
+            );
+        }
+        let roles: Vec<_> = t.rows.iter().map(|r| r.role.as_str()).collect();
+        assert_eq!(roles, ["Thinking", "Assistant"]);
+        assert_eq!(t.rows[0].text, "Reading the parser first. Then the tests.");
+        assert_eq!(t.rows[1].text, "Here is the fix. Done.");
+        assert_eq!(t.bytes, t.rows.iter().map(|r| r.bytes()).sum::<usize>());
+        // A reseed keeps the growing block's key.
+        let key = t.rows[0].key;
+        t.snapshot_for_transport(
+            ConversationSnapshot {
+                seq: 6,
+                first_seq: 1,
+                items: vec![thinking(
+                    "m1:0",
+                    "Reading the parser first. Then the tests. More",
+                )],
+            },
+            true,
+        );
+        assert_eq!(t.rows[0].key, key);
+        // Another block is its own row.
+        t.delta(
+            Delta {
+                seq: 7,
+                items: vec![thinking("m2:0", "Second thought")],
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(t.rows.len(), 2);
+    }
+
+    #[test]
+    fn compaction_dividers_and_user_uuids_come_through() {
+        let items: Vec<Item> = serde_json::from_value(json!([
+            {"kind":"user_message","text":"first","uuid":"6f1c2e1a-0b5e-4bd8-9f7e-2d6a8a1b9c3d"},
+            {"kind":"compaction","trigger":"auto","pre_tokens":25000,"post_tokens":2800},
+            {"kind":"user_message","text":"steered"},
+            {"kind":"user_message","text":"bad id","uuid":"not a uuid"}
+        ]))
+        .unwrap();
+        let mut t = Transcript::default();
+        t.snapshot(ConversationSnapshot {
+            seq: 4,
+            first_seq: 1,
+            items,
+        });
+        assert_eq!(t.rows[0].uuid, "6f1c2e1a-0b5e-4bd8-9f7e-2d6a8a1b9c3d");
+        assert_eq!(t.rows[1].role, "Compaction");
+        assert_eq!(t.rows[1].text, "Context compacted (auto) · 25k → 2.8k tokens");
+        assert_eq!(t.rows[2].uuid, "");
+        assert_eq!(t.rows[3].uuid, "");
+        // The transcript tailer's timestamped echo carries the uuid in.
+        let echo = Item {
+            kind: "user_message".into(),
+            text: "steered".into(),
+            uuid: "u-2".into(),
+            timestamp: Some("2026-10-14T10:00:00Z".into()),
+            ..Default::default()
+        };
+        t.delta(
+            Delta {
+                seq: 5,
+                items: vec![echo],
+                ..Default::default()
+            },
+            true,
+        );
+        assert_eq!(t.rows.len(), 4);
+        assert_eq!(t.rows[2].uuid, "u-2");
+    }
+
+    #[test]
+    fn sessions_carry_card_ids_observed_modes_compaction_and_codex_extras() {
+        let mut s = Session::default();
+        s.merge(&json!({
+            "sessionId":"a","provider":"claude","compacting":true,"compaction_count":2,
+            "last_compact_at":1_700_000_000_000_i64,"livePermissionMode":"default",
+            "observedPermissionMode":"acceptEdits","pendingRequestId":"req-7",
+            "pendingApproval":{"toolName":"Bash","requestId":"req-7",
+                "alwaysOptions":[{"id":"req-7:0","label":"Always allow Bash(ls:*) this session","scope":"session","kind":"addRules"}]}
+        }));
+        assert_eq!(s.card().as_deref(), Some("req-7"));
+        assert_eq!(s.access_mode(), "acceptEdits");
+        assert!(s.compacting);
+        assert_eq!(s.compaction_count, 2);
+        // A state-only row keeps the card and the observed mode.
+        s.merge(&json!({"sessionId":"a","mode":"approval"}));
+        assert_eq!(s.card().as_deref(), Some("req-7"));
+        assert_eq!(s.access_mode(), "acceptEdits");
+        // The card resolves: a full row without one clears both.
+        s.merge(&json!({"sessionId":"a","compacting":false,"pendingApproval":null}));
+        assert_eq!(s.card(), None);
+        assert_eq!(s.access_mode(), "default");
+        assert!(!s.compacting);
+        let mut codex = Session::default();
+        codex.merge(&json!({"sessionId":"c","provider":"codex","compacting":false,
+            "goal":{"objective":"Ship it","status":"active"},"threadName":"Parser work",
+            "windowsSandbox":{"ready":false,"status":"notConfigured"},"collaborationMode":"plan"}));
+        assert_eq!(codex.goal.as_ref().unwrap().objective, "Ship it");
+        assert_eq!(codex.thread_name, "Parser work");
+        assert!(codex.in_plan_mode());
+        assert!(!codex.windows_sandbox.as_ref().unwrap().ready);
+        codex.merge(&json!({"sessionId":"c","compacting":false}));
+        assert!(codex.goal.is_none() && codex.windows_sandbox.is_none());
+        assert!(!codex.plan_mode_available());
     }
 }
