@@ -652,6 +652,16 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'sessions.queueResume': {
+    reason:
+      "lifts the pause on the hub-held queue of the session named by sessionId. Entries already queued by sessions.queueAdd are then delivered through the hub's own agents.sendMessage path when the session is ready, which is sessions.queueAdd's reach and no more; it adds no text and takes no path, argv or policy value",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId'],
+      },
+    ],
+  },
   'sessionArchive.set': {
     reason:
       "adds or removes one opaque `sessionId` in the hub's own session-archive.json, which every client reads only to decide which sidebar rows to LIST. WRITE-THEN-INTERPRET: nothing reads that file as config, code, argv, path or policy; the id is validated as bounded text and never joined into a path or matched against a live process. WIDEN-THEN-USE: it changes no grant, no root, no permission mode, no approval gate, and it is deliberately not a lifecycle action — no stop, signal, close or delete is reachable from it, and an archived session keeps running. Restoring is the same call with archived:false",
@@ -1408,6 +1418,13 @@ export const parameterDecisions: Record<
         'selects the session whose hub-held queue is emptied; validated as one plain id segment and never joined into a path',
     },
   },
+  'sessions.queueResume': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        'selects the session whose hub-held queue resumes sending; validated as one plain id segment and never joined into a path',
+    },
+  },
   'sessions.taskStop': {
     taskId: {
       kind: 'id',
@@ -1825,6 +1842,7 @@ export const actors: string[] = [
   'sessions.queueClear',
   'sessions.queueMove',
   'sessions.queueRemove',
+  'sessions.queueResume',
   'sessions.queueSendNow',
   'sessions.queueUpdate',
   'sessions.save',
