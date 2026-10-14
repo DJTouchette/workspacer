@@ -33,6 +33,10 @@ fn text<'a>(v: &'a Value, key: &str) -> &'a str {
 struct ForkSource {
     session: String,
     before: Option<String>,
+    /// The source's recorded project (`metadata.projectCwd`).
+    project: Option<String>,
+    /// The source's execution cwd, which the fork runs in.
+    cwd: String,
 }
 /// A session or message id as `agents.fork` accepts it: bounded and plain,
 /// never a path segment that could climb.
@@ -160,16 +164,34 @@ impl SpawnCoordinator {
         if !text(&source.metadata["settings"], "launchIntegrationId").is_empty() {
             bail!("agents.fork: a session launched through a launch integration cannot be forked");
         }
+        // Never more permissive than the source: its own permission mode,
+        // with a bypass demoted to the provider default, and skipPermissions
+        // stated false so no config default can widen it (the lineage grants
+        // are switched off in `routed`).
+        let settings = &source.metadata["settings"];
         let mut spawn = json!({
             "provider": source.provider,
             "cwd": source.cwd,
             "transport": "stream",
             "manager": false,
+            "skipPermissions": false,
         });
+        let mode = text(settings, "permissionMode");
+        if source.provider == "claude" {
+            spawn["permissionMode"] = json!(match mode {
+                "" | "bypassPermissions" | "yolo" => "default",
+                mode => mode,
+            });
+        }
+        let selection = &source.metadata["launchSelection"];
         for (key, value) in [
-            ("profileId", &source.metadata["settings"]["profileId"]),
-            ("mcpItemIds", &source.metadata["settings"]["mcpItemIds"]),
-            ("model", &source.metadata["settings"]["model"]),
+            ("profileId", &settings["profileId"]),
+            ("mcpItemIds", &settings["mcpItemIds"]),
+            ("model", &settings["model"]),
+            ("modelIdentity", &selection["modelIdentity"]),
+            ("effort", &selection["effort"]),
+            ("contextWindow", &selection["contextWindow"]),
+            ("exactModel", &selection["exactModel"]),
             ("parentSessionId", &source.metadata["parentSessionId"]),
         ] {
             if !value.is_null() {
@@ -179,7 +201,21 @@ impl SpawnCoordinator {
         if let Some(label) = label.filter(|l| !l.trim().is_empty()) {
             spawn["label"] = json!(label);
         }
-        Ok((spawn, ForkSource { session, before }))
+        // Routing ceilings and the project identity are the source's PROJECT,
+        // not the worktree it executed in (as for a resume).
+        let project = source.metadata["projectCwd"]
+            .as_str()
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned);
+        Ok((
+            spawn,
+            ForkSource {
+                session,
+                before,
+                project,
+                cwd: source.cwd.clone(),
+            },
+        ))
     }
     /// Only the lease receiver can construct this non-cloneable admission.
     /// A failed/unknown execution never makes its durable lease reusable.
@@ -466,13 +502,20 @@ impl SpawnCoordinator {
         id: &str,
         project: &str,
         audit: &mut super::routing::SpawnAudit<'_>,
+        fork: bool,
     ) -> Result<Plan> {
         audit.begin_resolution();
         let profile = self.profiles.get(text(params, "profileId"));
         let parent = text(params, "parentSessionId");
-        let fleet = spawn_plan::Lineage {
-            fleet: self.has_fleet_ancestor(parent),
-            local_child: self.is_local_session(parent),
+        // A fork is never more permissive than its source: the lineage-based
+        // grants (fleetFullAccess / childFullAccess) are not applied to it.
+        let fleet = if fork {
+            spawn_plan::Lineage::default()
+        } else {
+            spawn_plan::Lineage {
+                fleet: self.has_fleet_ancestor(parent),
+                local_child: self.is_local_session(parent),
+            }
         };
         let plan = spawn_plan::resolve(params, config, profile.as_ref(), &self.home, id, fleet)?;
         let mut resolved_params = effective(params, &plan, project);
@@ -710,6 +753,12 @@ impl SpawnCoordinator {
                     .as_ref()
                     .filter(|prior| prior.cwd == project)
                     .and_then(|prior| prior.metadata["projectCwd"].as_str())
+                    .or_else(|| {
+                        // A fork routes against its source's project, as a resume does.
+                        fork.as_ref()
+                            .filter(|f| f.cwd == project)
+                            .and_then(|f| f.project.as_deref())
+                    })
                     .unwrap_or(&project)
                     .to_owned()
             });
@@ -738,8 +787,14 @@ impl SpawnCoordinator {
             .validate_admission(&self.tracking_input(&params, &project))?;
         // Validate provider/profile/model before any checkout or reservation.
         let mut routing_audit = self.routing.begin_spawn_audit(caller.as_ref());
-        let preliminary =
-            self.routed(&params, &config, &id, &routing_project, &mut routing_audit)?;
+        let preliminary = self.routed(
+            &params,
+            &config,
+            &id,
+            &routing_project,
+            &mut routing_audit,
+            fork.is_some(),
+        )?;
         if let Some(remote) = &remote {
             if preliminary.provider != remote.provider() {
                 bail!("routing cannot replace the leased remote provider");
@@ -817,7 +872,7 @@ impl SpawnCoordinator {
             if let Some(template)=&template{params["message"]=json!(dispatch_templates::render(text(template,"body"),&params["templateParams"],&execution,&project)?);}
             // Recheck effective selection after slow setup; ceilings apply to the
             // original project, not the allocated path outside that project's tree.
-            let mut plan=self.routed(&params,&config,&id,&routing_project,&mut routing_audit)?;plan.request["cwd"]=json!(execution);
+            let mut plan=self.routed(&params,&config,&id,&routing_project,&mut routing_audit,fork.is_some())?;plan.request["cwd"]=json!(execution);
             // A fork resumes the SOURCE into this new session (claudemon's
             // spawn-managed `{resume, fork, fork_before}`); only a managed
             // stream launch of the source's own provider can do that.
@@ -858,7 +913,7 @@ impl SpawnCoordinator {
             }
             plan.metadata["launchOperationId"]=json!(operation);
             if let Some(admission)=&admission { plan.metadata["workflowReservationToken"]=json!(admission.token); }
-            plan.metadata["projectCwd"]=remote.as_ref().map(|r|json!(r.repo_cwd())).or_else(||previous.as_ref().and_then(|prior|prior.metadata.get("projectCwd")).cloned()).unwrap_or(json!(project));if let Some(worktree)=&worktree{plan.metadata["worktree"]=worktree.clone();}
+            plan.metadata["projectCwd"]=remote.as_ref().map(|r|json!(r.repo_cwd())).or_else(||previous.as_ref().and_then(|prior|prior.metadata.get("projectCwd")).cloned()).or_else(||fork.as_ref().filter(|f|f.cwd==project).and_then(|f|f.project.clone()).map(|p|json!(p))).unwrap_or(json!(project));if let Some(worktree)=&worktree{plan.metadata["worktree"]=worktree.clone();}
             if let Some(claim)=&replacement {self.validate_replacement(claim)?;}
             if let Some(state)=&replacements {
                 let mut metadata=plan.metadata.clone();metadata["sessionId"]=json!(id);metadata["cwd"]=json!(execution);metadata["provider"]=json!(plan.provider);

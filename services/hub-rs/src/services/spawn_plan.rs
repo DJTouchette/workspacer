@@ -402,6 +402,24 @@ pub fn resolve(
     if !model.is_empty() {
         metadata["settings"]["model"] = json!(model);
     }
+    // What a later agents.fork copies so the fork runs the same selection:
+    // effort, window and exactness as requested at this launch.
+    let mut selection = json!({});
+    if !effort.is_empty() {
+        selection["effort"] = json!(effort);
+    }
+    if let Some(window) = window {
+        selection["contextWindow"] = json!(window);
+    }
+    if !identity.is_empty() {
+        selection["modelIdentity"] = json!(identity);
+    }
+    if params["exactModel"] == true {
+        selection["exactModel"] = json!(true);
+    }
+    if !selection.as_object().unwrap().is_empty() {
+        metadata["launchSelection"] = selection;
+    }
     if let Some(profile) = profile {
         metadata["settings"]["profileId"] = json!(profile.id);
     }

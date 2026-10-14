@@ -153,11 +153,36 @@ fn received(root: &Path, id: &str) -> Vec<Value> {
 async fn run(root: PathBuf) {
     let project = root.join("project");
     std::fs::create_dir(&project).unwrap();
+    // A repository, so a launch can take a worktree.
+    std::fs::write(project.join("README"), "fixture\n").unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "README"],
+        &[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "init",
+        ],
+    ] {
+        assert!(
+            Command::new("git")
+                .args(args)
+                .current_dir(&project)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     std::fs::create_dir(root.join("config")).unwrap();
     Config::open(root.join("config/config.yaml"))
         .save(
             json!({
-                "agents":{"binaries":{"claude":root.join("bin/claude")}},
+                "agents":{"binaries":{"claude":root.join("bin/claude")},"childFullAccess":true},
                 "claude":{"transport":"stream","defaultModel":"sonnet"}}),
             true,
         )
@@ -395,6 +420,119 @@ async fn run(root: PathBuf) {
             "{bad}"
         );
     }
+
+    // A fork is never more permissive than its source.
+    // (a) A plan-mode source in a worktree: plan-mode fork, run in the same
+    //     worktree, routed and recorded against the source's PROJECT.
+    let planned = client
+        .call(
+            "agents.spawn",
+            json!({"cwd":project,"provider":"claude","transport":"stream",
+                   "permissionMode":"plan","worktree":true,"message":"plan it"}),
+        )
+        .await
+        .unwrap();
+    let planned_id = planned["sessionId"].as_str().unwrap().to_owned();
+    assert_eq!(planned["worktree"]["allocated"], true, "{planned}");
+    let worktree = planned["worktree"]["executionCwd"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let fork = spawn_and_fork(&client, &root, &planned_id).await;
+    assert!(
+        fork.argv.contains("--permission-mode plan"),
+        "{}",
+        fork.argv
+    );
+    let journal = launch(&root, &fork.id);
+    assert_eq!(journal["cwd"], json!(worktree));
+    assert_eq!(
+        journal["metadata"]["projectCwd"],
+        launch(&root, &planned_id)["metadata"]["projectCwd"]
+    );
+    assert_ne!(journal["metadata"]["projectCwd"], json!(worktree));
+    assert_eq!(journal["metadata"]["settings"]["permissionMode"], "plan");
+
+    // (b) A bypass source, and (c) a child of a local session (which
+    //     childFullAccess grants full access): their forks are not bypassed.
+    for source in [
+        json!({"cwd":project,"provider":"claude","transport":"stream",
+               "skipPermissions":true,"message":"bypassed"}),
+        json!({"cwd":project,"provider":"claude","transport":"stream",
+               "parentSessionId":id,"message":"child"}),
+    ] {
+        let receipt = client.call("agents.spawn", source.clone()).await.unwrap();
+        let source_id = receipt["sessionId"].as_str().unwrap().to_owned();
+        let source_argv = argv_of(&root, &source_id).await;
+        assert!(
+            source_argv.contains("--dangerously-skip-permissions"),
+            "the source itself is bypassed: {source_argv}"
+        );
+        let fork = spawn_and_fork(&client, &root, &source_id).await;
+        assert!(
+            !fork.argv.contains("--dangerously-skip-permissions"),
+            "{}",
+            fork.argv
+        );
+        assert!(
+            fork.argv.contains("--permission-mode default"),
+            "{}",
+            fork.argv
+        );
+        assert_eq!(
+            launch(&root, &fork.id)["metadata"]["settings"]["bypassAvailable"],
+            false
+        );
+    }
     drop(client);
     backend.shutdown().await.unwrap();
+}
+
+struct Forked {
+    id: String,
+    argv: String,
+}
+
+async fn argv_of(root: &Path, id: &str) -> String {
+    let file = root.join(format!("argv-{id}.json"));
+    until("launch argv", async || file.exists()).await;
+    let spawned: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    spawned["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Wait for `source`'s first reply, fork the whole conversation, and return
+/// the fork's id and launch argv.
+async fn spawn_and_fork(client: &Client, root: &Path, source: &str) -> Forked {
+    until("source reply", async || {
+        items(client, source)
+            .await
+            .iter()
+            .any(|i| i["kind"] == "assistant_text" && i["text"] == "done")
+    })
+    .await;
+    let forked = client
+        .call("agents.fork", json!({"sessionId":source}))
+        .await
+        .unwrap();
+    let id = forked["sessionId"].as_str().unwrap().to_owned();
+    let argv = argv_of(root, &id).await;
+    Forked { id, argv }
+}
+
+/// One session's record in the hub's launch journal.
+fn launch(root: &Path, id: &str) -> Value {
+    let journal: Value =
+        serde_json::from_slice(&std::fs::read(root.join("data/agent-launches.json")).unwrap())
+            .unwrap();
+    journal
+        .get(id)
+        .or_else(|| journal.get("rows").and_then(|rows| rows.get(id)))
+        .cloned()
+        .unwrap_or_else(|| panic!("no launch record for {id}: {journal}"))
 }
