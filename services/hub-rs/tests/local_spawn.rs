@@ -353,6 +353,20 @@ async fn run(root: PathBuf) {
             .is_ok_and(|r| r["ambientState"] == "idle")
     })
     .await;
+    // Priority frames are only written once the driver has read the CLI's
+    // `system/init` (an unknown CLI gets plain frames). The fixture emits init
+    // after its MCP round trips, so "idle" alone can precede it on a slow
+    // runner; its reply to the first message comes after init on stdout.
+    until("successor-first-reply", async || {
+        client
+            .call(
+                "sessions.conversation",
+                json!({"sessionId":successor_id,"limit":50}),
+            )
+            .await
+            .is_ok_and(|r| r.to_string().contains("parent-fixture-received"))
+    })
+    .await;
     // `delivery` reaches the stream driver through the hub's tracked send:
     // a person's `now` claims the human origin, an agent's does not.
     for (text, from) in [
