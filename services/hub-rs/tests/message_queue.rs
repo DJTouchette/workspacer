@@ -514,7 +514,8 @@ async fn run(root: PathBuf) {
         })
     })
     .await;
-    // A mutation resumes it: the head is retried (and fails again).
+    // Adding while paused keeps it paused; an explicit resume retries the
+    // head (which fails again).
     let added = client
         .call(
             "sessions.queueAdd",
@@ -523,6 +524,25 @@ async fn run(root: PathBuf) {
         .await
         .unwrap();
     assert_eq!(texts(&added["queue"]), ["cannot deliver", "also queued"]);
+    let row = snapshot(&client, orphan).await;
+    assert_eq!(row["queuePaused"], true, "{row}");
+    assert!(row["queueError"].is_string(), "{row}");
+    // An edit from stale text is refused with the current text.
+    let entry = row["queuedMessages"][1]["id"].clone();
+    let conflict = client
+        .call(
+            "sessions.queueUpdate",
+            json!({"sessionId":orphan,"id":entry,"text":"mine","expectedText":"stale"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(conflict["ok"], false);
+    assert_eq!(conflict["conflict"]["currentText"], "also queued");
+    let resumed = client
+        .call("sessions.queueResume", json!({"sessionId":orphan}))
+        .await
+        .unwrap();
+    assert_eq!(texts(&resumed["queue"]), ["cannot deliver", "also queued"]);
     until("retried and paused again", async || {
         let row = snapshot(&client, orphan).await;
         row["queuePaused"] == true

@@ -284,6 +284,24 @@ impl Backend {
                 Err(error) => return Ok(effort_after_model(format!("failed: {error}"))),
             }
         }
+        // Send again: the text is queued anew first, and only then is the
+        // may-have-been-sent record dismissed, so a refused add keeps it.
+        if let Action::Queue(crate::queue::Op::Resend { uncertain, .. }) = action
+            && reply["ok"] != false
+        {
+            let (method, params) = crate::queue::Op::Remove(uncertain.clone()).wire(id);
+            let dismissed = match self.call(method, params).await {
+                Ok(value) if value["ok"] != false => return Ok(value),
+                Ok(value) => value["error"].as_str().unwrap_or("refused").to_owned(),
+                Err(error) => error.to_string(),
+            };
+            return Ok(serde_json::json!({
+                "ok": false,
+                "error": format!(
+                    "Queued again, but the may-have-been-sent notice was not dismissed ({dismissed}); dismiss it yourself"
+                ),
+            }));
+        }
         Ok(reply)
     }
 }

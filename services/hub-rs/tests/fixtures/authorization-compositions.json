@@ -133,6 +133,7 @@
     "sessions.queueClear",
     "sessions.queueMove",
     "sessions.queueRemove",
+    "sessions.queueResume",
     "sessions.queueSendNow",
     "sessions.queueUpdate",
     "sessions.save",
@@ -288,6 +289,7 @@
       "sessions.queueClear",
       "sessions.queueMove",
       "sessions.queueRemove",
+      "sessions.queueResume",
       "sessions.queueSendNow",
       "sessions.queueUpdate"
     ]
