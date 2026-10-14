@@ -153,6 +153,16 @@ impl ClaudeStatus {
                     s.set_fast_mode(&state, reason.as_deref())
                 });
             }
+            Some(StatusFrame::TurnEnded { fast_mode }) => {
+                store.update_provider_status(session_id, |s| {
+                    let mut changed = !s.active_hooks.is_empty();
+                    s.active_hooks.clear();
+                    if let Some((state, reason)) = &fast_mode {
+                        changed |= s.set_fast_mode(state, reason.as_deref());
+                    }
+                    changed
+                });
+            }
             Some(StatusFrame::HookStarted(hook)) => {
                 store.update_provider_status(session_id, |s| s.hook_started(hook));
             }
@@ -291,6 +301,10 @@ enum StatusFrame {
         state: String,
         reason: Option<String>,
     },
+    /// A main-thread `result`, with its `fast_mode_state` if it carried one.
+    TurnEnded {
+        fast_mode: Option<(String, Option<String>)>,
+    },
     HookStarted(ActiveHook),
     HookFinished {
         id: String,
@@ -353,8 +367,12 @@ fn frame_status(value: &Value, protocol: &CliProtocol) -> Option<StatusFrame> {
             }),
             _ => None,
         },
-        "result" => {
-            fast_mode_of(value).map(|(state, reason)| StatusFrame::FastMode { state, reason })
+        // The turn is over: no hook of it is still running, whatever its
+        // response said (or failed to say).
+        "result" if value.get("parent_tool_use_id").is_none_or(Value::is_null) => {
+            Some(StatusFrame::TurnEnded {
+                fast_mode: fast_mode_of(value),
+            })
         }
         "control_response" => {
             let response = value.get("response")?;
@@ -568,15 +586,20 @@ mod tests {
         );
         // An unknown fast-mode word is not a confirmed state.
         let odd = json!({"type":"result","fast_mode_state":"turbo"});
-        assert_eq!(frame_status(&odd, &protocol), None);
+        assert_eq!(
+            frame_status(&odd, &protocol),
+            Some(StatusFrame::TurnEnded { fast_mode: None })
+        );
         let result = json!({"type":"result","fast_mode_state":"cooldown"});
         assert_eq!(
             frame_status(&result, &protocol),
-            Some(StatusFrame::FastMode {
-                state: "cooldown".into(),
-                reason: None
+            Some(StatusFrame::TurnEnded {
+                fast_mode: Some(("cooldown".into(), None))
             })
         );
+        // A subagent's result ends nothing of the session's.
+        let sub = json!({"type":"result","parent_tool_use_id":"tu","fast_mode_state":"on"});
+        assert_eq!(frame_status(&sub, &protocol), None);
         // The driver's initialize answer carries it as well.
         let init_reply = json!({"type":"control_response","response":{"subtype":"success",
             "request_id":"wks-1","response":{"fast_mode_state":"on"}}});
@@ -1015,5 +1038,26 @@ done
         let (third, _verdict) = oneshot::channel();
         status.request(&out_tx, StatusControl::McpStatus { reply: third });
         assert!(out_rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_turn_end_clears_hooks_that_never_responded() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s1", "/tmp", "claude");
+        let protocol = CliProtocol::default();
+        let (out_tx, _out_rx) = mpsc::unbounded_channel();
+        let mut status = ClaudeStatus::default();
+        let started = json!({"type":"system","subtype":"hook_started","hook_id":"h","hook_name":"Stop","hook_event":"Stop"});
+        status.observe(&started, &store, &conv, "s1", &protocol, &out_tx);
+        assert_eq!(
+            store.get("s1").unwrap().provider_status.active_hooks.len(),
+            1
+        );
+        let result = json!({"type":"result","subtype":"success","fast_mode_state":"off"});
+        assert!(!status.observe(&result, &store, &conv, "s1", &protocol, &out_tx));
+        let row = store.get("s1").unwrap();
+        assert!(row.provider_status.active_hooks.is_empty());
+        assert_eq!(row.provider_status.fast_mode.as_deref(), Some("off"));
     }
 }

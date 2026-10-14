@@ -196,6 +196,14 @@ impl CodexStatus {
                     store.update_provider_status(session_id, |s| s.upsert_mcp_server(server));
                 }
             }
+            // A finished turn runs no hook any more.
+            "turn/completed" | "turn/failed" => {
+                store.update_provider_status(session_id, |s| {
+                    let had = !s.active_hooks.is_empty();
+                    s.active_hooks.clear();
+                    had
+                });
+            }
             "hook/started" => {
                 if let Some(hook) = hook_of(params) {
                     store.update_provider_status(session_id, |s| s.hook_started(hook));
@@ -529,5 +537,30 @@ mod tests {
         assert!(items.iter().any(|item| matches!(item,
             ConversationItem::AssistantNotice { text, .. } if text == "Hook guard.sh (preToolUse) failed: denied by policy")));
         assert_eq!(hook_failure(&run("blocked")), None);
+        // A hook whose completion never arrives is gone when its turn ends.
+        status.observe(
+            &json!({"method":"hook/started","params":{"threadId":"t1","run":run("running")}}),
+            &store,
+            &conv,
+            "c1",
+            Some("t1"),
+        );
+        assert_eq!(
+            store.get("c1").unwrap().provider_status.active_hooks.len(),
+            1
+        );
+        status.observe(
+            &json!({"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"x"}}}),
+            &store,
+            &conv,
+            "c1",
+            Some("t1"),
+        );
+        assert!(store
+            .get("c1")
+            .unwrap()
+            .provider_status
+            .active_hooks
+            .is_empty());
     }
 }

@@ -2214,6 +2214,14 @@ impl SessionStore {
             if !f(&mut entry.provider_status) {
                 return false;
             }
+            let entry = &mut *entry;
+            if let Some(caps) = entry
+                .status_line
+                .as_mut()
+                .and_then(|line| line.capabilities.as_mut())
+            {
+                entry.provider_status.sync_capabilities(caps);
+            }
             entry.updated_at = OffsetDateTime::now_utc();
             entry.clone()
         };
@@ -3741,7 +3749,10 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(update.state.provider_status.message_receipts[0].state, "completed");
+        assert_eq!(
+            update.state.provider_status.message_receipts[0].state,
+            "completed"
+        );
         tokio::time::sleep(STATUS_PUBLISH_DEBOUNCE * 2).await;
         assert!(updates.try_recv().is_err(), "one publish for the burst");
     }

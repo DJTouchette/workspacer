@@ -2670,6 +2670,8 @@ async fn run_session(
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
     // MCP server health and running hooks (see `codex_status`).
     let mut live_status = super::codex_status::CodexStatus::default();
+    // A respawned driver starts with no hook of its previous life running.
+    super::claude_status::reset(store, session_id);
     let mut status_open = true;
 
     let reason = 'driver: loop {

@@ -206,6 +206,37 @@ impl ProviderStatus {
         true
     }
 
+    /// Keep the status line's older `capabilities` view (`fast_mode`, the MCP
+    /// server count and `inventory.mcp_servers`) in agreement with these
+    /// newer, fresher fields: one source, two shapes.
+    pub fn sync_capabilities(&self, caps: &mut super::state::Capabilities) {
+        if let Some(state) = &self.fast_mode {
+            caps.fast_mode = Some(state == "on");
+        }
+        let Some(servers) = &self.mcp_servers else {
+            return;
+        };
+        caps.mcp_servers = servers.len() as u32;
+        if let Some(inventory) = caps.inventory.as_mut() {
+            let previous = std::mem::take(&mut inventory.mcp_servers);
+            inventory.mcp_servers = servers
+                .iter()
+                .map(|server| {
+                    let mut item = previous
+                        .iter()
+                        .find(|item| item.name == server.name)
+                        .cloned()
+                        .unwrap_or_else(|| super::state::ContextItem {
+                            name: server.name.clone(),
+                            ..Default::default()
+                        });
+                    item.status = Some(server.status.clone());
+                    item
+                })
+                .collect();
+        }
+    }
+
     /// A session that stopped runs no hook.
     pub fn end(&mut self) {
         self.active_hooks.clear();
@@ -286,10 +317,17 @@ mod tests {
         for i in 0..20 {
             s.record_receipt(&format!("u{i}"), "completed", i);
         }
-        let settled: Vec<_> = s.message_receipts.iter().filter(|r| r.state == "completed").collect();
+        let settled: Vec<_> = s
+            .message_receipts
+            .iter()
+            .filter(|r| r.state == "completed")
+            .collect();
         assert_eq!(settled.len(), SETTLED_RECEIPTS_KEPT);
         assert_eq!(settled[0].uuid, "u10");
-        assert!(s.message_receipts.iter().any(|r| r.uuid == "live"), "unsettled survive");
+        assert!(
+            s.message_receipts.iter().any(|r| r.uuid == "live"),
+            "unsettled survive"
+        );
         // …and nothing older than ten minutes.
         s.record_receipt("late", "queued", RECEIPT_MAX_AGE_MS + 100);
         assert_eq!(s.message_receipts.len(), 1);
@@ -332,6 +370,51 @@ mod tests {
         assert_eq!(s.mcp_servers.as_ref().unwrap().len(), 2);
         assert!(s.set_mcp_servers(Vec::new()));
         assert_eq!(s.mcp_servers, Some(Vec::new()));
+    }
+
+    #[test]
+    fn the_older_capabilities_view_follows_the_new_fields() {
+        let mut caps = super::super::state::Capabilities {
+            fast_mode: Some(true),
+            mcp_servers: 3,
+            inventory: Some(super::super::state::ContextInventory {
+                mcp_servers: vec![super::super::state::ContextItem {
+                    name: "a".into(),
+                    source: Some("claudeai".into()),
+                    status: Some("pending".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut s = ProviderStatus::default();
+        s.sync_capabilities(&mut caps);
+        assert_eq!(caps.mcp_servers, 3, "nothing reported, nothing changed");
+        s.set_fast_mode("cooldown", None);
+        s.set_mcp_servers(vec![
+            McpServer {
+                name: "a".into(),
+                status: "connected".into(),
+                error: None,
+            },
+            McpServer {
+                name: "b".into(),
+                status: "failed".into(),
+                error: None,
+            },
+        ]);
+        s.sync_capabilities(&mut caps);
+        assert_eq!(caps.fast_mode, Some(false));
+        assert_eq!(caps.mcp_servers, 2);
+        let items = &caps.inventory.as_ref().unwrap().mcp_servers;
+        assert_eq!(items[0].status.as_deref(), Some("connected"));
+        assert_eq!(
+            items[0].source.as_deref(),
+            Some("claudeai"),
+            "enrichment kept"
+        );
+        assert_eq!(items[1].name, "b");
     }
 
     #[test]
