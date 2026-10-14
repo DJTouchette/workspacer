@@ -2,7 +2,7 @@
 //! message queue (`services::message_queue`). Delivery always goes through the
 //! same internal send path as `agents.sendMessage` (`send::send_message`),
 //! as a human's message: the queue only ever holds what a person typed.
-use super::super::message_queue::{Delivery, Entry, valid_id};
+use super::super::message_queue::{Delivery, Entry, QueueConflict, valid_id};
 use super::{Sessions, segment, send::MessageOutcome, snapshots};
 use crate::protocol::Event;
 use anyhow::{Result, anyhow, bail};
@@ -77,10 +77,23 @@ impl Sessions {
                 Ok(())
             }
             "sessions.queueUpdate" => {
+                // The text the editor started from: a change made elsewhere
+                // since then is refused rather than overwritten.
+                let expected = match params.get("expectedText") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(text)) => Some(text.as_str()),
+                    Some(_) => bail!("expectedText must be text"),
+                };
                 self.queue
-                    .update(&id, entry_param(&params)?, text_param(&params, "text")?)
+                    .update(
+                        &id,
+                        entry_param(&params)?,
+                        text_param(&params, "text")?,
+                        expected,
+                    )
                     .await
             }
+            "sessions.queueResume" => self.queue.resume_sending(&id).await,
             "sessions.queueRemove" => self.queue.remove(&id, entry_param(&params)?).await,
             "sessions.queueMove" => {
                 let index = params["index"]
@@ -112,8 +125,21 @@ impl Sessions {
         };
         // Publish whatever was committed, including a send-now's bookkeeping.
         self.queue_changed(&id).await;
+        if let Err(error) = &outcome
+            && let Some(conflict) = error.downcast_ref::<QueueConflict>()
+        {
+            // A typed refusal: the caller keeps its edit and sees the newer
+            // text, then chooses to overwrite or discard. Nothing changed.
+            return Ok(json!({
+                "ok": false,
+                "error": conflict.to_string(),
+                "conflict": {"currentText": conflict.current},
+                "queue": self.queue.list(&id),
+            }));
+        }
         outcome?;
-        // Any mutation resumes a paused queue; let the worker look again.
+        // A resume (or send-now) may have lifted a pause, and any change may
+        // make the head sendable; let the worker look again.
         self.queue.kick(&id);
         reply["queue"] = self.queue.list(&id);
         Ok(reply)

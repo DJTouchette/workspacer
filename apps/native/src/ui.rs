@@ -1,4 +1,5 @@
 mod archive;
+mod async_questions;
 mod attachments;
 mod bus_commands;
 mod cache;
@@ -19,8 +20,10 @@ mod launch;
 mod markdown;
 mod motion;
 mod navigation;
+mod plan;
 mod projects;
 mod questions;
+mod queue;
 mod recent;
 mod remote;
 mod review;
@@ -356,6 +359,11 @@ actions!(
     [
         SendMessage,
         ComposerEnter,
+        SendNow,
+        QueueMessage,
+        QueueEditSave,
+        QueueEditCancel,
+        SubmitAsyncAnswers,
         SubmitAnswers,
         AnswerEnter,
         CreateSession,
@@ -394,6 +402,17 @@ actions!(
         Quit
     ]
 );
+
+/// How the composer's draft leaves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Submit {
+    /// The ordinary send: steers a running turn, else starts one.
+    Send,
+    /// Read immediately, setting the running work aside.
+    Now,
+    /// Held by the hub until the turn ends.
+    Queue,
+}
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -460,6 +479,40 @@ pub fn bind_keys(cx: &mut App) {
             gpui_component::input::Enter { secondary: false },
             Some("ComposerEnter > Input"),
         ),
+        // While the agent works: the send key steers the running turn, Tab
+        // (with a draft) queues it for the turn's end, and send-now asks the
+        // agent to read it immediately. With Enter sending, Ctrl/Cmd+Enter is
+        // send now; Ctrl/Cmd+Shift+Enter is in either mode. Same depth as the
+        // Input bindings above, so these come after them to win.
+        KeyBinding::new("ctrl-enter", SendNow, Some("ComposerEnter > Input")),
+        KeyBinding::new("cmd-enter", SendNow, Some("ComposerEnter > Input")),
+        KeyBinding::new("ctrl-shift-enter", SendNow, Some("Composer > Input")),
+        KeyBinding::new("cmd-shift-enter", SendNow, Some("Composer > Input")),
+        KeyBinding::new("tab", QueueMessage, Some("Composer > Input")),
+        // The queue panel's inline editor.
+        KeyBinding::new("enter", QueueEditSave, Some("QueueEditor > Input")),
+        KeyBinding::new("ctrl-enter", QueueEditSave, Some("QueueEditor > Input")),
+        KeyBinding::new("cmd-enter", QueueEditSave, Some("QueueEditor > Input")),
+        KeyBinding::new(
+            "shift-enter",
+            gpui_component::input::Enter { secondary: false },
+            Some("QueueEditor > Input"),
+        ),
+        KeyBinding::new("escape", QueueEditCancel, Some("QueueEditor > Input")),
+        // An async question card: Ctrl/Cmd+Enter sends its answers, never the
+        // composer draft (the Workspace bindings above would).
+        KeyBinding::new("ctrl-enter", SubmitAsyncAnswers, Some("AsyncQuestion")),
+        KeyBinding::new("cmd-enter", SubmitAsyncAnswers, Some("AsyncQuestion")),
+        KeyBinding::new(
+            "ctrl-enter",
+            SubmitAsyncAnswers,
+            Some("AsyncQuestion > Input"),
+        ),
+        KeyBinding::new(
+            "cmd-enter",
+            SubmitAsyncAnswers,
+            Some("AsyncQuestion > Input"),
+        ),
         KeyBinding::new("alt-down", NextSession, Some("Workspace")),
         KeyBinding::new("alt-up", PreviousSession, Some("Workspace")),
         KeyBinding::new("ctrl-l", FocusComposer, Some("Workspace")),
@@ -500,6 +553,9 @@ pub struct Workspace {
     chat: transcript::ChatUi,
     child_ui: children::ChildUi,
     tasks: tasks::TasksUi,
+    queue: queue::QueueUi,
+    async_questions: async_questions::AsyncQuestionUi,
+    plan: plan::PlanUi,
     screen: Screen,
     settings: Settings,
     fonts: typography::FontControls,
@@ -770,6 +826,7 @@ impl Workspace {
             }
         }));
         window.focus(&focus);
+        let queue = queue::QueueUi::new(window, cx);
         Self {
             extras,
             explorer: Default::default(),
@@ -779,6 +836,9 @@ impl Workspace {
             chat: transcript::ChatUi::default(),
             child_ui: children::ChildUi::default(),
             tasks: tasks::TasksUi::default(),
+            queue,
+            async_questions: Default::default(),
+            plan: Default::default(),
             ui_bus: Default::default(),
             screen: Screen::Conversation,
             settings: Settings::default(),
@@ -1058,6 +1118,9 @@ impl Workspace {
                 if ours {
                     let same_question = *signature == self.extras.question_signature;
                     self.extras.answers_sent = receipt.error.is_none() && same_question;
+                    if self.extras.answers_sent {
+                        self.forget_secret_answers(window, cx);
+                    }
                     self.extras.answer_error =
                         same_question.then(|| receipt.error.clone()).flatten();
                     self.extras.answer_submission = None;
@@ -1074,7 +1137,10 @@ impl Workspace {
                 clock.interrupt();
             }
             if receipt.error.is_none()
-                && let Action::Send(sent) | Action::Answer(sent) = &receipt.action
+                && let Some(sent) = receipt.action.draft_text().or(match &receipt.action {
+                    Action::Answer(sent) => Some(sent.as_str()),
+                    _ => None,
+                })
             {
                 if view.selected.as_ref() == Some(&receipt.session) {
                     if self.composer.read(cx).value().as_ref() == sent
@@ -1086,7 +1152,7 @@ impl Workspace {
                         self.composer
                             .update(cx, |input, cx| input.set_value("", window, cx));
                     }
-                } else if self.drafts.get(&receipt.session) == Some(sent) {
+                } else if self.drafts.get(&receipt.session).map(String::as_str) == Some(sent) {
                     self.drafts.remove(&receipt.session);
                 }
             }
@@ -1236,12 +1302,50 @@ impl Workspace {
     }
 
     fn send(&mut self, _: &SendMessage, window: &mut Window, cx: &mut Context<Self>) {
+        self.submit(Submit::Send, window, cx);
+    }
+
+    /// Ctrl/Cmd+Enter (with Enter sending) or Ctrl/Cmd+Shift+Enter: while the
+    /// agent works, it reads the message now; otherwise an ordinary send.
+    fn send_now(&mut self, _: &SendNow, window: &mut Window, cx: &mut Context<Self>) {
+        self.submit(Submit::Now, window, cx);
+    }
+
+    /// Tab with a draft while the agent works puts it on the hub's queue;
+    /// otherwise Tab keeps its usual job in the composer.
+    fn queue_message(&mut self, _: &QueueMessage, window: &mut Window, cx: &mut Context<Self>) {
+        // An open IME composition keeps its Tab, as it keeps its Enter.
+        let composing = self
+            .composer
+            .update(cx, |input, cx| {
+                gpui::EntityInputHandler::marked_text_range(input, window, cx)
+            })
+            .is_some_and(|range| !range.is_empty());
+        if composing || !self.composer_busy() || self.composer.read(cx).value().trim().is_empty() {
+            cx.propagate();
+            return;
+        }
+        self.submit(Submit::Queue, window, cx);
+    }
+
+    /// The selected agent is mid-turn, waiting on a decision, or about to
+    /// start a turn for a message still in flight: a message now steers it.
+    pub(super) fn composer_busy(&self) -> bool {
+        self.view.connected
+            && self.selected_session().is_some_and(|s| {
+                s.busy() || self.view.pending_messages.iter().any(|p| p.session == s.id)
+            })
+    }
+
+    fn submit(&mut self, kind: Submit, window: &mut Window, cx: &mut Context<Self>) {
         // Never submit a draft the open viewer covers.
         if self.viewer_modal(window) {
             return;
         }
         if self.new_session {
-            self.create(window, cx);
+            if kind == Submit::Send {
+                self.create(window, cx);
+            }
             return;
         }
         if self.screen == Screen::Projects {
@@ -1274,12 +1378,17 @@ impl Workspace {
         // A session the app's closing paused picks back up from here: the
         // message resumes it rather than being refused as sent to an ended one.
         if let Some(session) = self.selected_session().filter(|s| self.paused(s)).cloned() {
-            if self.resuming.is_none() && !self.view.creating {
+            if kind != Submit::Queue && self.resuming.is_none() && !self.view.creating {
                 self.drafts.insert(id, draft);
                 self.resume_with(&session, text, cx);
             }
             return;
         }
+        let action = match kind {
+            Submit::Now if self.composer_busy() => Action::SendNow(text),
+            Submit::Queue => Action::Queue(wks_native::queue::Op::Add(text)),
+            Submit::Send | Submit::Now => Action::Send(text),
+        };
         let attachments = self
             .extras
             .attachments
@@ -1288,7 +1397,7 @@ impl Workspace {
             .unwrap_or_default();
         self.extras.sent_drafts.insert(id.clone(), draft);
         self.extras.sent_attachments.insert(id, attachments);
-        self.act(Action::Send(text), cx);
+        self.act(action, cx);
     }
 
     /// Enter in the composer when Enter sends. An IME composition keeps the

@@ -38,7 +38,7 @@ impl Workspace {
         if let Some(receipt) = &next.receipt
             && receipt.number > self.last_receipt
         {
-            if receipt.error.is_none() && matches!(receipt.action, Action::Send(_)) {
+            if receipt.error.is_none() && receipt.action.draft_text().is_some() {
                 if let Some(sent) = self.extras.sent_drafts.remove(&receipt.session) {
                     if self.view.selected.as_ref() == Some(&receipt.session) {
                         if self.composer.read(cx).value().as_ref() == sent {

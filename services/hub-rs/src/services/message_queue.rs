@@ -69,6 +69,22 @@ pub struct Uncertain {
     pub at: i64,
 }
 
+/// `sessions.queueUpdate` with `expectedText`: the entry was changed
+/// elsewhere since the editor read it. Nothing was changed.
+#[derive(Debug)]
+pub struct QueueConflict {
+    /// The entry's text now.
+    pub current: String,
+}
+
+impl std::fmt::Display for QueueConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("queued message changed elsewhere")
+    }
+}
+
+impl std::error::Error for QueueConflict {}
+
 /// The outcome of one delivery attempt.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Delivery {
@@ -215,11 +231,13 @@ impl Queue {
     fn bytes(&self) -> usize {
         self.entries.iter().map(|e| e.text.len()).sum()
     }
-    /// Any user action clears a pause, its error and an uncertain report.
+    /// Lift a pause and its error. Only an explicit resume or a send-now does
+    /// this: adding, editing or reordering while paused keeps the queue
+    /// paused, so a person decides when sending starts again. An uncertain
+    /// report is separate; only its own removal (or a clear) acknowledges it.
     fn resume(&mut self) {
         self.paused = false;
         self.error = None;
-        self.uncertain = None;
     }
     fn wire(&self) -> Value {
         serde_json::to_value(&self.entries).unwrap_or_else(|_| json!([]))
@@ -486,31 +504,67 @@ impl Queues {
             };
             let entry_id = entry.id.clone();
             queue.entries.push(entry);
-            queue.resume();
             Ok(entry_id)
         })
         .await
     }
-    pub async fn update(&self, id: &str, entry: &str, text: &str) -> Result<()> {
+    /// Replace an entry's text. With `expected`, the edit applies only while
+    /// the entry still reads exactly that (what the editor started from):
+    /// a change made elsewhere meanwhile is a [`QueueConflict`] and nothing
+    /// changes, so one client's edit never silently overwrites another's.
+    pub async fn update(
+        &self,
+        id: &str,
+        entry: &str,
+        text: &str,
+        expected: Option<&str>,
+    ) -> Result<()> {
         validate_text(text)?;
         self.transact(id, |queue, others| {
             let index = queue.position(entry)?;
+            if let Some(expected) = expected
+                && queue.entries[index].text != expected
+            {
+                return Err(QueueConflict {
+                    current: queue.entries[index].text.clone(),
+                }
+                .into());
+            }
             let old = queue.entries[index].text.len();
             check_size(queue.bytes() - old + text.len(), others)?;
             queue.entries[index].text = text.to_owned();
-            queue.resume();
             Ok(())
         })
         .await
     }
-    /// Idempotent: removing an absent entry succeeds (and still counts as a
-    /// user action that clears a pause or an uncertain report).
+    /// Idempotent: removing an absent entry succeeds. Removing the uncertain
+    /// report's id acknowledges it; a pause stays until resumed.
     pub async fn remove(&self, id: &str, entry: &str) -> Result<()> {
         if !self.state.lock().unwrap().contains_key(id) {
             return Ok(());
         }
         self.transact(id, |queue, _| {
             queue.entries.retain(|e| e.id != entry);
+            if queue.uncertain.as_ref().is_some_and(|u| u.id == entry) {
+                queue.uncertain = None;
+            }
+            Ok(())
+        })
+        .await
+    }
+    /// Lift a pause (`sessions.queueResume`); the worker then sends the head
+    /// at the next turn end as usual. Resuming an unpaused queue is a no-op.
+    pub async fn resume_sending(&self, id: &str) -> Result<()> {
+        if !self
+            .state
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_some_and(|queue| queue.paused || queue.error.is_some())
+        {
+            return Ok(());
+        }
+        self.transact(id, |queue, _| {
             queue.resume();
             Ok(())
         })
@@ -527,17 +581,19 @@ impl Queues {
             }
             let moved = queue.entries.remove(from);
             queue.entries.insert(index, moved);
-            queue.resume();
             Ok(())
         })
         .await
     }
+    /// Empty the queue entirely: entries, the uncertain report and the pause
+    /// (with nothing left there is nothing for a pause to hold back).
     pub async fn clear(&self, id: &str) -> Result<()> {
         if !self.state.lock().unwrap().contains_key(id) {
             return Ok(());
         }
         self.transact(id, |queue, _| {
             queue.entries.clear();
+            queue.uncertain = None;
             queue.resume();
             Ok(())
         })
@@ -836,9 +892,9 @@ mod tests {
         assert!(queues.move_to("s1", &c, 3).await.is_err());
         assert!(queues.move_to("s1", "q-missing", 0).await.is_err());
         assert!(queues.move_to("other", &c, 0).await.is_err());
-        queues.update("s1", &a, "a2").await.unwrap();
-        assert!(queues.update("s1", "q-missing", "x").await.is_err());
-        assert!(queues.update("s1", &a, "").await.is_err());
+        queues.update("s1", &a, "a2", None).await.unwrap();
+        assert!(queues.update("s1", "q-missing", "x", None).await.is_err());
+        assert!(queues.update("s1", &a, "", None).await.is_err());
         queues.remove("s1", &b).await.unwrap();
         queues.remove("s1", &b).await.unwrap();
         assert_eq!(texts(&queues, "s1"), ["c", "a2"]);
@@ -873,8 +929,8 @@ mod tests {
         assert!(error.contains("exceed"), "{error}");
         // Updates are held to the same per-session total.
         let first = queues.list("s1")[0]["id"].as_str().unwrap().to_owned();
-        queues.update("s1", &first, "small").await.unwrap();
-        assert!(queues.update("s1", &first, &chunk).await.is_ok());
+        queues.update("s1", &first, "small", None).await.unwrap();
+        assert!(queues.update("s1", &first, &chunk, None).await.is_ok());
         let small = Queues::default();
         for n in 0..MAX_ENTRIES {
             small.add("s1", &format!("m{n}")).await.unwrap();
@@ -991,7 +1047,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_rejected_auto_send_restores_and_pauses_until_any_mutation() {
+    async fn a_rejected_auto_send_restores_and_pauses_until_resumed() {
         let queues = Queues::default();
         let log = Arc::default();
         queues.add("s1", "one").await.unwrap();
@@ -1014,17 +1070,77 @@ mod tests {
                 .await
                 .is_none()
         );
-        queues.add("s1", "two").await.unwrap();
-        assert_eq!(
-            queues.enrich(json!({"sessionId":"s1"}))["queuePaused"],
-            false
+        // Adding, editing and reordering keep it paused.
+        let two = queues.add("s1", "two").await.unwrap();
+        queues.update("s1", &two, "two!", None).await.unwrap();
+        queues.move_to("s1", &two, 0).await.unwrap();
+        queues.move_to("s1", &two, 1).await.unwrap();
+        let paused = queues.enrich(json!({"sessionId":"s1"}));
+        assert_eq!(paused["queuePaused"], true);
+        assert_eq!(paused["queueError"], "refused");
+        assert!(
+            queues
+                .flush("s1", &row("input"), deliverer(&log, Delivery::Sent))
+                .await
+                .is_none()
         );
+        queues.resume_sending("s1").await.unwrap();
+        let resumed = queues.enrich(json!({"sessionId":"s1"}));
+        assert_eq!(resumed["queuePaused"], false);
+        assert!(resumed.get("queueError").is_none());
         queues
             .flush("s1", &row("input"), deliverer(&log, Delivery::Sent))
             .await
             .unwrap();
         assert_eq!(*log.lock().unwrap(), ["one", "one"]);
-        assert_eq!(texts(&queues, "s1"), ["two"]);
+        assert_eq!(texts(&queues, "s1"), ["two!"]);
+        // Resuming an unpaused queue (or one never seen) is a no-op.
+        queues.resume_sending("s1").await.unwrap();
+        queues.resume_sending("nobody").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_edit_from_stale_text_is_a_conflict_and_changes_nothing() {
+        let queues = Queues::default();
+        let id = queues.add("s1", "original").await.unwrap();
+        queues
+            .update("s1", &id, "theirs", Some("original"))
+            .await
+            .unwrap();
+        let error = queues
+            .update("s1", &id, "mine", Some("original"))
+            .await
+            .unwrap_err();
+        let conflict = error
+            .downcast_ref::<QueueConflict>()
+            .expect("a typed conflict");
+        assert_eq!(conflict.current, "theirs");
+        assert_eq!(error.to_string(), "queued message changed elsewhere");
+        assert_eq!(texts(&queues, "s1"), ["theirs"]);
+        // Without expectedText the last write wins, as before.
+        queues.update("s1", &id, "mine", None).await.unwrap();
+        assert_eq!(texts(&queues, "s1"), ["mine"]);
+    }
+
+    #[tokio::test]
+    async fn clear_empties_entries_report_and_pause() {
+        let queues = Queues::default();
+        let log = Arc::default();
+        queues.add("s1", "one").await.unwrap();
+        queues.add("s1", "two").await.unwrap();
+        queues
+            .flush(
+                "s1",
+                &row("input"),
+                deliverer(&log, Delivery::Uncertain("lost".into())),
+            )
+            .await
+            .unwrap();
+        queues.clear("s1").await.unwrap();
+        let row = queues.enrich(json!({"sessionId":"s1"}));
+        assert_eq!(row["queuedMessages"], json!([]), "{row}");
+        assert_eq!(row["queuePaused"], false);
+        assert!(row.get("queueUncertain").is_none());
     }
 
     #[tokio::test]
@@ -1059,10 +1175,26 @@ mod tests {
                 .await
                 .is_none()
         );
-        // Acknowledged by an idempotent remove of the uncertain id.
+        // Other changes neither acknowledge the report nor resume sending.
+        queues.add("s1", "three").await.unwrap();
+        assert_eq!(uncertain(&queues, "s1")["text"], "one");
+        assert_eq!(
+            queues.enrich(json!({"sessionId":"s1"}))["queuePaused"],
+            true
+        );
+        // Acknowledged by an idempotent remove of the uncertain id; the
+        // pause holds until an explicit resume.
         let id = report["id"].as_str().unwrap().to_owned();
         queues.remove("s1", &id).await.unwrap();
         assert!(uncertain(&queues, "s1").is_null());
+        assert!(
+            queues
+                .flush("s1", &row("input"), deliverer(&log, Delivery::Sent))
+                .await
+                .is_none(),
+            "dismissing the report does not resume"
+        );
+        queues.resume_sending("s1").await.unwrap();
         queues
             .flush("s1", &row("input"), deliverer(&log, Delivery::Sent))
             .await
@@ -1123,9 +1255,12 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(
-            uncertain(&queues, "s1").is_null(),
-            "an explicit send is a user action"
+        // A send now resumes sending but leaves the may-have-been-sent report
+        // for the user to acknowledge.
+        assert_eq!(uncertain(&queues, "s1")["text"], "three");
+        assert_eq!(
+            queues.enrich(json!({"sessionId":"s1"}))["queuePaused"],
+            false
         );
         queues.observe(&row("responding"));
         queues.observe(&row("input"));
@@ -1138,6 +1273,14 @@ mod tests {
         );
         queues.observe(&row("responding"));
         queues.observe(&row("input"));
+        // The unacknowledged report still holds the automatic send back.
+        assert!(
+            queues
+                .flush("s1", &row("input"), deliverer(&log, Delivery::Sent))
+                .await
+                .is_none()
+        );
+        queues.remove("s1", &three).await.unwrap();
         queues
             .flush("s1", &row("input"), deliverer(&log, Delivery::Sent))
             .await
@@ -1169,7 +1312,7 @@ mod tests {
         let log: Arc<Mutex<Vec<String>>> = Arc::default();
         assert!(queues.add("s1", "three").await.is_err());
         assert!(queues.add("s2", "three").await.is_err());
-        assert!(queues.update("s1", "q-1", "edited").await.is_err());
+        assert!(queues.update("s1", "q-1", "edited", None).await.is_err());
         assert!(queues.move_to("s1", "q-2", 0).await.is_err());
         assert!(queues.remove("s1", "q-1").await.is_err());
         assert!(queues.clear("s1").await.is_err());

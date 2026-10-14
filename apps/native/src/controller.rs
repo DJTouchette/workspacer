@@ -31,7 +31,15 @@ pub const CONVERSATION_PAGE: usize = 200;
 
 #[derive(Clone, Debug)]
 pub enum Action {
+    /// `agents.sendMessage` with the hub's default delivery: while a turn
+    /// runs the agent reads it at its next step (Claude's tool boundary,
+    /// Codex's `turn/steer`); otherwise it starts a turn.
     Send(String),
+    /// `delivery: "now"`: the agent sets background work aside (Claude) or
+    /// is interrupted (Codex) and reads the message immediately.
+    SendNow(String),
+    /// A change to the session's hub-owned message queue.
+    Queue(crate::queue::Op),
     Approve(bool),
     /// Deny the pending tool with a note the agent reads, so it can change
     /// course instead of guessing why.
@@ -83,6 +91,11 @@ impl Action {
                 json!({"sessionId":id,"mode":mode}),
             ),
             Self::Send(text) => ("agents.sendMessage", json!({"sessionId":id, "text":text})),
+            Self::SendNow(text) => (
+                "agents.sendMessage",
+                json!({"sessionId":id, "text":text, "delivery":"now"}),
+            ),
+            Self::Queue(op) => op.wire(id),
             Self::DenyWithNote(reason) => (
                 "claude.approve",
                 json!({"sessionId":id, "decision":"no", "reason":reason}),
@@ -96,6 +109,23 @@ impl Action {
                 "claude.answer",
                 json!({"sessionId":id, "text":text,"answers":[text],"answerKinds":["text"]}),
             ),
+        }
+    }
+
+    /// The message a send delivers to the transcript now.
+    pub fn sent_text(&self) -> Option<&str> {
+        match self {
+            Self::Send(text) | Self::SendNow(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// The composer draft this action carries away once it succeeds: a send,
+    /// or a draft put on the queue.
+    pub fn draft_text(&self) -> Option<&str> {
+        match self {
+            Self::Queue(crate::queue::Op::Add(text)) => Some(text),
+            other => other.sent_text(),
         }
     }
 }
@@ -231,6 +261,13 @@ pub struct PendingMessage {
     pub number: u64,
     pub session: String,
     pub text: String,
+    /// Sent while the agent was busy: read inside the running turn, not
+    /// held for its end.
+    pub steered: bool,
+    /// Sent with `delivery: "now"`.
+    pub now: bool,
+    /// The daemon itself reported holding it until the turn ends (a
+    /// provider that cannot steer).
     pub queued: bool,
     pub accepted: bool,
     pub before: Option<crate::reading::Anchor>,
@@ -1419,7 +1456,7 @@ impl Worker {
         let valid = self.view.connected
             && self.view.selected.as_ref() == Some(&session)
             && self.sessions.get(&session).is_some_and(|s| {
-                !s.stopped()
+                (!s.stopped() || matches!(&action, Action::Queue(op) if !op.needs_live_session()))
                     && match &action {
                         Action::Approve(_) => s.approval.is_some(),
                         Action::DenyWithNote(note) => {
@@ -1428,9 +1465,12 @@ impl Worker {
                         Action::Answer(text) => {
                             s.questions.is_some() && !text.trim().is_empty() && text.len() <= 65536
                         }
-                        Action::Send(text) => {
+                        Action::Send(text) | Action::SendNow(text) => {
                             !self.view.loading && !text.trim().is_empty() && text.len() <= 65536
                         }
+                        Action::Queue(op) => op.text().is_none_or(|text| {
+                            !text.trim().is_empty() && text.len() <= crate::queue::MAX_TEXT_BYTES
+                        }),
                         Action::Stop | Action::Terminate => true,
                         Action::Answers(answers) => {
                             s.questions.is_some()
@@ -1461,7 +1501,7 @@ impl Worker {
                 ),
             });
         } else {
-            if let Action::Send(text) = &action {
+            if let Some(text) = action.sent_text() {
                 if self.view.pending_messages.len() >= 32 {
                     self.view.receipt = Some(Receipt { number, session, action, error: Some("Too many unacknowledged messages; wait for delivery before sending more".into()) });
                     self.dirty = true;
@@ -1472,18 +1512,19 @@ impl Worker {
                     .iter()
                     .rposition(|r| r.role == "You")
                     .and_then(|ix| crate::reading::Anchor::at(rows, ix));
-                let queued = self.sessions.get(&session).is_some_and(|s| {
-                    !matches!(s.state.as_str(), "input" | "idle" | "done" | "background")
-                }) || self
-                    .view
-                    .pending_messages
-                    .iter()
-                    .any(|p| p.session == session);
+                let steered = self.sessions.get(&session).is_some_and(Session::busy)
+                    || self
+                        .view
+                        .pending_messages
+                        .iter()
+                        .any(|p| p.session == session);
                 self.view.pending_messages.push(PendingMessage {
                     number,
                     session: session.clone(),
-                    text: text.clone(),
-                    queued,
+                    text: text.to_owned(),
+                    steered,
+                    now: matches!(action, Action::SendNow(_)),
+                    queued: false,
                     accepted: false,
                     before,
                 });
@@ -2025,10 +2066,21 @@ impl Worker {
                     .find(|p| p.number == number)
                 {
                     pending.accepted = true;
-                    pending.queued |= queued;
+                    pending.queued |= queued && !pending.now;
                 }
+                // A refused live switch says what was refused: the title chip
+                // keeps the hub's recorded value, so the notice is the only
+                // sign the pick did not take.
+                let error = error.map(|error| match &action {
+                    _ if error.starts_with("The model change was accepted") => error,
+                    Action::SetModel { .. } => format!("Model change refused: {error}"),
+                    Action::SetEffort(_) => format!("Effort change refused: {error}"),
+                    Action::SetPermission { .. } => format!("Access change refused: {error}"),
+                    Action::Queue(op) => op.failure(&error),
+                    _ => error,
+                });
                 self.view.notice = error.clone().unwrap_or_else(|| {
-                    if queued && !matches!(&action, Action::Send(_)) {
+                    if queued && action.sent_text().is_none() {
                         "Change queued; the provider will apply it when ready".into()
                     } else {
                         match &action {
@@ -2046,6 +2098,7 @@ impl Worker {
                             Action::SetPermission { label, .. } => {
                                 format!("Access change accepted: {label}")
                             }
+                            Action::Queue(op) => op.success().into(),
                             _ => String::new(),
                         }
                     }
