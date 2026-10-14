@@ -36,6 +36,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
+use super::elicitation::{self, ElicitationForm, ElicitationReply, FormError};
 use super::{apply_updates, note_user_send, set_mode, AgentUpdate, Facade, UsageAcc};
 use crate::session::background_tasks;
 use crate::session::conversation::{ConversationItem, TaskFold};
@@ -1235,6 +1236,11 @@ struct ParkedCanUse {
     tool: Option<String>,
     summary: Option<String>,
     raw: Value,
+    /// Set when the parked "question" is really an MCP elicitation
+    /// (`control_request {subtype:"elicitation"}`) shown on the question
+    /// card: its answer key, and its reply is `{action, content}` rather
+    /// than an AskUserQuestion `allow`.
+    elicitation: Option<ElicitationForm>,
 }
 
 /// What we're waiting on for a control request *we* sent to the CLI.
@@ -1363,7 +1369,118 @@ fn approval_raw(request: &Value) -> Value {
         "tool_use_id": request.get("tool_use_id").cloned().unwrap_or(Value::Null),
         "description": request.get("description").cloned().unwrap_or(Value::Null),
         "permission_suggestions": request.get("permission_suggestions").cloned().unwrap_or(Value::Null),
+        "always_options": always_options(request.get("permission_suggestions").unwrap_or(&Value::Null)),
     })
+}
+
+/// The `permission_suggestions` (CLI `PermissionUpdate`s) an "always allow"
+/// may apply: rule grants with `behavior:"allow"`, a mode switch (never to
+/// `bypassPermissions`) and added directories — each rewritten to
+/// `destination:"session"`, so "always" lasts for this session and never
+/// writes a settings file behind the user's back. Removals and deny/ask
+/// rules are not "allow" and are dropped.
+fn session_permission_updates(suggestions: &Value) -> Vec<Value> {
+    suggestions
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|u| match u.get("type").and_then(Value::as_str) {
+            Some("addRules" | "replaceRules") => {
+                u.get("behavior").and_then(Value::as_str) == Some("allow")
+                    && u.get("rules")
+                        .and_then(Value::as_array)
+                        .is_some_and(|r| !r.is_empty())
+            }
+            Some("setMode") => u
+                .get("mode")
+                .and_then(Value::as_str)
+                .is_some_and(|m| m != "bypassPermissions"),
+            Some("addDirectories") => u
+                .get("directories")
+                .and_then(Value::as_array)
+                .is_some_and(|d| !d.is_empty()),
+            _ => false,
+        })
+        .map(|u| {
+            let mut u = u.clone();
+            u["destination"] = json!("session");
+            u
+        })
+        .collect()
+}
+
+/// What "Always allow" on this card grants, for a client to label the
+/// button: `[{label, scope:"session", kind}]`, one entry per
+/// [`session_permission_updates`] update (`kind` is its `type`). Empty when
+/// the request carries no usable suggestion — "always" then answers as a
+/// plain allow.
+fn always_options(suggestions: &Value) -> Value {
+    let options: Vec<Value> = session_permission_updates(suggestions)
+        .iter()
+        .map(|u| {
+            let kind = u.get("type").and_then(Value::as_str).unwrap_or("");
+            let label = match kind {
+                "setMode" => match u.get("mode").and_then(Value::as_str).unwrap_or("") {
+                    "acceptEdits" => "Allow all edits this session".to_string(),
+                    mode => format!("Switch to {mode} mode for this session"),
+                },
+                "addDirectories" => format!(
+                    "Always allow access to {} this session",
+                    u["directories"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                _ => format!(
+                    "Always allow {} this session",
+                    u["rules"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|r| {
+                            let tool = r.get("toolName").and_then(Value::as_str)?;
+                            Some(match r.get("ruleContent").and_then(Value::as_str) {
+                                Some(content) if !content.is_empty() => {
+                                    format!("{tool}({content})")
+                                }
+                                _ => tool.to_string(),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            json!({ "label": label, "scope": "session", "kind": kind })
+        })
+        .collect();
+    Value::Array(options)
+}
+
+/// The `can_use_tool` answer for the parked approval at the queue head.
+/// `always` adds the session-scoped `updatedPermissions` (and classifies the
+/// decision `user_permanent`, the CLI's telemetry vocabulary for an
+/// always-allow); with no usable suggestion it is a plain allow.
+fn approval_response(
+    parked: &ParkedCanUse,
+    approve: bool,
+    always: bool,
+    deny_reason: Option<String>,
+) -> Value {
+    if !approve {
+        return json!({ "behavior": "deny", "message": deny_message(deny_reason), "interrupt": false });
+    }
+    let mut response = json!({ "behavior": "allow", "updatedInput": parked.input });
+    if always {
+        let updates = session_permission_updates(&parked.raw["permission_suggestions"]);
+        if !updates.is_empty() {
+            response["updatedPermissions"] = Value::Array(updates);
+            response["decisionClassification"] = json!("user_permanent");
+        }
+    }
+    response
 }
 
 /// If the user's sent text invokes a slash command the CLI reported at init
@@ -1776,12 +1893,10 @@ async fn run_session(
             },
             decision = drx.recv() => match decision {
                 Some(approve) => {
+                    let always = store.take_approve_always(&session_id);
                     if let Some(parked) = pending_approvals.pop_front() {
-                        let response = if approve {
-                            json!({ "behavior": "allow", "updatedInput": parked.input })
-                        } else {
-                            json!({ "behavior": "deny", "message": deny_message(store.take_deny_reason(&session_id)), "interrupt": false })
-                        };
+                        let deny_reason = if approve { None } else { store.take_deny_reason(&session_id) };
+                        let response = approval_response(&parked, approve, always, deny_reason);
                         let _ = out_tx.send(control_success(&parked.request_id, response));
                         // Another request may have parked behind the one just
                         // answered (parallel tool calls) — surface it so the
@@ -1805,11 +1920,19 @@ async fn run_session(
             answer = arx.recv() => match answer {
                 Some(ans) => {
                     if let Some(parked) = pending_question.take() {
-                        let updated = answered_input(&parked.input, &ans);
-                        let _ = out_tx.send(control_success(
-                            &parked.request_id,
-                            json!({ "behavior": "allow", "updatedInput": updated }),
-                        ));
+                        let response = match &parked.elicitation {
+                            Some(form) => {
+                                let reply = elicitation::reply(form, &ans);
+                                if let ElicitationReply::Invalid(why) = &reply {
+                                    apply_updates(store, conv, &session_id, vec![AgentUpdate::Notice(format!(
+                                        "⚠️ The answer couldn't be sent to the MCP server ({why}), so its request was declined."
+                                    ))], &mut cur_mode, &mut acc);
+                                }
+                                reply.result()
+                            }
+                            None => json!({ "behavior": "allow", "updatedInput": answered_input(&parked.input, &ans) }),
+                        };
+                        let _ = out_tx.send(control_success(&parked.request_id, response));
                         // An approval parked while the question was displayed
                         // must re-surface rather than being wiped to Responding.
                         match pending_approvals.front() {
@@ -2025,6 +2148,113 @@ fn send_control(
     }));
 }
 
+/// Answer a parked question that a newer one displaces: an elicitation is
+/// cancelled, an AskUserQuestion denied. Never just dropped — the CLI would
+/// wait on it forever.
+fn supersede_question(out_tx: &mpsc::UnboundedSender<Value>, old: &ParkedCanUse) {
+    let response = if old.elicitation.is_some() {
+        json!({ "action": "cancel" })
+    } else {
+        json!({ "behavior": "deny", "message": "Superseded by another question before the user answered.", "interrupt": false })
+    };
+    let _ = out_tx.send(control_success(&old.request_id, response));
+}
+
+/// The CLI relays an MCP server's elicitation (`elicitation/create`) as
+/// `control_request {subtype:"elicitation", mcp_server_name, message,
+/// mode?:"form"|"url", url?, elicitation_id?, requested_schema?,
+/// property_order?, title?, display_name?, description?}` and waits for
+/// `{action:"accept"|"decline"|"cancel", content?}` (CLI 2.1.299's own
+/// control schema; with no answer — or an error reply — it cancels).
+///
+/// It parks as the question card (see [`super::elicitation`]) — even under
+/// yolo, since it asks for the user's data, not permission. A schema the card
+/// cannot express is declined with a visible notice.
+#[allow(clippy::too_many_arguments)]
+fn park_elicitation(
+    store: &SessionStore,
+    conv: &ConversationStore,
+    session_id: &str,
+    out_tx: &mpsc::UnboundedSender<Value>,
+    cur_mode: &mut SessionMode,
+    acc: &mut UsageAcc,
+    pending_question: &mut Option<ParkedCanUse>,
+    request_id: Value,
+    request: &Value,
+) {
+    let server = request
+        .get("display_name")
+        .or_else(|| request.get("mcp_server_name"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("an MCP server");
+    let message = request.get("message").and_then(Value::as_str).unwrap_or("");
+    let card = match request.get("mode").and_then(Value::as_str) {
+        Some("url") => match request.get("url").and_then(Value::as_str) {
+            Some(url) => Ok(elicitation::url_card(server, message, url)),
+            None => Err(FormError::Unsupported("a url request with no url".into())),
+        },
+        None | Some("form") => {
+            let order: Option<Vec<String>> = request
+                .get("property_order")
+                .and_then(|o| serde_json::from_value(o.clone()).ok());
+            elicitation::form_card(
+                server,
+                message,
+                request.get("requested_schema").unwrap_or(&Value::Null),
+                order.as_deref(),
+            )
+        }
+        Some(other) => Err(FormError::Unsupported(format!("mode `{other}`"))),
+    };
+    let (form, questions) = match card {
+        Ok(card) => card,
+        Err(FormError::Unsupported(why)) => {
+            tracing::warn!(session = %session_id, server = %server, why = %why, "claude stream: MCP elicitation declined — unsupported form");
+            let _ = out_tx.send(control_success(&request_id, json!({ "action": "decline" })));
+            let asked = Some(message.trim())
+                .filter(|m| !m.is_empty())
+                .map(|m| format!(" It asked: “{m}”"))
+                .unwrap_or_default();
+            apply_updates(
+                store,
+                conv,
+                session_id,
+                vec![AgentUpdate::Notice(format!(
+                    "⚠️ The MCP server `{server}` asked for input Workspacer can't show ({why}), so the request was declined.{asked}"
+                ))],
+                cur_mode,
+                acc,
+            );
+            return;
+        }
+    };
+    if let Some(old) = pending_question.take() {
+        supersede_question(out_tx, &old);
+    }
+    set_mode(
+        store,
+        session_id,
+        SessionMode::Question,
+        PendingWrite::Park(
+            PendingOwner::Primary,
+            Pending::Question {
+                questions,
+                raw: request.clone(),
+            },
+        ),
+        cur_mode,
+    );
+    *pending_question = Some(ParkedCanUse {
+        request_id,
+        input: Value::Null,
+        tool: None,
+        summary: None,
+        raw: Value::Null,
+        elicitation: Some(form),
+    });
+}
+
 /// Handle one stdout line: our control responses, the CLI's control requests
 /// (approvals / questions), and plain events via [`translate`].
 #[allow(clippy::too_many_arguments)]
@@ -2163,6 +2393,20 @@ fn handle_line(
             let request_id = value.get("request_id").cloned().unwrap_or(Value::Null);
             let request = value.get("request").unwrap_or(&Value::Null);
             let subtype = request.get("subtype").and_then(Value::as_str).unwrap_or("");
+            if subtype == "elicitation" {
+                park_elicitation(
+                    store,
+                    conv,
+                    session_id,
+                    out_tx,
+                    cur_mode,
+                    acc,
+                    pending_question,
+                    request_id,
+                    request,
+                );
+                return;
+            }
             if subtype != "can_use_tool" {
                 tracing::debug!(session = %session_id, subtype = %subtype, "claude stream: unsupported control request — declining");
                 let _ = out_tx.send(control_error(
@@ -2179,6 +2423,11 @@ fn handle_line(
             if tool == "AskUserQuestion" {
                 // A question for the human — park it as `Question` even under
                 // yolo (auto-approving it without answers would be nonsense).
+                // A question already parked (an elicitation, say) is answered
+                // first: dropping it would leave the CLI blocked forever.
+                if let Some(old) = pending_question.take() {
+                    supersede_question(out_tx, &old);
+                }
                 let questions = questions_from(&input);
                 set_mode(
                     store,
@@ -2199,6 +2448,7 @@ fn handle_line(
                     tool: Some(tool.to_string()),
                     summary: None,
                     raw: Value::Null,
+                    elicitation: None,
                 });
                 return;
             }
@@ -2215,6 +2465,7 @@ fn handle_line(
                 tool: Some(tool.to_string()),
                 summary: approval_summary(request),
                 raw: approval_raw(request),
+                elicitation: None,
             });
             // Only the queue head is displayed: the store's pending is a single
             // slot, so a request arriving while another is awaiting the user
@@ -3692,6 +3943,249 @@ mod tests {
         assert_eq!(approval_summary(&request).as_deref(), Some("rm -rf build"));
     }
 
+    fn suggestions() -> Value {
+        json!([
+            { "type": "addRules", "rules": [ { "toolName": "Bash", "ruleContent": "npm test:*" } ],
+              "behavior": "allow", "destination": "localSettings" },
+            { "type": "addRules", "rules": [ { "toolName": "Bash" } ], "behavior": "deny", "destination": "session" },
+            { "type": "setMode", "mode": "acceptEdits", "destination": "session" },
+            { "type": "setMode", "mode": "bypassPermissions", "destination": "session" },
+            { "type": "addDirectories", "directories": ["/tmp/x"], "destination": "projectSettings" },
+            { "type": "removeRules", "rules": [ { "toolName": "Read" } ], "behavior": "allow", "destination": "session" }
+        ])
+    }
+
+    #[test]
+    fn always_options_name_what_a_session_grant_would_allow() {
+        let request = json!({ "subtype": "can_use_tool", "tool_name": "Bash",
+            "input": { "command": "npm test" }, "permission_suggestions": suggestions() });
+        let raw = approval_raw(&request);
+        assert_eq!(
+            raw["always_options"],
+            json!([
+                { "label": "Always allow Bash(npm test:*) this session", "scope": "session", "kind": "addRules" },
+                { "label": "Allow all edits this session", "scope": "session", "kind": "setMode" },
+                { "label": "Always allow access to /tmp/x this session", "scope": "session", "kind": "addDirectories" }
+            ])
+        );
+        // No suggestions → no options (the card shows no "always" choice).
+        let bare = approval_raw(&json!({ "tool_name": "Bash", "input": {} }));
+        assert_eq!(bare["always_options"], json!([]));
+    }
+
+    #[test]
+    fn always_answers_with_session_scoped_updated_permissions() {
+        let request = json!({ "subtype": "can_use_tool", "tool_name": "Bash",
+            "input": { "command": "npm test" }, "permission_suggestions": suggestions() });
+        let parked = ParkedCanUse {
+            request_id: json!("cli-1"),
+            input: json!({ "command": "npm test" }),
+            tool: Some("Bash".into()),
+            summary: None,
+            raw: approval_raw(&request),
+            elicitation: None,
+        };
+        assert_eq!(
+            approval_response(&parked, true, true, None),
+            json!({
+                "behavior": "allow",
+                "updatedInput": { "command": "npm test" },
+                "updatedPermissions": [
+                    { "type": "addRules", "rules": [ { "toolName": "Bash", "ruleContent": "npm test:*" } ],
+                      "behavior": "allow", "destination": "session" },
+                    { "type": "setMode", "mode": "acceptEdits", "destination": "session" },
+                    { "type": "addDirectories", "directories": ["/tmp/x"], "destination": "session" }
+                ],
+                "decisionClassification": "user_permanent"
+            })
+        );
+        // A plain yes is unchanged.
+        assert_eq!(
+            approval_response(&parked, true, false, None),
+            json!({ "behavior": "allow", "updatedInput": { "command": "npm test" } })
+        );
+        // Deny keeps its note.
+        assert_eq!(
+            approval_response(&parked, false, true, Some("not now".into()))["message"],
+            "The user denied this tool use and said: not now"
+        );
+        // Always with nothing to grant is a plain allow.
+        let bare = ParkedCanUse {
+            raw: approval_raw(&json!({ "tool_name": "Bash" })),
+            ..parked
+        };
+        assert!(approval_response(&bare, true, true, None)
+            .get("updatedPermissions")
+            .is_none());
+    }
+
+    /// Feed lines through `handle_line` with fresh per-test driver state.
+    struct Line {
+        store: SessionStore,
+        conv: ConversationStore,
+        out_tx: mpsc::UnboundedSender<Value>,
+        out_rx: mpsc::UnboundedReceiver<Value>,
+        cur_mode: SessionMode,
+        acc: UsageAcc,
+        totals: StreamTotals,
+        yolo: AtomicBool,
+        approvals: VecDeque<ParkedCanUse>,
+        question: Option<ParkedCanUse>,
+        controls: HashMap<String, PendingControl>,
+    }
+
+    impl Line {
+        fn new(yolo: bool) -> Self {
+            let store = SessionStore::new();
+            store.register_managed("sid-e", "/w", "claude");
+            let (out_tx, out_rx) = mpsc::unbounded_channel();
+            Self {
+                store,
+                conv: ConversationStore::new(),
+                out_tx,
+                out_rx,
+                cur_mode: SessionMode::Responding,
+                acc: UsageAcc::default(),
+                totals: StreamTotals::default(),
+                yolo: AtomicBool::new(yolo),
+                approvals: VecDeque::new(),
+                question: None,
+                controls: HashMap::new(),
+            }
+        }
+        fn feed(&mut self, value: Value) {
+            let (mut bg, mut idle) = (false, false);
+            handle_line(
+                &value,
+                &self.store,
+                &self.conv,
+                "sid-e",
+                &self.out_tx,
+                &mut self.cur_mode,
+                &mut self.acc,
+                &mut self.totals,
+                &self.yolo,
+                &mut self.approvals,
+                &mut self.question,
+                &mut self.controls,
+                &mut bg,
+                &mut idle,
+            );
+        }
+        fn sent(&mut self) -> Vec<Value> {
+            std::iter::from_fn(|| self.out_rx.try_recv().ok()).collect()
+        }
+        fn pending(&self) -> Option<Pending> {
+            self.store.get("sid-e").unwrap().pending().cloned()
+        }
+    }
+
+    fn elicitation_request(id: &str, mut request: Value) -> Value {
+        request["subtype"] = json!("elicitation");
+        json!({ "type": "control_request", "request_id": id, "request": request })
+    }
+
+    #[test]
+    fn a_form_elicitation_parks_as_questions_even_under_yolo() {
+        let mut l = Line::new(true);
+        l.feed(elicitation_request(
+            "cli-e1",
+            json!({
+                "mcp_server_name": "jira", "message": "Which project?", "mode": "form",
+                "requested_schema": { "type": "object", "properties": {
+                    "project_key": { "type": "string", "title": "Project key" },
+                    "urgent": { "type": "boolean" }
+                }, "required": ["project_key"] },
+                "property_order": ["urgent", "project_key"]
+            }),
+        ));
+        assert!(l.sent().is_empty(), "never auto-answered, even under yolo");
+        assert_eq!(l.cur_mode, SessionMode::Question);
+        let Some(Pending::Question { questions, raw }) = l.pending() else {
+            panic!("expected a question card, got {:?}", l.pending());
+        };
+        assert_eq!(raw["mcp_server_name"], "jira");
+        // The server's property order is kept; the consent question closes it.
+        let headers: Vec<_> = questions
+            .iter()
+            .map(|q| q.header.clone().unwrap())
+            .collect();
+        assert_eq!(headers, ["urgent", "Project key", "jira asks"]);
+        let parked = l.question.as_ref().expect("parked");
+        let form = parked.elicitation.as_ref().expect("an elicitation key");
+        let answer = ManagedAnswer {
+            answers: Some(vec!["2".into(), "DOCS".into()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            elicitation::reply(form, &answer).result(),
+            json!({ "action": "accept", "content": { "urgent": false, "project_key": "DOCS" } })
+        );
+    }
+
+    #[test]
+    fn an_unsupported_elicitation_is_declined_with_a_notice() {
+        let mut l = Line::new(false);
+        l.feed(elicitation_request(
+            "cli-e2",
+            json!({
+                "mcp_server_name": "jira", "message": "Nested?",
+                "requested_schema": { "type": "object", "properties": {
+                    "who": { "type": "object", "properties": {} }
+                } }
+            }),
+        ));
+        let sent = l.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["response"]["request_id"], "cli-e2");
+        assert_eq!(sent[0]["response"]["subtype"], "success");
+        assert_eq!(
+            sent[0]["response"]["response"],
+            json!({ "action": "decline" })
+        );
+        assert!(l.question.is_none());
+        let text = l
+            .conv
+            .snapshot("sid-e")
+            .map(|(_, i)| serde_json::to_string(&i).unwrap())
+            .unwrap();
+        assert!(text.contains("can't show"), "{text}");
+    }
+
+    #[test]
+    fn a_url_elicitation_parks_open_or_decline_and_a_newer_question_cancels_it() {
+        let mut l = Line::new(false);
+        l.feed(elicitation_request(
+            "cli-e3",
+            json!({
+                "mcp_server_name": "auth", "message": "Sign in", "mode": "url",
+                "url": "https://example.test/login", "elicitation_id": "el-1"
+            }),
+        ));
+        let Some(Pending::Question { questions, .. }) = l.pending() else {
+            panic!("expected a question card");
+        };
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].options[0].label, "Open");
+        assert_eq!(
+            questions[0].options[0].description.as_deref(),
+            Some("https://example.test/login")
+        );
+        // An AskUserQuestion arriving now answers the elicitation rather than
+        // dropping it (the CLI would block on it forever).
+        l.feed(json!({ "type": "control_request", "request_id": "cli-q", "request": {
+            "subtype": "can_use_tool", "tool_name": "AskUserQuestion",
+            "input": { "questions": [ { "question": "Ok?", "options": [ { "label": "Yes" } ] } ] } } }));
+        let sent = l.sent();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["response"]["request_id"], "cli-e3");
+        assert_eq!(
+            sent[0]["response"]["response"],
+            json!({ "action": "cancel" })
+        );
+        assert!(l.question.as_ref().unwrap().elicitation.is_none());
+    }
+
     #[test]
     fn build_argv_pins_or_resumes() {
         let cfg = SpawnConfig {
@@ -4350,6 +4844,128 @@ done
             "a finished turn leaves no phantom card"
         );
 
+        store.terminate_managed(sid);
+    }
+
+    /// "Always allow" and an MCP form elicitation through the real driver
+    /// loop: the stub records the two `control_response`s it receives.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn always_and_an_elicitation_answer_reach_the_cli_end_to_end() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = ScratchDir(
+            std::env::temp_dir().join(format!("claudemon-e2e-{}", uuid::Uuid::new_v4())),
+        );
+        std::fs::create_dir_all(&dir.0).expect("scratch dir");
+        let log = dir.0.join("responses.log");
+        let bin = dir.0.join("stub-claude-always");
+        let script = r#"#!/bin/sh
+LOG='__LOG__'
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      printf '%s\n' '{"type":"control_request","request_id":"cli-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"npm test"},"tool_use_id":"tu-1","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test:*"}],"behavior":"allow","destination":"localSettings"}]}}'
+      ;;
+    *'"request_id":"cli-1"'*)
+      printf '%s\n' "$line" >> "$LOG"
+      printf '%s\n' '{"type":"control_request","request_id":"cli-2","request":{"subtype":"elicitation","mcp_server_name":"jira","message":"Key?","mode":"form","requested_schema":{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}}}'
+      ;;
+    *'"request_id":"cli-2"'*)
+      printf '%s\n' "$line" >> "$LOG"
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done","duration_ms":1,"usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0.01}'
+      ;;
+  esac
+done
+"#
+        .replace("__LOG__", &log.to_string_lossy());
+        std::fs::write(&bin, script).expect("writing the stub CLI");
+        let mut perms = std::fs::metadata(&bin)
+            .expect("stub metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin, perms).expect("chmod the stub CLI");
+
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        let sid = "e2e-always";
+        store.register_managed(sid, &dir.0.to_string_lossy(), "claude");
+        store.set_transport(sid, crate::session::state::Transport::Stream);
+        spawn_session(
+            store.clone(),
+            conv.clone(),
+            SpawnConfig {
+                session_id: sid.to_string(),
+                cwd: dir.0.to_string_lossy().to_string(),
+                bin: bin.to_string_lossy().to_string(),
+                model: None,
+                effort: None,
+                permission_mode: None,
+                resume: None,
+                extra_args: vec![],
+                env: HashMap::new(),
+                yolo: false,
+                facade: Facade::default(),
+            },
+        );
+        assert!(settles(|| store.is_managed(sid)).await);
+        assert!(matches!(
+            store.submit_message(sid, "run the tests".into()),
+            crate::session::MessageOutcome::Sent
+        ));
+        assert!(
+            settles(|| store
+                .get(sid)
+                .is_some_and(|s| s.mode == SessionMode::Approval))
+            .await
+        );
+        let card = store.get(sid).and_then(|s| s.pending().cloned());
+        let Some(Pending::Approval { raw, .. }) = card else {
+            panic!("expected an approval card, got {card:?}");
+        };
+        assert_eq!(
+            raw["always_options"][0]["label"],
+            "Always allow Bash(npm test:*) this session"
+        );
+        // What `POST /approve {decision:"always"}` does.
+        store.set_approve_always(sid, true);
+        assert!(store.submit_managed_decision(sid, true));
+        assert!(
+            settles(|| store
+                .get(sid)
+                .is_some_and(|s| s.mode == SessionMode::Question))
+            .await
+        );
+        assert!(store.submit_managed_answer(
+            sid,
+            ManagedAnswer {
+                answers: Some(vec!["ABC-1".into()]),
+                ..Default::default()
+            }
+        ));
+        assert!(
+            settles(|| std::fs::read_to_string(&log).is_ok_and(|l| l.lines().count() >= 2)).await,
+            "the stub never received both answers"
+        );
+        let lines: Vec<Value> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            lines[0]["response"]["response"],
+            json!({
+                "behavior": "allow",
+                "updatedInput": { "command": "npm test" },
+                "updatedPermissions": [ { "type": "addRules",
+                    "rules": [ { "toolName": "Bash", "ruleContent": "npm test:*" } ],
+                    "behavior": "allow", "destination": "session" } ],
+                "decisionClassification": "user_permanent"
+            })
+        );
+        assert_eq!(
+            lines[1]["response"]["response"],
+            json!({ "action": "accept", "content": { "key": "ABC-1" } })
+        );
         store.terminate_managed(sid);
     }
 

@@ -315,6 +315,10 @@ pub struct SessionStore {
     /// it (Claude stream: the `deny` message the model reads). Beside the bool
     /// channel so providers without a deny message are unaffected.
     managed_deny_reasons: Arc<DashMap<String, String>>,
+    /// Sessions whose next managed approve is an "always allow" (`/approve
+    /// {decision:"always"}`). Beside the bool channel, like the deny note, so
+    /// providers with no session-scoped grant just see an approve.
+    managed_always: Arc<DashMap<String, ()>>,
     /// Live in-daemon PTY children, keyed by session_id, so daemon shutdown can
     /// kill them (they have no `kill_on_drop`, unlike the managed providers'
     /// tokio children) and their exit can be reaped. Without this, quitting the
@@ -517,7 +521,7 @@ impl ManagedInput {
 /// the same vocabulary `POST /sessions/:id/answer` accepts for PTY sessions
 /// (option number, free text, or one answer per question), forwarded to the
 /// driver instead of being typed into a picker.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ManagedAnswer {
     /// 1-indexed option for the current (or only) question.
     pub option: Option<u8>,
@@ -791,6 +795,7 @@ impl SessionStore {
             managed_inputs: Arc::new(DashMap::new()),
             managed_decisions: Arc::new(DashMap::new()),
             managed_deny_reasons: Arc::new(DashMap::new()),
+            managed_always: Arc::new(DashMap::new()),
             ptys: Arc::new(DashMap::new()),
             generations: Arc::new(DashMap::new()),
             context_telemetry_epochs: Arc::new(AtomicU64::new(context_epoch_seed())),
@@ -2308,6 +2313,22 @@ impl SessionStore {
         self.managed_deny_reasons.remove(session_id).map(|(_, r)| r)
     }
 
+    /// Record whether the next managed approve on this session is an
+    /// "always allow" (set before the decision is sent, cleared otherwise).
+    pub fn set_approve_always(&self, session_id: &str, always: bool) {
+        if always {
+            self.managed_always.insert(session_id.to_string(), ());
+        } else {
+            self.managed_always.remove(session_id);
+        }
+    }
+
+    /// Whether the approve being answered now asked to "always allow"; taken
+    /// once, so it can never widen a later plain approve.
+    pub fn take_approve_always(&self, session_id: &str) -> bool {
+        self.managed_always.remove(session_id).is_some()
+    }
+
     pub(crate) fn native_submit_managed_decision(&self, session_id: &str, approve: bool) -> bool {
         match self.managed_decisions.get(session_id) {
             Some(tx) => tx.send(approve).is_ok(),
@@ -2340,6 +2361,7 @@ impl SessionStore {
         let existed = self.managed_inputs.remove(session_id).is_some();
         self.managed_decisions.remove(session_id);
         self.managed_deny_reasons.remove(session_id);
+        self.managed_always.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_confirmed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
@@ -2401,6 +2423,7 @@ impl SessionStore {
         self.managed_inputs.remove(session_id);
         self.managed_decisions.remove(session_id);
         self.managed_deny_reasons.remove(session_id);
+        self.managed_always.remove(session_id);
         self.managed_model.remove(session_id);
         self.managed_confirmed_model.remove(session_id);
         self.managed_yolo.remove(session_id);

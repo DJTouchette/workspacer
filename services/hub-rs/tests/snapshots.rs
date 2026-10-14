@@ -268,6 +268,27 @@ fn approval_projection_unwraps_current_legacy_and_unknown_payloads() {
 }
 
 #[test]
+fn approval_projection_carries_always_options_only_when_offered() {
+    let option = json!({"label":"Always allow Bash(npm test:*) this session","scope":"session","kind":"addRules"});
+    let row = compat(
+        json!({"session_id":"s1","pending":{"kind":"approval","tool":"Bash",
+        "raw":{"tool_input":{"command":"npm test"},"always_options":[option.clone()]}}}),
+    );
+    assert_eq!(
+        row["pendingApproval"],
+        json!({"toolName":"Bash","toolInput":{"command":"npm test"},"alwaysOptions":[option]})
+    );
+    let row = compat(
+        json!({"session_id":"s1","pending":{"kind":"approval","tool":"Bash",
+        "raw":{"tool_input":{"command":"ls"},"always_options":[]}}}),
+    );
+    assert_eq!(
+        row["pendingApproval"],
+        json!({"toolName":"Bash","toolInput":{"command":"ls"}})
+    );
+}
+
+#[test]
 fn owner_selection_remains_sparse_and_preserves_contradictory_provider_evidence() {
     let old = compat(
         json!({"session_id":"old","mode":"input","usage":{"model":"opus","context_tokens":10}}),

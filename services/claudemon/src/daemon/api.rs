@@ -668,7 +668,12 @@ async fn post_message(
 struct ApprovePayload {
     /// `"yes"` → `{decision:"approve"}`, `"no"` → `{decision:"block"}`.
     /// `"always"` is treated as `"yes"` for hook purposes — hooks don't
-    /// have a "remember this" channel; persistence is a TUI-only concept.
+    /// have a "remember this" channel. A managed session's adapter gets it as
+    /// an approve plus [`SessionStore::set_approve_always`]: Claude stream
+    /// answers with the request's `permission_suggestions` scoped to the
+    /// session (`updatedPermissions`), Codex with its session-scoped decision
+    /// (`acceptForSession`, `scope:"session"`, `_meta.persist:"session"`).
+    /// The pending card's `raw.always_options` lists what that would grant.
     decision: Option<String>,
     /// Optional reason returned to Claude with a block (shows up in the
     /// assistant's context as "the tool was blocked because ...").
@@ -718,6 +723,7 @@ async fn post_approve(
     // A deny's note rides beside the decision: set before it is sent so the
     // adapter can take it when it answers, cleared on approve so a stale note
     // never reaches a later deny.
+    store.set_approve_always(&id, payload.decision.as_deref() == Some("always"));
     store.set_deny_reason(
         &id,
         if approve {
@@ -730,6 +736,7 @@ async fn post_approve(
         return Json(json!({ "ok": true, "managed": true, "approve": approve })).into_response();
     }
     store.take_deny_reason(&id);
+    store.take_approve_always(&id);
     if !store.resolve_decision(&id, hook_decision.clone()) {
         return (
             StatusCode::CONFLICT,
@@ -3718,6 +3725,37 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(rx.try_recv().unwrap());
         assert_eq!(store.take_deny_reason("sess-1"), None);
+    }
+
+    #[tokio::test]
+    async fn managed_always_is_an_approve_flagged_once() {
+        let state = test_state();
+        let store = state.store.clone();
+        store.register_managed("sess-1", "/tmp/proj", "claude");
+        let (tx, mut rx) = mpsc::unbounded_channel::<bool>();
+        store.register_managed_decision("sess-1", tx);
+        let approval = |store: &SessionStore| {
+            store.set_managed_mode(
+                "sess-1",
+                SessionMode::Approval,
+                PendingWrite::Resolve(PendingOwner::Primary),
+            )
+        };
+        approval(&store);
+        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "always" }));
+        let (status, _) = request(state.clone(), req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(rx.try_recv().unwrap(), "always is an approve");
+        assert!(store.take_approve_always("sess-1"));
+        assert!(!store.take_approve_always("sess-1"), "taken once");
+        // A flag left by an unanswered always never widens a later yes.
+        store.set_approve_always("sess-1", true);
+        approval(&store);
+        let req = post_json("/sessions/sess-1/approve", json!({ "decision": "yes" }));
+        let (status, _) = request(state, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(rx.try_recv().unwrap());
+        assert!(!store.take_approve_always("sess-1"));
     }
 
     // --- /decide ------------------------------------------------------------

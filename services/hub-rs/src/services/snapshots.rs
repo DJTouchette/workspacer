@@ -141,6 +141,18 @@ pub fn compat(mut snapshot: Value) -> Value {
                 .or_else(|| raw.get("input"))
                 .unwrap_or(raw);
             snapshot["pendingApproval"] = json!({"toolName":pending["tool"],"toolInput":input});
+            // What "Always allow" (`claude.approve {decision:"always"}`)
+            // would grant: claudemon's `raw.always_options`, each
+            // `{label, scope:"session", kind}`. Present only when non-empty,
+            // so a card without it offers no always choice (and the frozen
+            // projection of older rows is unchanged).
+            if let Some(options) = raw
+                .get("always_options")
+                .and_then(Value::as_array)
+                .filter(|options| !options.is_empty())
+            {
+                snapshot["pendingApproval"]["alwaysOptions"] = Value::Array(options.clone());
+            }
         }
         Some("question") => snapshot["pendingQuestions"] = pending["questions"].clone(),
         _ => (),
