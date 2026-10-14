@@ -75,10 +75,10 @@ pub(super) fn validate(method: &str, params: &mut Value) -> Result<()> {
     }
     if method == "claude.rewindFiles"
         && params
-            .get("dryRun")
+            .get("preview")
             .is_some_and(|value| !value.is_null() && !value.is_boolean())
     {
-        bail!("dryRun must be a boolean");
+        bail!("preview must be a boolean");
     }
     if method == "claude.rewindFiles"
         && params["userMessageId"]
@@ -168,7 +168,7 @@ mod tests {
             ),
             (
                 "claude.rewindFiles",
-                json!({"sessionId":"s","userMessageId":"u","dryRun":true}),
+                json!({"sessionId":"s","userMessageId":"u","preview":true}),
             ),
             (
                 "claude.revert",
@@ -191,7 +191,7 @@ mod tests {
             ),
             (
                 "claude.rewindFiles",
-                json!({"sessionId":"s","userMessageId":"u","dryRun":"yes"}),
+                json!({"sessionId":"s","userMessageId":"u","preview":"yes"}),
             ),
             ("claude.revert", json!({"sessionId":"s"})),
             (

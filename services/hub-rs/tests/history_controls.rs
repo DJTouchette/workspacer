@@ -251,7 +251,7 @@ async fn run(root: PathBuf) {
     let preview = client
         .call(
             "claude.rewindFiles",
-            json!({"sessionId":id,"userMessageId":uuid,"dryRun":true}),
+            json!({"sessionId":id,"userMessageId":uuid,"preview":true}),
         )
         .await
         .unwrap();
@@ -297,6 +297,103 @@ async fn run(root: PathBuf) {
         ),
     ] {
         assert!(client.call(method, bad).await.is_err(), "{method}");
+    }
+
+    // Fork from before the second message: a NEW session resumes the source
+    // with --fork-session at the entry before that message, pinned to its
+    // own id, and shows only the history before the message.
+    client
+        .call(
+            "agents.sendMessage",
+            json!({"sessionId":id,"text":"second"}),
+        )
+        .await
+        .unwrap();
+    let mut second = String::new();
+    until("second turn", async || {
+        let conversation = items(&client, &id).await;
+        let replied = conversation
+            .iter()
+            .filter(|i| i["kind"] == "assistant_text" && i["text"] == "done")
+            .count()
+            >= 2;
+        if let Some(user) = conversation
+            .iter()
+            .find(|i| i["kind"] == "user_message" && i["text"] == "second")
+        {
+            second = user["uuid"].as_str().unwrap_or_default().to_owned();
+        }
+        replied && !second.is_empty()
+    })
+    .await;
+    let forked = client
+        .call(
+            "agents.fork",
+            json!({"sessionId":id,"atMessageId":second,"label":"forked"}),
+        )
+        .await
+        .unwrap();
+    let fork_id = forked["sessionId"].as_str().unwrap().to_owned();
+    assert_ne!(fork_id, id);
+    until("fork started", async || {
+        root.join(format!("argv-{fork_id}.json")).exists()
+    })
+    .await;
+    let spawned: Value =
+        serde_json::from_slice(&std::fs::read(root.join(format!("argv-{fork_id}.json"))).unwrap())
+            .unwrap();
+    let argv: Vec<&str> = spawned["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let joined = argv.join(" ");
+    // The entry just before "second" in the source chain: the `/compact`
+    // message (a compaction turn has no assistant row in the fake).
+    let sent: Vec<Value> = received(&root, &id)
+        .into_iter()
+        .filter(|row| row.get("message").is_some())
+        .collect();
+    let at = sent
+        .iter()
+        .position(|row| row["message"] == "second")
+        .unwrap();
+    assert_eq!(sent[at - 1]["message"], "/compact keep the API notes");
+    let before = sent[at - 1]["uuid"].as_str().unwrap().to_owned();
+    assert!(
+        joined.contains(&format!(
+            "--resume {id} --fork-session --session-id {fork_id} --resume-session-at {before}"
+        )),
+        "{joined}"
+    );
+    let seeded = items(&client, &fork_id).await;
+    assert!(
+        seeded
+            .iter()
+            .any(|i| i["kind"] == "assistant_text" && i["text"] == "done"),
+        "{seeded:?}"
+    );
+    assert!(
+        !seeded.iter().any(|i| i["text"] == "second"),
+        "the forked-away message is not shown: {seeded:?}"
+    );
+    let row = client
+        .call("sessions.snapshot", json!({"sessionId":fork_id}))
+        .await
+        .unwrap();
+    assert_eq!(row["label"], "forked", "{row}");
+    // Unknown sources and malformed ids are refused before any launch.
+    for bad in [
+        json!({"sessionId":"never-launched"}),
+        json!({"sessionId":"../x"}),
+        json!({"sessionId":id,"atMessageId":"a b"}),
+        json!({}),
+    ] {
+        assert!(
+            client.call("agents.fork", bad.clone()).await.is_err(),
+            "{bad}"
+        );
     }
     drop(client);
     backend.shutdown().await.unwrap();

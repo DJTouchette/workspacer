@@ -304,8 +304,12 @@ Sources:
   block in the `assistant` frame lands whole only when its message did not
   stream. Current models default to an omitted thinking display
   (`thinking_display:"updates"`: empty `thinking`, only `estimated_tokens`),
-  which produces nothing; `--thinking-display summarized` (CLI flag, via a
-  profile's extra args) or the `showThinkingSummaries` setting shows text.
+  which produces nothing. So stream spawns add `--thinking-display
+  summarized` (a hidden CLI option) when `<bin> --version` (cached per
+  resolved binary) is ≥ 2.1.221 and nobody chose a display: no
+  `--thinking-display` / `--thinking disabled` in the extra args and no
+  `showThinkingSummaries` key in the config root's or project's settings.
+  Verified live on 2.1.299: summarized `thinking_delta` text streams.
   Transcript rows: `system/compact_boundary {compactMetadata}` and non-empty
   thinking blocks map to the same kinds (PTY sessions and resumed history).
 - Codex: `item/reasoning/summaryTextDelta` streams by `itemId`;
@@ -327,7 +331,7 @@ error naming the alternative.
 | Bus method | claudemon route | Claude stream | Codex |
 | --- | --- | --- | --- |
 | `claude.compact {sessionId, instructions?}` | `POST /sessions/:id/compact {instructions?}` | `/compact [instructions]` as a user message (documented headless path; verified live on 2.1.299) plus a `slash_command` echo; reply `{queued:true}` | `thread/compact/start {threadId}`; reply `{}` |
-| `claude.rewindFiles {sessionId, userMessageId, dryRun?}` | `POST /sessions/:id/rewind-files {user_message_id, dry_run?}` | `rewind_files` control request; reply `RewindFilesResult {canRewind, error?, filesChanged?, insertions?, deletions?, skippedLinks?}` | refused |
+| `claude.rewindFiles {sessionId, userMessageId, preview?}` (`preview` is the dry run) | `POST /sessions/:id/rewind-files {user_message_id, dry_run?}` | `rewind_files` control request; reply `RewindFilesResult {canRewind, error?, filesChanged?, insertions?, deletions?, skippedLinks?}` | refused |
 | `claude.revert {sessionId, userMessageId \| beforeTurnId}` | `POST /sessions/:id/revert {user_message_id?, before_turn_id?}` | refused | `thread/revert {threadId, beforeTurnId}`; on success the shown conversation is cut before that turn's user message (a `reset` delta) |
 
 HTTP answers: `200 {ok:true, result}`, `502 {ok:false, error}` (provider
@@ -337,11 +341,15 @@ for ids that are not bounded plain ids. All three bus methods are full-tier only
 Claude stream sessions always run with `--replay-user-messages` (replayed text
 frames carry `isReplay:true` and render nothing: the `user` arm reads only tool
 results) and `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true` unless the spawn
-env or daemon env chose a value. Live check (2.1.299, `--no-session-persistence`,
-after a `/compact`): `rewind_files` answered a dry run with success
-`{canRewind:false, error:"No file checkpoint found for this message."}` and a
-real one with a control error of the same text, so a successful file rewind is
-NOT yet verified against the real CLI.
+env or daemon env chose a value. Verified live on 2.1.299 (persisted session,
+haiku): after a Write, `rewind_files {user_message_id:<our stamped uuid>,
+dry_run:true}` answered `{canRewind:true, filesChanged:[<abs path>],
+insertions:0, deletions:1}` and the real call `{canRewind:true,
+skippedLinks:0}` and removed the file; the transcript's user row carried the
+same uuid. A session started with `--no-session-persistence` has no
+checkpoints: every rewind there answers "No file checkpoint found for this
+message." (a dry run as a success with `canRewind:false`, a real one as a
+control error).
 
 Fork (claudemon `/sessions/spawn-managed {provider, cwd, resume:<source>,
 fork:true, fork_before?:<user message uuid>}`): a NEW row id (never the
@@ -353,7 +361,17 @@ lastTurnId?, cwd}` as request id 101 (same capture as `thread/start`); the fork
 point (the turn before U's turn) comes from the LIVE source driver
 (`SessionControlAction::ForkPoint`), so forking a Codex session from a message
 needs the source running. The new session is seeded with the source's visible
-history cut at the fork point. The hub has no `agents.fork` yet: it needs a
-spawn path that mints a new id while inheriting the source launch record
-(provider/profile/cwd), which touches agent_spawn admission and the spawn-key
-registries.
+history cut at the fork point.
+
+Hub `agents.fork {sessionId, atMessageId?, label?}` (full tier, local only;
+refused for a hub-qualified call and before launch readiness, like
+agents.spawn) returns the agents.spawn receipt (`sessionId` of the new
+session). It needs this hub's launch record for the source, and takes from it
+provider, cwd, profileId, mcpItemIds, model and parentSessionId; never
+manager, label (pass `label`), permission bypass, or a launch integration
+(such sources are refused). The fork rides OUT OF BAND
+(`SpawnCoordinator::fork_for` → `spawn_admitted(.., Some(ForkSource))`), so
+agents.spawn's wire keys and the spawn-key registries are unchanged and no
+agents.spawn caller can name a fork source. After routing the plan must be a
+managed stream launch of the source's provider; the coordinator then sets
+`request.{resume, fork, fork_before}` and `metadata.forkedFrom`.

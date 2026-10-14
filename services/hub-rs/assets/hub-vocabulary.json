@@ -3,6 +3,7 @@
     "agents.close",
     "agents.dispatchPrepare",
     "agents.dispatchReplay",
+    "agents.fork",
     "agents.list",
     "agents.notifyWhen",
     "agents.orphans",

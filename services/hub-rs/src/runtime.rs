@@ -1949,6 +1949,11 @@ impl Core {
                 && !paired_spawn
                 && !external_provider
                 && (qualified.is_some() || !self.launch_ready()))
+            // A fork is a local launch only: never forwarded to another hub,
+            // and held to the same readiness as a spawn.
+            || (bare == "agents.fork"
+                && !external_provider
+                && (qualified.is_some() || !self.launch_ready()))
         {
             self.send(
                 caller,

@@ -2,6 +2,7 @@
   "description": "Independent authorization composition and actor decisions. Every registered vocabulary method must remain classified; tier membership alone is not approval of a composed authority. Closed proof IDs are exact pair-bound checks in auth_composition.rs, not arbitrary prose exemptions.",
   "actors": [
     "agents.dispatchPrepare",
+    "agents.fork",
     "agents.reportProgress",
     "agents.sendMessage",
     "agents.spawn",

@@ -34,6 +34,7 @@ const FULL: &[&str] = &[
     "agents.list",
     "fleetWorkflows.request",
     "agents.spawn",
+    "agents.fork",
     "agents.sendMessage",
     "terminals.create",
     "claude.approve",

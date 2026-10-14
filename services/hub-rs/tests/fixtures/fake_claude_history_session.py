@@ -25,6 +25,19 @@ def record(value):
         out.flush()
 
 
+transcript = Path(os.environ["HOME"]) / ".claude" / "projects" / os.getcwd().rstrip("/").replace("/", "-") / (session + ".jsonl")
+transcript.parent.mkdir(parents=True, exist_ok=True)
+last_entry = [None]
+
+
+def chain(row):
+    # Transcript rows the way Claude Code chains them (uuid / parentUuid).
+    row["parentUuid"] = last_entry[0]
+    last_entry[0] = row["uuid"]
+    with transcript.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(row) + "\n")
+
+
 def emit(value):
     print(json.dumps(value), flush=True)
 
@@ -61,6 +74,10 @@ for line in sys.stdin:
     else:
         prompt = "\n".join(block.get("text", "") for block in content if block.get("type") == "text")
     record({"message": prompt, "uuid": frame.get("uuid")})
+    chain({"type": "user", "uuid": frame.get("uuid"), "message": {"role": "user", "content": prompt}})
+    if not prompt.startswith("/compact"):
+        chain({"type": "assistant", "uuid": "a-" + frame.get("uuid"),
+               "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "text", "text": "done"}]}})
     emit({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": prompt}]},
           "parent_tool_use_id": None, "uuid": frame.get("uuid"), "isReplay": True})
     if prompt.startswith("/compact"):

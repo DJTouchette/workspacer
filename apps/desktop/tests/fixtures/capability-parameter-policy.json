@@ -142,7 +142,8 @@
     "sessions.queueRemove": "deletes one entry this hub queued for that session (selected by its opaque hub-minted id); it can only withhold a prompt. Clearing a paused queue's error may let the remaining entries, already queued by sessions.queueAdd, be delivered when the session is ready",
     "sessions.queueClear": "deletes every entry this hub queued for that session; it can only withhold prompts. No path, argv or policy value, and nothing is sent",
     "claude.compact": "asks an agent that is already running to summarize its own conversation: claudemon hands it to that session's live driver, which sends the CLI's own /compact user message (Claude stream) or codex's thread/compact/start. The optional instructions are focus text for that summary, sent the way agents.sendMessage sends a prompt to the same session. No path, argv or policy value; holding the capability is the gate",
-    "claude.rewindFiles": "restores the files an already-running Claude stream session changed to their checkpoint at one of that session's own user messages, through the CLI's own rewind_files control request. The caller names the session and a message id only: which files and what content come from the CLI's own checkpoints, and the CLI refuses symlinks, hard links and parents that moved. dryRun only previews. No path, argv or policy value",
+    "claude.rewindFiles": "restores the files an already-running Claude stream session changed to their checkpoint at one of that session's own user messages, through the CLI's own rewind_files control request. The caller names the session and a message id only: which files and what content come from the CLI's own checkpoints, and the CLI refuses symlinks, hard links and parents that moved. preview only previews (the CLI's dry run). No path, argv or policy value",
+    "agents.fork": "launches a NEW stream session continuing one this hub already launched, through the same spawn coordinator, admission, routing and launch journal as agents.spawn. The caller names only the source session, an optional message id to continue before, and a label: provider, working directory, profile, library MCP servers, parent and model come from the source's own launch record, and the fork never inherits a manager role, a permission bypass or a launch integration. No path, argv or policy value, and no reach agents.spawn of that same record would not have",
     "claude.revert": "drops one turn and every later one from an already-running Codex session's thread history through codex's own thread/revert; files are untouched. The caller names the session and a message or turn id only; it can only remove conversation history, never add to it. No path, argv or policy value"
   },
   "inertMethods": {
@@ -928,12 +929,6 @@
       "id": {
         "kind": "id",
         "reason": "an opaque hub-minted queue-entry id (q- plus hex) that selects an entry of that session's queue; never joined into a path"
-      }
-    },
-    "claude.rewindFiles": {
-      "dryRun": {
-        "kind": "inert",
-        "reason": "a boolean that turns the CLI's rewind_files into a preview: with it set nothing on disk changes and only the would-be diff stats come back. Never a command, path or policy value"
       }
     }
   },

@@ -861,7 +861,7 @@ impl Sessions {
                     format!("{root}/rewind-files"),
                     Some(json!({
                         "user_message_id": params["userMessageId"],
-                        "dry_run": params["dryRun"].as_bool().unwrap_or(false),
+                        "dry_run": params["preview"].as_bool().unwrap_or(false),
                     })),
                 )
                 .await

@@ -783,6 +783,16 @@ export const claims: Record<string, Claim> = {
       },
     ],
   },
+  'agents.fork': {
+    reason:
+      "launches a NEW stream session continuing one this hub already launched, through agents.spawn's own coordinator, admission, routing and launch journal. `sessionId` and `atMessageId` only SELECT the source launch record and where its conversation is cut; provider, cwd, profile, MCP servers and model come from that record, never the caller, and no manager role, permission bypass or launch integration is inherited",
+    witnesses: [
+      {
+        kind: 'params',
+        params: ['sessionId', 'atMessageId'],
+      },
+    ],
+  },
   'claude.compact': {
     reason:
       "asks an already-running agent to summarize its own conversation (the CLI's own /compact user message, or codex's thread/compact/start). The optional `instructions` are focus text for that summary, delivered to the same session the way agents.sendMessage delivers a prompt, so they reach nothing agents.sendMessage could not; no path, argv or policy value",
@@ -1647,6 +1657,18 @@ export const parameterDecisions: Record<
         "arms or disarms the PreToolUse parking gate for a running session: with it ON every tool call stops and waits for claude.approve, and with it OFF the agent's own configured permissions apply. It changes what the host will do without asking, which is what KindPermission means",
     },
   },
+  'agents.fork': {
+    sessionId: {
+      kind: 'id',
+      reason:
+        "selects the source session's launch record in this hub's own journal; validated as a bounded plain id and never joined into a path",
+    },
+    atMessageId: {
+      kind: 'id',
+      reason:
+        'an opaque user-message uuid naming where the source conversation is cut; validated as a bounded plain id and never joined into a path',
+    },
+  },
   'claude.compact': {
     instructions: {
       kind: 'shell',
@@ -1755,6 +1777,7 @@ export const parameterDecisions: Record<
 };
 export const actors: string[] = [
   'agents.dispatchPrepare',
+  'agents.fork',
   'agents.reportProgress',
   'agents.sendMessage',
   'agents.spawn',
