@@ -1640,6 +1640,119 @@ async fn seed_resumed_history(
 /// The exact headless argv, per the verified contract. `--verbose` is required
 /// for stream-json output in print mode; `--permission-prompt-tool stdio`
 /// routes approvals to us as `can_use_tool` control requests.
+/// The first CLI known to accept `--thinking-display <summarized|omitted>`
+/// (a hidden option; present in the 2.1.221 bundle, the oldest checked).
+const THINKING_DISPLAY_MIN_VERSION: (u32, u32, u32) = (2, 1, 221);
+
+/// `--thinking-display summarized` when the CLI is known to take it and no one
+/// already chose: not the spawn's own extra args (`--thinking-display`, or
+/// `--thinking disabled`), not a `showThinkingSummaries` setting. Current
+/// models default to an OMITTED display, whose thinking blocks carry no text
+/// (observed live on 2.1.299), so without this reasoning items never fill;
+/// with it, the same CLI streams summarized `thinking_delta` text (verified
+/// live, Haiku 5.5). An unknown or older version gets nothing: an unknown
+/// flag would stop the CLI from starting.
+fn thinking_display_args(
+    version: Option<(u32, u32, u32)>,
+    extra_args: &[String],
+    settings_choose: bool,
+) -> Vec<String> {
+    let chosen = extra_args.iter().any(|a| {
+        a == "--thinking-display"
+            || a.starts_with("--thinking-display=")
+            || a.starts_with("--thinking=disabled")
+    }) || extra_args
+        .windows(2)
+        .any(|w| w[0] == "--thinking" && w[1] == "disabled");
+    if chosen || settings_choose || version.is_none_or(|v| v < THINKING_DISPLAY_MIN_VERSION) {
+        return Vec::new();
+    }
+    vec!["--thinking-display".into(), "summarized".into()]
+}
+
+/// Whether a settings file the CLI reads for this session sets
+/// `showThinkingSummaries` (either way): the user's config root
+/// (`CLAUDE_CONFIG_DIR` from the spawn env or the daemon's, else
+/// `~/.claude`) and the project's `.claude/settings{,.local}.json`.
+fn settings_choose_thinking_display(cwd: &str, spawn_env: &HashMap<String, String>) -> bool {
+    let root = spawn_env
+        .get("CLAUDE_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from))
+        .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().join(".claude")));
+    let project = std::path::Path::new(cwd).join(".claude");
+    root.map(|r| r.join("settings.json"))
+        .into_iter()
+        .chain([
+            project.join("settings.json"),
+            project.join("settings.local.json"),
+        ])
+        .any(|path| {
+            std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|v| v.get("showThinkingSummaries").is_some())
+        })
+}
+
+/// The CLI's `(major, minor, patch)` from `<bin> --version` (~40 ms), cached
+/// per resolved binary path: an update installs a new versioned file, so the
+/// canonical path changes with the version. `None` when it cannot be learned.
+async fn cli_version(bin: &str) -> Option<(u32, u32, u32)> {
+    type Cache = std::sync::Mutex<HashMap<String, Option<(u32, u32, u32)>>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let key = which_bin(bin)
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| bin.to_string());
+    if let Some(known) = CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .get(&key)
+    {
+        return *known;
+    }
+    let probe = async {
+        let out = Command::new(bin)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .scrub_host_authority()
+            .no_console_window()
+            .output()
+            .await
+            .ok()?;
+        out.status
+            .success()
+            .then(|| parse_cli_version(&String::from_utf8_lossy(&out.stdout)))
+            .flatten()
+    };
+    let version = tokio::time::timeout(std::time::Duration::from_secs(5), probe)
+        .await
+        .ok()
+        .flatten();
+    CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .insert(key, version);
+    version
+}
+
+/// `bin` as a path: itself when it names one, else its first `PATH` hit.
+fn which_bin(bin: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(bin);
+    if path.components().count() > 1 {
+        return Some(path.to_path_buf());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(bin))
+        .find(|candidate| candidate.is_file())
+}
+
 fn build_argv(cfg: &SpawnConfig) -> Vec<String> {
     let mut argv: Vec<String> = [
         "--print",
@@ -1714,7 +1827,16 @@ async fn run_session(
 ) -> anyhow::Result<()> {
     let session_id = cfg.session_id.clone();
     let startup_started = std::time::Instant::now();
-    let argv = build_argv(&cfg);
+    let mut argv = build_argv(&cfg);
+    // Ask for thinking TEXT when the CLI takes the flag and nobody chose a
+    // display already (see `thinking_display_args`).
+    let version = cli_version(&cfg.bin).await;
+    let settings_choose = settings_choose_thinking_display(&cfg.cwd, &cfg.env);
+    argv.extend(thinking_display_args(
+        version,
+        &cfg.extra_args,
+        settings_choose,
+    ));
     // `_tie` lives as long as the session: the CLI cannot outlive the app.
     let mut command = Command::new(&cfg.bin);
     command.args(&argv).envs(&cfg.env);
@@ -2775,6 +2897,72 @@ mod tests {
         );
         // A status frame without the key says nothing about compaction.
         assert!(t(json!({ "type": "system", "subtype": "status" })).is_empty());
+    }
+
+    /// Summarized thinking is requested only from a CLI known to take the
+    /// flag, and never over a choice the user already made.
+    #[test]
+    fn thinking_display_is_summarized_unless_unknown_or_chosen() {
+        let summarized = vec!["--thinking-display".to_string(), "summarized".to_string()];
+        assert_eq!(
+            thinking_display_args(Some((2, 1, 299)), &[], false),
+            summarized
+        );
+        assert_eq!(
+            thinking_display_args(Some((2, 1, 221)), &[], false),
+            summarized
+        );
+        assert!(thinking_display_args(Some((2, 1, 220)), &[], false).is_empty());
+        assert!(
+            thinking_display_args(None, &[], false).is_empty(),
+            "unknown CLI"
+        );
+        assert!(
+            thinking_display_args(Some((2, 1, 299)), &[], true).is_empty(),
+            "settings chose"
+        );
+        for chosen in [
+            vec!["--thinking-display".to_string(), "omitted".to_string()],
+            vec!["--thinking-display=omitted".to_string()],
+            vec!["--thinking".to_string(), "disabled".to_string()],
+            vec!["--thinking=disabled".to_string()],
+        ] {
+            assert!(
+                thinking_display_args(Some((2, 1, 299)), &chosen, false).is_empty(),
+                "{chosen:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_settings_file_naming_show_thinking_summaries_is_a_choice() {
+        let dir = std::env::temp_dir().join(format!("claudemon-thinking-{}", uuid::Uuid::new_v4()));
+        let project = dir.join("project");
+        let root = dir.join("config");
+        std::fs::create_dir_all(project.join(".claude")).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let env = HashMap::from([(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            root.to_string_lossy().into_owned(),
+        )]);
+        let cwd = project.to_string_lossy().into_owned();
+        assert!(!settings_choose_thinking_display(&cwd, &env));
+        std::fs::write(root.join("settings.json"), r#"{"model":"opus"}"#).unwrap();
+        assert!(!settings_choose_thinking_display(&cwd, &env));
+        std::fs::write(
+            project.join(".claude/settings.local.json"),
+            r#"{"showThinkingSummaries":false}"#,
+        )
+        .unwrap();
+        assert!(settings_choose_thinking_display(&cwd, &env));
+        std::fs::remove_file(project.join(".claude/settings.local.json")).unwrap();
+        std::fs::write(
+            root.join("settings.json"),
+            r#"{"showThinkingSummaries":true}"#,
+        )
+        .unwrap();
+        assert!(settings_choose_thinking_display(&cwd, &env));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
