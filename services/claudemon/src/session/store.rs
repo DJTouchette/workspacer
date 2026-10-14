@@ -14,8 +14,8 @@ use super::account_usage::{AccountUsage, UsageError, UsageFailure};
 use super::conversation::{ConversationItem, ConversationStore};
 use super::permission_mode::{classify_screen, PermissionMode, PermissionSwitchError};
 use super::state::{
-    ContextUsageState, HookEvent, Pending, PendingWrite, Plan, SessionMode, SessionState,
-    StatusLine, SubagentInfo, SubagentStatus, SubagentUpdate, Transport,
+    ContextUsageState, HookEvent, Pending, PendingOwner, PendingWrite, Plan, SessionMode,
+    SessionState, StatusLine, SubagentInfo, SubagentStatus, SubagentUpdate, Transport,
     CLAUDE_FIVE_HOUR_WINDOW_MINUTES, CLAUDE_SEVEN_DAY_WINDOW_MINUTES,
 };
 use crate::protocol::WrapperMessage;
@@ -356,6 +356,14 @@ pub struct SessionStore {
     /// driver's `can_use_tool` allow-with-answers). `/answer` routes here when
     /// present instead of writing picker keystrokes to a PTY.
     managed_answers: Arc<DashMap<String, mpsc::UnboundedSender<ManagedAnswer>>>,
+    /// The same, for questions raised by the `AskUserQuestion` MCP shim
+    /// (`daemon::mcp_ask`, [`PendingOwner::Ask`]). Kept apart from the
+    /// driver's own channel because a codex driver ALSO parks questions
+    /// (`item/tool/requestUserInput`): with one last-writer-wins slot, the
+    /// shim's registration replaced the driver's and its unregister then left
+    /// the driver with no channel at all. `/answer` routes by the feed that
+    /// owns the displayed card.
+    ask_answers: Arc<DashMap<String, mpsc::UnboundedSender<ManagedAnswer>>>,
     /// Structural permission-mode switches for managed sessions whose driver
     /// speaks Claude's own mode vocabulary (`set_permission_mode` on the
     /// stream control protocol). Present only for the stream driver — codex
@@ -754,6 +762,7 @@ impl SessionStore {
             managed_yolo: Arc::new(DashMap::new()),
             managed_model: Arc::new(DashMap::new()),
             managed_answers: Arc::new(DashMap::new()),
+            ask_answers: Arc::new(DashMap::new()),
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             managed_task_controls: Arc::new(DashMap::new()),
@@ -1981,16 +1990,34 @@ impl SessionStore {
     }
 
     /// Remove the structural answer channel — but only if it is still the one
-    /// this caller registered (`same_channel`). Short-lived registrants (the
-    /// MCP AskUserQuestion endpoint parks a channel per question) must not
-    /// clobber a newer registration made while they were awaiting: last
-    /// writer wins on register, so only the last writer may unregister.
+    /// this caller registered (`same_channel`), so a stale caller cannot
+    /// clobber a newer registration: last writer wins on register, so only
+    /// the last writer may unregister.
     pub fn unregister_managed_answer_if(
         &self,
         session_id: &str,
         tx: &mpsc::UnboundedSender<ManagedAnswer>,
     ) {
         self.managed_answers
+            .remove_if(session_id, |_, existing| existing.same_channel(tx));
+    }
+
+    /// Register the answer channel for a question the `AskUserQuestion` MCP
+    /// shim parked ([`PendingOwner::Ask`]). Separate from the driver's
+    /// [`Self::register_managed_answer`] so neither feed can unseat the other.
+    pub fn register_ask_answer(&self, session_id: &str, tx: mpsc::UnboundedSender<ManagedAnswer>) {
+        self.ask_answers.insert(session_id.to_string(), tx);
+    }
+
+    /// Remove the shim's answer channel if it is still this caller's. The shim
+    /// parks one channel per question, and two concurrent asks on one session
+    /// collapse onto the newer one (see `daemon::mcp_ask`).
+    pub fn unregister_ask_answer_if(
+        &self,
+        session_id: &str,
+        tx: &mpsc::UnboundedSender<ManagedAnswer>,
+    ) {
+        self.ask_answers
             .remove_if(session_id, |_, existing| existing.same_channel(tx));
     }
 
@@ -2008,7 +2035,22 @@ impl SessionStore {
         session_id: &str,
         answer: ManagedAnswer,
     ) -> bool {
-        match self.managed_answers.get(session_id) {
+        // Route to the feed whose question is on the card. Only a card the
+        // driver itself parked goes to the driver; otherwise (the shim's card,
+        // or a racing answer before the shim's park landed) the shim's channel
+        // wins when it exists. Either falls back to the other, which is the
+        // single-feed behavior every session had before the split.
+        let owner = self.states.get(session_id).and_then(|s| s.pending_owner());
+        let (first, second) = if owner == Some(PendingOwner::Primary) {
+            (&self.managed_answers, &self.ask_answers)
+        } else {
+            (&self.ask_answers, &self.managed_answers)
+        };
+        let tx = first
+            .get(session_id)
+            .or_else(|| second.get(session_id))
+            .map(|tx| tx.clone());
+        match tx {
             Some(tx) => tx.send(answer).is_ok(),
             None => false,
         }
@@ -2222,6 +2264,7 @@ impl SessionStore {
         self.managed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
         self.managed_answers.remove(session_id);
+        self.ask_answers.remove(session_id);
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
@@ -2281,6 +2324,7 @@ impl SessionStore {
         self.managed_model.remove(session_id);
         self.managed_yolo.remove(session_id);
         self.managed_answers.remove(session_id);
+        self.ask_answers.remove(session_id);
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
@@ -3414,7 +3458,7 @@ impl Default for SessionStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::state::{ContextHealth, PendingOwner};
+    use crate::session::state::ContextHealth;
 
     #[test]
     fn post_switch_context_confirmation_policy_is_evidence_backed() {
@@ -3627,7 +3671,7 @@ mod tests {
     }
 
     #[test]
-    fn unregister_managed_answer_if_only_removes_its_own_channel() {
+    fn unregister_ask_answer_if_only_removes_its_own_channel() {
         // The MCP AskUserQuestion endpoint parks one short-lived channel per
         // question, last-writer-wins. A stale registrant's unregister (its 6h
         // timeout or drop guard firing while a NEWER question is parked) must
@@ -3637,11 +3681,11 @@ mod tests {
         store.register_managed("s1", "/w", "codex");
         let (tx1, _rx1) = mpsc::unbounded_channel::<ManagedAnswer>();
         let (tx2, mut rx2) = mpsc::unbounded_channel::<ManagedAnswer>();
-        store.register_managed_answer("s1", tx1.clone());
-        store.register_managed_answer("s1", tx2.clone()); // overwrites tx1
+        store.register_ask_answer("s1", tx1.clone());
+        store.register_ask_answer("s1", tx2.clone()); // overwrites tx1
 
         // Stale unregister (tx1 lost the slot) leaves tx2's registration alone.
-        store.unregister_managed_answer_if("s1", &tx1);
+        store.unregister_ask_answer_if("s1", &tx1);
         assert!(store.submit_managed_answer(
             "s1",
             ManagedAnswer {
@@ -3655,7 +3699,7 @@ mod tests {
         assert_eq!(got.option, Some(2));
 
         // The rightful (last) owner may remove its own channel.
-        store.unregister_managed_answer_if("s1", &tx2);
+        store.unregister_ask_answer_if("s1", &tx2);
         assert!(!store.submit_managed_answer(
             "s1",
             ManagedAnswer {
@@ -3665,6 +3709,74 @@ mod tests {
                 answer_kinds: None,
             },
         ));
+    }
+
+    /// The driver's own answer channel (codex parks `requestUserInput`
+    /// questions) and the MCP shim's are separate: an answer goes to the feed
+    /// whose card is displayed, and the shim's register/unregister can never
+    /// strip the driver's channel — which a shared last-writer-wins slot did,
+    /// for the rest of the session.
+    #[test]
+    fn answers_route_to_the_feed_whose_question_is_displayed() {
+        use crate::session::state::{PendingQuestion, PendingWrite};
+        let store = SessionStore::new();
+        store.register_managed("s1", "/w", "codex");
+        let (driver, mut driver_rx) = mpsc::unbounded_channel::<ManagedAnswer>();
+        store.register_managed_answer("s1", driver);
+        let question = |q: &str| Pending::Question {
+            questions: vec![PendingQuestion {
+                question: q.into(),
+                header: None,
+                multi_select: false,
+                options: Vec::new(),
+                secret: false,
+            }],
+            raw: Value::Null,
+        };
+        let answer = |text: &str| ManagedAnswer {
+            option: None,
+            text: Some(text.into()),
+            answers: None,
+            answer_kinds: None,
+        };
+
+        // The driver's question is up; the shim then asks over it.
+        store.set_managed_mode(
+            "s1",
+            SessionMode::Question,
+            PendingWrite::Park(PendingOwner::Primary, question("driver?")),
+        );
+        let (ask, mut ask_rx) = mpsc::unbounded_channel::<ManagedAnswer>();
+        store.register_ask_answer("s1", ask.clone());
+        store.set_managed_mode(
+            "s1",
+            SessionMode::Question,
+            PendingWrite::Park(PendingOwner::Ask, question("ask?")),
+        );
+        assert!(store.submit_managed_answer("s1", answer("for ask")));
+        assert_eq!(ask_rx.try_recv().unwrap().text.as_deref(), Some("for ask"));
+        assert!(driver_rx.try_recv().is_err());
+
+        // The shim finishes: its card goes, the driver's comes back, and the
+        // driver's channel is still there to answer it.
+        store.unregister_ask_answer_if("s1", &ask);
+        store.set_managed_mode(
+            "s1",
+            SessionMode::Responding,
+            PendingWrite::Resolve(PendingOwner::Ask),
+        );
+        assert!(store.submit_managed_answer("s1", answer("for driver")));
+        assert_eq!(
+            driver_rx.try_recv().unwrap().text.as_deref(),
+            Some("for driver")
+        );
+
+        // The driver's card on top of a live shim question routes to the driver.
+        let (ask, mut ask_rx) = mpsc::unbounded_channel::<ManagedAnswer>();
+        store.register_ask_answer("s1", ask);
+        assert!(store.submit_managed_answer("s1", answer("driver again")));
+        assert!(ask_rx.try_recv().is_err());
+        assert!(driver_rx.try_recv().is_ok());
     }
 
     #[test]

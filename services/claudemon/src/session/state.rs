@@ -155,6 +155,11 @@ pub struct PendingQuestion {
     pub multi_select: bool,
     #[serde(default)]
     pub options: Vec<PendingOption>,
+    /// The answer is sensitive (Codex `request_user_input`'s `isSecret`):
+    /// clients should mask the typed answer, and nothing may log it. Omitted
+    /// from the wire when false, so Claude's questions serialize unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1028,6 +1033,13 @@ impl SessionState {
     /// [`PendingOwner`]).
     pub fn pending(&self) -> Option<&Pending> {
         self.pending_card.as_ref()
+    }
+
+    /// Which feed raised the displayed card, so an answer can be routed to
+    /// the feed that is actually waiting on it (see
+    /// `SessionStore::submit_managed_answer`).
+    pub(crate) fn pending_owner(&self) -> Option<PendingOwner> {
+        self.pending_owner
     }
 
     /// Apply a [`PendingWrite`] to the slot and to `mode`, and report whether
