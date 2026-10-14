@@ -108,6 +108,7 @@ async fn an_uncertain_send_is_confirmed_by_its_own_receipt() {
                 text: "warm up".into(),
                 delivery: Default::default(),
                 sender: Default::default(),
+                images: Vec::new(),
             })
             .await
             .is_ok()
@@ -136,6 +137,7 @@ async fn an_uncertain_send_is_confirmed_by_its_own_receipt() {
                     delivery: Default::default(),
                     sender: Default::default(),
                     uuid,
+                    images: Vec::new(),
                 })
                 .await
                 .unwrap();

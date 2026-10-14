@@ -84,6 +84,78 @@ pub struct Session {
     /// Receipts, MCP servers, hooks and fast mode as the provider reports
     /// them; see [`crate::provider_status`].
     pub status: crate::provider_status::Status,
+    /// What the composer offers on `/` (the hub's `slashCommands`): Claude's
+    /// commands and skills, Codex's skills. Kept when a row omits it.
+    pub slash_commands: Vec<SlashCommand>,
+}
+
+/// One entry of the composer's `/` menu.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SlashCommand {
+    pub name: String,
+    /// The text the menu inserts (`/compact`, Codex's `$skill`).
+    pub insert: String,
+    pub description: String,
+}
+
+/// Most menu entries kept per session.
+pub const MAX_SLASH_COMMANDS: usize = 400;
+/// Rows the composer's `/` menu shows at once.
+pub const SLASH_MENU_ROWS: usize = 8;
+
+/// The menu for a composer draft: open only while the draft is a single
+/// `/token` (nothing typed after it yet), matching names that start with the
+/// token first, then names that contain it. Empty means the menu is shut.
+pub fn slash_matches<'a>(commands: &'a [SlashCommand], draft: &str) -> Vec<&'a SlashCommand> {
+    let Some(query) = draft.strip_prefix('/') else {
+        return Vec::new();
+    };
+    if query.chars().any(char::is_whitespace) {
+        return Vec::new();
+    }
+    let query = query.to_lowercase();
+    let name = |c: &SlashCommand| c.name.to_lowercase();
+    let mut out: Vec<&SlashCommand> = commands
+        .iter()
+        .filter(|c| name(c).starts_with(&query))
+        .collect();
+    out.extend(
+        commands
+            .iter()
+            .filter(|c| !name(c).starts_with(&query) && name(c).contains(&query)),
+    );
+    out.truncate(SLASH_MENU_ROWS);
+    out
+}
+
+impl SlashCommand {
+    fn parse(value: &Value) -> Vec<Self> {
+        value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| {
+                let name = row.get("name")?.as_str()?.trim();
+                let insert = row
+                    .get("insert")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("/{name}"));
+                let token = |t: &str| {
+                    !t.is_empty() && t.len() <= 129 && !t.chars().any(char::is_whitespace)
+                };
+                (token(name) && token(&insert) && insert.starts_with(['/', '$'])).then(|| Self {
+                    name: name.to_owned(),
+                    insert,
+                    description: crate::transcript::head(
+                        row.get("description").and_then(Value::as_str).unwrap_or(""),
+                        200,
+                    ),
+                })
+            })
+            .take(MAX_SLASH_COMMANDS)
+            .collect()
+    }
 }
 
 /// One account's usage windows from a session's status line: what decides
@@ -297,6 +369,17 @@ impl Session {
         }
     }
 
+    /// Whether the hub hands this session's attached images to the provider
+    /// as real image input (Claude stream, Codex) rather than as a path the
+    /// agent must read.
+    pub fn takes_images(&self) -> bool {
+        match self.provider_id() {
+            "claude" => self.transport == "stream",
+            "codex" => true,
+            _ => false,
+        }
+    }
+
     pub fn id_of(value: &Value) -> Option<&str> {
         value
             .get("sessionId")
@@ -380,6 +463,9 @@ impl Session {
         .filter(|m| !m.is_empty())
         {
             self.runtime_model = crate::transcript::head(model, 128);
+        }
+        if let Some(commands) = value.get("slashCommands") {
+            self.slash_commands = SlashCommand::parse(commands);
         }
         if let Some(skills) = value.pointer("/statusLine/capabilities/inventory/skills") {
             self.skills = bounded_inventory(skills, &["name", "description", "origin", "path"]);
@@ -1417,6 +1503,78 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn image_sends_carry_upload_paths_and_only_stream_and_codex_take_them() {
+        use crate::controller::Action;
+        let send = |now| Action::SendImages {
+            text: "look".into(),
+            images: vec!["/u/m-1-abcdef01.png".into()],
+            now,
+        };
+        let (method, params) = send(false).wire("a");
+        assert_eq!(method, "agents.sendMessage");
+        assert_eq!(
+            params,
+            serde_json::json!({"sessionId":"a","text":"look","images":[{"path":"/u/m-1-abcdef01.png"}]})
+        );
+        assert_eq!(send(true).wire("a").1["delivery"], "now");
+        assert_eq!(send(true).draft_text(), Some("look"));
+        let session = |provider: &str, transport: &str| Session {
+            provider: provider.into(),
+            transport: transport.into(),
+            ..Default::default()
+        };
+        assert!(session("claude", "stream").takes_images());
+        assert!(session("", "stream").takes_images());
+        assert!(session("codex", "").takes_images());
+        assert!(!session("claude", "pty").takes_images());
+        assert!(!session("opencode", "stream").takes_images());
+    }
+
+    #[test]
+    fn slash_menu_parses_the_snapshot_and_filters_a_single_token_draft() {
+        let mut session = Session::default();
+        session.merge(&serde_json::json!({"slashCommands": [
+            {"name": "compact", "insert": "/compact", "description": "Compact the context", "kind": "command"},
+            {"name": "code-review", "insert": "/code-review", "kind": "skill"},
+            {"name": "review-pr", "insert": "$review-pr", "kind": "skill"},
+            {"name": "bad name", "insert": "/bad name"},
+            {"name": "evil", "insert": "rm -rf"},
+            {"name": "legacy"}
+        ]}));
+        let names = |draft: &str| {
+            slash_matches(&session.slash_commands, draft)
+                .iter()
+                .map(|c| c.insert.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            session.slash_commands.len(),
+            4,
+            "malformed rows are dropped"
+        );
+        assert_eq!(session.slash_commands[0].description, "Compact the context");
+        assert_eq!(
+            names("/"),
+            ["/compact", "/code-review", "$review-pr", "/legacy"]
+        );
+        assert_eq!(names("/co"), ["/compact", "/code-review"]);
+        // Prefix matches first, then names containing the token.
+        assert_eq!(names("/rev"), ["$review-pr", "/code-review"]);
+        assert_eq!(names("/CO"), ["/compact", "/code-review"]);
+        assert!(
+            names("/compact ").is_empty(),
+            "shut once an argument starts"
+        );
+        assert!(names("compact").is_empty());
+        assert!(names("/zzz").is_empty());
+        // A row without the key keeps the list; an explicit list replaces it.
+        session.merge(&serde_json::json!({"mode": "input"}));
+        assert_eq!(session.slash_commands.len(), 4);
+        session.merge(&serde_json::json!({"slashCommands": []}));
+        assert!(session.slash_commands.is_empty());
+    }
     use serde_json::json;
 
     /// The hub's camelCase row (and the daemon's own snake_case one) carry

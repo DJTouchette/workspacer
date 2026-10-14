@@ -17,12 +17,10 @@ struct Params {
     #[serde(default)]
     data_base64: String,
 }
+/// The landing pad, shared with the daemon: `agents.sendMessage` accepts an
+/// image only from here (`claudemon::session::images`).
 fn directory() -> PathBuf {
-    #[cfg(unix)]
-    let uid = unsafe { libc::getuid() }.to_string();
-    #[cfg(not(unix))]
-    let uid = "-1";
-    std::env::temp_dir().join(format!("workspacer-uploads-{uid}"))
+    claudemon::session::images::upload_dir()
 }
 fn store(params: Value, dir: &Path) -> Result<Value> {
     let params: Params = serde_json::from_value(params)

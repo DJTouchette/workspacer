@@ -33,11 +33,45 @@ impl MessageOutcome {
     }
 }
 
+/// The `images` of an `agents.sendMessage`: `[{path}]` naming files this
+/// host's `files.upload` wrote. Each path must be one of those uploads
+/// (confined by [`claudemon::session::images::confine`]: directly inside the
+/// private upload directory, under the hub-composed name, a regular file) —
+/// a caller can never point the agent at any other file this way. The shape
+/// was checked in `params`; the daemon re-checks, sniffs and size-caps the
+/// bytes when it loads them.
+pub(super) async fn confined_images_off_thread(images: &Value) -> anyhow::Result<Vec<String>> {
+    if images.as_array().is_none_or(Vec::is_empty) {
+        return Ok(Vec::new());
+    }
+    // Canonicalizing and stat-ing are file I/O: off the async workers.
+    let images = images.clone();
+    tokio::task::spawn_blocking(move || confined_images(&images)).await?
+}
+
+/// [`confined_images_off_thread`]'s blocking check.
+pub(super) fn confined_images(images: &Value) -> anyhow::Result<Vec<String>> {
+    let Some(images) = images.as_array() else {
+        return Ok(Vec::new());
+    };
+    images
+        .iter()
+        .map(|image| {
+            let path = image["path"].as_str().unwrap_or("");
+            claudemon::session::images::confine(path)
+                .map(|path| path.to_string_lossy().into_owned())
+                .map_err(|error| anyhow!(error))
+        })
+        .collect()
+}
+
 impl Sessions {
     /// Send `text` to session `id`. `from` names a sending session: present,
     /// the message is agent-to-agent (sender `Agent`, attributed with a
     /// sender header); absent, it comes from a person (sender `Human`) — only
     /// a person's `now` may claim `origin: {kind: "human"}`.
+    ///
+    /// `images` are already-confined upload paths ([`confined_images`]).
     ///
     /// The caller has already validated `id` (`segment`) and the wire params.
     ///
@@ -52,6 +86,7 @@ impl Sessions {
         delivery: Delivery,
         from: Option<&str>,
         uuid: Option<&str>,
+        images: &[String],
     ) -> MessageOutcome {
         let Some(text) = text.filter(|s| !s.is_empty()) else {
             return MessageOutcome::Rejected(anyhow!(
@@ -98,6 +133,7 @@ impl Sessions {
                 delivery,
                 sender,
                 uuid,
+                images,
             )
             .await
             {
@@ -124,6 +160,9 @@ impl Sessions {
         if let Some(uuid) = uuid {
             payload["uuid"] = json!(uuid);
         }
+        if !images.is_empty() {
+            payload["images"] = images.iter().map(|path| json!({"path":path})).collect();
+        }
         match self
             .request("POST", format!("/sessions/{id}/message"), Some(payload))
             .await
@@ -133,12 +172,41 @@ impl Sessions {
                 if let Some(uuid) = reply["message_uuid"].as_str() {
                     wire["messageUuid"] = json!(uuid);
                 }
+                if reply["imagesAsMarkers"] == true {
+                    wire["imagesAsMarkers"] = json!(true);
+                }
                 MessageOutcome::Delivered(wire)
             }
             Err(error) if error.downcast_ref::<CommandRejected>().is_some() => {
                 MessageOutcome::Rejected(error)
             }
             Err(error) => MessageOutcome::Uncertain(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::confined_images;
+    use serde_json::json;
+
+    #[test]
+    fn images_must_name_this_hosts_uploads() {
+        assert!(confined_images(&json!(null)).unwrap().is_empty());
+        assert!(confined_images(&json!([])).unwrap().is_empty());
+        let dir = claudemon::session::images::upload_dir();
+        for refused in [
+            json!([{"path": "/etc/passwd"}]),
+            json!([{"path": dir.join("m-1-abcdef01.txt")}]),
+            json!([{"path": dir.join("m-1-ffffffff.png")}]),
+            json!([{"path": "relative/m-1-abcdef01.png"}]),
+        ] {
+            let error = confined_images(&refused).unwrap_err().to_string();
+            // (A missing upload directory is refused as such.)
+            assert!(
+                error.contains("not a file uploaded") || error.contains("upload directory"),
+                "{refused}: {error}"
+            );
         }
     }
 }

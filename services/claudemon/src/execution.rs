@@ -79,10 +79,18 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
         let _ = (delivery, sender);
         self.send(store, id, text)
     }
+    /// Whether this engine hands images to providers structurally; when
+    /// not, [`Self::send_full`] delivers markers and the daemon reads no
+    /// image bytes for it.
+    fn takes_images(&self) -> bool {
+        false
+    }
     /// `send_with` carrying the uuid a delivery-aware driver stamps on the
-    /// message. Engines that cannot honour it keep the default, which drops
-    /// the uuid and sends normally.
-    fn send_tracked(
+    /// message and validated images. Engines that cannot honour them keep
+    /// the default: the uuid is dropped and the images become
+    /// `[Image: <path>]` markers ahead of the text.
+    #[allow(clippy::too_many_arguments)]
+    fn send_full(
         &self,
         store: &SessionStore,
         id: &str,
@@ -90,8 +98,10 @@ pub(crate) trait ExecutionEngineV1: Send + Sync {
         delivery: Delivery,
         sender: MessageSender,
         uuid: Option<String>,
+        images: Vec<crate::session::images::ImageInput>,
     ) -> MessageOutcome {
         let _ = uuid;
+        let text = crate::session::images::with_markers(text, &images);
         self.send_with(store, id, text, delivery, sender)
     }
     fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool;
@@ -232,7 +242,10 @@ impl ExecutionEngineV1 for ClaudemonEngine {
     ) -> MessageOutcome {
         store.native_submit_message_from(id, text, delivery, sender)
     }
-    fn send_tracked(
+    fn takes_images(&self) -> bool {
+        true
+    }
+    fn send_full(
         &self,
         store: &SessionStore,
         id: &str,
@@ -240,8 +253,9 @@ impl ExecutionEngineV1 for ClaudemonEngine {
         delivery: Delivery,
         sender: MessageSender,
         uuid: Option<String>,
+        images: Vec<crate::session::images::ImageInput>,
     ) -> MessageOutcome {
-        store.native_submit_message_tracked(id, text, delivery, sender, uuid)
+        store.native_submit_message_full(id, text, delivery, sender, uuid, images)
     }
     fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool {
         store.native_submit_managed_decision(id, decision)
@@ -351,7 +365,9 @@ impl ExecutionEngineV1 for BoundEngine {
             engine.send_with(store, id, text, delivery, sender)
         })
     }
-    fn send_tracked(
+    // Images reach a proxied engine as markers (`takes_images` stays false,
+    // so the daemon read no bytes for them); the uuid is forwarded.
+    fn send_full(
         &self,
         store: &SessionStore,
         id: &str,
@@ -359,9 +375,11 @@ impl ExecutionEngineV1 for BoundEngine {
         delivery: Delivery,
         sender: MessageSender,
         uuid: Option<String>,
+        images: Vec<crate::session::images::ImageInput>,
     ) -> MessageOutcome {
+        let text = crate::session::images::with_markers(text, &images);
         self.call(MessageOutcome::WrapperGone, |engine| {
-            engine.send_tracked(store, id, text, delivery, sender, uuid)
+            engine.send_full(store, id, text, delivery, sender, uuid, Vec::new())
         })
     }
     fn decide(&self, store: &SessionStore, id: &str, decision: ManagedDecision) -> bool {

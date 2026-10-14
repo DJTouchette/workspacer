@@ -65,6 +65,14 @@ pub(super) struct Extras {
     pub keep_running: std::rc::Rc<std::cell::Cell<bool>>,
     pub upload_receipt: u64,
     pub attachments: HashMap<String, Vec<(String, String)>>,
+    /// Uploaded size by hub path, from each `files.upload` result: decides
+    /// whether an image is small enough to send as real image input.
+    pub attachment_sizes: HashMap<String, u64>,
+    /// The composer's `/` menu: the highlighted row, and the draft the user
+    /// dismissed it for with Esc (it stays shut until the draft changes),
+    /// each keyed by (session, draft).
+    pub slash_cursor: Option<(String, String, usize)>,
+    pub slash_dismissed: Option<(String, String)>,
     pub sent_drafts: HashMap<String, String>,
     pub answer_watches: Vec<gpui::Subscription>,
     pub sent_attachments: HashMap<String, Vec<(String, String)>>,
@@ -204,6 +212,9 @@ impl Extras {
             keep_running: Default::default(),
             upload_receipt: 0,
             attachments: HashMap::new(),
+            attachment_sizes: HashMap::new(),
+            slash_cursor: None,
+            slash_dismissed: None,
             sent_drafts: HashMap::new(),
             answer_watches: Vec::new(),
             sent_attachments: HashMap::new(),

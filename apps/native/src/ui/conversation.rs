@@ -905,13 +905,15 @@ impl Workspace {
         } else {
             "Attach a file (or paste an image)"
         };
+        let slash_rows = self.slash_menu(cx);
         let composer = div()
             .id("floating-composer")
             .debug_selector(|| "chat-composer".into())
-            .key_context(if self.settings.enter_sends {
-                "Composer ComposerEnter"
-            } else {
-                "Composer"
+            .key_context(match (self.settings.enter_sends, slash_rows.is_empty()) {
+                (true, true) => "Composer ComposerEnter",
+                (false, true) => "Composer",
+                (true, false) => "Composer ComposerEnter SlashMenu",
+                (false, false) => "Composer SlashMenu",
             })
             .occlude()
             .bg(rgb(p.surface))
@@ -936,6 +938,9 @@ impl Workspace {
                         .overflow_y_scroll()
                         .child(self.render_draft_attachments(draft_files, &draft_cwd, cx)),
                 )
+            })
+            .when(!slash_rows.is_empty(), |d| {
+                d.child(self.render_slash_menu(slash_rows, cx))
             })
             .child(
                 Input::new(&self.composer)

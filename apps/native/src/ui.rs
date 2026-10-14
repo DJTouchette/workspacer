@@ -31,6 +31,7 @@ mod scroll;
 mod session_tools;
 mod settings;
 mod sidebar;
+mod slash;
 mod smooth_scroll;
 mod states;
 mod syntax;
@@ -362,6 +363,11 @@ actions!(
         ComposerEnter,
         SendNow,
         QueueMessage,
+        SlashUp,
+        SlashDown,
+        SlashAccept,
+        SlashEnter,
+        SlashClose,
         QueueEditSave,
         QueueEditCancel,
         SubmitAsyncAnswers,
@@ -490,6 +496,14 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-enter", SendNow, Some("Composer > Input")),
         KeyBinding::new("cmd-shift-enter", SendNow, Some("Composer > Input")),
         KeyBinding::new("tab", QueueMessage, Some("Composer > Input")),
+        // The open `/` menu (its context exists only while it shows rows)
+        // takes the keys that move through and pick from it, ahead of the
+        // composer's own Enter, Tab and arrows.
+        KeyBinding::new("up", SlashUp, Some("SlashMenu > Input")),
+        KeyBinding::new("down", SlashDown, Some("SlashMenu > Input")),
+        KeyBinding::new("enter", SlashEnter, Some("SlashMenu > Input")),
+        KeyBinding::new("tab", SlashAccept, Some("SlashMenu > Input")),
+        KeyBinding::new("escape", SlashClose, Some("SlashMenu > Input")),
         // The queue panel's inline editor.
         KeyBinding::new("enter", QueueEditSave, Some("QueueEditor > Input")),
         KeyBinding::new("ctrl-enter", QueueEditSave, Some("QueueEditor > Input")),
@@ -1395,14 +1409,25 @@ impl Workspace {
         // message resumes it rather than being refused as sent to an ended one.
         if let Some(session) = self.selected_session().filter(|s| self.paused(s)).cloned() {
             if kind != Submit::Queue && self.resuming.is_none() && !self.view.creating {
+                // A resume carries text alone: images go as path markers.
+                let text = self.attachment_text_with(&id, &draft, &[]);
                 self.drafts.insert(id, draft);
                 self.resume_with(&session, text, cx);
             }
             return;
         }
+        let images = self.attachment_images(&id);
+        if kind == Submit::Queue && !images.is_empty() {
+            // The hub queue replays text only; an image has to go now.
+            self.extras.notice = "Images can't be queued. Send them now (steer or send now), or remove them to queue the text.".into();
+            cx.notify();
+            return;
+        }
+        let now = kind == Submit::Now && self.composer_busy();
         let action = match kind {
-            Submit::Now if self.composer_busy() => Action::SendNow(text),
             Submit::Queue => Action::Queue(wks_native::queue::Op::Add(text)),
+            _ if !images.is_empty() => Action::SendImages { text, images, now },
+            _ if now => Action::SendNow(text),
             Submit::Send | Submit::Now => Action::Send(text),
         };
         let attachments = self
