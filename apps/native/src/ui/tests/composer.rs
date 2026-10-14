@@ -947,3 +947,202 @@ fn a_spent_usage_window_offers_the_other_agent_or_waiting(cx: &mut TestAppContex
         );
     });
 }
+
+fn composer_draft(workspace: &Entity<Workspace>, visual: &mut VisualTestContext, text: &str) {
+    let text = text.to_owned();
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.composer.update(cx, |input, cx| {
+                input.set_value(text, window, cx);
+                input.focus(window, cx);
+            })
+        })
+    });
+    visual.run_until_parked();
+}
+
+fn composer_value(workspace: &Entity<Workspace>, visual: &mut VisualTestContext) -> String {
+    workspace.read_with(visual, |this, cx| {
+        this.composer.read(cx).value().to_string()
+    })
+}
+
+fn sent_actions(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> Vec<Action> {
+    let mut out = Vec::new();
+    while let Ok(command) = commands.try_recv() {
+        if let Command::Act { action, .. } = command {
+            out.push(action);
+        }
+    }
+    out
+}
+
+/// A Claude stream session mid-turn, and a Claude terminal session beside it.
+fn image_sessions() -> View {
+    let mut next = state("a");
+    let sessions = Arc::make_mut(&mut next.sessions);
+    sessions[0].provider = "claude".into();
+    sessions[0].transport = "stream".into();
+    sessions[0].state = "responding".into();
+    sessions[1].provider = "claude".into();
+    sessions[1].transport = "pty".into();
+    next
+}
+
+/// On a Claude stream (or Codex) session a small image goes as a real image
+/// (`images` on agents.sendMessage) and is only named in the text; an
+/// oversize image and a PDF stay path markers; a terminal session gets
+/// markers for everything; and images refuse the queue with a notice.
+#[gpui::test]
+fn stream_sessions_send_small_images_as_images_and_refuse_to_queue_them(cx: &mut TestAppContext) {
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let shot = "/hub/uploads/m-1-abcdef01.png";
+    let big = "/hub/uploads/m-2-abcdef01.png";
+    let pdf = "/hub/uploads/m-3-abcdef01.pdf";
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.update_view(Arc::new(image_sessions()), window, cx);
+            for id in ["a", "b"] {
+                this.extras.attachments.insert(
+                    id.into(),
+                    vec![
+                        ("Screenshot.png".into(), shot.into()),
+                        ("Huge.png".into(), big.into()),
+                        ("brief.pdf".into(), pdf.into()),
+                    ],
+                );
+            }
+            this.extras.attachment_sizes.insert(shot.into(), 1_000);
+            this.extras
+                .attachment_sizes
+                .insert(big.into(), wks_native::features::MAX_IMAGE_BYTES + 1);
+            cx.notify();
+        })
+    });
+    visual.run_until_parked();
+    let text = format!("[Image attached: Screenshot.png]\n[Image: {big}]\n[PDF: {pdf}]\nlook");
+    workspace.read_with(&visual, |this, _| {
+        assert_eq!(this.attachment_images("a"), vec![shot.to_owned()]);
+        assert_eq!(this.attachment_text("a", "look"), text);
+        assert!(
+            this.attachment_images("b").is_empty(),
+            "terminal sessions read paths"
+        );
+        assert_eq!(
+            this.attachment_text("b", "look"),
+            format!("[Image: {shot}]\n[Image: {big}]\n[PDF: {pdf}]\nlook")
+        );
+    });
+    // Tab with images attached queues nothing and says why.
+    composer_draft(&workspace, &mut visual, "look");
+    visual.simulate_keystrokes("tab");
+    assert!(sent_actions(&mut commands).is_empty());
+    workspace.read_with(&visual, |this, _| {
+        assert!(
+            this.extras.notice.contains("Images can't be queued"),
+            "{}",
+            this.extras.notice
+        );
+    });
+    // The steer carries the image; send now carries it with delivery now.
+    visual.simulate_keystrokes("ctrl-enter");
+    visual.simulate_keystrokes("ctrl-shift-enter");
+    let sent = sent_actions(&mut commands);
+    assert!(
+        matches!(&sent[..], [
+            Action::SendImages { text: a, images: ia, now: false },
+            Action::SendImages { text: b, images: ib, now: true },
+        ] if *a == text && *b == text && ia == &[shot] && ib == &[shot]),
+        "{sent:?}"
+    );
+    assert_eq!(sent[1].sent_text(), Some(text.as_str()));
+}
+
+/// Typing `/` opens the session's command menu; arrows move, Enter or Tab
+/// inserts (even on a busy composer, where Tab otherwise queues), Esc shuts
+/// it for that draft, and once an argument is typed Tab queues again.
+#[gpui::test]
+fn slash_menu_filters_inserts_and_yields_its_keys_once_closed(cx: &mut TestAppContext) {
+    use wks_native::model::SlashCommand;
+    let (workspace, mut visual, mut commands, _updates) = fixture(cx);
+    let command = |name: &str, insert: &str| SlashCommand {
+        name: name.into(),
+        insert: insert.into(),
+        description: format!("{name} help"),
+    };
+    let mut next = state("a");
+    {
+        let session = &mut Arc::make_mut(&mut next.sessions)[0];
+        session.state = "responding".into();
+        session.slash_commands = vec![
+            command("compact", "/compact"),
+            command("code-review", "/code-review"),
+            command("review-pr", "$review-pr"),
+        ];
+    }
+    visual.update(|window, cx| {
+        workspace.update(cx, |this, cx| {
+            this.settings.enter_sends = true;
+            this.update_view(Arc::new(next), window, cx)
+        })
+    });
+    visual.run_until_parked();
+    composer_draft(&workspace, &mut visual, "");
+    visual.simulate_input("/co");
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, cx| {
+        let rows = this.slash_menu(cx);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].insert, "/code-review");
+    });
+    assert!(visual.debug_bounds("slash-menu").is_some());
+    assert!(visual.debug_bounds("slash-item-1").is_some());
+    // Down moves through the rows; Enter inserts instead of sending.
+    visual.simulate_keystrokes("down");
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert_eq!(composer_value(&workspace, &mut visual), "/code-review ");
+    assert!(
+        sent_actions(&mut commands).is_empty(),
+        "Enter picked, never sent"
+    );
+    workspace.read_with(&visual, |this, cx| assert!(this.slash_menu(cx).is_empty()));
+    // Up from the first row wraps to the last; Tab inserts on a busy composer.
+    composer_draft(&workspace, &mut visual, "");
+    visual.simulate_input("/");
+    visual.simulate_keystrokes("up");
+    visual.simulate_keystrokes("tab");
+    visual.run_until_parked();
+    assert_eq!(composer_value(&workspace, &mut visual), "$review-pr ");
+    assert!(
+        sent_actions(&mut commands).is_empty(),
+        "Tab picked, never queued"
+    );
+    // An argument closes the menu: Tab queues the draft again.
+    visual.simulate_input("now");
+    assert_eq!(composer_value(&workspace, &mut visual), "$review-pr now");
+    visual.simulate_keystrokes("tab");
+    let queued = sent_actions(&mut commands);
+    assert!(
+        matches!(
+            &queued[..],
+            [Action::Queue(wks_native::queue::Op::Add(text))] if text == "$review-pr now"
+        ),
+        "{queued:?}"
+    );
+    // Esc shuts it for this draft; typing reopens it.
+    composer_draft(&workspace, &mut visual, "");
+    visual.simulate_input("/comp");
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, cx| assert!(this.slash_menu(cx).is_empty()));
+    assert_eq!(composer_value(&workspace, &mut visual), "/comp");
+    visual.simulate_input("a");
+    visual.run_until_parked();
+    workspace.read_with(&visual, |this, cx| assert_eq!(this.slash_menu(cx).len(), 1));
+    // A click inserts too.
+    let item = visual.debug_bounds("slash-item-0").unwrap();
+    visual.simulate_click(item.center(), gpui::Modifiers::none());
+    visual.run_until_parked();
+    assert_eq!(composer_value(&workspace, &mut visual), "/compact ");
+}

@@ -28,6 +28,9 @@ impl Workspace {
                 && let (Some(name), Some(path)) =
                     (state.value["name"].as_str(), state.value["path"].as_str())
             {
+                if let Some(size) = state.value["size"].as_u64() {
+                    self.extras.attachment_sizes.insert(path.into(), size);
+                }
                 self.extras
                     .attachments
                     .entry(session.clone())
@@ -310,9 +313,60 @@ impl Workspace {
         self.view.requests.get("upload").is_some_and(|s| s.loading)
     }
 
+    /// The draft's attachments the hub hands the provider as real images:
+    /// images (by extension) of a session that takes them, small enough for
+    /// the provider's per-image limit, at most [`MAX_IMAGES`] of them. Every
+    /// other attachment travels as a path marker in [`Self::attachment_text`].
+    ///
+    /// [`MAX_IMAGES`]: wks_native::features::MAX_IMAGES
+    pub(super) fn attachment_images(&self, id: &str) -> Vec<String> {
+        let takes = self
+            .view
+            .sessions
+            .iter()
+            .find(|s| s.id == id)
+            .is_some_and(|s| s.takes_images());
+        if !takes {
+            return Vec::new();
+        }
+        self.extras
+            .attachments
+            .get(id)
+            .into_iter()
+            .flatten()
+            .filter(|(name, path)| {
+                let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase());
+                matches!(
+                    ext.as_deref(),
+                    Some("png" | "jpg" | "jpeg" | "gif" | "webp")
+                ) && self
+                    .extras
+                    .attachment_sizes
+                    .get(path)
+                    .is_some_and(|size| *size <= wks_native::features::MAX_IMAGE_BYTES)
+            })
+            .take(wks_native::features::MAX_IMAGES)
+            .map(|(_, path)| path.clone())
+            .collect()
+    }
+
+    /// The text a send carries: a line per attachment, then the draft. A
+    /// real image ([`Self::attachment_images`]) is only named, so the
+    /// transcript shows it was attached; anything else is a path marker the
+    /// agent reads the file by.
     pub(super) fn attachment_text(&self, id: &str, text: &str) -> String {
+        self.attachment_text_with(id, text, &self.attachment_images(id))
+    }
+
+    /// [`Self::attachment_text`] naming `images` as the real images; with
+    /// none, every attachment is a path marker.
+    pub(super) fn attachment_text_with(&self, id: &str, text: &str, images: &[String]) -> String {
         let mut result = String::new();
         for (name, path) in self.extras.attachments.get(id).into_iter().flatten() {
+            if images.contains(path) {
+                result.push_str(&format!("[Image attached: {name}]\n"));
+                continue;
+            }
             let kind = if name.to_lowercase().ends_with(".pdf") {
                 "PDF"
             } else {

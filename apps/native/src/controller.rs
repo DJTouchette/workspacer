@@ -38,6 +38,13 @@ pub enum Action {
     /// `delivery: "now"`: the agent sets background work aside (Claude) or
     /// is interrupted (Codex) and reads the message immediately.
     SendNow(String),
+    /// [`Self::Send`] (or, with `now`, [`Self::SendNow`]) carrying
+    /// `files.upload` paths the hub hands the provider as real images.
+    SendImages {
+        text: String,
+        images: Vec<String>,
+        now: bool,
+    },
     /// A change to the session's hub-owned message queue.
     Queue(crate::queue::Op),
     Approve(bool),
@@ -95,6 +102,14 @@ impl Action {
                 "agents.sendMessage",
                 json!({"sessionId":id, "text":text, "delivery":"now"}),
             ),
+            Self::SendImages { text, images, now } => {
+                let mut params = json!({"sessionId":id, "text":text,
+                    "images": images.iter().map(|path| json!({"path":path})).collect::<Vec<_>>()});
+                if *now {
+                    params["delivery"] = json!("now");
+                }
+                ("agents.sendMessage", params)
+            }
             Self::Queue(op) => op.wire(id),
             Self::DenyWithNote(reason) => (
                 "claude.approve",
@@ -115,7 +130,7 @@ impl Action {
     /// The message a send delivers to the transcript now.
     pub fn sent_text(&self) -> Option<&str> {
         match self {
-            Self::Send(text) | Self::SendNow(text) => Some(text),
+            Self::Send(text) | Self::SendNow(text) | Self::SendImages { text, .. } => Some(text),
             _ => None,
         }
     }
@@ -1468,6 +1483,14 @@ impl Worker {
                         Action::Send(text) | Action::SendNow(text) => {
                             !self.view.loading && !text.trim().is_empty() && text.len() <= 65536
                         }
+                        Action::SendImages { text, images, .. } => {
+                            !self.view.loading
+                                && !text.trim().is_empty()
+                                && text.len() <= 65536
+                                && !images.is_empty()
+                                && images.len() <= crate::features::MAX_IMAGES
+                                && s.takes_images()
+                        }
                         Action::Queue(op) => op.text().is_none_or(|text| {
                             !text.trim().is_empty() && text.len() <= crate::queue::MAX_TEXT_BYTES
                         }),
@@ -1523,7 +1546,10 @@ impl Worker {
                     session: session.clone(),
                     text: text.to_owned(),
                     steered,
-                    now: matches!(action, Action::SendNow(_)),
+                    now: matches!(
+                        action,
+                        Action::SendNow(_) | Action::SendImages { now: true, .. }
+                    ),
                     queued: false,
                     accepted: false,
                     before,
