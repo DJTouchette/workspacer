@@ -2351,11 +2351,13 @@ mod tests {
         let out = dir.join("argv.txt");
         // The deliberate exit can trigger a second, fallback provider launch.
         // Publish the first complete invocation without letting that fallback
-        // replace the native argv this fixture is supposed to observe.
+        // replace the native argv this fixture is supposed to observe. A
+        // `--version` probe (the Claude stream driver asks before it launches)
+        // is not a launch and records nothing.
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nrecord='{0}'.$$.part\nprintf '%s\\n' \"$@\" > \"$record\"\nln \"$record\" '{0}' 2>/dev/null\nrm -f \"$record\"\nexit 1\n",
+                "#!/bin/sh\n[ \"$1\" = --version ] && exit 1\nrecord='{0}'.$$.part\nprintf '%s\\n' \"$@\" > \"$record\"\nln \"$record\" '{0}' 2>/dev/null\nrm -f \"$record\"\nexit 1\n",
                 out.display()
             ),
         )
