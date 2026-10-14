@@ -379,6 +379,9 @@ pub struct SessionStore {
     /// Background-task control for stream sessions (provider pid + the
     /// `stop_task` channel). Absent for every other transport.
     managed_task_controls: Arc<DashMap<String, ManagedTaskControl>>,
+    /// Conversation-history controls (compact / rewind files / revert) for
+    /// managed drivers that speak them (see [`ManagedSessionControl`]).
+    managed_session_controls: Arc<DashMap<String, mpsc::UnboundedSender<ManagedSessionControl>>>,
     /// Latest account-level rate-limit reading from the OAuth usage endpoint
     /// (see `session::account_usage`), keyed by Claude config root (`""` = the
     /// daemon's default). One entry per logged-in account: a profile spawn
@@ -552,6 +555,47 @@ pub struct ManagedPermissionSwitch {
 pub struct ManagedTaskStop {
     pub task_id: String,
     pub reply: oneshot::Sender<Result<(), String>>,
+}
+
+/// One conversation-history control, performed by the session's driver
+/// through its provider's own protocol.
+///
+/// The two "go back" actions are deliberately different operations with
+/// different names, because the providers offer different halves:
+/// `RewindFiles` restores FILES to a user message and leaves the conversation
+/// alone (Claude's `rewind_files`); `Revert` drops conversation TURNS and
+/// leaves files alone (Codex's `thread/revert`). A driver answers an action
+/// its provider lacks with an error naming the alternative.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionControlAction {
+    /// Summarize the conversation so far (Claude `/compact`, Codex
+    /// `thread/compact/start`). `instructions` is Claude's optional focus.
+    Compact { instructions: Option<String> },
+    /// Restore files to their state at `user_message_id` (Claude). `dry_run`
+    /// previews without touching anything.
+    RewindFiles {
+        user_message_id: String,
+        dry_run: bool,
+    },
+    /// Drop a turn and every later one from the thread's history (Codex):
+    /// `before_turn_id` names it directly, or `user_message_id` names the
+    /// user message whose turn it is.
+    Revert {
+        user_message_id: Option<String>,
+        before_turn_id: Option<String>,
+    },
+    /// Where a fork that continues from BEFORE `user_message_id` must cut
+    /// this session's history, in the provider's own terms (Codex:
+    /// `{lastTurnId}`). Read-only.
+    ForkPoint { user_message_id: String },
+}
+
+/// A [`SessionControlAction`] plus where its verdict goes: the provider's
+/// own result object, or its error text.
+#[derive(Debug)]
+pub struct ManagedSessionControl {
+    pub action: SessionControlAction,
+    pub reply: oneshot::Sender<Result<Value, String>>,
 }
 
 /// What a stream driver exposes for its session's background tasks: the
@@ -803,6 +847,7 @@ impl SessionStore {
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             managed_task_controls: Arc::new(DashMap::new()),
+            managed_session_controls: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             account_usage_errors: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -2138,6 +2183,26 @@ impl SessionStore {
             .insert(session_id.to_string(), control);
     }
 
+    /// Register a managed driver's conversation-history control channel.
+    pub fn register_managed_session_control(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<ManagedSessionControl>,
+    ) {
+        self.managed_session_controls
+            .insert(session_id.to_string(), tx);
+    }
+
+    /// The live history-control channel for a session, if its driver has one.
+    pub fn managed_session_control(
+        &self,
+        session_id: &str,
+    ) -> Option<mpsc::UnboundedSender<ManagedSessionControl>> {
+        self.managed_session_controls
+            .get(session_id)
+            .map(|c| c.value().clone())
+    }
+
     /// The live task control for a session, if its driver offers one.
     pub fn managed_task_control(&self, session_id: &str) -> Option<ManagedTaskControl> {
         self.managed_task_controls
@@ -2348,6 +2413,7 @@ impl SessionStore {
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
+        self.managed_session_controls.remove(session_id);
         existed
     }
 
@@ -2409,6 +2475,7 @@ impl SessionStore {
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
+        self.managed_session_controls.remove(session_id);
         // Release the hybrid Term view's resources (attached by `attach_pty`).
         // The 256 KiB byte ring per session is the bulk of a managed session's
         // memory; leaving it (and the input wrapper + broadcast) around after the
@@ -2450,6 +2517,48 @@ impl SessionStore {
     /// does not ride on this: only `local_agent` tasks hold a session busy
     /// (see the stream driver) — this count is how clients surface ambient
     /// work (a dev server, a poll loop) without the mode lying "responding".
+    /// A managed driver's compaction bracket — the stream counterpart of the
+    /// `PreCompact`/`PostCompact` hooks, which `ingest` keeps enrichment-only
+    /// for managed sessions. Broadcast only on change.
+    pub fn set_compacting(&self, session_id: &str, on: bool) {
+        self.update_managed_row(session_id, |entry| {
+            if entry.compacting == on {
+                return false;
+            }
+            entry.compacting = on;
+            true
+        });
+    }
+
+    /// A managed driver saw a compaction boundary: compaction is over, and it
+    /// counts (same bookkeeping as the `PostCompact` hook).
+    pub fn note_compaction(&self, session_id: &str) {
+        self.update_managed_row(session_id, |entry| {
+            entry.compacting = false;
+            entry.last_compact_at = Some(OffsetDateTime::now_utc().unix_timestamp());
+            entry.compaction_count = entry.compaction_count.saturating_add(1);
+            true
+        });
+    }
+
+    fn update_managed_row(&self, session_id: &str, change: impl FnOnce(&mut SessionState) -> bool) {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return;
+            };
+            if !change(&mut entry) {
+                return;
+            }
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+    }
+
     pub fn set_background_tasks(&self, session_id: &str, live: u32) {
         let state = {
             let Some(mut entry) = self.states.get_mut(session_id) else {

@@ -223,7 +223,13 @@ pub fn build_brief(
                     continue; // successful results add bulk, not signal
                 }
             }
-            ConversationItem::Usage { .. } | ConversationItem::AssistantNotice { .. } => continue,
+            // Reasoning is the source model's private working, not the
+            // exchange; a compaction boundary is bookkeeping. Neither belongs
+            // in a successor's brief.
+            ConversationItem::Usage { .. }
+            | ConversationItem::AssistantNotice { .. }
+            | ConversationItem::Reasoning { .. }
+            | ConversationItem::Compaction { .. } => continue,
             ConversationItem::SlashCommand { name, args, .. } => match args {
                 Some(args) => format!("**User ran:** /{name} {}\n", clip(args, RECENT_TEXT_CAP)),
                 None => format!("**User ran:** /{name}\n"),
@@ -313,6 +319,7 @@ mod tests {
     fn user(text: &str) -> ConversationItem {
         ConversationItem::UserMessage {
             text: text.into(),
+            uuid: None,
             timestamp: None,
         }
     }
@@ -346,6 +353,31 @@ mod tests {
         assert!(brief.contains("`src/auth.rs`"), "read file listed");
         assert!(brief.contains("Fixed the null check"));
         assert!(brief.contains("abc12345-xyz"));
+    }
+
+    /// The source model's reasoning and compaction bookkeeping are not part
+    /// of what a successor is told.
+    #[test]
+    fn brief_leaves_out_reasoning_and_compaction() {
+        let items = vec![
+            user("fix the login bug"),
+            ConversationItem::Reasoning {
+                item_id: "r1".into(),
+                text: "PRIVATE-THOUGHT".into(),
+                timestamp: None,
+            },
+            ConversationItem::Compaction {
+                trigger: Some("auto".into()),
+                pre_tokens: Some(1),
+                post_tokens: None,
+                timestamp: None,
+            },
+            agent("Fixed it."),
+        ];
+        let brief = build_brief("abc12345-xyz", None, &items);
+        assert!(brief.contains("Fixed it."));
+        assert!(!brief.contains("PRIVATE-THOUGHT"));
+        assert!(!brief.contains("compaction"));
     }
 
     #[test]

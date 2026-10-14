@@ -33,9 +33,9 @@ pub struct SummarySource {
 
 fn usable(item: &ConversationItem) -> Option<(&'static str, &str, &Option<String>)> {
     match item {
-        ConversationItem::UserMessage { text, timestamp } => {
-            Some(("user_message", text.as_str(), timestamp))
-        }
+        ConversationItem::UserMessage {
+            text, timestamp, ..
+        } => Some(("user_message", text.as_str(), timestamp)),
         ConversationItem::AssistantText { text, timestamp }
         | ConversationItem::AssistantQuestions {
             text, timestamp, ..
@@ -137,6 +137,7 @@ mod tests {
     fn bounds_order_dedupe_and_exclusions() {
         let mut items = vec![ConversationItem::UserMessage {
             text: "task".into(),
+            uuid: None,
             timestamp: None,
         }];
         for i in 0..80 {
@@ -175,6 +176,7 @@ mod tests {
     fn small_source_deduplicates_and_empty_is_explicit() {
         let items = [ConversationItem::UserMessage {
             text: "task".into(),
+            uuid: None,
             timestamp: None,
         }];
         let s = project("s", 1, 1, true, items.iter().zip(1..));
@@ -184,5 +186,31 @@ mod tests {
         let empty = project("s", 0, 0, false, std::iter::empty());
         assert!(empty.events.is_empty());
         assert_eq!(empty.projection, PROJECTION);
+    }
+    #[test]
+    fn reasoning_and_compaction_are_not_summary_events() {
+        let items = [
+            ConversationItem::UserMessage {
+                text: "task".into(),
+                uuid: Some("u1".into()),
+                timestamp: None,
+            },
+            ConversationItem::Reasoning {
+                item_id: "r1".into(),
+                text: "PRIVATE-THOUGHT".into(),
+                timestamp: None,
+            },
+            ConversationItem::Compaction {
+                trigger: None,
+                pre_tokens: None,
+                post_tokens: None,
+                timestamp: None,
+            },
+        ];
+        let s = project("s", 3, 1, false, items.iter().zip(1..));
+        assert_eq!(s.events.len(), 1);
+        assert!(!serde_json::to_string(&s)
+            .unwrap()
+            .contains("PRIVATE-THOUGHT"));
     }
 }

@@ -77,6 +77,11 @@
       "server": "claudemon-api"
     },
     {
+      "method": "POST",
+      "pattern": "/sessions/:id/compact",
+      "server": "claudemon-api"
+    },
+    {
       "method": "GET",
       "pattern": "/sessions/:id/conversation",
       "server": "claudemon-api"
@@ -124,6 +129,16 @@
     {
       "method": "POST",
       "pattern": "/sessions/:id/resize",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/revert",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/rewind-files",
       "server": "claudemon-api"
     },
     {

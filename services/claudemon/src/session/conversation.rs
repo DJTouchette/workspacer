@@ -39,6 +39,10 @@ const SIDE_IDLE_INTERVAL: Duration = Duration::from_secs(5);
 /// the true total so gap detection / resync stay correct — a late joiner
 /// adopting the snapshot simply gets the most-recent window.
 const MAX_CONVERSATION_ITEMS: usize = 5000;
+/// How far back from the newest item the dedupe lookups
+/// ([`ConversationStore::has_reasoning`], [`ConversationStore::compacted_this_turn`])
+/// look. A completed item lands within a turn of its deltas.
+const RECENT_SCAN: usize = 200;
 /// Keep draining a stopped session's transcript briefly — the final
 /// assistant message can flush to disk after the Stop/SessionEnd hook fires.
 const STOPPED_DRAIN_SECS: i64 = 30;
@@ -130,6 +134,51 @@ pub async fn replay_transcript_plan(path: &str) -> std::io::Result<(TaskFold, Op
     Ok((fold, plan))
 }
 
+/// The chain parent of the transcript entry `uuid`: `Some(Some(parent))`
+/// for an entry with a parent, `Some(None)` for the first entry, `None`
+/// when no entry has that uuid. A fork that continues from BEFORE a user
+/// message resumes at its parent (`--resume-session-at` keeps through the
+/// named entry, inclusive).
+pub async fn transcript_parent_of(
+    path: &str,
+    uuid: &str,
+) -> std::io::Result<Option<Option<String>>> {
+    use tokio::io::AsyncBufReadExt;
+    if !path_is_allowed(std::path::Path::new(path)) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("transcript path is outside every known transcript root: {path}"),
+        ));
+    }
+    let file = tokio::fs::File::open(path).await?;
+    let mut lines = tokio::io::BufReader::new(file).lines();
+    while let Some(line) = lines.next_line().await? {
+        if !line.contains(uuid) {
+            continue;
+        }
+        let Ok(row) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if row.get("uuid").and_then(Value::as_str) == Some(uuid) {
+            return Ok(Some(
+                row.get("parentUuid")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+/// The items before the user message `uuid`, or `None` when no user message
+/// in `items` carries it.
+pub fn items_before_user(items: &[ConversationItem], uuid: &str) -> Option<Vec<ConversationItem>> {
+    let at = items.iter().position(
+        |i| matches!(i, ConversationItem::UserMessage { uuid: Some(u), .. } if u == uuid),
+    )?;
+    Some(items[..at].to_vec())
+}
+
 fn stopped_drain_finished(age_secs: i64, backlog: bool) -> bool {
     age_secs > STOPPED_DRAIN_SECS && (!backlog || age_secs > STOPPED_MAX_DRAIN_SECS)
 }
@@ -150,6 +199,13 @@ pub struct ConversationWindow {
 pub enum ConversationItem {
     UserMessage {
         text: String,
+        /// The provider's own id for this user message, when it has one a
+        /// later control can name: Claude's message uuid (the stream driver
+        /// stamps it on every frame it sends; transcript rows carry it), which
+        /// is what `rewind_files` and `--resume-session-at` take. Omitted when
+        /// unknown, so older clients never see the field.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
     },
@@ -239,6 +295,37 @@ pub enum ConversationItem {
         name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         args: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
+    /// The model's reasoning, as far as the provider shows it: Claude's
+    /// thinking blocks (`thinking_delta`s; redacted or signature-only blocks
+    /// carry no text and produce nothing) and Codex's reasoning summaries
+    /// (raw reasoning content only when no summary exists). Never merged into
+    /// `assistant_text`.
+    ///
+    /// Streams as FRAGMENTS: every item with the same `item_id` appends to
+    /// the one before it, the way consecutive `assistant_text` items do. The
+    /// retained log folds a fragment into a trailing item with the same id,
+    /// so a snapshot normally holds one item per reasoning block. Clients
+    /// that do not know the kind ignore it.
+    Reasoning {
+        item_id: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
+    /// The provider compacted the conversation here: everything before this
+    /// item was summarized out of the model's context. `trigger` is
+    /// `"manual"` or `"auto"` when the provider says (Claude does; Codex does
+    /// not); token counts are the context size before/after when reported.
+    Compaction {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        trigger: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pre_tokens: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        post_tokens: Option<u64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         timestamp: Option<String>,
     },
@@ -379,12 +466,26 @@ impl TailLog {
     /// Only contiguous assistant text merges: a tool use or a user message
     /// landing between two chunks ends the run, which is the turn boundary.
     /// Timestamps keep the first chunk's — when the message started.
+    ///
+    /// Reasoning fragments fold the same way, but only into a trailing
+    /// reasoning item with the SAME `item_id`, so two thinking blocks stay two.
     fn try_coalesce_assistant_text(&mut self, item: &ConversationItem) -> bool {
-        let ConversationItem::AssistantText { text, .. } = item else {
-            return false;
-        };
-        match self.items.last_mut() {
-            Some(ConversationItem::AssistantText { text: prev, .. }) => {
+        match (item, self.items.last_mut()) {
+            (
+                ConversationItem::AssistantText { text, .. },
+                Some(ConversationItem::AssistantText { text: prev, .. }),
+            ) => {
+                prev.push_str(text);
+                true
+            }
+            (
+                ConversationItem::Reasoning { item_id, text, .. },
+                Some(ConversationItem::Reasoning {
+                    item_id: prev_id,
+                    text: prev,
+                    ..
+                }),
+            ) if item_id == prev_id => {
                 prev.push_str(text);
                 true
             }
@@ -478,6 +579,32 @@ impl ConversationStore {
         }
     }
 
+    /// Whether the retained log already holds reasoning for `item_id`, so a
+    /// provider's completed reasoning item does not repeat what its deltas
+    /// already streamed.
+    pub fn has_reasoning(&self, session_id: &str, item_id: &str) -> bool {
+        self.logs.get(session_id).is_some_and(|l| {
+            l.items.iter().rev().take(RECENT_SCAN).any(
+                |i| matches!(i, ConversationItem::Reasoning { item_id: id, .. } if id == item_id),
+            )
+        })
+    }
+
+    /// Whether a compaction boundary was recorded since the latest user
+    /// message, so a provider that reports one compaction twice (Codex's
+    /// deprecated `thread/compacted` beside its `contextCompaction` item)
+    /// leaves a single boundary.
+    pub fn compacted_this_turn(&self, session_id: &str) -> bool {
+        self.logs.get(session_id).is_some_and(|l| {
+            l.items
+                .iter()
+                .rev()
+                .take(RECENT_SCAN)
+                .take_while(|i| !matches!(i, ConversationItem::UserMessage { .. }))
+                .any(|i| matches!(i, ConversationItem::Compaction { .. }))
+        })
+    }
+
     pub fn has_conversation(&self, session_id: &str) -> bool {
         self.logs
             .get(session_id)
@@ -521,6 +648,36 @@ impl ConversationStore {
             }
         };
         let _ = self.tx.send(delta);
+    }
+
+    /// Cut a managed session's log just before the user message whose `uuid`
+    /// is given — the provider dropped that turn and everything after it
+    /// (Codex `thread/revert`). The rebuilt log goes out as a `reset` delta,
+    /// so every client adopts it wholesale. Returns whether the message was
+    /// found (nothing changes otherwise).
+    pub fn truncate_before_user(&self, session_id: &str, uuid: &str) -> bool {
+        let delta = {
+            let Some(mut log) = self.logs.get_mut(session_id) else {
+                return false;
+            };
+            let Some(kept) = items_before_user(&log.items, uuid) else {
+                return false;
+            };
+            log.items = kept;
+            // A reset restarts the sequence space at the retained items, the
+            // way a transcript rebuild (`reset_log`) does.
+            let kept = log.items.len() as u64;
+            log.seq = kept;
+            log.item_seqs = (1..=kept).collect();
+            ConversationDelta {
+                session_id: session_id.to_string(),
+                seq: log.seq,
+                reset: true,
+                items: log.items.clone(),
+            }
+        };
+        let _ = self.tx.send(delta);
+        true
     }
 
     /// Drop a session's accumulated conversation log. Called when a session ends
@@ -1072,10 +1229,14 @@ pub fn items_from_row(value: &Value, marking: ApiErrorMarking) -> Vec<Conversati
     // `local_command`) with the text in a top-level `content` string — no
     // `message` envelope, so this must run before the message requirement.
     if row_type == "system" {
-        if value.get("subtype").and_then(Value::as_str) == Some("local_command") {
-            if let Some(text) = value.get("content").and_then(Value::as_str) {
-                out.extend(command_items_from_text(text, &ts));
+        match value.get("subtype").and_then(Value::as_str) {
+            Some("local_command") => {
+                if let Some(text) = value.get("content").and_then(Value::as_str) {
+                    out.extend(command_items_from_text(text, &ts));
+                }
             }
+            Some("compact_boundary") => out.push(compaction_item(value, ts)),
+            _ => {}
         }
         return out;
     }
@@ -1129,6 +1290,7 @@ pub fn items_from_row(value: &Value, marking: ApiErrorMarking) -> Vec<Conversati
                 if !text.trim().is_empty() {
                     out.push(ConversationItem::UserMessage {
                         text,
+                        uuid: value.get("uuid").and_then(Value::as_str).map(str::to_owned),
                         timestamp: ts,
                     });
                 }
@@ -1178,6 +1340,15 @@ pub fn items_from_row(value: &Value, marking: ApiErrorMarking) -> Vec<Conversati
                             timestamp: ts.clone(),
                         });
                     }
+                    // Thinking the CLI showed (an omitted/redacted block is
+                    // empty: only its signature is kept).
+                    Block::Thinking { text } if !text.trim().is_empty() => {
+                        out.push(ConversationItem::Reasoning {
+                            item_id: reasoning_row_id(value, msg),
+                            text: text.to_string(),
+                            timestamp: ts.clone(),
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -1185,6 +1356,37 @@ pub fn items_from_row(value: &Value, marking: ApiErrorMarking) -> Vec<Conversati
         _ => {}
     }
     out
+}
+
+/// A Claude `compact_boundary` frame or transcript row as a conversation
+/// boundary. Stream frames spell the metadata `compact_metadata {trigger,
+/// pre_tokens, post_tokens}` (observed live on CLI 2.1.299); transcript rows
+/// use camelCase (`compactMetadata {trigger, preTokens}`). Both are read.
+pub(crate) fn compaction_item(value: &Value, timestamp: Option<String>) -> ConversationItem {
+    let meta = value
+        .get("compact_metadata")
+        .or_else(|| value.get("compactMetadata"))
+        .unwrap_or(&Value::Null);
+    let num = |a: &str, b: &str| meta.get(a).or_else(|| meta.get(b)).and_then(Value::as_u64);
+    ConversationItem::Compaction {
+        trigger: meta
+            .get("trigger")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        pre_tokens: num("pre_tokens", "preTokens"),
+        post_tokens: num("post_tokens", "postTokens"),
+        timestamp,
+    }
+}
+
+/// The reasoning item id for a transcript row's thinking block: the API
+/// message id (what the stream driver uses too), else the row's own uuid.
+fn reasoning_row_id(row: &Value, msg: &Value) -> String {
+    msg.get("id")
+        .or_else(|| row.get("uuid"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Extract the agent's current plan from a transcript row, if it carries a
@@ -1768,6 +1970,7 @@ pub(crate) mod tests {
             (0..MAX_CONVERSATION_ITEMS + 1)
                 .map(|_| ConversationItem::UserMessage {
                     text: "task".into(),
+                    uuid: None,
                     timestamp: None,
                 })
                 .collect(),
@@ -1905,7 +2108,9 @@ pub(crate) mod tests {
         let items = items_from_row(&row, ApiErrorMarking::Tailer);
         assert_eq!(items.len(), 1);
         match &items[0] {
-            ConversationItem::UserMessage { text, timestamp } => {
+            ConversationItem::UserMessage {
+                text, timestamp, ..
+            } => {
                 assert_eq!(text, "hello there");
                 assert_eq!(timestamp.as_deref(), Some("2026-06-12T10:00:00Z"));
             }
@@ -2096,15 +2301,22 @@ pub(crate) mod tests {
             }
         });
         let items = items_from_row(&row, ApiErrorMarking::Tailer);
-        assert_eq!(items.len(), 3, "usage + text + tool_use (thinking skipped)");
+        assert_eq!(
+            items.len(),
+            4,
+            "usage + reasoning + text + tool_use (thinking is its own item)"
+        );
         assert!(
             matches!(&items[0], ConversationItem::Usage { model: Some(m), message_id: Some(id), .. } if m == "claude-fable-5" && id == "msg_1")
         );
         assert!(
-            matches!(&items[1], ConversationItem::AssistantText { text, .. } if text == "I'll read the file.")
+            matches!(&items[1], ConversationItem::Reasoning { item_id, text, .. } if item_id == "msg_1" && text == "hmm")
         );
         assert!(
-            matches!(&items[2], ConversationItem::ToolUse { id, name, .. } if id == "tu_2" && name == "Read")
+            matches!(&items[2], ConversationItem::AssistantText { text, .. } if text == "I'll read the file.")
+        );
+        assert!(
+            matches!(&items[3], ConversationItem::ToolUse { id, name, .. } if id == "tu_2" && name == "Read")
         );
     }
 
@@ -2750,6 +2962,7 @@ pub(crate) mod tests {
             "s1",
             vec![ConversationItem::UserMessage {
                 text: "next question".into(),
+                uuid: None,
                 timestamp: None,
             }],
         );
@@ -2824,6 +3037,7 @@ pub(crate) mod tests {
                 "s1",
                 vec![ConversationItem::UserMessage {
                     text: format!("m{i}"),
+                    uuid: None,
                     timestamp: None,
                 }],
             );
@@ -2872,6 +3086,7 @@ pub(crate) mod tests {
             "s1",
             vec![ConversationItem::UserMessage {
                 text: "go".into(),
+                uuid: None,
                 timestamp: None,
             }],
         );
@@ -2930,6 +3145,7 @@ pub(crate) mod tests {
                 "s1",
                 vec![ConversationItem::UserMessage {
                     text: format!("m{i}"),
+                    uuid: None,
                     timestamp: None,
                 }],
             );
@@ -2944,6 +3160,7 @@ pub(crate) mod tests {
             "s1",
             vec![ConversationItem::UserMessage {
                 text: "after".into(),
+                uuid: None,
                 timestamp: None,
             }],
         );
@@ -2956,5 +3173,195 @@ pub(crate) mod tests {
         );
         let (seq, first_seq, _) = conv.snapshot_windowed("s1").unwrap();
         assert_eq!((seq, first_seq), (1, 1), "the new life starts from one");
+    }
+
+    fn reasoning(item_id: &str, text: &str) -> ConversationItem {
+        ConversationItem::Reasoning {
+            item_id: item_id.into(),
+            text: text.into(),
+            timestamp: None,
+        }
+    }
+
+    fn user_with(uuid: &str, text: &str) -> ConversationItem {
+        ConversationItem::UserMessage {
+            text: text.into(),
+            uuid: Some(uuid.into()),
+            timestamp: None,
+        }
+    }
+
+    /// The wire shapes the UI renders. Older clients key on `kind` and skip
+    /// what they do not know; `uuid` is absent unless known.
+    #[test]
+    fn history_item_wire_shapes() {
+        assert_eq!(
+            serde_json::to_value(reasoning("msg_1:0", "hmm")).unwrap(),
+            json!({ "kind": "reasoning", "item_id": "msg_1:0", "text": "hmm" })
+        );
+        assert_eq!(
+            serde_json::to_value(ConversationItem::Compaction {
+                trigger: Some("auto".into()),
+                pre_tokens: Some(180_000),
+                post_tokens: None,
+                timestamp: None,
+            })
+            .unwrap(),
+            json!({ "kind": "compaction", "trigger": "auto", "pre_tokens": 180000 })
+        );
+        assert_eq!(
+            serde_json::to_value(user_with("u-1", "hi")).unwrap(),
+            json!({ "kind": "user_message", "text": "hi", "uuid": "u-1" })
+        );
+        assert_eq!(
+            serde_json::to_value(ConversationItem::UserMessage {
+                text: "hi".into(),
+                uuid: None,
+                timestamp: None,
+            })
+            .unwrap(),
+            json!({ "kind": "user_message", "text": "hi" })
+        );
+    }
+
+    /// Reasoning fragments fold into the trailing item of the SAME block;
+    /// another block, or anything in between, starts a new item.
+    #[test]
+    fn reasoning_fragments_fold_per_block() {
+        let conv = ConversationStore::new();
+        for item in [
+            reasoning("r1", "Let me "),
+            reasoning("r1", "think."),
+            reasoning("r2", "Next block."),
+        ] {
+            conv.push("s", vec![item]);
+        }
+        conv.push("s", vec![assistant("Answer")]);
+        conv.push("s", vec![reasoning("r2", " Late.")]);
+        let (seq, items) = conv.snapshot("s").unwrap();
+        assert_eq!(seq, 5, "every fragment still counts on the wire");
+        let texts: Vec<_> = items
+            .iter()
+            .map(|i| match i {
+                ConversationItem::Reasoning { item_id, text, .. } => format!("{item_id}={text}"),
+                ConversationItem::AssistantText { text, .. } => text.clone(),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec!["r1=Let me think.", "r2=Next block.", "Answer", "r2= Late."]
+        );
+        assert!(conv.has_reasoning("s", "r1"));
+        assert!(!conv.has_reasoning("s", "r9"));
+        // Reasoning never joins assistant text, either way round.
+        conv.push("t", vec![assistant("text")]);
+        conv.push("t", vec![reasoning("r", "thought")]);
+        assert_eq!(conv.snapshot("t").unwrap().1.len(), 2);
+    }
+
+    fn assistant(text: &str) -> ConversationItem {
+        ConversationItem::AssistantText {
+            text: text.into(),
+            timestamp: None,
+        }
+    }
+
+    #[test]
+    fn a_boundary_counts_once_per_turn() {
+        let conv = ConversationStore::new();
+        assert!(!conv.compacted_this_turn("s"));
+        conv.push("s", vec![user_with("u1", "go")]);
+        assert!(!conv.compacted_this_turn("s"));
+        conv.push(
+            "s",
+            vec![ConversationItem::Compaction {
+                trigger: None,
+                pre_tokens: None,
+                post_tokens: None,
+                timestamp: None,
+            }],
+        );
+        conv.push("s", vec![assistant("done")]);
+        assert!(conv.compacted_this_turn("s"));
+        conv.push("s", vec![user_with("u2", "again")]);
+        assert!(!conv.compacted_this_turn("s"), "a new user turn resets it");
+    }
+
+    /// A revert cuts the log before the dropped turn's user message and
+    /// tells every client to adopt the cut log wholesale.
+    #[test]
+    fn truncate_before_user_resets_to_the_kept_prefix() {
+        let conv = ConversationStore::new();
+        conv.push("s", vec![user_with("u1", "first")]);
+        conv.push("s", vec![assistant("one")]);
+        conv.push("s", vec![user_with("u2", "second")]);
+        conv.push("s", vec![assistant("two")]);
+        let mut rx = conv.subscribe();
+        assert!(!conv.truncate_before_user("s", "nope"));
+        assert!(conv.truncate_before_user("s", "u2"));
+        let delta = rx.try_recv().expect("a reset delta");
+        assert!(delta.reset);
+        assert_eq!(delta.seq, 2);
+        assert_eq!(delta.items.len(), 2);
+        let (seq, first_seq, items) = conv.snapshot_windowed("s").unwrap();
+        assert_eq!((seq, first_seq, items.len()), (2, 1, 2));
+        conv.push("s", vec![assistant("after")]);
+        assert_eq!(conv.snapshot("s").unwrap().0, 3);
+    }
+
+    /// Transcript rows carry what the stream frames do: the user row's uuid,
+    /// a shown thinking block, and the compaction boundary (camelCase there).
+    #[test]
+    fn transcript_rows_carry_uuid_reasoning_and_compaction() {
+        let user = items_from_row(
+            &json!({"type":"user","uuid":"row-u1","message":{"role":"user","content":"hello"}}),
+            ApiErrorMarking::Tailer,
+        );
+        assert!(
+            matches!(&user[..], [ConversationItem::UserMessage { uuid: Some(u), .. }] if u == "row-u1")
+        );
+        let thinking = items_from_row(
+            &json!({"type":"assistant","uuid":"row-a1","message":{"id":"msg_7","role":"assistant","content":[
+                {"type":"thinking","thinking":"weigh options","signature":"s"},
+                {"type":"thinking","thinking":"","signature":"s"}
+            ]}}),
+            ApiErrorMarking::Tailer,
+        );
+        assert!(matches!(&thinking[..],
+            [ConversationItem::Reasoning { item_id, text, .. }] if item_id == "msg_7" && text == "weigh options"));
+        let boundary = items_from_row(
+            &json!({"type":"system","subtype":"compact_boundary","timestamp":"2026-10-14T04:51:08Z",
+                "compactMetadata":{"trigger":"auto","preTokens":150000}}),
+            ApiErrorMarking::Tailer,
+        );
+        assert!(matches!(&boundary[..],
+            [ConversationItem::Compaction { trigger: Some(t), pre_tokens: Some(150000), post_tokens: None, timestamp: Some(_) }]
+                if t == "auto"));
+    }
+
+    /// A fork from BEFORE a user message resumes at that row's chain parent.
+    #[tokio::test]
+    async fn transcript_parent_names_the_entry_before_a_message() {
+        let rows = vec![
+            json!({"type":"user","uuid":"u1","parentUuid":null,"message":{"role":"user","content":"first"}}),
+            json!({"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"one"}]}}),
+            json!({"type":"user","uuid":"u2","parentUuid":"a1","message":{"role":"user","content":"second"}}),
+        ];
+        let (_dir, path) = transcript_fixture(&rows);
+        assert_eq!(
+            transcript_parent_of(&path, "u2").await.unwrap(),
+            Some(Some("a1".into()))
+        );
+        assert_eq!(transcript_parent_of(&path, "u1").await.unwrap(), Some(None));
+        assert_eq!(transcript_parent_of(&path, "zz").await.unwrap(), None);
+        assert!(transcript_parent_of("/etc/passwd", "u1").await.is_err());
+        let items = replay_transcript(&path).await.unwrap();
+        let before = items_before_user(&items, "u2").expect("u2 is a user message");
+        assert_eq!(before.len(), 2);
+        assert!(
+            items_before_user(&items, "a1").is_none(),
+            "only user messages are fork points"
+        );
     }
 }

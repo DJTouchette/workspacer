@@ -298,6 +298,30 @@ pub enum AgentUpdate {
     },
     /// A user message echoed back by the server.
     UserText(String),
+    /// A fragment of the model's reasoning for the block `item_id` — lands as
+    /// a [`ConversationItem::Reasoning`] fragment (never assistant text).
+    /// `complete` marks the provider's finished copy of a block (Codex's
+    /// completed `reasoning` item): it is dropped when deltas for the same
+    /// id already streamed, so the block is never shown twice.
+    Reasoning {
+        item_id: String,
+        text: String,
+        complete: bool,
+    },
+    /// The provider started (`true`) or finished (`false`) compacting the
+    /// conversation — the session row's `compacting` flag. A finish without
+    /// a boundary (a failed compaction) only clears the flag.
+    Compacting(bool),
+    /// A compaction boundary: a [`ConversationItem::Compaction`] item, the
+    /// row's `compaction_count`/`last_compact_at`, and `compacting` cleared.
+    /// `legacy` marks a provider's deprecated duplicate report (Codex's
+    /// `thread/compacted`), dropped when this turn already has a boundary.
+    Compacted {
+        trigger: Option<String>,
+        pre_tokens: Option<u64>,
+        post_tokens: Option<u64>,
+        legacy: bool,
+    },
     /// A tool invocation.
     ToolUse {
         id: String,
@@ -557,6 +581,21 @@ pub fn requested_context_window_for(model: &str) -> Option<u64> {
 }
 
 /// Map an `AgentUpdate` to a conversation item, when it represents one.
+/// What a batch of updates does to the row's compaction state.
+#[derive(Debug, Clone, Copy)]
+enum Compaction {
+    /// Set or clear `compacting` only.
+    Flag(bool),
+    /// A boundary landed: clear `compacting`, count it, stamp the time.
+    Boundary,
+}
+
+fn now_rfc3339() -> Option<String> {
+    OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
+}
+
 pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
     // Managed adapters have no transcript rows to inherit timestamps from, so
     // stamp arrival time. Clients derive tool durations from the gap between a
@@ -587,6 +626,7 @@ pub fn conversation_item(update: &AgentUpdate) -> Option<ConversationItem> {
         }),
         AgentUpdate::UserText(text) => Some(ConversationItem::UserMessage {
             text: text.clone(),
+            uuid: None,
             timestamp: now,
         }),
         AgentUpdate::ToolUse { id, name, input } => Some(ConversationItem::ToolUse {
@@ -1062,6 +1102,8 @@ fn apply_updates_current(
     // so its own conversation item lands just past the batch's items.
     let mut plan: Option<Plan> = None;
     let mut subagents = Vec::new();
+    // The batch's last compaction fact; a boundary implies "finished".
+    let mut compaction: Option<Compaction> = None;
 
     for update in &updates {
         match update {
@@ -1212,6 +1254,59 @@ fn apply_updates_current(
             }
             AgentUpdate::Plan(p) => plan = Some(p.clone()),
             AgentUpdate::Subagent(update) => subagents.push(update.clone()),
+            AgentUpdate::Reasoning {
+                item_id,
+                text,
+                complete,
+            } => {
+                let streamed = *complete
+                    && (items.iter().any(|i| {
+                        matches!(i, ConversationItem::Reasoning { item_id: id, .. } if id == item_id)
+                    }) || conv.has_reasoning(session_id, item_id));
+                if !text.is_empty() && !streamed {
+                    // Fragments of one block in one batch are one item.
+                    match items.last_mut() {
+                        Some(ConversationItem::Reasoning {
+                            item_id: prev,
+                            text: so_far,
+                            ..
+                        }) if prev == item_id => so_far.push_str(text),
+                        _ => items.push(ConversationItem::Reasoning {
+                            item_id: item_id.clone(),
+                            text: text.clone(),
+                            timestamp: now_rfc3339(),
+                        }),
+                    }
+                }
+            }
+            AgentUpdate::Compacting(on) => {
+                // A finish never undoes this batch's boundary (which already
+                // means finished, and also counts the compaction).
+                if !(matches!(compaction, Some(Compaction::Boundary)) && !*on) {
+                    compaction = Some(Compaction::Flag(*on));
+                }
+            }
+            AgentUpdate::Compacted {
+                trigger,
+                pre_tokens,
+                post_tokens,
+                legacy,
+            } => {
+                let duplicate = *legacy
+                    && (items
+                        .iter()
+                        .any(|i| matches!(i, ConversationItem::Compaction { .. }))
+                        || conv.compacted_this_turn(session_id));
+                if !duplicate {
+                    items.push(ConversationItem::Compaction {
+                        trigger: trigger.clone(),
+                        pre_tokens: *pre_tokens,
+                        post_tokens: *post_tokens,
+                        timestamp: now_rfc3339(),
+                    });
+                    compaction = Some(Compaction::Boundary);
+                }
+            }
             AgentUpdate::AssistantText(_)
             | AgentUpdate::AssistantQuestions { .. }
             | AgentUpdate::Notice(_)
@@ -1227,6 +1322,11 @@ fn apply_updates_current(
 
     if !items.is_empty() {
         conv.push(session_id, items);
+    }
+    match compaction {
+        Some(Compaction::Flag(on)) => store.set_compacting(session_id, on),
+        Some(Compaction::Boundary) => store.note_compaction(session_id),
+        None => {}
     }
     if let Some(plan) = plan {
         store.set_plan(conv, session_id, plan);
@@ -2201,6 +2301,115 @@ mod tests {
         assert!(items
             .iter()
             .any(|i| matches!(i, ConversationItem::Plan { steps, .. } if steps.len() == 2)));
+    }
+
+    /// Reasoning lands as its own items; a provider's completed copy of a
+    /// block that already streamed is dropped.
+    #[test]
+    fn apply_updates_reasoning_streams_and_never_repeats_a_block() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s-r", "/tmp/proj", "codex");
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        let reasoning = |id: &str, text: &str, complete| AgentUpdate::Reasoning {
+            item_id: id.into(),
+            text: text.into(),
+            complete,
+        };
+        let mut apply = |updates| apply_updates(&store, &conv, "s-r", updates, &mut mode, &mut acc);
+        apply(vec![
+            reasoning("r1", "Plan", false),
+            reasoning("r1", "ning.", false),
+        ]);
+        apply(vec![reasoning("r1", "Planning.", true)]);
+        // A block that never streamed is shown from its completed item.
+        apply(vec![reasoning("r2", "Whole block.", true)]);
+        apply(vec![reasoning("r3", "", false)]);
+        let (_, items) = conv.snapshot("s-r").unwrap();
+        let texts: Vec<_> = items
+            .iter()
+            .filter_map(|i| match i {
+                ConversationItem::Reasoning { item_id, text, .. } => {
+                    Some(format!("{item_id}={text}"))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["r1=Planning.", "r2=Whole block."]);
+        assert!(!items
+            .iter()
+            .any(|i| matches!(i, ConversationItem::AssistantText { .. })));
+    }
+
+    /// Compaction drives the row (`compacting`, `compaction_count`,
+    /// `last_compact_at`) and leaves ONE boundary per compaction even when a
+    /// provider reports it twice.
+    #[test]
+    fn apply_updates_compaction_flag_and_single_boundary() {
+        let store = SessionStore::new();
+        let conv = ConversationStore::new();
+        store.register_managed("s-c", "/tmp/proj", "codex");
+        let mut mode = SessionMode::Input;
+        let mut acc = UsageAcc::new();
+        let boundary = |legacy| AgentUpdate::Compacted {
+            trigger: None,
+            pre_tokens: None,
+            post_tokens: None,
+            legacy,
+        };
+        let mut apply = |updates| apply_updates(&store, &conv, "s-c", updates, &mut mode, &mut acc);
+        apply(vec![AgentUpdate::Compacting(true)]);
+        assert!(store.get("s-c").unwrap().compacting);
+        apply(vec![boundary(false)]);
+        apply(vec![boundary(true)]);
+        let row = store.get("s-c").unwrap();
+        assert!(!row.compacting);
+        assert_eq!(
+            row.compaction_count, 1,
+            "the deprecated duplicate is not a second compaction"
+        );
+        assert!(row.last_compact_at.is_some());
+        let boundaries = conv
+            .snapshot("s-c")
+            .unwrap()
+            .1
+            .iter()
+            .filter(|i| matches!(i, ConversationItem::Compaction { .. }))
+            .count();
+        assert_eq!(boundaries, 1);
+        // An old server that only sends the deprecated notification still
+        // gets its boundary.
+        let conv = ConversationStore::new();
+        apply_updates(
+            &store,
+            &conv,
+            "s-c",
+            vec![boundary(true)],
+            &mut mode,
+            &mut acc,
+        );
+        assert_eq!(store.get("s-c").unwrap().compaction_count, 2);
+        // A failed compaction only clears the flag.
+        apply_updates(
+            &store,
+            &conv,
+            "s-c",
+            vec![AgentUpdate::Compacting(true)],
+            &mut mode,
+            &mut acc,
+        );
+        apply_updates(
+            &store,
+            &conv,
+            "s-c",
+            vec![AgentUpdate::Compacting(false)],
+            &mut mode,
+            &mut acc,
+        );
+        let row = store.get("s-c").unwrap();
+        assert!(!row.compacting);
+        assert_eq!(row.compaction_count, 2);
     }
 
     #[test]

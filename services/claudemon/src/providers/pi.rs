@@ -973,7 +973,7 @@ async fn run_session(
                 Some(text) => {
                     // Echo the user's message verbatim, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
-                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), timestamp: None }]);
+                    conv.push(session_id, vec![ConversationItem::UserMessage { text: text.clone(), uuid: None, timestamp: None }]);
                     let sent = match pending_instructions.take() {
                         Some(instr) => format!("{instr}\n\n{text}"),
                         None => text,
