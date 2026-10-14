@@ -977,6 +977,11 @@ pub struct SessionState {
     /// fold (see [`super::prompt_cache`]).
     #[serde(skip)]
     pub last_api_request: Option<super::prompt_cache::RequestObservation>,
+    /// Live provider status (delivery receipts, MCP servers, running hooks,
+    /// fast mode), flattened so each is a top-level snapshot key. See
+    /// [`super::provider_status`].
+    #[serde(flatten)]
+    pub provider_status: super::provider_status::ProviderStatus,
 }
 
 /// Serde default for [`SessionState::provider`] — the un-managed PTY path is
@@ -1024,6 +1029,7 @@ impl SessionState {
             model_confirmation_suppressions_remaining: 0,
             context_display_confirmation_pending: false,
             last_api_request: None,
+            provider_status: Default::default(),
         }
     }
 

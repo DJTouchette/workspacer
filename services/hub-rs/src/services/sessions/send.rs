@@ -40,12 +40,18 @@ impl Sessions {
     /// a person's `now` may claim `origin: {kind: "human"}`.
     ///
     /// The caller has already validated `id` (`segment`) and the wire params.
+    ///
+    /// `uuid`, when given, is stamped on the message's provider frame (Claude
+    /// stream), so its delivery receipts (`message_receipts`) can be matched
+    /// even when this send's own outcome is lost. A delivered result reports
+    /// the stamped uuid as `messageUuid` whenever the driver stamps one.
     pub(super) async fn send_message(
         &self,
         id: &str,
         text: Option<&str>,
         delivery: Delivery,
         from: Option<&str>,
+        uuid: Option<&str>,
     ) -> MessageOutcome {
         let Some(text) = text.filter(|s| !s.is_empty()) else {
             return MessageOutcome::Rejected(anyhow!(
@@ -91,6 +97,7 @@ impl Sessions {
                 self.requests.as_deref(),
                 delivery,
                 sender,
+                uuid,
             )
             .await
             {
@@ -113,15 +120,21 @@ impl Sessions {
                 }
             };
         }
+        let mut payload = json!({"text":text,"delivery":delivery,"sender":sender});
+        if let Some(uuid) = uuid {
+            payload["uuid"] = json!(uuid);
+        }
         match self
-            .request(
-                "POST",
-                format!("/sessions/{id}/message"),
-                Some(json!({"text":text,"delivery":delivery,"sender":sender})),
-            )
+            .request("POST", format!("/sessions/{id}/message"), Some(payload))
             .await
         {
-            Ok(_) => MessageOutcome::Delivered(json!({"ok":true})),
+            Ok(reply) => {
+                let mut wire = json!({"ok":true});
+                if let Some(uuid) = reply["message_uuid"].as_str() {
+                    wire["messageUuid"] = json!(uuid);
+                }
+                MessageOutcome::Delivered(wire)
+            }
             Err(error) if error.downcast_ref::<CommandRejected>().is_some() => {
                 MessageOutcome::Rejected(error)
             }

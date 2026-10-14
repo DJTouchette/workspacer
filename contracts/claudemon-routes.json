@@ -88,6 +88,11 @@
     },
     {
       "method": "POST",
+      "pattern": "/sessions/:id/fast-mode",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
       "pattern": "/sessions/:id/gate",
       "server": "claudemon-api"
     },
@@ -99,6 +104,16 @@
     {
       "method": "POST",
       "pattern": "/sessions/:id/input",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/mcp-reconnect",
+      "server": "claudemon-api"
+    },
+    {
+      "method": "POST",
+      "pattern": "/sessions/:id/mcp-status",
       "server": "claudemon-api"
     },
     {

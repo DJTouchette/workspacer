@@ -138,6 +138,10 @@ impl Drop for TrackedDelivery {
 pub struct DeliveryResult {
     pub held: bool,
     pub outcome: SendOutcome,
+    /// The uuid the provider driver stamped on the message (Claude stream),
+    /// as the daemon reported it; `None` for every other driver and for a
+    /// held message (replayed later under a fresh uuid).
+    pub message_uuid: Option<String>,
 }
 impl DeliveryResult {
     pub fn accepted(&self) -> bool {
@@ -145,7 +149,13 @@ impl DeliveryResult {
     }
     pub fn wire(&self) -> Value {
         match &self.outcome {
-            SendOutcome::Accepted => json!({"ok":true,"held":self.held}),
+            SendOutcome::Accepted => {
+                let mut wire = json!({"ok":true,"held":self.held});
+                if let Some(uuid) = &self.message_uuid {
+                    wire["messageUuid"] = json!(uuid);
+                }
+                wire
+            }
             SendOutcome::Rejected { status, reason } => {
                 json!({"ok":false,"status":status,"delivery":"rejected","error":reason})
             }
@@ -179,6 +189,7 @@ pub async fn send_engine(
         inbox,
         claudemon::session::Delivery::Steer,
         claudemon::session::MessageSender::Agent,
+        None,
     )
     .await
 }
@@ -200,6 +211,7 @@ pub async fn send_engine_with(
     inbox: Option<&crate::services::manager_requests::ManagerRequests>,
     delivery: claudemon::session::Delivery,
     sender: claudemon::session::MessageSender,
+    message_uuid: Option<&str>,
 ) -> Result<DeliveryResult> {
     use anyhow::{Context, bail};
     use claudemon::daemon::embedded::{Command, CommandRejected};
@@ -225,6 +237,7 @@ pub async fn send_engine_with(
             return Ok(DeliveryResult {
                 held: false,
                 outcome: SendOutcome::Accepted,
+                message_uuid: None,
             });
         }
         if attempt["status"] != "pending" {
@@ -250,6 +263,7 @@ pub async fn send_engine_with(
                 return Ok(DeliveryResult {
                     held: true,
                     outcome: SendOutcome::Accepted,
+                    message_uuid: None,
                 });
             }
             BeginDelivery::Send(delivery) => delivery,
@@ -261,18 +275,32 @@ pub async fn send_engine_with(
             "unknown",
         )?;
     }
-    let outcome = match tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        engine.request(Command::Message {
+    let command = match message_uuid {
+        Some(uuid) => Command::IdentifiedMessage {
             id: target.into(),
             text: content,
             delivery,
             sender,
-        }),
+            uuid: uuid.into(),
+        },
+        None => Command::Message {
+            id: target.into(),
+            text: content,
+            delivery,
+            sender,
+        },
+    };
+    let mut stamped = None;
+    let outcome = match tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        engine.request(command),
     )
     .await
     {
-        Ok(Ok(_)) => SendOutcome::Accepted,
+        Ok(Ok(reply)) => {
+            stamped = reply["message_uuid"].as_str().map(str::to_owned);
+            SendOutcome::Accepted
+        }
         Ok(Err(error)) => {
             if let Some(rejected) = error.downcast_ref::<CommandRejected>() {
                 SendOutcome::Rejected {
@@ -300,5 +328,6 @@ pub async fn send_engine_with(
     Ok(DeliveryResult {
         held: false,
         outcome,
+        message_uuid: stamped,
     })
 }

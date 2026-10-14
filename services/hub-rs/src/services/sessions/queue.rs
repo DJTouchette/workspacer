@@ -123,7 +123,7 @@ impl Sessions {
     /// human who queued it (no sending session), with `delivery` honoured.
     async fn deliver(&self, id: &str, entry: Entry, delivery: SendDelivery) -> Delivery {
         classify(
-            self.send_message(id, Some(&entry.text), delivery, None)
+            self.send_message(id, Some(&entry.text), delivery, None, None)
                 .await,
         )
     }

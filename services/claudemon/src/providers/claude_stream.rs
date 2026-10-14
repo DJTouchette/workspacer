@@ -154,7 +154,7 @@ const PRIORITY_NOW_MIN_VERSION: (u32, u32, u32) = (2, 1, 286);
 const SENT_UUIDS_KEPT: usize = 64;
 
 impl CliProtocol {
-    fn observe_init(&mut self, init: &Value) {
+    pub(super) fn observe_init(&mut self, init: &Value) {
         self.observed_init = true;
         if let Some(version) = init
             .get("claude_code_version")
@@ -172,7 +172,7 @@ impl CliProtocol {
         }
     }
 
-    fn has_capability(&self, name: &str) -> bool {
+    pub(super) fn has_capability(&self, name: &str) -> bool {
         self.capabilities.iter().any(|c| c == name)
     }
 
@@ -192,7 +192,12 @@ impl CliProtocol {
         }
     }
 
-    fn remember_sent(&mut self, uuid: String) {
+    /// Whether `uuid` names a message we sent (within [`SENT_UUIDS_KEPT`]).
+    pub(super) fn sent_by_us(&self, uuid: &str) -> bool {
+        self.sent.iter().any(|s| s == uuid)
+    }
+
+    pub(super) fn remember_sent(&mut self, uuid: String) {
         if self.sent.len() == SENT_UUIDS_KEPT {
             self.sent.pop_front();
         }
@@ -202,7 +207,7 @@ impl CliProtocol {
     /// The uuids in an interrupt receipt list that are messages WE sent; the
     /// CLI may list uuids it enqueued itself (scheduled triggers), which are
     /// not ours to reason about.
-    fn ours(&self, list: Option<&Value>) -> Vec<String> {
+    pub(super) fn ours(&self, list: Option<&Value>) -> Vec<String> {
         list.and_then(Value::as_array)
             .into_iter()
             .flatten()
@@ -214,7 +219,7 @@ impl CliProtocol {
 }
 
 /// `"2.1.296"` (tolerating a `-suffix`) → `(2, 1, 296)`.
-fn parse_cli_version(raw: &str) -> Option<(u32, u32, u32)> {
+pub(super) fn parse_cli_version(raw: &str) -> Option<(u32, u32, u32)> {
     let core = raw.trim().split(['-', '+', ' ']).next()?;
     let mut parts = core.split('.').map(|p| p.parse::<u32>().ok());
     Some((parts.next()??, parts.next()??, parts.next()??))
@@ -311,12 +316,12 @@ impl SwitchAck {
 /// (`TaskCreate` / `TaskGet` / `TaskUpdate` / `TaskList`). Without it they are
 /// ABSENT on Opus/Sonnet/Haiku 5.5 and any model id the CLI doesn't recognise,
 /// so the session plan would never fill.
-const TODO_TOOLS_ENV: &str = "CLAUDE_CODE_ENABLE_TODO_TOOLS";
+pub(crate) const TODO_TOOLS_ENV: &str = "CLAUDE_CODE_ENABLE_TODO_TOOLS";
 
 /// The `(key, value)` to add to the child's environment, or `None` when the
 /// caller (spawn `env`, e.g. a profile) or the daemon's own environment
 /// already chose a value — a user's explicit `0` must win.
-fn todo_tools_env(
+pub(crate) fn todo_tools_env(
     spawn_env: &HashMap<String, String>,
     inherited: Option<std::ffi::OsString>,
 ) -> Option<(&'static str, &'static str)> {
@@ -1574,7 +1579,14 @@ async fn run_session(
 ) -> anyhow::Result<()> {
     let session_id = cfg.session_id.clone();
     let startup_started = std::time::Instant::now();
-    let argv = build_argv(&cfg);
+    let mut argv = build_argv(&cfg);
+    // Hook lifecycle frames feed the row's `active_hooks` (see
+    // `claude_status`); an older CLI would refuse the unknown flag.
+    if !argv.iter().any(|a| a == "--include-hook-events")
+        && super::claude_status::hook_events_supported(&cfg.bin, &cfg.cwd, &cfg.env).await
+    {
+        argv.insert(9, "--include-hook-events".into());
+    }
     // `_tie` lives as long as the session: the CLI cannot outlive the app.
     let mut command = Command::new(&cfg.bin);
     command.args(&argv).envs(&cfg.env);
@@ -1659,6 +1671,13 @@ async fn run_session(
     // later auto-answers whatever `can_use_tool` still arrives.
     let yolo_live = Arc::new(AtomicBool::new(cfg.yolo));
     store.register_managed_yolo(&session_id, yolo_live.clone(), cfg.yolo);
+    // Live status: MCP status/reconnect, fast mode, the receipt interrupt.
+    let (status_tx, mut status_rx) =
+        mpsc::unbounded_channel::<crate::session::provider_status::StatusControl>();
+    store.register_managed_status_control(&session_id, status_tx);
+    let mut live_status = super::claude_status::ClaudeStatus::default();
+    let mut status_open = true;
+    super::claude_status::reset(store, &session_id);
 
     // The SDK-parity handshake. The CLI tolerates traffic before the response
     // lands, so nothing blocks on it.
@@ -1712,6 +1731,9 @@ async fn run_session(
                         tracing::debug!(session = %session_id, line = %line, "claude stream: unparsed stdout line");
                         continue;
                     };
+                    if live_status.observe(&value, store, conv, &session_id, &totals.protocol, &out_tx) {
+                        continue;
+                    }
                     handle_line(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,
@@ -1723,7 +1745,7 @@ async fn run_session(
                 Err(err) => return Err(err.into()),
             },
             msg = rx.recv() => match msg {
-                Some(ManagedPrompt { text, delivery, sender }) => {
+                Some(ManagedPrompt { text, delivery, sender, uuid }) => {
                     // Echo the user's message, but prepend the role
                     // instructions (once) to what's actually sent to the agent.
                     // A message invoking a known slash command echoes as the
@@ -1738,7 +1760,9 @@ async fn run_session(
                         Some(instr) => format!("{instr}\n\n{text}"),
                         None => text,
                     };
-                    let uuid = uuid::Uuid::new_v4().to_string();
+                    // The caller's uuid when it named one (so it can match
+                    // this message's receipts), else a fresh one.
+                    let uuid = uuid.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                     // Busy only decides the older-CLI fallback (interrupt, then
                     // send). Every send of ours flips the mode to Responding
                     // (`note_user_send`) until a `result` idles it, and the
@@ -1860,6 +1884,11 @@ async fn run_session(
                 }
                 None => break,
             },
+            control = status_rx.recv(), if status_open => match control {
+                Some(control) => live_status.request(&out_tx, control),
+                // Deregistered (terminating): the input channel ends the loop.
+                None => status_open = false,
+            },
             _ = irx.recv() => {
                 send_control(
                     &out_tx,
@@ -1901,6 +1930,9 @@ async fn run_session(
                     let line = line.trim();
                     if line.is_empty() { continue; }
                     let Ok(value) = serde_json::from_str::<Value>(line) else { continue; };
+                    if live_status.observe(&value, store, conv, &session_id, &totals.protocol, &out_tx) {
+                        continue;
+                    }
                     handle_line(
                         &value, store, conv, &session_id, &out_tx,
                         &mut cur_mode, &mut acc, &mut totals,

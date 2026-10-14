@@ -13,9 +13,11 @@
 //! that drives the stores. The live process/transport clients live in each
 //! provider module.
 
+pub(crate) mod claude_status;
 pub mod claude_stream;
 pub mod codex;
 pub mod codex_rollout;
+pub(crate) mod codex_status;
 pub mod codex_usage;
 pub mod copilot;
 pub mod copilot_usage;

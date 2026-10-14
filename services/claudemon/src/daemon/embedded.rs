@@ -68,6 +68,17 @@ pub enum Command {
         /// Who wrote it; see [`crate::session::MessageSender`].
         sender: crate::session::MessageSender,
     },
+    /// [`Command::Message`] naming the uuid the driver stamps on the
+    /// message's provider frame (Claude stream), so a caller that never sees
+    /// the reply still knows which delivery receipt is its message. Must be
+    /// a UUID. The reply carries `message_uuid` when the driver stamps it.
+    IdentifiedMessage {
+        id: String,
+        text: String,
+        delivery: crate::session::Delivery,
+        sender: crate::session::MessageSender,
+        uuid: String,
+    },
     Approve {
         id: String,
         decision: String,
@@ -442,6 +453,16 @@ async fn dispatch(router: Router, command: Command) -> Result<Value> {
         } => (
             session_path(&id, "message")?,
             Some(json!({"text": text, "delivery": delivery, "sender": sender})),
+        ),
+        Command::IdentifiedMessage {
+            id,
+            text,
+            delivery,
+            sender,
+            uuid,
+        } => (
+            session_path(&id, "message")?,
+            Some(json!({"text": text, "delivery": delivery, "sender": sender, "uuid": uuid})),
         ),
         Command::Approve { id, decision } => (
             session_path(&id, "approve")?,

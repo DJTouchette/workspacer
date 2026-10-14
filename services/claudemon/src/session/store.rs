@@ -379,6 +379,11 @@ pub struct SessionStore {
     /// Background-task control for stream sessions (provider pid + the
     /// `stop_task` channel). Absent for every other transport.
     managed_task_controls: Arc<DashMap<String, ManagedTaskControl>>,
+    /// Live-status control requests (MCP status/reconnect, fast mode, the
+    /// receipt-reporting interrupt) for drivers that implement them. See
+    /// [`super::provider_status::StatusControl`].
+    managed_status_controls:
+        Arc<DashMap<String, mpsc::UnboundedSender<super::provider_status::StatusControl>>>,
     /// Latest account-level rate-limit reading from the OAuth usage endpoint
     /// (see `session::account_usage`), keyed by Claude config root (`""` = the
     /// daemon's default). One entry per logged-in account: a profile spawn
@@ -474,6 +479,11 @@ pub struct ManagedPrompt {
     pub text: String,
     pub delivery: Delivery,
     pub sender: MessageSender,
+    /// The uuid the driver stamps on this message's provider frame, when the
+    /// caller chose one (`POST /sessions/:id/message {uuid}`); the driver mints
+    /// one otherwise. Claude stream names messages by it in `command_lifecycle`
+    /// receipts and interrupt receipts; other drivers ignore it.
+    pub uuid: Option<String>,
 }
 
 /// A live model/effort switch whose driver answers only once the provider
@@ -499,7 +509,13 @@ enum ManagedInput {
 }
 
 impl ManagedInput {
-    fn send(&self, text: String, delivery: Delivery, sender: MessageSender) -> bool {
+    fn send(
+        &self,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> bool {
         match self {
             Self::Text(tx) => tx.send(text).is_ok(),
             Self::Prompt(tx) => tx
@@ -507,6 +523,7 @@ impl ManagedInput {
                     text,
                     delivery,
                     sender,
+                    uuid,
                 })
                 .is_ok(),
         }
@@ -803,6 +820,7 @@ impl SessionStore {
             managed_permission_modes: Arc::new(DashMap::new()),
             managed_interrupts: Arc::new(DashMap::new()),
             managed_task_controls: Arc::new(DashMap::new()),
+            managed_status_controls: Arc::new(DashMap::new()),
             account_usage: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             account_usage_errors: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -2008,7 +2026,7 @@ impl SessionStore {
         // this drain runs the instant the driver's channel is live. There is no
         // window in between for the caller to have to guess at.
         for text in self.take_pending_messages(session_id) {
-            if !tx.send(text, Delivery::Steer, MessageSender::Human) {
+            if !tx.send(text, Delivery::Steer, MessageSender::Human, None) {
                 tracing::warn!(session_id, "managed prompt channel closed before the queued first message could be delivered");
                 break;
             }
@@ -2129,6 +2147,65 @@ impl SessionStore {
     /// stream driver's SIGINT equivalent — an `interrupt` control request).
     pub fn register_managed_interrupt(&self, session_id: &str, tx: mpsc::UnboundedSender<()>) {
         self.managed_interrupts.insert(session_id.to_string(), tx);
+    }
+
+    /// Register a driver's live-status control channel (see
+    /// [`super::provider_status::StatusControl`]).
+    pub fn register_managed_status_control(
+        &self,
+        session_id: &str,
+        tx: mpsc::UnboundedSender<super::provider_status::StatusControl>,
+    ) {
+        self.managed_status_controls
+            .insert(session_id.to_string(), tx);
+    }
+
+    /// Hand a live-status request to the session's driver. `Err` gives the
+    /// request back when the session has no such driver (or it is gone), so
+    /// the caller can answer with that instead of waiting.
+    pub fn submit_status_control(
+        &self,
+        session_id: &str,
+        control: super::provider_status::StatusControl,
+    ) -> Result<(), super::provider_status::StatusControl> {
+        let Some(tx) = self
+            .managed_status_controls
+            .get(session_id)
+            .map(|tx| tx.clone())
+        else {
+            return Err(control);
+        };
+        tx.send(control).map_err(|error| error.0)
+    }
+
+    /// Whether the session's driver takes live-status requests.
+    pub fn has_status_control(&self, session_id: &str) -> bool {
+        self.managed_status_controls.contains_key(session_id)
+    }
+
+    /// Apply `f` to the session's [`super::provider_status::ProviderStatus`]
+    /// and publish the row when `f` reports a change.
+    pub fn update_provider_status(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut super::provider_status::ProviderStatus) -> bool,
+    ) -> bool {
+        let state = {
+            let Some(mut entry) = self.states.get_mut(session_id) else {
+                return false;
+            };
+            if !f(&mut entry.provider_status) {
+                return false;
+            }
+            entry.updated_at = OffsetDateTime::now_utc();
+            entry.clone()
+        };
+        let _ = self.update_tx.send(SessionUpdate {
+            session_id: session_id.to_string(),
+            event: "Managed".to_string(),
+            state,
+        });
+        true
     }
 
     /// Register a stream session's background-task control (see
@@ -2348,6 +2425,7 @@ impl SessionStore {
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
+        self.managed_status_controls.remove(session_id);
         existed
     }
 
@@ -2409,6 +2487,7 @@ impl SessionStore {
         self.managed_permission_modes.remove(session_id);
         self.managed_interrupts.remove(session_id);
         self.managed_task_controls.remove(session_id);
+        self.managed_status_controls.remove(session_id);
         // Release the hybrid Term view's resources (attached by `attach_pty`).
         // The 256 KiB byte ring per session is the bulk of a managed session's
         // memory; leaving it (and the input wrapper + broadcast) around after the
@@ -2424,6 +2503,7 @@ impl SessionStore {
             // A stopped session runs nothing — a leftover live-task count would
             // badge a dead row as "working in background".
             entry.background_tasks = 0;
+            entry.provider_status.end();
             let completed_at = now_millis();
             super::background_tasks::end_all(&mut entry.background_task_list, completed_at);
             for sub in &mut entry.subagents {
@@ -3089,10 +3169,38 @@ impl SessionStore {
         delivery: Delivery,
         sender: MessageSender,
     ) -> MessageOutcome {
+        self.native_submit_message_tracked(session_id, text, delivery, sender, None)
+    }
+
+    /// [`Self::submit_message_from`] with the uuid the driver must stamp on
+    /// the message (see [`ManagedPrompt::uuid`]). Only delivery-aware managed
+    /// drivers see it; every other path delivers exactly as without it.
+    pub fn submit_message_tracked(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> MessageOutcome {
+        if let Some(engine) = self.engines.bound(session_id) {
+            return engine.send_tracked(self, session_id, text, delivery, sender, uuid);
+        }
+        self.native_submit_message_tracked(session_id, text, delivery, sender, uuid)
+    }
+
+    pub(crate) fn native_submit_message_tracked(
+        &self,
+        session_id: &str,
+        text: String,
+        delivery: Delivery,
+        sender: MessageSender,
+        uuid: Option<String>,
+    ) -> MessageOutcome {
         // Managed (adapter-driven) sessions forward the prompt to the provider's
         // own API via the driver task — no PTY, no Input-mode gating.
         if let Some(tx) = self.managed_input(session_id) {
-            return if tx.send(text, delivery, sender) {
+            return if tx.send(text, delivery, sender, uuid) {
                 MessageOutcome::Sent
             } else {
                 MessageOutcome::WrapperGone

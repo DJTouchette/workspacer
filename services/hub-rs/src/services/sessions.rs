@@ -794,6 +794,7 @@ impl Sessions {
                     params["text"].as_str(),
                     delivery,
                     params["fromSessionId"].as_str(),
+                    None,
                 )
                 .await
                 .into_result()

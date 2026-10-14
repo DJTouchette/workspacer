@@ -2526,6 +2526,10 @@ async fn run_session(
         // driver answers AskUserQuestion through.
         let (atx, arx) = mpsc::unbounded_channel::<ManagedAnswer>();
         store.register_managed_answer(session_id, atx);
+        // Live status: MCP server list/reload (see `codex_status`).
+        let (sttx, strx) =
+            mpsc::unbounded_channel::<crate::session::provider_status::StatusControl>();
+        store.register_managed_status_control(session_id, sttx);
         // Approval policy, live-switchable via `/permission-mode`: the adapter
         // mediates every approval request on this ws path, so flipping the flag
         // takes effect on the next request without touching the session. A
@@ -2568,9 +2572,11 @@ async fn run_session(
             )
         };
 
-        (rx, drx, mrx, irx, arx, policy, tui_pty)
+        (rx, drx, mrx, irx, arx, strx, policy, tui_pty)
     });
-    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, policy, tui_pty)) = registration else {
+    let Some((mut rx, mut drx, mut mrx, mut irx, mut arx, mut status_rx, policy, tui_pty)) =
+        registration
+    else {
         evidence.reason = DriverExit::Superseded;
         evidence.cleanup = child.cleanup().await;
         evidence.exit_status = child.exit_status;
@@ -2662,6 +2668,9 @@ async fn run_session(
     // dead thread. try_wait is cheap; a coarse tick is fine.
     let mut upkeep = tokio::time::interval(std::time::Duration::from_secs(1));
     let mut tui_check = tokio::time::interval(std::time::Duration::from_secs(2));
+    // MCP server health and running hooks (see `codex_status`).
+    let mut live_status = super::codex_status::CodexStatus::default();
+    let mut status_open = true;
 
     let reason = 'driver: loop {
         let mut incoming: Option<ManagedPrompt> = None;
@@ -2674,12 +2683,17 @@ async fn run_session(
                         let line = line.trim();
                         if line.is_empty() { continue; }
                         let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
-                        let applied = store.with_generation(session_id, evidence.generation, || handle_message(
-                            &value, store, conv, session_id, &out_tx,
-                            &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
-                            &mut cur_mode, &mut acc, &policy, &mut requests, &mut input,
-                            &mut pending_switch, headless,
-                        ));
+                        let applied = store.with_generation(session_id, evidence.generation, || {
+                            if live_status.observe(&value, store, conv, session_id, thread_id.as_deref()) {
+                                return;
+                            }
+                            handle_message(
+                                &value, store, conv, session_id, &out_tx,
+                                &mut thread_id, &mut subscribed, &mut pending_prompts, &mut req_id,
+                                &mut cur_mode, &mut acc, &policy, &mut requests, &mut input,
+                                &mut pending_switch, headless,
+                            )
+                        });
                         if applied.is_none() { break 'driver DriverExit::Superseded; }
                         if subscribed && !readiness_logged {
                             readiness_logged = true;
@@ -2751,6 +2765,10 @@ async fn run_session(
                         input.watchdog(now, &out_tx, &mut req_id, tid, &policy);
                     }
                 }).is_none() { break DriverExit::Superseded; }
+            },
+            control = status_rx.recv(), if status_open => match control {
+                Some(control) => live_status.request(&out_tx, thread_id.as_deref(), control),
+                None => status_open = false,
             },
             intr = irx.recv() => match intr {
                 Some(()) => {

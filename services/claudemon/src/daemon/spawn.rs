@@ -336,6 +336,39 @@ pub async fn handle(
     }
 }
 
+/// Whether a PTY spawn's argv launches Claude Code itself (`claude`,
+/// `claude.exe`, `/path/to/claude`), not a shell or another agent's TUI.
+fn is_claude_argv(argv: &[String], rollout_provider: Option<&str>) -> bool {
+    rollout_provider.is_none()
+        && argv.first().is_some_and(|bin| {
+            // Either separator: a Windows caller's path reaches every host.
+            let name = bin.rsplit(['/', '\\']).next().unwrap_or(bin);
+            let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
+            stem.eq_ignore_ascii_case("claude")
+        })
+}
+
+/// The env a PTY child gets on top of the daemon's: the caller's, plus — for
+/// Claude Code — the task-tool opt-in the stream driver sets
+/// (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`; without it TaskCreate/TaskUpdate are
+/// absent and the transcript's task fold never fills the plan). Never over a
+/// value the caller or the daemon's own environment already chose.
+fn pty_child_env(
+    argv: &[String],
+    rollout_provider: Option<&str>,
+    env: &HashMap<String, String>,
+    inherited: Option<std::ffi::OsString>,
+) -> HashMap<String, String> {
+    let mut env = env.clone();
+    if is_claude_argv(argv, rollout_provider) {
+        if let Some((key, value)) = crate::providers::claude_stream::todo_tools_env(&env, inherited)
+        {
+            env.insert(key.into(), value.into());
+        }
+    }
+    env
+}
+
 pub(crate) fn start_native_pty(
     store: &SessionStore,
     conv: &ConversationStore,
@@ -353,6 +386,12 @@ pub(crate) fn start_native_pty(
     // ~/.claude/projects; tell the transcript reader about that root so its
     // containment check doesn't refuse our own child's file.
     crate::session::transcript::allow_spawn_env(&payload.env);
+    let env = pty_child_env(
+        &payload.argv,
+        payload.rollout_provider.as_deref(),
+        &payload.env,
+        std::env::var_os(crate::providers::claude_stream::TODO_TOOLS_ENV),
+    );
 
     let pty_handle = match pty::spawn(
         &payload.argv,
@@ -363,7 +402,7 @@ pub(crate) fn start_native_pty(
             pixel_width: 0,
             pixel_height: 0,
         },
-        &payload.env,
+        &env,
     ) {
         Ok(h) => Arc::new(h),
         Err(err) => {
@@ -1047,6 +1086,39 @@ pub async fn handle_provider_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_pty_spawns_opt_into_task_tools_without_clobbering() {
+        let argv = |bin: &str| vec![bin.to_string(), "--session-id".into(), "x".into()];
+        let key = crate::providers::claude_stream::TODO_TOOLS_ENV;
+        let empty = HashMap::new();
+        for bin in [
+            "claude",
+            "/home/u/.local/bin/claude",
+            "C:\\bin\\claude.exe",
+            "CLAUDE.cmd",
+        ] {
+            let env = pty_child_env(&argv(bin), None, &empty, None);
+            assert_eq!(env.get(key).map(String::as_str), Some("1"), "{bin}");
+        }
+        // Not Claude: a shell, another agent's TUI, a hybrid rollout PTY.
+        for (bin, rollout) in [("bash", None), ("codex", None), ("claude", Some("codex"))] {
+            let env = pty_child_env(&argv(bin), rollout, &empty, None);
+            assert!(!env.contains_key(key), "{bin}");
+        }
+        // A caller's own value wins, and so does the daemon's environment.
+        let chosen = HashMap::from([(key.to_string(), "0".to_string())]);
+        assert_eq!(
+            pty_child_env(&argv("claude"), None, &chosen, None)[key],
+            "0"
+        );
+        let inherited = pty_child_env(&argv("claude"), None, &empty, Some("0".into()));
+        assert!(!inherited.contains_key(key));
+        // Everything else the caller passed rides along untouched.
+        let profile = HashMap::from([("CLAUDE_CONFIG_DIR".to_string(), "/p".to_string())]);
+        let env = pty_child_env(&argv("claude"), None, &profile, None);
+        assert_eq!(env["CLAUDE_CONFIG_DIR"], "/p");
+    }
 
     #[cfg(windows)]
     #[tokio::test]
